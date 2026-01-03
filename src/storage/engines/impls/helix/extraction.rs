@@ -12,11 +12,11 @@ use tracing::debug;
 
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::FileSystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
-    ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode, ExtractionRequest,
-    ExtractionResult, ExtractionStats, ExtractedVector, VectorExtractor,
+    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
+    ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
 
 /// HELIX Vector Extractor
@@ -51,9 +51,9 @@ impl HelixExtractor {
 
         // Read number of blocks
         let mut num_blocks_bytes = [0u8; 4];
-        cursor
-            .read_exact(&mut num_blocks_bytes)
-            .map_err(|e| ExtractionError::ParseError(format!("Failed to read block count: {}", e)))?;
+        cursor.read_exact(&mut num_blocks_bytes).map_err(|e| {
+            ExtractionError::ParseError(format!("Failed to read block count: {}", e))
+        })?;
         let num_blocks = u32::from_le_bytes(num_blocks_bytes);
 
         let mut records = Vec::new();

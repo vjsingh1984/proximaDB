@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "proximadb-embedded"
-version = "0.1.5"
+version = "0.2.0"
 description = "ProximaDB Embedded - In-process vector database for Python with zero network overhead"
 authors = [
     {name = "Vijaykumar Singh", email = "singhvjd@gmail.com"}

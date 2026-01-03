@@ -908,7 +908,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             timestamp: Some(chrono::Utc::now().timestamp()),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: Some(0), // Epoch time = always in past = tombstone marker
-            version: None, // May be updated by MVCC later
+            version: None,       // May be updated by MVCC later
             // rank removed -  None,
             source: None,
         };

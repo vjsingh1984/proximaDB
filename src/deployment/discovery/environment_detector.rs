@@ -378,7 +378,7 @@ impl EnvironmentDetector {
 
         // Check for kubectl command
         match tokio::process::Command::new("kubectl")
-            .args(&["cluster-info"])
+            .args(["cluster-info"])
             .output()
             .await
         {
@@ -388,7 +388,7 @@ impl EnvironmentDetector {
 
                     // Additional check: verify we can list nodes
                     match tokio::process::Command::new("kubectl")
-                        .args(&["get", "nodes"])
+                        .args(["get", "nodes"])
                         .output()
                         .await
                     {
@@ -521,7 +521,7 @@ impl EnvironmentDetector {
         debug!("🔍 Checking Docker availability...");
 
         match tokio::process::Command::new("docker")
-            .args(&["version"])
+            .args(["version"])
             .output()
             .await
         {
@@ -625,7 +625,7 @@ impl EnvironmentDetector {
     async fn detect_storage_gb(&self) -> Result<u64> {
         // Try using df command to check available disk space
         match tokio::process::Command::new("df")
-            .args(&["-BG", "/"])
+            .args(["-BG", "/"])
             .output()
             .await
         {
@@ -879,7 +879,7 @@ impl PlatformAnalyzer for KubernetesAnalyzer {
 
         // Check for additional Kubernetes features
         if let Ok(output) = tokio::process::Command::new("kubectl")
-            .args(&["get", "storageclass"])
+            .args(["get", "storageclass"])
             .output()
             .await
         {

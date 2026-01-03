@@ -296,7 +296,7 @@ impl ParquetReader {
         };
 
         // Extract metadata columns - look for any columns that aren't standard columns
-        let standard_columns = vec![
+        let standard_columns = [
             FIELD_ID,
             FIELD_TIMESTAMP,
             FIELD_VECTOR_FP32,

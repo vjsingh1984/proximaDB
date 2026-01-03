@@ -121,7 +121,12 @@ pub trait SpatialCurveEncoder: Send + Sync {
     ///
     /// # Returns
     /// true if the block should be searched, false if it can be pruned
-    fn in_range(&self, block_code: &SpatialCode, query_code: &SpatialCode, epsilon: &SpatialCode) -> bool;
+    fn in_range(
+        &self,
+        block_code: &SpatialCode,
+        query_code: &SpatialCode,
+        epsilon: &SpatialCode,
+    ) -> bool;
 
     /// Decode a spatial code back to coordinates (for debugging/visualization)
     fn decode(&self, code: &SpatialCode) -> Vec<f32>;
@@ -131,13 +136,14 @@ pub trait SpatialCurveEncoder: Send + Sync {
     /// This is an approximation of actual distance based on curve position
     fn code_distance(&self, code1: &SpatialCode, code2: &SpatialCode) -> SpatialCode {
         match (code1, code2) {
-            (SpatialCode::Code64(a), SpatialCode::Code64(b)) => {
-                SpatialCode::Code64(a.abs_diff(*b))
-            }
+            (SpatialCode::Code64(a), SpatialCode::Code64(b)) => SpatialCode::Code64(a.abs_diff(*b)),
             (SpatialCode::Code128(a), SpatialCode::Code128(b)) => {
                 SpatialCode::Code128(a.abs_diff(*b))
             }
-            (SpatialCode::Code256 { low: al, high: ah }, SpatialCode::Code256 { low: bl, high: bh }) => {
+            (
+                SpatialCode::Code256 { low: al, high: ah },
+                SpatialCode::Code256 { low: bl, high: bh },
+            ) => {
                 // Compute absolute difference for 256-bit codes
                 let (low, borrow) = if al >= bl {
                     (al - bl, false)
@@ -251,12 +257,22 @@ impl SpatialCurveEncoder for ZOrderSpatialEncoder {
         match self.code_type() {
             CodeType::Bits64 => SpatialCode::Code64(epsilon_value),
             CodeType::Bits128 => SpatialCode::Code128(epsilon_value as u128),
-            CodeType::Bits256 => SpatialCode::Code256 { low: epsilon_value as u128, high: 0 },
-            CodeType::Bits512 => SpatialCode::Code512(super::spatial_encoding::U512::from_u64(epsilon_value)),
+            CodeType::Bits256 => SpatialCode::Code256 {
+                low: epsilon_value as u128,
+                high: 0,
+            },
+            CodeType::Bits512 => {
+                SpatialCode::Code512(super::spatial_encoding::U512::from_u64(epsilon_value))
+            }
         }
     }
 
-    fn in_range(&self, block_code: &SpatialCode, query_code: &SpatialCode, epsilon: &SpatialCode) -> bool {
+    fn in_range(
+        &self,
+        block_code: &SpatialCode,
+        query_code: &SpatialCode,
+        epsilon: &SpatialCode,
+    ) -> bool {
         let min_code = query_code.saturating_sub(epsilon);
         let max_code = query_code.saturating_add(epsilon);
         block_code.in_range(&min_code, &max_code)
@@ -331,8 +347,13 @@ impl SpatialCurveEncoder for HilbertSpatialEncoder {
         match self.code_type {
             CodeType::Bits64 => SpatialCode::Code64(hilbert_index),
             CodeType::Bits128 => SpatialCode::Code128(hilbert_index as u128),
-            CodeType::Bits256 => SpatialCode::Code256 { low: hilbert_index as u128, high: 0 },
-            CodeType::Bits512 => SpatialCode::Code512(super::spatial_encoding::U512::from_u64(hilbert_index)),
+            CodeType::Bits256 => SpatialCode::Code256 {
+                low: hilbert_index as u128,
+                high: 0,
+            },
+            CodeType::Bits512 => {
+                SpatialCode::Code512(super::spatial_encoding::U512::from_u64(hilbert_index))
+            }
         }
     }
 
@@ -344,17 +365,28 @@ impl SpatialCurveEncoder for HilbertSpatialEncoder {
         // Hilbert curve needs less epsilon for same quality due to better locality
         let locality_bonus = 0.85; // 15% tighter than Z-order
         let base_blocks = (num_blocks as f32).sqrt().ceil() as u64;
-        let epsilon_value = (base_blocks as f64 * epsilon_factor as f64 * 800.0 * locality_bonus) as u64;
+        let epsilon_value =
+            (base_blocks as f64 * epsilon_factor as f64 * 800.0 * locality_bonus) as u64;
 
         match self.code_type {
             CodeType::Bits64 => SpatialCode::Code64(epsilon_value),
             CodeType::Bits128 => SpatialCode::Code128(epsilon_value as u128),
-            CodeType::Bits256 => SpatialCode::Code256 { low: epsilon_value as u128, high: 0 },
-            CodeType::Bits512 => SpatialCode::Code512(super::spatial_encoding::U512::from_u64(epsilon_value)),
+            CodeType::Bits256 => SpatialCode::Code256 {
+                low: epsilon_value as u128,
+                high: 0,
+            },
+            CodeType::Bits512 => {
+                SpatialCode::Code512(super::spatial_encoding::U512::from_u64(epsilon_value))
+            }
         }
     }
 
-    fn in_range(&self, block_code: &SpatialCode, query_code: &SpatialCode, epsilon: &SpatialCode) -> bool {
+    fn in_range(
+        &self,
+        block_code: &SpatialCode,
+        query_code: &SpatialCode,
+        epsilon: &SpatialCode,
+    ) -> bool {
         let min_code = query_code.saturating_sub(epsilon);
         let max_code = query_code.saturating_add(epsilon);
         block_code.in_range(&min_code, &max_code)
@@ -398,7 +430,11 @@ impl SpatialEncoderFactory {
     }
 
     /// Create encoder for a specific curve type
-    pub fn create(curve_type: CurveType, dimensions: usize, bits_per_dim: usize) -> Box<dyn SpatialCurveEncoder> {
+    pub fn create(
+        curve_type: CurveType,
+        dimensions: usize,
+        bits_per_dim: usize,
+    ) -> Box<dyn SpatialCurveEncoder> {
         match curve_type {
             CurveType::ZOrder => Self::create_zorder(dimensions, bits_per_dim),
             CurveType::Hilbert => Self::create_hilbert(dimensions, bits_per_dim),
@@ -471,7 +507,8 @@ mod tests {
             vec![0.9, 0.9, 0.9, 0.9],
             vec![0.2, 0.2, 0.2, 0.2],
         ];
-        let block_codes: Vec<SpatialCode> = block_coords.iter().map(|c| encoder.encode(c)).collect();
+        let block_codes: Vec<SpatialCode> =
+            block_coords.iter().map(|c| encoder.encode(c)).collect();
 
         // Query near first block
         let query_code = encoder.encode(&[0.15, 0.15, 0.15, 0.15]);

@@ -2,13 +2,11 @@
 
 use super::resources::TenantResourceUsageSnapshot;
 use super::{TenantConfig, TenantContext, TenantResourceTracker, TenantStatus};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
-
-use crate::storage::tenant::context::ResourceLimits;
 
 /// Clean tenant manager without over-engineering
 pub struct TenantManager {
@@ -187,6 +185,7 @@ pub struct TenantResourceUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::tenant::context::ResourceLimits;
     use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies};
 
     #[tokio::test]

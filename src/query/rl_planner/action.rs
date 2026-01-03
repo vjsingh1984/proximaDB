@@ -471,7 +471,11 @@ impl ExecutionAction {
         parts.push(format!("Mode: {}", self.search_mode));
 
         if !self.quantization_stages.is_empty() {
-            let stages: Vec<_> = self.quantization_stages.iter().map(|s| s.to_string()).collect();
+            let stages: Vec<_> = self
+                .quantization_stages
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             parts.push(format!("Quant: {}", stages.join("→")));
         }
 
@@ -791,10 +795,7 @@ mod tests {
                 action.index_strategy.is_some(),
                 recovered.index_strategy.is_some()
             );
-            assert_eq!(
-                action.bloom_filter_enabled,
-                recovered.bloom_filter_enabled
-            );
+            assert_eq!(action.bloom_filter_enabled, recovered.bloom_filter_enabled);
         }
     }
 

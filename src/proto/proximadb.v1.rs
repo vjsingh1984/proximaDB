@@ -3949,6 +3949,20 @@ pub struct BatchEdgeRequest {
     #[prost(message, repeated, tag = "2")]
     pub edges: ::prost::alloc::vec::Vec<Edge>,
 }
+/// Structured error for a single item in a batch operation
+/// Aligned with REST API's BatchError type for consistent client experience
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BatchItemError {
+    /// ID of the failed entity
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Human-readable error message
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+    /// Structured error code for programmatic handling
+    #[prost(enumeration = "BatchErrorCode", tag = "3")]
+    pub code: i32,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchResponse {
     #[prost(bool, tag = "1")]
@@ -3969,10 +3983,16 @@ pub struct BatchResponse {
     pub updated_count: ::core::option::Option<u32>,
     #[prost(uint32, optional, tag = "7")]
     pub failed_count: ::core::option::Option<u32>,
+    /// DEPRECATED: Use errors field instead for structured error information
     #[prost(string, repeated, tag = "8")]
     pub failed_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// DEPRECATED: Use errors field instead for structured error information
     #[prost(string, repeated, tag = "9")]
     pub error_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Structured error information for failed items (aligned with REST API)
+    /// Each BatchItemError contains id, message, and error code
+    #[prost(message, repeated, tag = "11")]
+    pub errors: ::prost::alloc::vec::Vec<BatchItemError>,
 }
 /// Hybrid query request combining vector and graph components
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -4484,6 +4504,51 @@ impl TraversalAlgorithm {
             "TRAVERSAL_ALGORITHM_BFS" => Some(Self::Bfs),
             "TRAVERSAL_ALGORITHM_DFS" => Some(Self::Dfs),
             "TRAVERSAL_ALGORITHM_PARALLEL_BFS" => Some(Self::ParallelBfs),
+            _ => None,
+        }
+    }
+}
+/// Error codes for batch item failures (aligned with REST API ErrorCode)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BatchErrorCode {
+    Unspecified = 0,
+    NotFound = 1,
+    AlreadyExists = 2,
+    InvalidArgument = 3,
+    ConstraintViolation = 4,
+    InternalError = 5,
+    Timeout = 6,
+    PermissionDenied = 7,
+}
+impl BatchErrorCode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BATCH_ERROR_CODE_UNSPECIFIED",
+            Self::NotFound => "BATCH_ERROR_CODE_NOT_FOUND",
+            Self::AlreadyExists => "BATCH_ERROR_CODE_ALREADY_EXISTS",
+            Self::InvalidArgument => "BATCH_ERROR_CODE_INVALID_ARGUMENT",
+            Self::ConstraintViolation => "BATCH_ERROR_CODE_CONSTRAINT_VIOLATION",
+            Self::InternalError => "BATCH_ERROR_CODE_INTERNAL_ERROR",
+            Self::Timeout => "BATCH_ERROR_CODE_TIMEOUT",
+            Self::PermissionDenied => "BATCH_ERROR_CODE_PERMISSION_DENIED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BATCH_ERROR_CODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "BATCH_ERROR_CODE_NOT_FOUND" => Some(Self::NotFound),
+            "BATCH_ERROR_CODE_ALREADY_EXISTS" => Some(Self::AlreadyExists),
+            "BATCH_ERROR_CODE_INVALID_ARGUMENT" => Some(Self::InvalidArgument),
+            "BATCH_ERROR_CODE_CONSTRAINT_VIOLATION" => Some(Self::ConstraintViolation),
+            "BATCH_ERROR_CODE_INTERNAL_ERROR" => Some(Self::InternalError),
+            "BATCH_ERROR_CODE_TIMEOUT" => Some(Self::Timeout),
+            "BATCH_ERROR_CODE_PERMISSION_DENIED" => Some(Self::PermissionDenied),
             _ => None,
         }
     }
@@ -8196,5 +8261,7980 @@ impl PermissionType {
             "DELETE" => Some(Self::Delete),
             _ => None,
         }
+    }
+}
+/// Document content wrapper
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentContent {
+    /// The document data as nested SqlObject
+    #[prost(message, optional, tag = "1")]
+    pub document: ::core::option::Option<SqlObject>,
+    /// Optional schema ID for validation
+    #[prost(string, optional, tag = "2")]
+    pub schema_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// JSON paths that should be indexed
+    #[prost(string, repeated, tag = "3")]
+    pub indexed_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Document type/kind for type-based queries
+    #[prost(string, optional, tag = "4")]
+    pub document_type: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Document collection configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentCollectionConfig {
+    /// Collection name
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Optional JSON schema for validation
+    #[prost(string, optional, tag = "2")]
+    pub json_schema: ::core::option::Option<::prost::alloc::string::String>,
+    /// Paths to create indexes on
+    #[prost(message, repeated, tag = "3")]
+    pub indexes: ::prost::alloc::vec::Vec<IndexDefinition>,
+    /// Enable full-text search (Tantivy)
+    #[prost(bool, tag = "4")]
+    pub enable_fulltext: bool,
+    /// Paths to include in full-text search
+    #[prost(string, repeated, tag = "5")]
+    pub fulltext_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Time-to-live for documents (0 = no expiry)
+    #[prost(uint64, tag = "6")]
+    pub ttl_seconds: u64,
+    /// Compression settings
+    #[prost(message, optional, tag = "7")]
+    pub compression: ::core::option::Option<CompressionConfig>,
+}
+/// Index definition for document paths
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IndexDefinition {
+    /// JSON path expression (e.g., "$.user.email")
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    /// Index type
+    #[prost(enumeration = "DocIndexType", tag = "2")]
+    pub index_type: i32,
+    /// Whether the index enforces uniqueness
+    #[prost(bool, tag = "3")]
+    pub unique: bool,
+    /// Sparse index (only index documents with this field)
+    #[prost(bool, tag = "4")]
+    pub sparse: bool,
+    /// Index name (auto-generated if not provided)
+    #[prost(string, optional, tag = "5")]
+    pub name: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Document filter for queries
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentFilter {
+    /// Filter conditions (AND logic)
+    #[prost(message, repeated, tag = "1")]
+    pub conditions: ::prost::alloc::vec::Vec<DocFilterCondition>,
+    /// Nested OR groups
+    #[prost(message, repeated, tag = "2")]
+    pub or_filters: ::prost::alloc::vec::Vec<DocumentFilter>,
+    /// Nested AND groups
+    #[prost(message, repeated, tag = "3")]
+    pub and_filters: ::prost::alloc::vec::Vec<DocumentFilter>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocFilterCondition {
+    /// JSON path to filter on
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    /// Comparison operator
+    #[prost(enumeration = "DocFilterOperator", tag = "2")]
+    pub operator: i32,
+    /// Value to compare against
+    #[prost(message, optional, tag = "3")]
+    pub value: ::core::option::Option<SqlValue>,
+    /// For IN/NOT_IN operators
+    #[prost(message, repeated, tag = "4")]
+    pub values: ::prost::alloc::vec::Vec<SqlValue>,
+}
+/// Document update operations
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentUpdate {
+    /// Update operation type
+    #[prost(enumeration = "UpdateOperation", tag = "1")]
+    pub operation: i32,
+    /// JSON path to update
+    #[prost(string, tag = "2")]
+    pub path: ::prost::alloc::string::String,
+    /// Value for SET/PUSH/PULL operations
+    #[prost(message, optional, tag = "3")]
+    pub value: ::core::option::Option<SqlValue>,
+}
+/// Create document collection
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateDocumentCollectionRequest {
+    #[prost(message, optional, tag = "1")]
+    pub config: ::core::option::Option<DocumentCollectionConfig>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateDocumentCollectionResponse {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
+}
+/// Insert document
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InsertDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    /// Auto-generated if not provided
+    #[prost(string, optional, tag = "2")]
+    pub id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag = "3")]
+    pub document: ::core::option::Option<SqlObject>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct InsertDocumentResponse {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+}
+/// Get document by ID
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    /// Projection: fields to include (empty = all)
+    #[prost(string, repeated, tag = "3")]
+    pub projection: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetDocumentResponse {
+    #[prost(message, optional, tag = "1")]
+    pub document: ::core::option::Option<SqlObject>,
+    #[prost(uint64, tag = "2")]
+    pub version: u64,
+    #[prost(bool, tag = "3")]
+    pub found: bool,
+}
+/// Update document
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "3")]
+    pub updates: ::prost::alloc::vec::Vec<DocumentUpdate>,
+    /// Optimistic locking: update only if version matches
+    #[prost(uint64, optional, tag = "4")]
+    pub expected_version: ::core::option::Option<u64>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UpdateDocumentResponse {
+    #[prost(uint64, tag = "1")]
+    pub new_version: u64,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
+}
+/// Delete document
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteDocumentResponse {
+    #[prost(bool, tag = "1")]
+    pub deleted: bool,
+}
+/// Query documents
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDocumentsRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub filter: ::core::option::Option<DocumentFilter>,
+    /// Projection: fields to include
+    #[prost(string, repeated, tag = "3")]
+    pub projection: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Sort order
+    #[prost(message, repeated, tag = "4")]
+    pub sort: ::prost::alloc::vec::Vec<SortField>,
+    /// Pagination
+    #[prost(uint32, tag = "5")]
+    pub limit: u32,
+    #[prost(uint32, tag = "6")]
+    pub offset: u32,
+    /// Include total count (slower)
+    #[prost(bool, tag = "7")]
+    pub include_count: bool,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SortField {
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(enumeration = "SortOrder", tag = "2")]
+    pub order: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDocumentsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub documents: ::prost::alloc::vec::Vec<DocumentResult>,
+    #[prost(uint64, optional, tag = "2")]
+    pub total_count: ::core::option::Option<u64>,
+    #[prost(uint64, tag = "3")]
+    pub query_time_ms: u64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentResult {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub document: ::core::option::Option<SqlObject>,
+    #[prost(uint64, tag = "3")]
+    pub version: u64,
+    /// Relevance score for full-text queries
+    #[prost(float, optional, tag = "4")]
+    pub score: ::core::option::Option<f32>,
+}
+/// Aggregate documents
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregateDocumentsRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub filter: ::core::option::Option<DocumentFilter>,
+    #[prost(message, repeated, tag = "3")]
+    pub pipeline: ::prost::alloc::vec::Vec<AggregationStage>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregationStage {
+    #[prost(oneof = "aggregation_stage::Stage", tags = "1, 2, 3, 4, 5, 6, 7")]
+    pub stage: ::core::option::Option<aggregation_stage::Stage>,
+}
+/// Nested message and enum types in `AggregationStage`.
+pub mod aggregation_stage {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Stage {
+        #[prost(message, tag = "1")]
+        Match(super::MatchStage),
+        #[prost(message, tag = "2")]
+        Group(super::GroupStage),
+        #[prost(message, tag = "3")]
+        Project(super::ProjectStage),
+        #[prost(message, tag = "4")]
+        Sort(super::SortStage),
+        #[prost(message, tag = "5")]
+        Limit(super::LimitStage),
+        #[prost(message, tag = "6")]
+        Skip(super::SkipStage),
+        #[prost(message, tag = "7")]
+        Unwind(super::UnwindStage),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MatchStage {
+    #[prost(message, optional, tag = "1")]
+    pub filter: ::core::option::Option<DocumentFilter>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GroupStage {
+    /// Group key (JSON path or "\_id" for all)
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    /// Aggregations to compute
+    #[prost(message, repeated, tag = "2")]
+    pub aggregations: ::prost::alloc::vec::Vec<Aggregation>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Aggregation {
+    #[prost(string, tag = "1")]
+    pub output_field: ::prost::alloc::string::String,
+    #[prost(enumeration = "AggregationType", tag = "2")]
+    pub r#type: i32,
+    #[prost(string, tag = "3")]
+    pub input_path: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ProjectStage {
+    /// Fields to include/exclude
+    #[prost(map = "string, bool", tag = "1")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, bool>,
+    /// Computed fields
+    #[prost(map = "string, string", tag = "2")]
+    pub computed: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SortStage {
+    #[prost(message, repeated, tag = "1")]
+    pub fields: ::prost::alloc::vec::Vec<SortField>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LimitStage {
+    #[prost(uint32, tag = "1")]
+    pub limit: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SkipStage {
+    #[prost(uint32, tag = "1")]
+    pub skip: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UnwindStage {
+    /// Array path to unwind
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    /// Preserve null/empty arrays
+    #[prost(bool, tag = "2")]
+    pub preserve_null: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregateDocumentsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<SqlObject>,
+    #[prost(uint64, tag = "2")]
+    pub query_time_ms: u64,
+}
+/// List document collections request
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListDocumentCollectionsRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListDocumentCollectionsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub collections: ::prost::alloc::vec::Vec<DocumentCollectionInfo>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentCollectionInfo {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub document_count: u64,
+    #[prost(uint64, tag = "3")]
+    pub storage_size_bytes: u64,
+    #[prost(message, repeated, tag = "4")]
+    pub indexes: ::prost::alloc::vec::Vec<IndexDefinition>,
+}
+/// Delete collection request
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteDocumentCollectionRequest {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteDocumentCollectionResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DocIndexType {
+    Unspecified = 0,
+    /// B+ tree for range queries
+    Btree = 1,
+    /// Hash for equality lookups
+    Hash = 2,
+    /// Inverted index for arrays
+    Inverted = 3,
+    /// Full-text search index
+    Fulltext = 4,
+    /// Geospatial index (future)
+    Geo = 5,
+}
+impl DocIndexType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DOC_INDEX_TYPE_UNSPECIFIED",
+            Self::Btree => "DOC_INDEX_TYPE_BTREE",
+            Self::Hash => "DOC_INDEX_TYPE_HASH",
+            Self::Inverted => "DOC_INDEX_TYPE_INVERTED",
+            Self::Fulltext => "DOC_INDEX_TYPE_FULLTEXT",
+            Self::Geo => "DOC_INDEX_TYPE_GEO",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DOC_INDEX_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "DOC_INDEX_TYPE_BTREE" => Some(Self::Btree),
+            "DOC_INDEX_TYPE_HASH" => Some(Self::Hash),
+            "DOC_INDEX_TYPE_INVERTED" => Some(Self::Inverted),
+            "DOC_INDEX_TYPE_FULLTEXT" => Some(Self::Fulltext),
+            "DOC_INDEX_TYPE_GEO" => Some(Self::Geo),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DocFilterOperator {
+    Unspecified = 0,
+    /// Equal
+    Eq = 1,
+    /// Not equal
+    Ne = 2,
+    /// Greater than
+    Gt = 3,
+    /// Greater than or equal
+    Gte = 4,
+    /// Less than
+    Lt = 5,
+    /// Less than or equal
+    Lte = 6,
+    /// In array
+    In = 7,
+    /// Not in array
+    NotIn = 8,
+    /// Array contains value
+    Contains = 9,
+    /// Regex match
+    Regex = 10,
+    /// Field exists
+    Exists = 11,
+    /// Field is of type
+    Type = 12,
+    /// Full-text search
+    Fulltext = 13,
+}
+impl DocFilterOperator {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DOC_FILTER_OPERATOR_UNSPECIFIED",
+            Self::Eq => "DOC_FILTER_OPERATOR_EQ",
+            Self::Ne => "DOC_FILTER_OPERATOR_NE",
+            Self::Gt => "DOC_FILTER_OPERATOR_GT",
+            Self::Gte => "DOC_FILTER_OPERATOR_GTE",
+            Self::Lt => "DOC_FILTER_OPERATOR_LT",
+            Self::Lte => "DOC_FILTER_OPERATOR_LTE",
+            Self::In => "DOC_FILTER_OPERATOR_IN",
+            Self::NotIn => "DOC_FILTER_OPERATOR_NOT_IN",
+            Self::Contains => "DOC_FILTER_OPERATOR_CONTAINS",
+            Self::Regex => "DOC_FILTER_OPERATOR_REGEX",
+            Self::Exists => "DOC_FILTER_OPERATOR_EXISTS",
+            Self::Type => "DOC_FILTER_OPERATOR_TYPE",
+            Self::Fulltext => "DOC_FILTER_OPERATOR_FULLTEXT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DOC_FILTER_OPERATOR_UNSPECIFIED" => Some(Self::Unspecified),
+            "DOC_FILTER_OPERATOR_EQ" => Some(Self::Eq),
+            "DOC_FILTER_OPERATOR_NE" => Some(Self::Ne),
+            "DOC_FILTER_OPERATOR_GT" => Some(Self::Gt),
+            "DOC_FILTER_OPERATOR_GTE" => Some(Self::Gte),
+            "DOC_FILTER_OPERATOR_LT" => Some(Self::Lt),
+            "DOC_FILTER_OPERATOR_LTE" => Some(Self::Lte),
+            "DOC_FILTER_OPERATOR_IN" => Some(Self::In),
+            "DOC_FILTER_OPERATOR_NOT_IN" => Some(Self::NotIn),
+            "DOC_FILTER_OPERATOR_CONTAINS" => Some(Self::Contains),
+            "DOC_FILTER_OPERATOR_REGEX" => Some(Self::Regex),
+            "DOC_FILTER_OPERATOR_EXISTS" => Some(Self::Exists),
+            "DOC_FILTER_OPERATOR_TYPE" => Some(Self::Type),
+            "DOC_FILTER_OPERATOR_FULLTEXT" => Some(Self::Fulltext),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum UpdateOperation {
+    Unspecified = 0,
+    /// Set field value
+    Set = 1,
+    /// Remove field
+    Unset = 2,
+    /// Increment numeric field
+    Inc = 3,
+    /// Push to array
+    Push = 4,
+    /// Remove from array
+    Pull = 5,
+    /// Add unique to array
+    AddToSet = 6,
+    /// Rename field
+    Rename = 7,
+}
+impl UpdateOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "UPDATE_OPERATION_UNSPECIFIED",
+            Self::Set => "UPDATE_OPERATION_SET",
+            Self::Unset => "UPDATE_OPERATION_UNSET",
+            Self::Inc => "UPDATE_OPERATION_INC",
+            Self::Push => "UPDATE_OPERATION_PUSH",
+            Self::Pull => "UPDATE_OPERATION_PULL",
+            Self::AddToSet => "UPDATE_OPERATION_ADD_TO_SET",
+            Self::Rename => "UPDATE_OPERATION_RENAME",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "UPDATE_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "UPDATE_OPERATION_SET" => Some(Self::Set),
+            "UPDATE_OPERATION_UNSET" => Some(Self::Unset),
+            "UPDATE_OPERATION_INC" => Some(Self::Inc),
+            "UPDATE_OPERATION_PUSH" => Some(Self::Push),
+            "UPDATE_OPERATION_PULL" => Some(Self::Pull),
+            "UPDATE_OPERATION_ADD_TO_SET" => Some(Self::AddToSet),
+            "UPDATE_OPERATION_RENAME" => Some(Self::Rename),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SortOrder {
+    Unspecified = 0,
+    Asc = 1,
+    Desc = 2,
+}
+impl SortOrder {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SORT_ORDER_UNSPECIFIED",
+            Self::Asc => "SORT_ORDER_ASC",
+            Self::Desc => "SORT_ORDER_DESC",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SORT_ORDER_UNSPECIFIED" => Some(Self::Unspecified),
+            "SORT_ORDER_ASC" => Some(Self::Asc),
+            "SORT_ORDER_DESC" => Some(Self::Desc),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AggregationType {
+    Unspecified = 0,
+    Count = 1,
+    Sum = 2,
+    Avg = 3,
+    Min = 4,
+    Max = 5,
+    First = 6,
+    Last = 7,
+    /// Collect into array
+    Push = 8,
+    /// Collect unique
+    AddToSet = 9,
+}
+impl AggregationType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "AGGREGATION_TYPE_UNSPECIFIED",
+            Self::Count => "AGGREGATION_TYPE_COUNT",
+            Self::Sum => "AGGREGATION_TYPE_SUM",
+            Self::Avg => "AGGREGATION_TYPE_AVG",
+            Self::Min => "AGGREGATION_TYPE_MIN",
+            Self::Max => "AGGREGATION_TYPE_MAX",
+            Self::First => "AGGREGATION_TYPE_FIRST",
+            Self::Last => "AGGREGATION_TYPE_LAST",
+            Self::Push => "AGGREGATION_TYPE_PUSH",
+            Self::AddToSet => "AGGREGATION_TYPE_ADD_TO_SET",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "AGGREGATION_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "AGGREGATION_TYPE_COUNT" => Some(Self::Count),
+            "AGGREGATION_TYPE_SUM" => Some(Self::Sum),
+            "AGGREGATION_TYPE_AVG" => Some(Self::Avg),
+            "AGGREGATION_TYPE_MIN" => Some(Self::Min),
+            "AGGREGATION_TYPE_MAX" => Some(Self::Max),
+            "AGGREGATION_TYPE_FIRST" => Some(Self::First),
+            "AGGREGATION_TYPE_LAST" => Some(Self::Last),
+            "AGGREGATION_TYPE_PUSH" => Some(Self::Push),
+            "AGGREGATION_TYPE_ADD_TO_SET" => Some(Self::AddToSet),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod document_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Document gRPC service
+    #[derive(Debug, Clone)]
+    pub struct DocumentServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl DocumentServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> DocumentServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> DocumentServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            DocumentServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Collection operations
+        pub async fn create_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateDocumentCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateDocumentCollectionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/CreateCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "CreateCollection"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_collections(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListDocumentCollectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListDocumentCollectionsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/ListCollections",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "ListCollections"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteDocumentCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteDocumentCollectionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/DeleteCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "DeleteCollection"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Document CRUD
+        pub async fn insert_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::InsertDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InsertDocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/InsertDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "InsertDocument"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetDocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/GetDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.DocumentService", "GetDocument"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateDocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/UpdateDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "UpdateDocument"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteDocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/DeleteDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "DeleteDocument"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Query operations
+        pub async fn query_documents(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryDocumentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/QueryDocuments",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "QueryDocuments"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn aggregate_documents(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AggregateDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AggregateDocumentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.DocumentService/AggregateDocuments",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.DocumentService", "AggregateDocuments"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod document_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with DocumentServiceServer.
+    #[async_trait]
+    pub trait DocumentService: std::marker::Send + std::marker::Sync + 'static {
+        /// Collection operations
+        async fn create_collection(
+            &self,
+            request: tonic::Request<super::CreateDocumentCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateDocumentCollectionResponse>,
+            tonic::Status,
+        >;
+        async fn list_collections(
+            &self,
+            request: tonic::Request<super::ListDocumentCollectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListDocumentCollectionsResponse>,
+            tonic::Status,
+        >;
+        async fn delete_collection(
+            &self,
+            request: tonic::Request<super::DeleteDocumentCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteDocumentCollectionResponse>,
+            tonic::Status,
+        >;
+        /// Document CRUD
+        async fn insert_document(
+            &self,
+            request: tonic::Request<super::InsertDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::InsertDocumentResponse>,
+            tonic::Status,
+        >;
+        async fn get_document(
+            &self,
+            request: tonic::Request<super::GetDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetDocumentResponse>,
+            tonic::Status,
+        >;
+        async fn update_document(
+            &self,
+            request: tonic::Request<super::UpdateDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateDocumentResponse>,
+            tonic::Status,
+        >;
+        async fn delete_document(
+            &self,
+            request: tonic::Request<super::DeleteDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteDocumentResponse>,
+            tonic::Status,
+        >;
+        /// Query operations
+        async fn query_documents(
+            &self,
+            request: tonic::Request<super::QueryDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryDocumentsResponse>,
+            tonic::Status,
+        >;
+        async fn aggregate_documents(
+            &self,
+            request: tonic::Request<super::AggregateDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AggregateDocumentsResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Document gRPC service
+    #[derive(Debug)]
+    pub struct DocumentServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> DocumentServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for DocumentServiceServer<T>
+    where
+        T: DocumentService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v1.DocumentService/CreateCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateCollectionSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::CreateDocumentCollectionRequest>
+                    for CreateCollectionSvc<T> {
+                        type Response = super::CreateDocumentCollectionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::CreateDocumentCollectionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::create_collection(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateCollectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/ListCollections" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListCollectionsSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::ListDocumentCollectionsRequest>
+                    for ListCollectionsSvc<T> {
+                        type Response = super::ListDocumentCollectionsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::ListDocumentCollectionsRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::list_collections(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListCollectionsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/DeleteCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteCollectionSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::DeleteDocumentCollectionRequest>
+                    for DeleteCollectionSvc<T> {
+                        type Response = super::DeleteDocumentCollectionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::DeleteDocumentCollectionRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::delete_collection(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteCollectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/InsertDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct InsertDocumentSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::InsertDocumentRequest>
+                    for InsertDocumentSvc<T> {
+                        type Response = super::InsertDocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::InsertDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::insert_document(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = InsertDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/GetDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetDocumentSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::GetDocumentRequest>
+                    for GetDocumentSvc<T> {
+                        type Response = super::GetDocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::get_document(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/UpdateDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateDocumentSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::UpdateDocumentRequest>
+                    for UpdateDocumentSvc<T> {
+                        type Response = super::UpdateDocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::update_document(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/DeleteDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteDocumentSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::DeleteDocumentRequest>
+                    for DeleteDocumentSvc<T> {
+                        type Response = super::DeleteDocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::delete_document(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/QueryDocuments" => {
+                    #[allow(non_camel_case_types)]
+                    struct QueryDocumentsSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::QueryDocumentsRequest>
+                    for QueryDocumentsSvc<T> {
+                        type Response = super::QueryDocumentsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryDocumentsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::query_documents(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = QueryDocumentsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.DocumentService/AggregateDocuments" => {
+                    #[allow(non_camel_case_types)]
+                    struct AggregateDocumentsSvc<T: DocumentService>(pub Arc<T>);
+                    impl<
+                        T: DocumentService,
+                    > tonic::server::UnaryService<super::AggregateDocumentsRequest>
+                    for AggregateDocumentsSvc<T> {
+                        type Response = super::AggregateDocumentsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AggregateDocumentsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as DocumentService>::aggregate_documents(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AggregateDocumentsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for DocumentServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v1.DocumentService";
+    impl<T> tonic::server::NamedService for DocumentServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
+/// Main observability content wrapper
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ObservabilityContent {
+    /// Type discriminator
+    #[prost(enumeration = "ObservabilityType", tag = "1")]
+    pub obs_type: i32,
+    /// High-precision timestamp (nanoseconds since epoch)
+    #[prost(int64, tag = "2")]
+    pub timestamp_ns: i64,
+    /// Source identifier (hostname, IP, agent ID)
+    #[prost(string, tag = "3")]
+    pub source: ::prost::alloc::string::String,
+    /// Service/application name
+    #[prost(string, tag = "4")]
+    pub service: ::prost::alloc::string::String,
+    /// Log severity (for logs)
+    #[prost(enumeration = "Severity", optional, tag = "5")]
+    pub severity: ::core::option::Option<i32>,
+    /// Metric data (for metrics)
+    #[prost(message, optional, tag = "6")]
+    pub metric: ::core::option::Option<MetricData>,
+    /// Trace data (for traces)
+    #[prost(message, optional, tag = "7")]
+    pub trace: ::core::option::Option<TraceData>,
+    /// Structured fields (parsed from log message)
+    #[prost(map = "string, message", tag = "8")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+    /// Raw message (original log line)
+    #[prost(string, optional, tag = "9")]
+    pub raw_message: ::core::option::Option<::prost::alloc::string::String>,
+    /// Ingestion format for provenance
+    #[prost(enumeration = "IngestionFormat", optional, tag = "10")]
+    pub format: ::core::option::Option<i32>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetricData {
+    /// Metric name
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Metric unit (e.g., "bytes", "ms", "requests")
+    #[prost(string, optional, tag = "6")]
+    pub unit: ::core::option::Option<::prost::alloc::string::String>,
+    /// Metric labels for dimensional queries
+    #[prost(map = "string, string", tag = "7")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// Aggregation temporality
+    #[prost(enumeration = "AggregationTemporality", tag = "8")]
+    pub temporality: i32,
+    /// Metric value
+    #[prost(oneof = "metric_data::Value", tags = "2, 3, 4, 5")]
+    pub value: ::core::option::Option<metric_data::Value>,
+}
+/// Nested message and enum types in `MetricData`.
+pub mod metric_data {
+    /// Metric value
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(double, tag = "2")]
+        Gauge(f64),
+        #[prost(int64, tag = "3")]
+        Counter(i64),
+        #[prost(message, tag = "4")]
+        Histogram(super::HistogramValue),
+        #[prost(message, tag = "5")]
+        Summary(super::SummaryValue),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HistogramValue {
+    #[prost(double, repeated, tag = "1")]
+    pub bucket_bounds: ::prost::alloc::vec::Vec<f64>,
+    #[prost(uint64, repeated, tag = "2")]
+    pub bucket_counts: ::prost::alloc::vec::Vec<u64>,
+    #[prost(double, tag = "3")]
+    pub sum: f64,
+    #[prost(uint64, tag = "4")]
+    pub count: u64,
+    #[prost(double, optional, tag = "5")]
+    pub min: ::core::option::Option<f64>,
+    #[prost(double, optional, tag = "6")]
+    pub max: ::core::option::Option<f64>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SummaryValue {
+    #[prost(message, repeated, tag = "1")]
+    pub quantiles: ::prost::alloc::vec::Vec<Quantile>,
+    #[prost(double, tag = "2")]
+    pub sum: f64,
+    #[prost(uint64, tag = "3")]
+    pub count: u64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct Quantile {
+    /// 0.0 to 1.0
+    #[prost(double, tag = "1")]
+    pub quantile: f64,
+    #[prost(double, tag = "2")]
+    pub value: f64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TraceData {
+    /// Trace ID (128-bit as hex string)
+    #[prost(string, tag = "1")]
+    pub trace_id: ::prost::alloc::string::String,
+    /// Span ID (64-bit as hex string)
+    #[prost(string, tag = "2")]
+    pub span_id: ::prost::alloc::string::String,
+    /// Parent span ID (empty for root spans)
+    #[prost(string, optional, tag = "3")]
+    pub parent_span_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Span name/operation
+    #[prost(string, tag = "4")]
+    pub name: ::prost::alloc::string::String,
+    /// Span kind
+    #[prost(enumeration = "SpanKind", tag = "5")]
+    pub kind: i32,
+    /// Start time (nanoseconds)
+    #[prost(int64, tag = "6")]
+    pub start_time_ns: i64,
+    /// End time (nanoseconds)
+    #[prost(int64, tag = "7")]
+    pub end_time_ns: i64,
+    /// Span status
+    #[prost(message, optional, tag = "8")]
+    pub status: ::core::option::Option<SpanStatus>,
+    /// Span attributes
+    #[prost(map = "string, message", tag = "9")]
+    pub attributes: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        SqlValue,
+    >,
+    /// Span events
+    #[prost(message, repeated, tag = "10")]
+    pub events: ::prost::alloc::vec::Vec<SpanEvent>,
+    /// Span links
+    #[prost(message, repeated, tag = "11")]
+    pub links: ::prost::alloc::vec::Vec<SpanLink>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpanStatus {
+    #[prost(enumeration = "SpanStatusCode", tag = "1")]
+    pub code: i32,
+    #[prost(string, optional, tag = "2")]
+    pub message: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpanEvent {
+    #[prost(int64, tag = "1")]
+    pub timestamp_ns: i64,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(map = "string, message", tag = "3")]
+    pub attributes: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        SqlValue,
+    >,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpanLink {
+    #[prost(string, tag = "1")]
+    pub trace_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub span_id: ::prost::alloc::string::String,
+    #[prost(map = "string, message", tag = "3")]
+    pub attributes: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        SqlValue,
+    >,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ObservabilityNamespaceConfig {
+    /// Namespace name
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Retention policies by tier
+    #[prost(message, optional, tag = "2")]
+    pub retention: ::core::option::Option<RetentionConfig>,
+    /// Ingestion settings
+    #[prost(message, optional, tag = "3")]
+    pub ingestion: ::core::option::Option<IngestionConfig>,
+    /// Alerting rules
+    #[prost(message, repeated, tag = "4")]
+    pub alert_rules: ::prost::alloc::vec::Vec<AlertRule>,
+    /// Access control
+    #[prost(message, optional, tag = "5")]
+    pub access: ::core::option::Option<ObservabilityAccessControl>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RetentionConfig {
+    /// Hot tier retention (SST, fast queries)
+    #[prost(uint64, tag = "1")]
+    pub hot_retention_hours: u64,
+    /// Warm tier retention (SST, moderate latency)
+    #[prost(uint64, tag = "2")]
+    pub warm_retention_days: u64,
+    /// Cold tier retention (VIPER/Parquet)
+    #[prost(uint64, tag = "3")]
+    pub cold_retention_days: u64,
+    /// Archive tier (S3/GCS, query on demand)
+    #[prost(uint64, tag = "4")]
+    pub archive_retention_days: u64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IngestionConfig {
+    /// Maximum events per second (0 = unlimited)
+    #[prost(uint64, tag = "1")]
+    pub rate_limit_per_second: u64,
+    /// Maximum batch size
+    #[prost(uint32, tag = "2")]
+    pub max_batch_size: u32,
+    /// Enable parsing of structured fields
+    #[prost(bool, tag = "3")]
+    pub parse_structured_fields: bool,
+    /// Timestamp field for parsing
+    #[prost(string, optional, tag = "4")]
+    pub timestamp_field: ::core::option::Option<::prost::alloc::string::String>,
+    /// Severity field for parsing
+    #[prost(string, optional, tag = "5")]
+    pub severity_field: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AlertRule {
+    /// Rule ID
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Rule name
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// Alert condition
+    #[prost(message, optional, tag = "3")]
+    pub condition: ::core::option::Option<AlertCondition>,
+    /// Notification channels
+    #[prost(message, repeated, tag = "4")]
+    pub notifications: ::prost::alloc::vec::Vec<NotificationChannel>,
+    /// Evaluation interval (seconds)
+    #[prost(uint32, tag = "5")]
+    pub evaluation_interval_seconds: u32,
+    /// Alert severity
+    #[prost(enumeration = "AlertSeverity", tag = "6")]
+    pub severity: i32,
+    /// Labels to attach to alerts
+    #[prost(map = "string, string", tag = "7")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// Enabled flag
+    #[prost(bool, tag = "8")]
+    pub enabled: bool,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AlertCondition {
+    #[prost(oneof = "alert_condition::Condition", tags = "1, 2, 3, 4")]
+    pub condition: ::core::option::Option<alert_condition::Condition>,
+}
+/// Nested message and enum types in `AlertCondition`.
+pub mod alert_condition {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Condition {
+        #[prost(message, tag = "1")]
+        Threshold(super::ThresholdCondition),
+        #[prost(message, tag = "2")]
+        Rate(super::RateCondition),
+        #[prost(message, tag = "3")]
+        Pattern(super::PatternCondition),
+        #[prost(message, tag = "4")]
+        Anomaly(super::AnomalyCondition),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ThresholdCondition {
+    /// Metric name or log query
+    #[prost(string, tag = "1")]
+    pub query: ::prost::alloc::string::String,
+    /// Comparison operator
+    #[prost(enumeration = "ComparisonOperator", tag = "2")]
+    pub operator: i32,
+    /// Threshold value
+    #[prost(double, tag = "3")]
+    pub threshold: f64,
+    /// Duration to sustain threshold (seconds)
+    #[prost(uint32, tag = "4")]
+    pub for_seconds: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RateCondition {
+    /// Query to count
+    #[prost(string, tag = "1")]
+    pub query: ::prost::alloc::string::String,
+    /// Time window (seconds)
+    #[prost(uint32, tag = "2")]
+    pub window_seconds: u32,
+    /// Rate threshold
+    #[prost(double, tag = "3")]
+    pub threshold: f64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PatternCondition {
+    /// Log query filter
+    #[prost(string, tag = "1")]
+    pub filter: ::prost::alloc::string::String,
+    /// Pattern to match (regex)
+    #[prost(string, tag = "2")]
+    pub pattern: ::prost::alloc::string::String,
+    /// Minimum occurrences in window
+    #[prost(uint32, tag = "3")]
+    pub min_occurrences: u32,
+    /// Time window (seconds)
+    #[prost(uint32, tag = "4")]
+    pub window_seconds: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AnomalyCondition {
+    /// Metric name
+    #[prost(string, tag = "1")]
+    pub metric: ::prost::alloc::string::String,
+    /// Standard deviations for anomaly detection
+    #[prost(double, tag = "2")]
+    pub std_dev_threshold: f64,
+    /// Training window (hours)
+    #[prost(uint32, tag = "3")]
+    pub training_window_hours: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NotificationChannel {
+    #[prost(oneof = "notification_channel::Channel", tags = "1, 2, 3, 4")]
+    pub channel: ::core::option::Option<notification_channel::Channel>,
+}
+/// Nested message and enum types in `NotificationChannel`.
+pub mod notification_channel {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Channel {
+        #[prost(message, tag = "1")]
+        Webhook(super::WebhookNotification),
+        #[prost(message, tag = "2")]
+        Slack(super::SlackNotification),
+        #[prost(message, tag = "3")]
+        Pagerduty(super::PagerDutyNotification),
+        #[prost(message, tag = "4")]
+        Email(super::EmailNotification),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WebhookNotification {
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "2")]
+    pub headers: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SlackNotification {
+    #[prost(string, tag = "1")]
+    pub webhook_url: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub channel: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PagerDutyNotification {
+    #[prost(string, tag = "1")]
+    pub routing_key: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EmailNotification {
+    #[prost(string, repeated, tag = "1")]
+    pub recipients: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ObservabilityAccessControl {
+    /// Required roles to access this namespace
+    #[prost(string, repeated, tag = "1")]
+    pub required_roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Read-only roles
+    #[prost(string, repeated, tag = "2")]
+    pub read_only_roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Create namespace
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateObservabilityNamespaceRequest {
+    #[prost(message, optional, tag = "1")]
+    pub config: ::core::option::Option<ObservabilityNamespaceConfig>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateObservabilityNamespaceResponse {
+    #[prost(string, tag = "1")]
+    pub namespace_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
+}
+/// Bulk log ingestion
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IngestLogsRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub logs: ::prost::alloc::vec::Vec<LogEntry>,
+    /// Ingestion format hint
+    #[prost(enumeration = "IngestionFormat", optional, tag = "3")]
+    pub format: ::core::option::Option<i32>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LogEntry {
+    #[prost(int64, tag = "1")]
+    pub timestamp_ns: i64,
+    #[prost(enumeration = "Severity", tag = "2")]
+    pub severity: i32,
+    #[prost(string, tag = "3")]
+    pub message: ::prost::alloc::string::String,
+    #[prost(map = "string, message", tag = "4")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+    #[prost(string, optional, tag = "5")]
+    pub source: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "6")]
+    pub service: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IngestLogsResponse {
+    #[prost(uint64, tag = "1")]
+    pub ingested: u64,
+    #[prost(uint64, tag = "2")]
+    pub failed: u64,
+    #[prost(string, repeated, tag = "3")]
+    pub errors: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint64, tag = "4")]
+    pub processing_time_ms: u64,
+}
+/// Bulk metrics ingestion
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IngestMetricsRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub samples: ::prost::alloc::vec::Vec<MetricSample>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetricSample {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(int64, tag = "2")]
+    pub timestamp_ns: i64,
+    #[prost(double, tag = "3")]
+    pub value: f64,
+    #[prost(map = "string, string", tag = "4")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IngestMetricsResponse {
+    #[prost(uint64, tag = "1")]
+    pub ingested: u64,
+    #[prost(uint64, tag = "2")]
+    pub failed: u64,
+    #[prost(uint64, tag = "3")]
+    pub processing_time_ms: u64,
+}
+/// Trace ingestion
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IngestTracesRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub traces: ::prost::alloc::vec::Vec<TraceData>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct IngestTracesResponse {
+    #[prost(uint64, tag = "1")]
+    pub ingested: u64,
+    #[prost(uint64, tag = "2")]
+    pub failed: u64,
+    #[prost(uint64, tag = "3")]
+    pub processing_time_ms: u64,
+}
+/// Query logs
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryLogsRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    /// Time range
+    #[prost(int64, tag = "2")]
+    pub start_time_ns: i64,
+    #[prost(int64, tag = "3")]
+    pub end_time_ns: i64,
+    /// Filter query (Datadog-style or SQL-like)
+    #[prost(string, optional, tag = "4")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    /// Structured filter
+    #[prost(message, optional, tag = "5")]
+    pub filter: ::core::option::Option<LogFilter>,
+    /// Pagination
+    #[prost(uint32, tag = "6")]
+    pub limit: u32,
+    #[prost(string, optional, tag = "7")]
+    pub cursor: ::core::option::Option<::prost::alloc::string::String>,
+    /// Sort order (default: newest first)
+    #[prost(enumeration = "SortOrder", tag = "8")]
+    pub sort: i32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LogFilter {
+    #[prost(enumeration = "Severity", repeated, tag = "1")]
+    pub severities: ::prost::alloc::vec::Vec<i32>,
+    #[prost(string, repeated, tag = "2")]
+    pub services: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "3")]
+    pub sources: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Field filters
+    #[prost(message, repeated, tag = "4")]
+    pub field_filters: ::prost::alloc::vec::Vec<DocFilterCondition>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryLogsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub logs: ::prost::alloc::vec::Vec<LogEntry>,
+    #[prost(string, optional, tag = "2")]
+    pub next_cursor: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, tag = "3")]
+    pub total_matched: u64,
+    #[prost(uint64, tag = "4")]
+    pub query_time_ms: u64,
+}
+/// Aggregate metrics (PromQL-style)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregateMetricsRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    /// Metric name
+    #[prost(string, tag = "2")]
+    pub metric_name: ::prost::alloc::string::String,
+    /// Time range
+    #[prost(int64, tag = "3")]
+    pub start_time_ns: i64,
+    #[prost(int64, tag = "4")]
+    pub end_time_ns: i64,
+    /// Aggregation function
+    #[prost(enumeration = "MetricAggregation", tag = "5")]
+    pub aggregation: i32,
+    /// Step/resolution (seconds)
+    #[prost(uint32, tag = "6")]
+    pub step_seconds: u32,
+    /// Label filters
+    #[prost(map = "string, string", tag = "7")]
+    pub label_filters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// Group by labels
+    #[prost(string, repeated, tag = "8")]
+    pub group_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregateMetricsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub series: ::prost::alloc::vec::Vec<TimeSeriesResult>,
+    #[prost(uint64, tag = "2")]
+    pub query_time_ms: u64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TimeSeriesResult {
+    #[prost(map = "string, string", tag = "1")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(message, repeated, tag = "2")]
+    pub points: ::prost::alloc::vec::Vec<DataPoint>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct DataPoint {
+    #[prost(int64, tag = "1")]
+    pub timestamp_ns: i64,
+    #[prost(double, tag = "2")]
+    pub value: f64,
+}
+/// Query traces
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryTracesRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    /// Time range
+    #[prost(int64, tag = "2")]
+    pub start_time_ns: i64,
+    #[prost(int64, tag = "3")]
+    pub end_time_ns: i64,
+    /// Filter by trace ID (exact)
+    #[prost(string, optional, tag = "4")]
+    pub trace_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Filter by service
+    #[prost(string, optional, tag = "5")]
+    pub service: ::core::option::Option<::prost::alloc::string::String>,
+    /// Filter by operation name
+    #[prost(string, optional, tag = "6")]
+    pub operation: ::core::option::Option<::prost::alloc::string::String>,
+    /// Minimum duration (nanoseconds)
+    #[prost(int64, optional, tag = "7")]
+    pub min_duration_ns: ::core::option::Option<i64>,
+    /// Status filter
+    #[prost(enumeration = "SpanStatusCode", optional, tag = "8")]
+    pub status: ::core::option::Option<i32>,
+    /// Pagination
+    #[prost(uint32, tag = "9")]
+    pub limit: u32,
+    #[prost(string, optional, tag = "10")]
+    pub cursor: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryTracesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub traces: ::prost::alloc::vec::Vec<TraceData>,
+    #[prost(string, optional, tag = "2")]
+    pub next_cursor: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, tag = "3")]
+    pub query_time_ms: u64,
+}
+/// Assemble full trace (all spans)
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTraceRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub trace_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetTraceResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub spans: ::prost::alloc::vec::Vec<TraceData>,
+    /// All spans found
+    #[prost(bool, tag = "2")]
+    pub complete: bool,
+}
+/// Create/update alert rule
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpsertAlertRuleRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub rule: ::core::option::Option<AlertRule>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UpsertAlertRuleResponse {
+    #[prost(string, tag = "1")]
+    pub rule_id: ::prost::alloc::string::String,
+    /// true = created, false = updated
+    #[prost(bool, tag = "2")]
+    pub created: bool,
+}
+/// Delete alert rule
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteAlertRuleRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub rule_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteAlertRuleResponse {
+    #[prost(bool, tag = "1")]
+    pub deleted: bool,
+}
+/// List active alerts
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListAlertsRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(enumeration = "AlertSeverity", optional, tag = "2")]
+    pub min_severity: ::core::option::Option<i32>,
+    #[prost(bool, optional, tag = "3")]
+    pub include_resolved: ::core::option::Option<bool>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListAlertsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub alerts: ::prost::alloc::vec::Vec<Alert>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Alert {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub rule_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub rule_name: ::prost::alloc::string::String,
+    #[prost(enumeration = "AlertSeverity", tag = "4")]
+    pub severity: i32,
+    #[prost(enumeration = "AlertState", tag = "5")]
+    pub state: i32,
+    #[prost(int64, tag = "6")]
+    pub started_at_ns: i64,
+    #[prost(int64, optional, tag = "7")]
+    pub resolved_at_ns: ::core::option::Option<i64>,
+    #[prost(map = "string, string", tag = "8")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(string, tag = "9")]
+    pub summary: ::prost::alloc::string::String,
+}
+/// List namespaces
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListNamespacesRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListNamespacesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub namespaces: ::prost::alloc::vec::Vec<NamespaceInfo>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NamespaceInfo {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub retention: ::core::option::Option<RetentionConfig>,
+    #[prost(uint64, tag = "3")]
+    pub log_count: u64,
+    #[prost(uint64, tag = "4")]
+    pub metric_count: u64,
+    #[prost(uint64, tag = "5")]
+    pub trace_count: u64,
+}
+/// Delete namespace
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteNamespaceRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteNamespaceResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+/// Query metrics (simple query, not aggregated)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryMetricsRequest {
+    #[prost(string, tag = "1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub metric_name: ::prost::alloc::string::String,
+    #[prost(int64, tag = "3")]
+    pub start_time_ns: i64,
+    #[prost(int64, tag = "4")]
+    pub end_time_ns: i64,
+    #[prost(map = "string, string", tag = "5")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(uint32, tag = "6")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryMetricsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub samples: ::prost::alloc::vec::Vec<MetricSample>,
+    #[prost(uint64, tag = "2")]
+    pub query_time_ms: u64,
+}
+/// Observability event type discriminator
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ObservabilityType {
+    Unspecified = 0,
+    Log = 1,
+    Metric = 2,
+    Trace = 3,
+    Event = 4,
+}
+impl ObservabilityType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "OBSERVABILITY_TYPE_UNSPECIFIED",
+            Self::Log => "OBSERVABILITY_TYPE_LOG",
+            Self::Metric => "OBSERVABILITY_TYPE_METRIC",
+            Self::Trace => "OBSERVABILITY_TYPE_TRACE",
+            Self::Event => "OBSERVABILITY_TYPE_EVENT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "OBSERVABILITY_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "OBSERVABILITY_TYPE_LOG" => Some(Self::Log),
+            "OBSERVABILITY_TYPE_METRIC" => Some(Self::Metric),
+            "OBSERVABILITY_TYPE_TRACE" => Some(Self::Trace),
+            "OBSERVABILITY_TYPE_EVENT" => Some(Self::Event),
+            _ => None,
+        }
+    }
+}
+/// Log severity levels (aligned with syslog)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum Severity {
+    Unspecified = 0,
+    /// Finest granularity
+    Trace = 1,
+    Debug = 2,
+    Info = 3,
+    Warn = 4,
+    Error = 5,
+    /// Critical/Emergency
+    Fatal = 6,
+}
+impl Severity {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SEVERITY_UNSPECIFIED",
+            Self::Trace => "SEVERITY_TRACE",
+            Self::Debug => "SEVERITY_DEBUG",
+            Self::Info => "SEVERITY_INFO",
+            Self::Warn => "SEVERITY_WARN",
+            Self::Error => "SEVERITY_ERROR",
+            Self::Fatal => "SEVERITY_FATAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SEVERITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "SEVERITY_TRACE" => Some(Self::Trace),
+            "SEVERITY_DEBUG" => Some(Self::Debug),
+            "SEVERITY_INFO" => Some(Self::Info),
+            "SEVERITY_WARN" => Some(Self::Warn),
+            "SEVERITY_ERROR" => Some(Self::Error),
+            "SEVERITY_FATAL" => Some(Self::Fatal),
+            _ => None,
+        }
+    }
+}
+/// Ingestion format for provenance tracking
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum IngestionFormat {
+    Unspecified = 0,
+    Json = 1,
+    Otlp = 2,
+    SyslogRfc3164 = 3,
+    SyslogRfc5424 = 4,
+    Fluent = 5,
+    /// ArcSight Common Event Format
+    Cef = 6,
+    /// IBM Log Event Extended Format
+    Leef = 7,
+    /// Open Cybersecurity Schema Framework
+    Ocsf = 8,
+    /// Newline-delimited JSON
+    Ndjson = 9,
+}
+impl IngestionFormat {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "INGESTION_FORMAT_UNSPECIFIED",
+            Self::Json => "INGESTION_FORMAT_JSON",
+            Self::Otlp => "INGESTION_FORMAT_OTLP",
+            Self::SyslogRfc3164 => "INGESTION_FORMAT_SYSLOG_RFC3164",
+            Self::SyslogRfc5424 => "INGESTION_FORMAT_SYSLOG_RFC5424",
+            Self::Fluent => "INGESTION_FORMAT_FLUENT",
+            Self::Cef => "INGESTION_FORMAT_CEF",
+            Self::Leef => "INGESTION_FORMAT_LEEF",
+            Self::Ocsf => "INGESTION_FORMAT_OCSF",
+            Self::Ndjson => "INGESTION_FORMAT_NDJSON",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "INGESTION_FORMAT_UNSPECIFIED" => Some(Self::Unspecified),
+            "INGESTION_FORMAT_JSON" => Some(Self::Json),
+            "INGESTION_FORMAT_OTLP" => Some(Self::Otlp),
+            "INGESTION_FORMAT_SYSLOG_RFC3164" => Some(Self::SyslogRfc3164),
+            "INGESTION_FORMAT_SYSLOG_RFC5424" => Some(Self::SyslogRfc5424),
+            "INGESTION_FORMAT_FLUENT" => Some(Self::Fluent),
+            "INGESTION_FORMAT_CEF" => Some(Self::Cef),
+            "INGESTION_FORMAT_LEEF" => Some(Self::Leef),
+            "INGESTION_FORMAT_OCSF" => Some(Self::Ocsf),
+            "INGESTION_FORMAT_NDJSON" => Some(Self::Ndjson),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AggregationTemporality {
+    Unspecified = 0,
+    Delta = 1,
+    Cumulative = 2,
+}
+impl AggregationTemporality {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "AGGREGATION_TEMPORALITY_UNSPECIFIED",
+            Self::Delta => "AGGREGATION_TEMPORALITY_DELTA",
+            Self::Cumulative => "AGGREGATION_TEMPORALITY_CUMULATIVE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "AGGREGATION_TEMPORALITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "AGGREGATION_TEMPORALITY_DELTA" => Some(Self::Delta),
+            "AGGREGATION_TEMPORALITY_CUMULATIVE" => Some(Self::Cumulative),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SpanKind {
+    Unspecified = 0,
+    Internal = 1,
+    Server = 2,
+    Client = 3,
+    Producer = 4,
+    Consumer = 5,
+}
+impl SpanKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SPAN_KIND_UNSPECIFIED",
+            Self::Internal => "SPAN_KIND_INTERNAL",
+            Self::Server => "SPAN_KIND_SERVER",
+            Self::Client => "SPAN_KIND_CLIENT",
+            Self::Producer => "SPAN_KIND_PRODUCER",
+            Self::Consumer => "SPAN_KIND_CONSUMER",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SPAN_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "SPAN_KIND_INTERNAL" => Some(Self::Internal),
+            "SPAN_KIND_SERVER" => Some(Self::Server),
+            "SPAN_KIND_CLIENT" => Some(Self::Client),
+            "SPAN_KIND_PRODUCER" => Some(Self::Producer),
+            "SPAN_KIND_CONSUMER" => Some(Self::Consumer),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SpanStatusCode {
+    Unset = 0,
+    Ok = 1,
+    Error = 2,
+}
+impl SpanStatusCode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unset => "SPAN_STATUS_CODE_UNSET",
+            Self::Ok => "SPAN_STATUS_CODE_OK",
+            Self::Error => "SPAN_STATUS_CODE_ERROR",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SPAN_STATUS_CODE_UNSET" => Some(Self::Unset),
+            "SPAN_STATUS_CODE_OK" => Some(Self::Ok),
+            "SPAN_STATUS_CODE_ERROR" => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ComparisonOperator {
+    Unspecified = 0,
+    Gt = 1,
+    Gte = 2,
+    Lt = 3,
+    Lte = 4,
+    Eq = 5,
+    Ne = 6,
+}
+impl ComparisonOperator {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "COMPARISON_OPERATOR_UNSPECIFIED",
+            Self::Gt => "COMPARISON_OPERATOR_GT",
+            Self::Gte => "COMPARISON_OPERATOR_GTE",
+            Self::Lt => "COMPARISON_OPERATOR_LT",
+            Self::Lte => "COMPARISON_OPERATOR_LTE",
+            Self::Eq => "COMPARISON_OPERATOR_EQ",
+            Self::Ne => "COMPARISON_OPERATOR_NE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "COMPARISON_OPERATOR_UNSPECIFIED" => Some(Self::Unspecified),
+            "COMPARISON_OPERATOR_GT" => Some(Self::Gt),
+            "COMPARISON_OPERATOR_GTE" => Some(Self::Gte),
+            "COMPARISON_OPERATOR_LT" => Some(Self::Lt),
+            "COMPARISON_OPERATOR_LTE" => Some(Self::Lte),
+            "COMPARISON_OPERATOR_EQ" => Some(Self::Eq),
+            "COMPARISON_OPERATOR_NE" => Some(Self::Ne),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AlertSeverity {
+    Unspecified = 0,
+    Info = 1,
+    Warning = 2,
+    Critical = 3,
+}
+impl AlertSeverity {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ALERT_SEVERITY_UNSPECIFIED",
+            Self::Info => "ALERT_SEVERITY_INFO",
+            Self::Warning => "ALERT_SEVERITY_WARNING",
+            Self::Critical => "ALERT_SEVERITY_CRITICAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ALERT_SEVERITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "ALERT_SEVERITY_INFO" => Some(Self::Info),
+            "ALERT_SEVERITY_WARNING" => Some(Self::Warning),
+            "ALERT_SEVERITY_CRITICAL" => Some(Self::Critical),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum MetricAggregation {
+    Unspecified = 0,
+    Avg = 1,
+    Sum = 2,
+    Min = 3,
+    Max = 4,
+    Count = 5,
+    Rate = 6,
+    P50 = 7,
+    P90 = 8,
+    P95 = 9,
+    P99 = 10,
+}
+impl MetricAggregation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "METRIC_AGGREGATION_UNSPECIFIED",
+            Self::Avg => "METRIC_AGGREGATION_AVG",
+            Self::Sum => "METRIC_AGGREGATION_SUM",
+            Self::Min => "METRIC_AGGREGATION_MIN",
+            Self::Max => "METRIC_AGGREGATION_MAX",
+            Self::Count => "METRIC_AGGREGATION_COUNT",
+            Self::Rate => "METRIC_AGGREGATION_RATE",
+            Self::P50 => "METRIC_AGGREGATION_P50",
+            Self::P90 => "METRIC_AGGREGATION_P90",
+            Self::P95 => "METRIC_AGGREGATION_P95",
+            Self::P99 => "METRIC_AGGREGATION_P99",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "METRIC_AGGREGATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "METRIC_AGGREGATION_AVG" => Some(Self::Avg),
+            "METRIC_AGGREGATION_SUM" => Some(Self::Sum),
+            "METRIC_AGGREGATION_MIN" => Some(Self::Min),
+            "METRIC_AGGREGATION_MAX" => Some(Self::Max),
+            "METRIC_AGGREGATION_COUNT" => Some(Self::Count),
+            "METRIC_AGGREGATION_RATE" => Some(Self::Rate),
+            "METRIC_AGGREGATION_P50" => Some(Self::P50),
+            "METRIC_AGGREGATION_P90" => Some(Self::P90),
+            "METRIC_AGGREGATION_P95" => Some(Self::P95),
+            "METRIC_AGGREGATION_P99" => Some(Self::P99),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AlertState {
+    Unspecified = 0,
+    Pending = 1,
+    Firing = 2,
+    Resolved = 3,
+}
+impl AlertState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ALERT_STATE_UNSPECIFIED",
+            Self::Pending => "ALERT_STATE_PENDING",
+            Self::Firing => "ALERT_STATE_FIRING",
+            Self::Resolved => "ALERT_STATE_RESOLVED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ALERT_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "ALERT_STATE_PENDING" => Some(Self::Pending),
+            "ALERT_STATE_FIRING" => Some(Self::Firing),
+            "ALERT_STATE_RESOLVED" => Some(Self::Resolved),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod observability_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Observability gRPC service
+    #[derive(Debug, Clone)]
+    pub struct ObservabilityServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl ObservabilityServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> ObservabilityServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> ObservabilityServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            ObservabilityServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Namespace management
+        pub async fn create_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateObservabilityNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateObservabilityNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/CreateNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.ObservabilityService",
+                        "CreateNamespace",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_namespaces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListNamespacesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/ListNamespaces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.ObservabilityService",
+                        "ListNamespaces",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/DeleteNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.ObservabilityService",
+                        "DeleteNamespace",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Log operations
+        pub async fn ingest_logs(
+            &mut self,
+            request: impl tonic::IntoRequest<super::IngestLogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::IngestLogsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/IngestLogs",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "IngestLogs"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn query_logs(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryLogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryLogsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/QueryLogs",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "QueryLogs"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn stream_logs(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryLogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::LogEntry>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/StreamLogs",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "StreamLogs"),
+                );
+            self.inner.server_streaming(req, path, codec).await
+        }
+        /// Metric operations
+        pub async fn ingest_metrics(
+            &mut self,
+            request: impl tonic::IntoRequest<super::IngestMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::IngestMetricsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/IngestMetrics",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "IngestMetrics"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn query_metrics(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryMetricsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/QueryMetrics",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "QueryMetrics"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn aggregate_metrics(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AggregateMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AggregateMetricsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/AggregateMetrics",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.ObservabilityService",
+                        "AggregateMetrics",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Trace operations
+        pub async fn ingest_traces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::IngestTracesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::IngestTracesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/IngestTraces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "IngestTraces"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn query_traces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryTracesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryTracesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/QueryTraces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "QueryTraces"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_trace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTraceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTraceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/GetTrace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "GetTrace"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Alerting
+        pub async fn upsert_alert_rule(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpsertAlertRuleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpsertAlertRuleResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/UpsertAlertRule",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.ObservabilityService",
+                        "UpsertAlertRule",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_alert_rule(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteAlertRuleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteAlertRuleResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/DeleteAlertRule",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.ObservabilityService",
+                        "DeleteAlertRule",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_alerts(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListAlertsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListAlertsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.ObservabilityService/ListAlerts",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.ObservabilityService", "ListAlerts"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod observability_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ObservabilityServiceServer.
+    #[async_trait]
+    pub trait ObservabilityService: std::marker::Send + std::marker::Sync + 'static {
+        /// Namespace management
+        async fn create_namespace(
+            &self,
+            request: tonic::Request<super::CreateObservabilityNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateObservabilityNamespaceResponse>,
+            tonic::Status,
+        >;
+        async fn list_namespaces(
+            &self,
+            request: tonic::Request<super::ListNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListNamespacesResponse>,
+            tonic::Status,
+        >;
+        async fn delete_namespace(
+            &self,
+            request: tonic::Request<super::DeleteNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteNamespaceResponse>,
+            tonic::Status,
+        >;
+        /// Log operations
+        async fn ingest_logs(
+            &self,
+            request: tonic::Request<super::IngestLogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::IngestLogsResponse>,
+            tonic::Status,
+        >;
+        async fn query_logs(
+            &self,
+            request: tonic::Request<super::QueryLogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryLogsResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the StreamLogs method.
+        type StreamLogsStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::LogEntry, tonic::Status>,
+            >
+            + std::marker::Send
+            + 'static;
+        async fn stream_logs(
+            &self,
+            request: tonic::Request<super::QueryLogsRequest>,
+        ) -> std::result::Result<tonic::Response<Self::StreamLogsStream>, tonic::Status>;
+        /// Metric operations
+        async fn ingest_metrics(
+            &self,
+            request: tonic::Request<super::IngestMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::IngestMetricsResponse>,
+            tonic::Status,
+        >;
+        async fn query_metrics(
+            &self,
+            request: tonic::Request<super::QueryMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryMetricsResponse>,
+            tonic::Status,
+        >;
+        async fn aggregate_metrics(
+            &self,
+            request: tonic::Request<super::AggregateMetricsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AggregateMetricsResponse>,
+            tonic::Status,
+        >;
+        /// Trace operations
+        async fn ingest_traces(
+            &self,
+            request: tonic::Request<super::IngestTracesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::IngestTracesResponse>,
+            tonic::Status,
+        >;
+        async fn query_traces(
+            &self,
+            request: tonic::Request<super::QueryTracesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryTracesResponse>,
+            tonic::Status,
+        >;
+        async fn get_trace(
+            &self,
+            request: tonic::Request<super::GetTraceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTraceResponse>,
+            tonic::Status,
+        >;
+        /// Alerting
+        async fn upsert_alert_rule(
+            &self,
+            request: tonic::Request<super::UpsertAlertRuleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpsertAlertRuleResponse>,
+            tonic::Status,
+        >;
+        async fn delete_alert_rule(
+            &self,
+            request: tonic::Request<super::DeleteAlertRuleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteAlertRuleResponse>,
+            tonic::Status,
+        >;
+        async fn list_alerts(
+            &self,
+            request: tonic::Request<super::ListAlertsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListAlertsResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Observability gRPC service
+    #[derive(Debug)]
+    pub struct ObservabilityServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> ObservabilityServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for ObservabilityServiceServer<T>
+    where
+        T: ObservabilityService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v1.ObservabilityService/CreateNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateNamespaceSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<
+                        super::CreateObservabilityNamespaceRequest,
+                    > for CreateNamespaceSvc<T> {
+                        type Response = super::CreateObservabilityNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::CreateObservabilityNamespaceRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::create_namespace(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/ListNamespaces" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListNamespacesSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::ListNamespacesRequest>
+                    for ListNamespacesSvc<T> {
+                        type Response = super::ListNamespacesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListNamespacesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::list_namespaces(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListNamespacesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/DeleteNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteNamespaceSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::DeleteNamespaceRequest>
+                    for DeleteNamespaceSvc<T> {
+                        type Response = super::DeleteNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteNamespaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::delete_namespace(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/IngestLogs" => {
+                    #[allow(non_camel_case_types)]
+                    struct IngestLogsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::IngestLogsRequest>
+                    for IngestLogsSvc<T> {
+                        type Response = super::IngestLogsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::IngestLogsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::ingest_logs(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = IngestLogsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/QueryLogs" => {
+                    #[allow(non_camel_case_types)]
+                    struct QueryLogsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::QueryLogsRequest>
+                    for QueryLogsSvc<T> {
+                        type Response = super::QueryLogsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryLogsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::query_logs(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = QueryLogsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/StreamLogs" => {
+                    #[allow(non_camel_case_types)]
+                    struct StreamLogsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::ServerStreamingService<super::QueryLogsRequest>
+                    for StreamLogsSvc<T> {
+                        type Response = super::LogEntry;
+                        type ResponseStream = T::StreamLogsStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryLogsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::stream_logs(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = StreamLogsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/IngestMetrics" => {
+                    #[allow(non_camel_case_types)]
+                    struct IngestMetricsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::IngestMetricsRequest>
+                    for IngestMetricsSvc<T> {
+                        type Response = super::IngestMetricsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::IngestMetricsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::ingest_metrics(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = IngestMetricsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/QueryMetrics" => {
+                    #[allow(non_camel_case_types)]
+                    struct QueryMetricsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::QueryMetricsRequest>
+                    for QueryMetricsSvc<T> {
+                        type Response = super::QueryMetricsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryMetricsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::query_metrics(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = QueryMetricsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/AggregateMetrics" => {
+                    #[allow(non_camel_case_types)]
+                    struct AggregateMetricsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::AggregateMetricsRequest>
+                    for AggregateMetricsSvc<T> {
+                        type Response = super::AggregateMetricsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AggregateMetricsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::aggregate_metrics(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AggregateMetricsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/IngestTraces" => {
+                    #[allow(non_camel_case_types)]
+                    struct IngestTracesSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::IngestTracesRequest>
+                    for IngestTracesSvc<T> {
+                        type Response = super::IngestTracesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::IngestTracesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::ingest_traces(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = IngestTracesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/QueryTraces" => {
+                    #[allow(non_camel_case_types)]
+                    struct QueryTracesSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::QueryTracesRequest>
+                    for QueryTracesSvc<T> {
+                        type Response = super::QueryTracesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryTracesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::query_traces(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = QueryTracesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/GetTrace" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTraceSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::GetTraceRequest>
+                    for GetTraceSvc<T> {
+                        type Response = super::GetTraceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetTraceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::get_trace(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTraceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/UpsertAlertRule" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpsertAlertRuleSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::UpsertAlertRuleRequest>
+                    for UpsertAlertRuleSvc<T> {
+                        type Response = super::UpsertAlertRuleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpsertAlertRuleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::upsert_alert_rule(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpsertAlertRuleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/DeleteAlertRule" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteAlertRuleSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::DeleteAlertRuleRequest>
+                    for DeleteAlertRuleSvc<T> {
+                        type Response = super::DeleteAlertRuleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteAlertRuleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::delete_alert_rule(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteAlertRuleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.ObservabilityService/ListAlerts" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListAlertsSvc<T: ObservabilityService>(pub Arc<T>);
+                    impl<
+                        T: ObservabilityService,
+                    > tonic::server::UnaryService<super::ListAlertsRequest>
+                    for ListAlertsSvc<T> {
+                        type Response = super::ListAlertsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListAlertsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ObservabilityService>::list_alerts(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListAlertsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for ObservabilityServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v1.ObservabilityService";
+    impl<T> tonic::server::NamedService for ObservabilityServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
+/// Common metadata shared across all record types
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CommonMetadata {
+    /// Creation timestamp (nanoseconds since epoch)
+    #[prost(int64, tag = "1")]
+    pub created_at_ns: i64,
+    /// Last modification timestamp
+    #[prost(int64, tag = "2")]
+    pub updated_at_ns: i64,
+    /// Optional expiration timestamp for TTL
+    #[prost(int64, optional, tag = "3")]
+    pub expires_at_ns: ::core::option::Option<i64>,
+    /// User-defined labels for filtering
+    #[prost(map = "string, string", tag = "4")]
+    pub labels: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// System-generated tags
+    #[prost(string, repeated, tag = "5")]
+    pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Source system identifier
+    #[prost(string, optional, tag = "6")]
+    pub source: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Unified record that can represent any data model
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UnifiedRecord {
+    /// Unique identifier within the container
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Type discriminator
+    #[prost(enumeration = "RecordType", tag = "2")]
+    pub record_type: i32,
+    /// Container (collection, graph, namespace) this record belongs to
+    #[prost(string, tag = "3")]
+    pub container_id: ::prost::alloc::string::String,
+    /// Shared metadata
+    #[prost(message, optional, tag = "20")]
+    pub metadata: ::core::option::Option<CommonMetadata>,
+    /// Optimistic concurrency version
+    #[prost(uint64, tag = "21")]
+    pub version: u64,
+    /// Multi-tenant isolation
+    #[prost(string, optional, tag = "22")]
+    pub tenant_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Type-specific content
+    #[prost(oneof = "unified_record::Content", tags = "10, 11, 12, 13, 14")]
+    pub content: ::core::option::Option<unified_record::Content>,
+}
+/// Nested message and enum types in `UnifiedRecord`.
+pub mod unified_record {
+    /// Type-specific content
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Content {
+        #[prost(message, tag = "10")]
+        Document(super::DocumentContent),
+        #[prost(message, tag = "11")]
+        GraphNode(super::GraphNodeContent),
+        #[prost(message, tag = "12")]
+        GraphEdge(super::GraphEdgeContent),
+        #[prost(message, tag = "13")]
+        Vector(super::VectorContent),
+        #[prost(message, tag = "14")]
+        Observability(super::ObservabilityContent),
+    }
+}
+/// Graph node content (references existing graph types)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphNodeContent {
+    /// Node labels (e.g., "Person", "Company")
+    #[prost(string, repeated, tag = "1")]
+    pub labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Node properties as SqlValue for nested support
+    #[prost(map = "string, message", tag = "2")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        SqlValue,
+    >,
+    /// Optional embedding for hybrid vector-graph queries
+    #[prost(float, repeated, tag = "3")]
+    pub embedding: ::prost::alloc::vec::Vec<f32>,
+}
+/// Graph edge content
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphEdgeContent {
+    /// Source node ID
+    #[prost(string, tag = "1")]
+    pub source_id: ::prost::alloc::string::String,
+    /// Target node ID
+    #[prost(string, tag = "2")]
+    pub target_id: ::prost::alloc::string::String,
+    /// Edge type (e.g., "KNOWS", "WORKS_AT")
+    #[prost(string, tag = "3")]
+    pub edge_type: ::prost::alloc::string::String,
+    /// Edge properties
+    #[prost(map = "string, message", tag = "4")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        SqlValue,
+    >,
+    /// Edge weight for weighted graph algorithms
+    #[prost(double, optional, tag = "5")]
+    pub weight: ::core::option::Option<f64>,
+}
+/// Vector content (references existing vector types)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorContent {
+    /// The embedding vector
+    #[prost(float, repeated, tag = "1")]
+    pub vector: ::prost::alloc::vec::Vec<f32>,
+    /// Dimension (for validation)
+    #[prost(uint32, tag = "2")]
+    pub dimension: u32,
+    /// Associated metadata for filtering
+    #[prost(map = "string, message", tag = "3")]
+    pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+    /// Model that generated this embedding
+    #[prost(string, optional, tag = "4")]
+    pub model_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Batch operations for unified records
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchUnifiedRecordRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub records: ::prost::alloc::vec::Vec<UnifiedRecord>,
+    /// Operation type
+    #[prost(enumeration = "BatchOperation", tag = "2")]
+    pub operation: i32,
+    /// Container to operate on
+    #[prost(string, tag = "3")]
+    pub container_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchUnifiedRecordResponse {
+    /// Number of records processed
+    #[prost(uint64, tag = "1")]
+    pub processed: u64,
+    /// Number of records that failed
+    #[prost(uint64, tag = "2")]
+    pub failed: u64,
+    /// Error details for failed records
+    #[prost(message, repeated, tag = "3")]
+    pub errors: ::prost::alloc::vec::Vec<BatchError>,
+    /// Processing time in milliseconds
+    #[prost(uint64, tag = "4")]
+    pub processing_time_ms: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BatchError {
+    #[prost(string, tag = "1")]
+    pub record_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub error_message: ::prost::alloc::string::String,
+    #[prost(int32, tag = "3")]
+    pub error_code: i32,
+}
+/// Record type discriminator
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RecordType {
+    Unspecified = 0,
+    Document = 1,
+    GraphNode = 2,
+    GraphEdge = 3,
+    Vector = 4,
+    Log = 5,
+    Metric = 6,
+    Trace = 7,
+}
+impl RecordType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RECORD_TYPE_UNSPECIFIED",
+            Self::Document => "RECORD_TYPE_DOCUMENT",
+            Self::GraphNode => "RECORD_TYPE_GRAPH_NODE",
+            Self::GraphEdge => "RECORD_TYPE_GRAPH_EDGE",
+            Self::Vector => "RECORD_TYPE_VECTOR",
+            Self::Log => "RECORD_TYPE_LOG",
+            Self::Metric => "RECORD_TYPE_METRIC",
+            Self::Trace => "RECORD_TYPE_TRACE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RECORD_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "RECORD_TYPE_DOCUMENT" => Some(Self::Document),
+            "RECORD_TYPE_GRAPH_NODE" => Some(Self::GraphNode),
+            "RECORD_TYPE_GRAPH_EDGE" => Some(Self::GraphEdge),
+            "RECORD_TYPE_VECTOR" => Some(Self::Vector),
+            "RECORD_TYPE_LOG" => Some(Self::Log),
+            "RECORD_TYPE_METRIC" => Some(Self::Metric),
+            "RECORD_TYPE_TRACE" => Some(Self::Trace),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BatchOperation {
+    Unspecified = 0,
+    Insert = 1,
+    Upsert = 2,
+    Update = 3,
+    Delete = 4,
+}
+impl BatchOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BATCH_OPERATION_UNSPECIFIED",
+            Self::Insert => "BATCH_OPERATION_INSERT",
+            Self::Upsert => "BATCH_OPERATION_UPSERT",
+            Self::Update => "BATCH_OPERATION_UPDATE",
+            Self::Delete => "BATCH_OPERATION_DELETE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BATCH_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "BATCH_OPERATION_INSERT" => Some(Self::Insert),
+            "BATCH_OPERATION_UPSERT" => Some(Self::Upsert),
+            "BATCH_OPERATION_UPDATE" => Some(Self::Update),
+            "BATCH_OPERATION_DELETE" => Some(Self::Delete),
+            _ => None,
+        }
+    }
+}
+/// Catalog configuration
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CatalogConfig {
+    /// Catalog name (e.g., "production", "analytics")
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "CatalogType", tag = "2")]
+    pub catalog_type: i32,
+    /// Common settings
+    ///
+    /// Prevent DDL operations
+    #[prost(bool, tag = "20")]
+    pub read_only: bool,
+    /// Enable local metadata cache
+    #[prost(bool, tag = "21")]
+    pub cache_enabled: bool,
+    /// Cache TTL (default: 300)
+    #[prost(int32, tag = "22")]
+    pub cache_ttl_seconds: i32,
+    /// Additional properties
+    #[prost(map = "string, string", tag = "23")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(oneof = "catalog_config::Config", tags = "10, 11, 12, 13, 14, 15, 16")]
+    pub config: ::core::option::Option<catalog_config::Config>,
+}
+/// Nested message and enum types in `CatalogConfig`.
+pub mod catalog_config {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Config {
+        #[prost(message, tag = "10")]
+        Native(super::NativeCatalogConfig),
+        #[prost(message, tag = "11")]
+        Glue(super::GlueCatalogConfig),
+        #[prost(message, tag = "12")]
+        Unity(super::UnityCatalogConfig),
+        #[prost(message, tag = "13")]
+        Polaris(super::PolarisCatalogConfig),
+        #[prost(message, tag = "14")]
+        Hive(super::HiveCatalogConfig),
+        #[prost(message, tag = "15")]
+        Iceberg(super::IcebergCatalogConfig),
+        #[prost(message, tag = "16")]
+        Delta(super::DeltaCatalogConfig),
+    }
+}
+/// Native ProximaDB catalog (cloud-first)
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NativeCatalogConfig {
+    /// s3://bucket/catalog, adls://..., gcs://...
+    #[prost(string, tag = "1")]
+    pub storage_url: ::prost::alloc::string::String,
+    /// "json", "avro", "parquet" (default: json)
+    #[prost(string, tag = "2")]
+    pub metadata_format: ::prost::alloc::string::String,
+    /// Enable schema versioning
+    #[prost(bool, tag = "3")]
+    pub versioned: bool,
+    /// Max versions to keep (default: 100)
+    #[prost(int32, tag = "4")]
+    pub max_versions: i32,
+    /// Cross-region replication
+    #[prost(message, optional, tag = "5")]
+    pub replication: ::core::option::Option<ReplicationConfig>,
+}
+/// AWS Glue Data Catalog
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GlueCatalogConfig {
+    /// AWS region (e.g., "us-east-1")
+    #[prost(string, tag = "1")]
+    pub region: ::prost::alloc::string::String,
+    /// Prefix for database names
+    #[prost(string, tag = "2")]
+    pub database_prefix: ::prost::alloc::string::String,
+    /// IAM role ARN for cross-account
+    #[prost(string, tag = "3")]
+    pub role_arn: ::prost::alloc::string::String,
+    /// AWS account ID (optional)
+    #[prost(string, tag = "4")]
+    pub catalog_id: ::prost::alloc::string::String,
+    /// Enable Lake Formation permissions
+    #[prost(bool, tag = "5")]
+    pub use_lake_formation: bool,
+}
+/// Databricks Unity Catalog
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UnityCatalogConfig {
+    /// <https://xxx.cloud.databricks.com>
+    #[prost(string, tag = "1")]
+    pub workspace_url: ::prost::alloc::string::String,
+    /// Personal access token or OAuth
+    #[prost(string, tag = "2")]
+    pub token: ::prost::alloc::string::String,
+    /// Unity catalog name
+    #[prost(string, tag = "3")]
+    pub catalog_name: ::prost::alloc::string::String,
+    /// Metastore ID (optional)
+    #[prost(string, tag = "4")]
+    pub metastore_id: ::prost::alloc::string::String,
+    /// Use external storage locations
+    #[prost(bool, tag = "5")]
+    pub use_external_locations: bool,
+}
+/// Apache Polaris (Iceberg REST Catalog)
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PolarisCatalogConfig {
+    /// Polaris server URI
+    #[prost(string, tag = "1")]
+    pub uri: ::prost::alloc::string::String,
+    /// Warehouse name
+    #[prost(string, tag = "2")]
+    pub warehouse: ::prost::alloc::string::String,
+    /// Bearer token or OAuth client
+    #[prost(string, tag = "3")]
+    pub credential: ::prost::alloc::string::String,
+    /// OAuth2 server (optional)
+    #[prost(string, tag = "4")]
+    pub oauth_server_uri: ::prost::alloc::string::String,
+    /// OAuth2 scope
+    #[prost(string, tag = "5")]
+    pub scope: ::prost::alloc::string::String,
+}
+/// Apache Hive Metastore
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HiveCatalogConfig {
+    /// thrift://host:9083
+    #[prost(string, tag = "1")]
+    pub thrift_uri: ::prost::alloc::string::String,
+    /// Kerberos principal (optional)
+    #[prost(string, tag = "2")]
+    pub kerberos_principal: ::prost::alloc::string::String,
+    /// Keytab file path
+    #[prost(string, tag = "3")]
+    pub kerberos_keytab: ::prost::alloc::string::String,
+    /// Default database
+    #[prost(string, tag = "4")]
+    pub database: ::prost::alloc::string::String,
+    /// Enable TLS
+    #[prost(bool, tag = "5")]
+    pub use_ssl: bool,
+}
+/// Generic Iceberg Catalog (REST, JDBC, Hadoop)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IcebergCatalogConfig {
+    /// Catalog implementation class
+    #[prost(string, tag = "1")]
+    pub catalog_impl: ::prost::alloc::string::String,
+    /// Connection URI
+    #[prost(string, tag = "2")]
+    pub uri: ::prost::alloc::string::String,
+    /// Warehouse location
+    #[prost(string, tag = "3")]
+    pub warehouse: ::prost::alloc::string::String,
+    /// Iceberg catalog properties
+    #[prost(map = "string, string", tag = "4")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// For JDBC catalog
+    #[prost(string, tag = "10")]
+    pub jdbc_driver: ::prost::alloc::string::String,
+    #[prost(string, tag = "11")]
+    pub jdbc_user: ::prost::alloc::string::String,
+    #[prost(string, tag = "12")]
+    pub jdbc_password: ::prost::alloc::string::String,
+    /// For Hadoop catalog
+    #[prost(string, tag = "20")]
+    pub hadoop_conf_dir: ::prost::alloc::string::String,
+}
+/// Delta Lake Catalog
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeltaCatalogConfig {
+    /// s3://bucket/path, file:///path, abfs://...
+    #[prost(string, tag = "1")]
+    pub storage_url: ::prost::alloc::string::String,
+    /// AWS region (for S3 storage)
+    #[prost(string, optional, tag = "2")]
+    pub aws_region: ::core::option::Option<::prost::alloc::string::String>,
+    /// Azure storage account (for ADLS)
+    #[prost(string, optional, tag = "3")]
+    pub azure_storage_account: ::core::option::Option<::prost::alloc::string::String>,
+    /// JSON storage options (credentials, etc.)
+    #[prost(string, optional, tag = "4")]
+    pub storage_options: ::core::option::Option<::prost::alloc::string::String>,
+    /// Enable Delta checkpointing
+    #[prost(bool, tag = "5")]
+    pub enable_checkpoint: bool,
+    /// Checkpoint every N commits
+    #[prost(int32, optional, tag = "6")]
+    pub checkpoint_interval: ::core::option::Option<i32>,
+}
+/// Cross-region replication for native catalog
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplicationConfig {
+    /// Replica storage URLs
+    #[prost(string, repeated, tag = "1")]
+    pub replica_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(enumeration = "ReplicationMode", tag = "2")]
+    pub mode: i32,
+    /// Sync frequency
+    #[prost(int32, tag = "3")]
+    pub sync_interval_seconds: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Namespace {
+    /// Parent catalog name
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    /// Namespace hierarchy (e.g., \["db", "schema"\])
+    #[prost(string, repeated, tag = "2")]
+    pub levels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Namespace properties
+    #[prost(map = "string, string", tag = "3")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(message, optional, tag = "4")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "5")]
+    pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
+    /// Owner principal
+    #[prost(string, tag = "6")]
+    pub owner: ::prost::alloc::string::String,
+    /// Storage location (optional)
+    #[prost(string, tag = "7")]
+    pub location: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TableSchema {
+    /// Catalog name
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    /// Namespace path
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Table name
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "10")]
+    pub columns: ::prost::alloc::vec::Vec<ColumnDefinition>,
+    #[prost(message, repeated, tag = "11")]
+    pub partitions: ::prost::alloc::vec::Vec<PartitionSpec>,
+    #[prost(message, repeated, tag = "12")]
+    pub sort_orders: ::prost::alloc::vec::Vec<CatalogSortOrder>,
+    #[prost(message, optional, tag = "13")]
+    pub primary_key: ::core::option::Option<PrimaryKeySpec>,
+    #[prost(message, repeated, tag = "14")]
+    pub indexes: ::prost::alloc::vec::Vec<CatalogIndexDefinition>,
+    /// Storage format
+    #[prost(enumeration = "TableFormat", tag = "20")]
+    pub format: i32,
+    #[prost(enumeration = "TableType", tag = "21")]
+    pub table_type: i32,
+    /// Storage location
+    #[prost(string, tag = "22")]
+    pub location: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "23")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// Metadata
+    ///
+    /// Schema version ID
+    #[prost(int64, tag = "30")]
+    pub schema_id: i64,
+    #[prost(message, optional, tag = "31")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "32")]
+    pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(string, tag = "33")]
+    pub owner: ::prost::alloc::string::String,
+    /// For Iceberg tables
+    #[prost(int64, tag = "34")]
+    pub current_snapshot_id: i64,
+    /// ProximaDB-specific extensions
+    ///
+    /// Vector column settings
+    #[prost(message, optional, tag = "40")]
+    pub vector_config: ::core::option::Option<VectorColumnConfig>,
+    /// Full-text search settings
+    #[prost(message, optional, tag = "41")]
+    pub fulltext_config: ::core::option::Option<FullTextConfig>,
+}
+/// Column definition
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ColumnDefinition {
+    /// Column ID (stable across renames)
+    #[prost(int32, tag = "1")]
+    pub id: i32,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "DataType", tag = "3")]
+    pub data_type: i32,
+    #[prost(bool, tag = "4")]
+    pub nullable: bool,
+    /// SQL expression
+    #[prost(string, tag = "5")]
+    pub default_value: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub comment: ::prost::alloc::string::String,
+    /// Column metadata
+    #[prost(map = "string, string", tag = "7")]
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// For nested types
+    #[prost(message, repeated, tag = "10")]
+    pub children: ::prost::alloc::vec::Vec<ColumnDefinition>,
+}
+/// Schema evolution request
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SchemaEvolutionRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub changes: ::prost::alloc::vec::Vec<schema_evolution_request::EvolutionChange>,
+}
+/// Nested message and enum types in `SchemaEvolutionRequest`.
+pub mod schema_evolution_request {
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct EvolutionChange {
+        #[prost(oneof = "evolution_change::Change", tags = "1, 2, 3, 4")]
+        pub change: ::core::option::Option<evolution_change::Change>,
+    }
+    /// Nested message and enum types in `EvolutionChange`.
+    pub mod evolution_change {
+        #[derive(Clone, PartialEq, ::prost::Oneof)]
+        pub enum Change {
+            #[prost(message, tag = "1")]
+            AddColumn(super::super::AddColumnChange),
+            #[prost(message, tag = "2")]
+            DropColumn(super::super::DropColumnChange),
+            #[prost(message, tag = "3")]
+            RenameColumn(super::super::RenameColumnChange),
+            #[prost(message, tag = "4")]
+            ModifyColumn(super::super::ModifyColumnChange),
+        }
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AddColumnChange {
+    #[prost(message, optional, tag = "1")]
+    pub column: ::core::option::Option<ColumnDefinition>,
+    /// Insert after this column (optional)
+    #[prost(string, tag = "2")]
+    pub after_column: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropColumnChange {
+    #[prost(string, tag = "1")]
+    pub column_name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameColumnChange {
+    #[prost(string, tag = "1")]
+    pub old_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub new_name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ModifyColumnChange {
+    /// New column definition with same name
+    #[prost(message, optional, tag = "1")]
+    pub column: ::core::option::Option<ColumnDefinition>,
+}
+/// Partition specification
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PartitionSpec {
+    #[prost(int32, tag = "1")]
+    pub spec_id: i32,
+    #[prost(message, repeated, tag = "2")]
+    pub fields: ::prost::alloc::vec::Vec<PartitionField>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PartitionField {
+    /// Source column ID
+    #[prost(int32, tag = "1")]
+    pub source_id: i32,
+    /// Partition field ID
+    #[prost(int32, tag = "2")]
+    pub field_id: i32,
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "PartitionTransform", tag = "4")]
+    pub transform: i32,
+}
+/// Sort order for data files (catalog-specific)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CatalogSortOrder {
+    #[prost(int32, tag = "1")]
+    pub order_id: i32,
+    #[prost(message, repeated, tag = "2")]
+    pub fields: ::prost::alloc::vec::Vec<CatalogSortField>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CatalogSortField {
+    #[prost(int32, tag = "1")]
+    pub source_id: i32,
+    #[prost(enumeration = "SortDirection", tag = "2")]
+    pub direction: i32,
+    #[prost(enumeration = "NullOrder", tag = "3")]
+    pub null_order: i32,
+}
+/// Primary key specification
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PrimaryKeySpec {
+    /// Column IDs in primary key
+    #[prost(int32, repeated, tag = "1")]
+    pub column_ids: ::prost::alloc::vec::Vec<i32>,
+    /// Auto-generate if not provided
+    #[prost(bool, tag = "2")]
+    pub auto_generate: bool,
+}
+/// Secondary index definition (catalog-specific)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CatalogIndexDefinition {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "IndexType", tag = "2")]
+    pub index_type: i32,
+    /// Indexed column IDs
+    #[prost(int32, repeated, tag = "3")]
+    pub column_ids: ::prost::alloc::vec::Vec<i32>,
+    /// Index-specific options
+    #[prost(map = "string, string", tag = "4")]
+    pub options: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    /// For vector indexes
+    #[prost(message, optional, tag = "10")]
+    pub vector_config: ::core::option::Option<VectorIndexConfig>,
+}
+/// Vector index configuration
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct VectorIndexConfig {
+    #[prost(int32, tag = "1")]
+    pub dimension: i32,
+    /// "l2", "cosine", "dot_product"
+    #[prost(string, tag = "2")]
+    pub distance_metric: ::prost::alloc::string::String,
+    /// HNSW params
+    #[prost(int32, tag = "10")]
+    pub hnsw_m: i32,
+    #[prost(int32, tag = "11")]
+    pub hnsw_ef_construction: i32,
+    /// IVF params
+    #[prost(int32, tag = "20")]
+    pub ivf_nlist: i32,
+    #[prost(int32, tag = "21")]
+    pub ivf_nprobe: i32,
+    /// Quantization
+    ///
+    /// "none", "sq8", "pq", "binary"
+    #[prost(string, tag = "30")]
+    pub quantization: ::prost::alloc::string::String,
+}
+/// Vector column configuration
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct VectorColumnConfig {
+    #[prost(string, tag = "1")]
+    pub column_name: ::prost::alloc::string::String,
+    #[prost(int32, tag = "2")]
+    pub dimension: i32,
+    #[prost(string, tag = "3")]
+    pub distance_metric: ::prost::alloc::string::String,
+    /// Create vector index automatically
+    #[prost(bool, tag = "4")]
+    pub auto_index: bool,
+    /// For auto-embedding columns
+    #[prost(string, tag = "5")]
+    pub embedding_model: ::prost::alloc::string::String,
+}
+/// Full-text search configuration
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct FullTextConfig {
+    #[prost(string, repeated, tag = "1")]
+    pub indexed_columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// "standard", "english", "chinese"
+    #[prost(string, tag = "2")]
+    pub analyzer: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub enable_highlighting: bool,
+}
+/// Catalog operations
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateCatalogRequest {
+    #[prost(message, optional, tag = "1")]
+    pub config: ::core::option::Option<CatalogConfig>,
+    #[prost(bool, tag = "2")]
+    pub if_not_exists: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateCatalogResponse {
+    #[prost(string, tag = "1")]
+    pub catalog_name: ::prost::alloc::string::String,
+    /// False if already exists
+    #[prost(bool, tag = "2")]
+    pub created: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetCatalogRequest {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetCatalogResponse {
+    #[prost(message, optional, tag = "1")]
+    pub config: ::core::option::Option<CatalogConfig>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListCatalogsRequest {
+    /// Glob pattern (optional)
+    #[prost(string, tag = "1")]
+    pub pattern: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListCatalogsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub catalogs: ::prost::alloc::vec::Vec<CatalogConfig>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropCatalogRequest {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Drop all namespaces/tables
+    #[prost(bool, tag = "2")]
+    pub cascade: bool,
+    #[prost(bool, tag = "3")]
+    pub if_exists: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropCatalogResponse {
+    #[prost(bool, tag = "1")]
+    pub dropped: bool,
+}
+/// Namespace operations
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    /// Namespace path
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(map = "string, string", tag = "3")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(bool, tag = "4")]
+    pub if_not_exists: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub namespace: ::core::option::Option<Namespace>,
+    #[prost(bool, tag = "2")]
+    pub created: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetNamespaceRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetNamespaceResponse {
+    #[prost(message, optional, tag = "1")]
+    pub namespace: ::core::option::Option<Namespace>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CatalogListNamespacesRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    /// Parent namespace (empty for root)
+    #[prost(string, repeated, tag = "2")]
+    pub parent: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CatalogListNamespacesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub namespaces: ::prost::alloc::vec::Vec<Namespace>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropNamespaceRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(bool, tag = "3")]
+    pub cascade: bool,
+    #[prost(bool, tag = "4")]
+    pub if_exists: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropNamespaceResponse {
+    #[prost(bool, tag = "1")]
+    pub dropped: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespacePropertiesRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(map = "string, string", tag = "3")]
+    pub set_properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(string, repeated, tag = "4")]
+    pub remove_properties: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateNamespacePropertiesResponse {
+    #[prost(message, optional, tag = "1")]
+    pub namespace: ::core::option::Option<Namespace>,
+}
+/// Table operations
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateTableRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub schema: ::core::option::Option<TableSchema>,
+    #[prost(bool, tag = "5")]
+    pub if_not_exists: bool,
+    /// Replace existing table
+    #[prost(bool, tag = "6")]
+    pub or_replace: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateTableResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+    #[prost(bool, tag = "2")]
+    pub created: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTableRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    /// Include table stats
+    #[prost(bool, tag = "4")]
+    pub include_statistics: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetTableResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+    /// If requested
+    #[prost(message, optional, tag = "2")]
+    pub statistics: ::core::option::Option<TableStatistics>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListTablesRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Glob pattern (optional)
+    #[prost(string, tag = "3")]
+    pub pattern: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListTablesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub tables: ::prost::alloc::vec::Vec<TableSchema>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropTableRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    /// Delete underlying data
+    #[prost(bool, tag = "4")]
+    pub purge: bool,
+    #[prost(bool, tag = "5")]
+    pub if_exists: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropTableResponse {
+    #[prost(bool, tag = "1")]
+    pub dropped: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameTableRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub source_namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub source_name: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "4")]
+    pub target_namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "5")]
+    pub target_name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RenameTableResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AlterTableRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(oneof = "alter_table_request::Alteration", tags = "10, 11, 12")]
+    pub alteration: ::core::option::Option<alter_table_request::Alteration>,
+}
+/// Nested message and enum types in `AlterTableRequest`.
+pub mod alter_table_request {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Alteration {
+        #[prost(message, tag = "10")]
+        SetProperties(super::SetTableProperties),
+        #[prost(message, tag = "11")]
+        RemoveProperties(super::RemoveTableProperties),
+        #[prost(message, tag = "12")]
+        SetLocation(super::SetTableLocation),
+    }
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetTableProperties {
+    #[prost(map = "string, string", tag = "1")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RemoveTableProperties {
+    #[prost(string, repeated, tag = "1")]
+    pub keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetTableLocation {
+    #[prost(string, tag = "1")]
+    pub location: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AlterTableResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+}
+/// Schema evolution
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AddColumnRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub column: ::core::option::Option<ColumnDefinition>,
+    /// Position after this column
+    #[prost(string, tag = "5")]
+    pub after_column: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AddColumnResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropColumnRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub column: ::prost::alloc::string::String,
+    #[prost(bool, tag = "5")]
+    pub if_exists: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DropColumnResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RenameColumnRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub old_name: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub new_name: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RenameColumnResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UpdateColumnTypeRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub column: ::prost::alloc::string::String,
+    #[prost(enumeration = "DataType", tag = "5")]
+    pub new_type: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateColumnTypeResponse {
+    #[prost(message, optional, tag = "1")]
+    pub table: ::core::option::Option<TableSchema>,
+}
+/// Index operations
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateIndexRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "4")]
+    pub index: ::core::option::Option<CatalogIndexDefinition>,
+    #[prost(bool, tag = "5")]
+    pub if_not_exists: bool,
+    /// Build index asynchronously
+    #[prost(bool, tag = "6")]
+    pub r#async: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateIndexResponse {
+    #[prost(message, optional, tag = "1")]
+    pub index: ::core::option::Option<CatalogIndexDefinition>,
+    #[prost(bool, tag = "2")]
+    pub created: bool,
+    /// For async builds
+    #[prost(string, tag = "3")]
+    pub job_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropIndexRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub index_name: ::prost::alloc::string::String,
+    #[prost(bool, tag = "5")]
+    pub if_exists: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DropIndexResponse {
+    #[prost(bool, tag = "1")]
+    pub dropped: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListIndexesRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListIndexesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub indexes: ::prost::alloc::vec::Vec<CatalogIndexDefinition>,
+}
+/// Statistics
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TableStatistics {
+    #[prost(int64, tag = "1")]
+    pub row_count: i64,
+    #[prost(int64, tag = "2")]
+    pub data_size_bytes: i64,
+    #[prost(int64, tag = "3")]
+    pub index_size_bytes: i64,
+    #[prost(int64, tag = "4")]
+    pub file_count: i64,
+    #[prost(message, optional, tag = "5")]
+    pub last_updated: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(map = "string, message", tag = "6")]
+    pub column_stats: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ColumnStatistics,
+    >,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ColumnStatistics {
+    #[prost(int64, tag = "1")]
+    pub null_count: i64,
+    #[prost(int64, tag = "2")]
+    pub distinct_count: i64,
+    #[prost(message, optional, tag = "3")]
+    pub min_value: ::core::option::Option<SqlValue>,
+    #[prost(message, optional, tag = "4")]
+    pub max_value: ::core::option::Option<SqlValue>,
+    /// For string/binary columns
+    #[prost(double, tag = "5")]
+    pub avg_length: f64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTableStatisticsRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    /// Specific columns (empty = all)
+    #[prost(string, repeated, tag = "4")]
+    pub columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetTableStatisticsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub statistics: ::core::option::Option<TableStatistics>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RefreshStatisticsRequest {
+    #[prost(string, tag = "1")]
+    pub catalog: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub namespace: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "3")]
+    pub table: ::prost::alloc::string::String,
+    /// Full vs sampled stats
+    #[prost(bool, tag = "4")]
+    pub full_scan: bool,
+    /// Sample ratio if not full
+    #[prost(double, tag = "5")]
+    pub sample_ratio: f64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RefreshStatisticsResponse {
+    #[prost(message, optional, tag = "1")]
+    pub statistics: ::core::option::Option<TableStatistics>,
+}
+/// Catalog provider type
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CatalogType {
+    Unspecified = 0,
+    /// ProximaDB native catalog (cloud storage)
+    Native = 1,
+    /// AWS Glue Data Catalog
+    Glue = 2,
+    /// Databricks Unity Catalog
+    Unity = 3,
+    /// Apache Polaris (Iceberg REST)
+    Polaris = 4,
+    /// Apache Hive Metastore
+    Hive = 5,
+    /// Generic Iceberg REST Catalog
+    IcebergRest = 6,
+    /// Iceberg JDBC Catalog
+    IcebergJdbc = 7,
+    /// Iceberg Hadoop Catalog
+    IcebergHadoop = 8,
+    /// Delta Lake catalog
+    Delta = 9,
+}
+impl CatalogType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CATALOG_TYPE_UNSPECIFIED",
+            Self::Native => "CATALOG_TYPE_NATIVE",
+            Self::Glue => "CATALOG_TYPE_GLUE",
+            Self::Unity => "CATALOG_TYPE_UNITY",
+            Self::Polaris => "CATALOG_TYPE_POLARIS",
+            Self::Hive => "CATALOG_TYPE_HIVE",
+            Self::IcebergRest => "CATALOG_TYPE_ICEBERG_REST",
+            Self::IcebergJdbc => "CATALOG_TYPE_ICEBERG_JDBC",
+            Self::IcebergHadoop => "CATALOG_TYPE_ICEBERG_HADOOP",
+            Self::Delta => "CATALOG_TYPE_DELTA",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CATALOG_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "CATALOG_TYPE_NATIVE" => Some(Self::Native),
+            "CATALOG_TYPE_GLUE" => Some(Self::Glue),
+            "CATALOG_TYPE_UNITY" => Some(Self::Unity),
+            "CATALOG_TYPE_POLARIS" => Some(Self::Polaris),
+            "CATALOG_TYPE_HIVE" => Some(Self::Hive),
+            "CATALOG_TYPE_ICEBERG_REST" => Some(Self::IcebergRest),
+            "CATALOG_TYPE_ICEBERG_JDBC" => Some(Self::IcebergJdbc),
+            "CATALOG_TYPE_ICEBERG_HADOOP" => Some(Self::IcebergHadoop),
+            "CATALOG_TYPE_DELTA" => Some(Self::Delta),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ReplicationMode {
+    Unspecified = 0,
+    /// Eventual consistency
+    Async = 1,
+    /// Strong consistency (2PC)
+    Sync = 2,
+    /// Quorum writes
+    Quorum = 3,
+}
+impl ReplicationMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "REPLICATION_MODE_UNSPECIFIED",
+            Self::Async => "REPLICATION_MODE_ASYNC",
+            Self::Sync => "REPLICATION_MODE_SYNC",
+            Self::Quorum => "REPLICATION_MODE_QUORUM",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "REPLICATION_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "REPLICATION_MODE_ASYNC" => Some(Self::Async),
+            "REPLICATION_MODE_SYNC" => Some(Self::Sync),
+            "REPLICATION_MODE_QUORUM" => Some(Self::Quorum),
+            _ => None,
+        }
+    }
+}
+/// SQL data types with vector extensions
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DataType {
+    Unspecified = 0,
+    /// Primitive types
+    Boolean = 1,
+    Int8 = 2,
+    Int16 = 3,
+    Int32 = 4,
+    Int64 = 5,
+    Float32 = 6,
+    Float64 = 7,
+    /// With precision/scale
+    Decimal = 8,
+    String = 9,
+    Binary = 10,
+    Date = 11,
+    Time = 12,
+    Timestamp = 13,
+    Timestamptz = 14,
+    Uuid = 15,
+    /// Complex types
+    Array = 20,
+    Map = 21,
+    Struct = 22,
+    Json = 23,
+    /// ProximaDB extensions
+    ///
+    /// Fixed-dimension float vector
+    Vector = 30,
+    /// Sparse vector
+    SparseVector = 31,
+    /// Binary vector (bit-packed)
+    BinaryVector = 32,
+    /// Auto-generated embedding
+    Embedding = 33,
+}
+impl DataType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DATA_TYPE_UNSPECIFIED",
+            Self::Boolean => "DATA_TYPE_BOOLEAN",
+            Self::Int8 => "DATA_TYPE_INT8",
+            Self::Int16 => "DATA_TYPE_INT16",
+            Self::Int32 => "DATA_TYPE_INT32",
+            Self::Int64 => "DATA_TYPE_INT64",
+            Self::Float32 => "DATA_TYPE_FLOAT32",
+            Self::Float64 => "DATA_TYPE_FLOAT64",
+            Self::Decimal => "DATA_TYPE_DECIMAL",
+            Self::String => "DATA_TYPE_STRING",
+            Self::Binary => "DATA_TYPE_BINARY",
+            Self::Date => "DATA_TYPE_DATE",
+            Self::Time => "DATA_TYPE_TIME",
+            Self::Timestamp => "DATA_TYPE_TIMESTAMP",
+            Self::Timestamptz => "DATA_TYPE_TIMESTAMPTZ",
+            Self::Uuid => "DATA_TYPE_UUID",
+            Self::Array => "DATA_TYPE_ARRAY",
+            Self::Map => "DATA_TYPE_MAP",
+            Self::Struct => "DATA_TYPE_STRUCT",
+            Self::Json => "DATA_TYPE_JSON",
+            Self::Vector => "DATA_TYPE_VECTOR",
+            Self::SparseVector => "DATA_TYPE_SPARSE_VECTOR",
+            Self::BinaryVector => "DATA_TYPE_BINARY_VECTOR",
+            Self::Embedding => "DATA_TYPE_EMBEDDING",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DATA_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "DATA_TYPE_BOOLEAN" => Some(Self::Boolean),
+            "DATA_TYPE_INT8" => Some(Self::Int8),
+            "DATA_TYPE_INT16" => Some(Self::Int16),
+            "DATA_TYPE_INT32" => Some(Self::Int32),
+            "DATA_TYPE_INT64" => Some(Self::Int64),
+            "DATA_TYPE_FLOAT32" => Some(Self::Float32),
+            "DATA_TYPE_FLOAT64" => Some(Self::Float64),
+            "DATA_TYPE_DECIMAL" => Some(Self::Decimal),
+            "DATA_TYPE_STRING" => Some(Self::String),
+            "DATA_TYPE_BINARY" => Some(Self::Binary),
+            "DATA_TYPE_DATE" => Some(Self::Date),
+            "DATA_TYPE_TIME" => Some(Self::Time),
+            "DATA_TYPE_TIMESTAMP" => Some(Self::Timestamp),
+            "DATA_TYPE_TIMESTAMPTZ" => Some(Self::Timestamptz),
+            "DATA_TYPE_UUID" => Some(Self::Uuid),
+            "DATA_TYPE_ARRAY" => Some(Self::Array),
+            "DATA_TYPE_MAP" => Some(Self::Map),
+            "DATA_TYPE_STRUCT" => Some(Self::Struct),
+            "DATA_TYPE_JSON" => Some(Self::Json),
+            "DATA_TYPE_VECTOR" => Some(Self::Vector),
+            "DATA_TYPE_SPARSE_VECTOR" => Some(Self::SparseVector),
+            "DATA_TYPE_BINARY_VECTOR" => Some(Self::BinaryVector),
+            "DATA_TYPE_EMBEDDING" => Some(Self::Embedding),
+            _ => None,
+        }
+    }
+}
+/// Table storage format
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TableFormat {
+    Unspecified = 0,
+    /// Native ProximaDB format
+    Proximadb = 1,
+    /// Apache Iceberg
+    Iceberg = 2,
+    /// Delta Lake
+    Delta = 3,
+    /// Apache Hudi
+    Hudi = 4,
+    /// Plain Parquet
+    Parquet = 5,
+}
+impl TableFormat {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TABLE_FORMAT_UNSPECIFIED",
+            Self::Proximadb => "TABLE_FORMAT_PROXIMADB",
+            Self::Iceberg => "TABLE_FORMAT_ICEBERG",
+            Self::Delta => "TABLE_FORMAT_DELTA",
+            Self::Hudi => "TABLE_FORMAT_HUDI",
+            Self::Parquet => "TABLE_FORMAT_PARQUET",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TABLE_FORMAT_UNSPECIFIED" => Some(Self::Unspecified),
+            "TABLE_FORMAT_PROXIMADB" => Some(Self::Proximadb),
+            "TABLE_FORMAT_ICEBERG" => Some(Self::Iceberg),
+            "TABLE_FORMAT_DELTA" => Some(Self::Delta),
+            "TABLE_FORMAT_HUDI" => Some(Self::Hudi),
+            "TABLE_FORMAT_PARQUET" => Some(Self::Parquet),
+            _ => None,
+        }
+    }
+}
+/// Table type
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TableType {
+    Unspecified = 0,
+    /// ProximaDB manages storage
+    Managed = 1,
+    /// External storage location
+    External = 2,
+    /// Logical view
+    View = 3,
+    /// Materialized view
+    MaterializedView = 4,
+    /// Session-scoped temp table
+    Temporary = 5,
+}
+impl TableType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TABLE_TYPE_UNSPECIFIED",
+            Self::Managed => "TABLE_TYPE_MANAGED",
+            Self::External => "TABLE_TYPE_EXTERNAL",
+            Self::View => "TABLE_TYPE_VIEW",
+            Self::MaterializedView => "TABLE_TYPE_MATERIALIZED_VIEW",
+            Self::Temporary => "TABLE_TYPE_TEMPORARY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TABLE_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "TABLE_TYPE_MANAGED" => Some(Self::Managed),
+            "TABLE_TYPE_EXTERNAL" => Some(Self::External),
+            "TABLE_TYPE_VIEW" => Some(Self::View),
+            "TABLE_TYPE_MATERIALIZED_VIEW" => Some(Self::MaterializedView),
+            "TABLE_TYPE_TEMPORARY" => Some(Self::Temporary),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PartitionTransform {
+    Unspecified = 0,
+    Identity = 1,
+    Year = 2,
+    Month = 3,
+    Day = 4,
+    Hour = 5,
+    /// Hash bucket
+    Bucket = 6,
+    /// Truncate string/number
+    Truncate = 7,
+}
+impl PartitionTransform {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PARTITION_TRANSFORM_UNSPECIFIED",
+            Self::Identity => "PARTITION_TRANSFORM_IDENTITY",
+            Self::Year => "PARTITION_TRANSFORM_YEAR",
+            Self::Month => "PARTITION_TRANSFORM_MONTH",
+            Self::Day => "PARTITION_TRANSFORM_DAY",
+            Self::Hour => "PARTITION_TRANSFORM_HOUR",
+            Self::Bucket => "PARTITION_TRANSFORM_BUCKET",
+            Self::Truncate => "PARTITION_TRANSFORM_TRUNCATE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PARTITION_TRANSFORM_UNSPECIFIED" => Some(Self::Unspecified),
+            "PARTITION_TRANSFORM_IDENTITY" => Some(Self::Identity),
+            "PARTITION_TRANSFORM_YEAR" => Some(Self::Year),
+            "PARTITION_TRANSFORM_MONTH" => Some(Self::Month),
+            "PARTITION_TRANSFORM_DAY" => Some(Self::Day),
+            "PARTITION_TRANSFORM_HOUR" => Some(Self::Hour),
+            "PARTITION_TRANSFORM_BUCKET" => Some(Self::Bucket),
+            "PARTITION_TRANSFORM_TRUNCATE" => Some(Self::Truncate),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SortDirection {
+    Unspecified = 0,
+    Asc = 1,
+    Desc = 2,
+}
+impl SortDirection {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SORT_DIRECTION_UNSPECIFIED",
+            Self::Asc => "SORT_DIRECTION_ASC",
+            Self::Desc => "SORT_DIRECTION_DESC",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SORT_DIRECTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "SORT_DIRECTION_ASC" => Some(Self::Asc),
+            "SORT_DIRECTION_DESC" => Some(Self::Desc),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum NullOrder {
+    Unspecified = 0,
+    NullsFirst = 1,
+    NullsLast = 2,
+}
+impl NullOrder {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "NULL_ORDER_UNSPECIFIED",
+            Self::NullsFirst => "NULL_ORDER_NULLS_FIRST",
+            Self::NullsLast => "NULL_ORDER_NULLS_LAST",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "NULL_ORDER_UNSPECIFIED" => Some(Self::Unspecified),
+            "NULL_ORDER_NULLS_FIRST" => Some(Self::NullsFirst),
+            "NULL_ORDER_NULLS_LAST" => Some(Self::NullsLast),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum IndexType {
+    Unspecified = 0,
+    /// B-tree (range queries)
+    Btree = 1,
+    /// Hash (equality queries)
+    Hash = 2,
+    /// Bloom filter (membership)
+    Bloom = 3,
+    /// Full-text search
+    Fulltext = 4,
+    /// HNSW vector index
+    VectorHnsw = 5,
+    /// IVF vector index
+    VectorIvf = 6,
+    /// Product quantization
+    VectorPq = 7,
+    /// Geospatial (R-tree)
+    Spatial = 8,
+}
+impl IndexType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "INDEX_TYPE_UNSPECIFIED",
+            Self::Btree => "INDEX_TYPE_BTREE",
+            Self::Hash => "INDEX_TYPE_HASH",
+            Self::Bloom => "INDEX_TYPE_BLOOM",
+            Self::Fulltext => "INDEX_TYPE_FULLTEXT",
+            Self::VectorHnsw => "INDEX_TYPE_VECTOR_HNSW",
+            Self::VectorIvf => "INDEX_TYPE_VECTOR_IVF",
+            Self::VectorPq => "INDEX_TYPE_VECTOR_PQ",
+            Self::Spatial => "INDEX_TYPE_SPATIAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "INDEX_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "INDEX_TYPE_BTREE" => Some(Self::Btree),
+            "INDEX_TYPE_HASH" => Some(Self::Hash),
+            "INDEX_TYPE_BLOOM" => Some(Self::Bloom),
+            "INDEX_TYPE_FULLTEXT" => Some(Self::Fulltext),
+            "INDEX_TYPE_VECTOR_HNSW" => Some(Self::VectorHnsw),
+            "INDEX_TYPE_VECTOR_IVF" => Some(Self::VectorIvf),
+            "INDEX_TYPE_VECTOR_PQ" => Some(Self::VectorPq),
+            "INDEX_TYPE_SPATIAL" => Some(Self::Spatial),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod catalog_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    #[derive(Debug, Clone)]
+    pub struct CatalogServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl CatalogServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> CatalogServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> CatalogServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            CatalogServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Catalog management
+        pub async fn create_catalog(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateCatalogRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateCatalogResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/CreateCatalog",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "CreateCatalog"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_catalog(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetCatalogRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetCatalogResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/GetCatalog",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "GetCatalog"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_catalogs(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListCatalogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListCatalogsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/ListCatalogs",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "ListCatalogs"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn drop_catalog(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DropCatalogRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropCatalogResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/DropCatalog",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "DropCatalog"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Namespace management
+        pub async fn create_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/CreateNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CatalogService", "CreateNamespace"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/GetNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "GetNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_namespaces(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CatalogListNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CatalogListNamespacesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/ListNamespaces",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CatalogService", "ListNamespaces"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn drop_namespace(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DropNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropNamespaceResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/DropNamespace",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "DropNamespace"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_namespace_properties(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateNamespacePropertiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateNamespacePropertiesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/UpdateNamespaceProperties",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.CatalogService",
+                        "UpdateNamespaceProperties",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Table management
+        pub async fn create_table(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateTableResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/CreateTable",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "CreateTable"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_table(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTableResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/GetTable",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "GetTable"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_tables(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListTablesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListTablesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/ListTables",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "ListTables"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn drop_table(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DropTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropTableResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/DropTable",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "DropTable"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn rename_table(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RenameTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RenameTableResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/RenameTable",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "RenameTable"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn alter_table(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AlterTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AlterTableResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/AlterTable",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "AlterTable"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Schema evolution
+        pub async fn add_column(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AddColumnRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AddColumnResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/AddColumn",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "AddColumn"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn drop_column(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DropColumnRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropColumnResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/DropColumn",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "DropColumn"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn rename_column(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RenameColumnRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RenameColumnResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/RenameColumn",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "RenameColumn"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_column_type(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateColumnTypeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateColumnTypeResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/UpdateColumnType",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CatalogService", "UpdateColumnType"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Index management
+        pub async fn create_index(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateIndexResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/CreateIndex",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "CreateIndex"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn drop_index(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DropIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropIndexResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/DropIndex",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "DropIndex"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_indexes(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListIndexesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListIndexesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/ListIndexes",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.CatalogService", "ListIndexes"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Statistics and metadata
+        pub async fn get_table_statistics(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTableStatisticsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTableStatisticsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/GetTableStatistics",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CatalogService", "GetTableStatistics"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn refresh_statistics(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RefreshStatisticsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RefreshStatisticsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CatalogService/RefreshStatistics",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CatalogService", "RefreshStatistics"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod catalog_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with CatalogServiceServer.
+    #[async_trait]
+    pub trait CatalogService: std::marker::Send + std::marker::Sync + 'static {
+        /// Catalog management
+        async fn create_catalog(
+            &self,
+            request: tonic::Request<super::CreateCatalogRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateCatalogResponse>,
+            tonic::Status,
+        >;
+        async fn get_catalog(
+            &self,
+            request: tonic::Request<super::GetCatalogRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetCatalogResponse>,
+            tonic::Status,
+        >;
+        async fn list_catalogs(
+            &self,
+            request: tonic::Request<super::ListCatalogsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListCatalogsResponse>,
+            tonic::Status,
+        >;
+        async fn drop_catalog(
+            &self,
+            request: tonic::Request<super::DropCatalogRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropCatalogResponse>,
+            tonic::Status,
+        >;
+        /// Namespace management
+        async fn create_namespace(
+            &self,
+            request: tonic::Request<super::CreateNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateNamespaceResponse>,
+            tonic::Status,
+        >;
+        async fn get_namespace(
+            &self,
+            request: tonic::Request<super::GetNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetNamespaceResponse>,
+            tonic::Status,
+        >;
+        async fn list_namespaces(
+            &self,
+            request: tonic::Request<super::CatalogListNamespacesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CatalogListNamespacesResponse>,
+            tonic::Status,
+        >;
+        async fn drop_namespace(
+            &self,
+            request: tonic::Request<super::DropNamespaceRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropNamespaceResponse>,
+            tonic::Status,
+        >;
+        async fn update_namespace_properties(
+            &self,
+            request: tonic::Request<super::UpdateNamespacePropertiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateNamespacePropertiesResponse>,
+            tonic::Status,
+        >;
+        /// Table management
+        async fn create_table(
+            &self,
+            request: tonic::Request<super::CreateTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateTableResponse>,
+            tonic::Status,
+        >;
+        async fn get_table(
+            &self,
+            request: tonic::Request<super::GetTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTableResponse>,
+            tonic::Status,
+        >;
+        async fn list_tables(
+            &self,
+            request: tonic::Request<super::ListTablesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListTablesResponse>,
+            tonic::Status,
+        >;
+        async fn drop_table(
+            &self,
+            request: tonic::Request<super::DropTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropTableResponse>,
+            tonic::Status,
+        >;
+        async fn rename_table(
+            &self,
+            request: tonic::Request<super::RenameTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RenameTableResponse>,
+            tonic::Status,
+        >;
+        async fn alter_table(
+            &self,
+            request: tonic::Request<super::AlterTableRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AlterTableResponse>,
+            tonic::Status,
+        >;
+        /// Schema evolution
+        async fn add_column(
+            &self,
+            request: tonic::Request<super::AddColumnRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AddColumnResponse>,
+            tonic::Status,
+        >;
+        async fn drop_column(
+            &self,
+            request: tonic::Request<super::DropColumnRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropColumnResponse>,
+            tonic::Status,
+        >;
+        async fn rename_column(
+            &self,
+            request: tonic::Request<super::RenameColumnRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RenameColumnResponse>,
+            tonic::Status,
+        >;
+        async fn update_column_type(
+            &self,
+            request: tonic::Request<super::UpdateColumnTypeRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpdateColumnTypeResponse>,
+            tonic::Status,
+        >;
+        /// Index management
+        async fn create_index(
+            &self,
+            request: tonic::Request<super::CreateIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateIndexResponse>,
+            tonic::Status,
+        >;
+        async fn drop_index(
+            &self,
+            request: tonic::Request<super::DropIndexRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DropIndexResponse>,
+            tonic::Status,
+        >;
+        async fn list_indexes(
+            &self,
+            request: tonic::Request<super::ListIndexesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListIndexesResponse>,
+            tonic::Status,
+        >;
+        /// Statistics and metadata
+        async fn get_table_statistics(
+            &self,
+            request: tonic::Request<super::GetTableStatisticsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTableStatisticsResponse>,
+            tonic::Status,
+        >;
+        async fn refresh_statistics(
+            &self,
+            request: tonic::Request<super::RefreshStatisticsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RefreshStatisticsResponse>,
+            tonic::Status,
+        >;
+    }
+    #[derive(Debug)]
+    pub struct CatalogServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> CatalogServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for CatalogServiceServer<T>
+    where
+        T: CatalogService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v1.CatalogService/CreateCatalog" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateCatalogSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::CreateCatalogRequest>
+                    for CreateCatalogSvc<T> {
+                        type Response = super::CreateCatalogResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateCatalogRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::create_catalog(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateCatalogSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/GetCatalog" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetCatalogSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::GetCatalogRequest>
+                    for GetCatalogSvc<T> {
+                        type Response = super::GetCatalogResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetCatalogRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::get_catalog(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetCatalogSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/ListCatalogs" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListCatalogsSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::ListCatalogsRequest>
+                    for ListCatalogsSvc<T> {
+                        type Response = super::ListCatalogsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListCatalogsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::list_catalogs(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListCatalogsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/DropCatalog" => {
+                    #[allow(non_camel_case_types)]
+                    struct DropCatalogSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::DropCatalogRequest>
+                    for DropCatalogSvc<T> {
+                        type Response = super::DropCatalogResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DropCatalogRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::drop_catalog(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DropCatalogSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/CreateNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateNamespaceSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::CreateNamespaceRequest>
+                    for CreateNamespaceSvc<T> {
+                        type Response = super::CreateNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateNamespaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::create_namespace(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/GetNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetNamespaceSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::GetNamespaceRequest>
+                    for GetNamespaceSvc<T> {
+                        type Response = super::GetNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetNamespaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::get_namespace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/ListNamespaces" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListNamespacesSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::CatalogListNamespacesRequest>
+                    for ListNamespacesSvc<T> {
+                        type Response = super::CatalogListNamespacesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CatalogListNamespacesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::list_namespaces(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListNamespacesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/DropNamespace" => {
+                    #[allow(non_camel_case_types)]
+                    struct DropNamespaceSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::DropNamespaceRequest>
+                    for DropNamespaceSvc<T> {
+                        type Response = super::DropNamespaceResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DropNamespaceRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::drop_namespace(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DropNamespaceSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/UpdateNamespaceProperties" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateNamespacePropertiesSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<
+                        super::UpdateNamespacePropertiesRequest,
+                    > for UpdateNamespacePropertiesSvc<T> {
+                        type Response = super::UpdateNamespacePropertiesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::UpdateNamespacePropertiesRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::update_namespace_properties(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateNamespacePropertiesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/CreateTable" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateTableSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::CreateTableRequest>
+                    for CreateTableSvc<T> {
+                        type Response = super::CreateTableResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateTableRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::create_table(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateTableSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/GetTable" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTableSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::GetTableRequest>
+                    for GetTableSvc<T> {
+                        type Response = super::GetTableResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetTableRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::get_table(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTableSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/ListTables" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListTablesSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::ListTablesRequest>
+                    for ListTablesSvc<T> {
+                        type Response = super::ListTablesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListTablesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::list_tables(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListTablesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/DropTable" => {
+                    #[allow(non_camel_case_types)]
+                    struct DropTableSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::DropTableRequest>
+                    for DropTableSvc<T> {
+                        type Response = super::DropTableResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DropTableRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::drop_table(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DropTableSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/RenameTable" => {
+                    #[allow(non_camel_case_types)]
+                    struct RenameTableSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::RenameTableRequest>
+                    for RenameTableSvc<T> {
+                        type Response = super::RenameTableResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RenameTableRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::rename_table(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RenameTableSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/AlterTable" => {
+                    #[allow(non_camel_case_types)]
+                    struct AlterTableSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::AlterTableRequest>
+                    for AlterTableSvc<T> {
+                        type Response = super::AlterTableResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AlterTableRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::alter_table(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AlterTableSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/AddColumn" => {
+                    #[allow(non_camel_case_types)]
+                    struct AddColumnSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::AddColumnRequest>
+                    for AddColumnSvc<T> {
+                        type Response = super::AddColumnResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AddColumnRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::add_column(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AddColumnSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/DropColumn" => {
+                    #[allow(non_camel_case_types)]
+                    struct DropColumnSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::DropColumnRequest>
+                    for DropColumnSvc<T> {
+                        type Response = super::DropColumnResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DropColumnRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::drop_column(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DropColumnSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/RenameColumn" => {
+                    #[allow(non_camel_case_types)]
+                    struct RenameColumnSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::RenameColumnRequest>
+                    for RenameColumnSvc<T> {
+                        type Response = super::RenameColumnResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RenameColumnRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::rename_column(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RenameColumnSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/UpdateColumnType" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateColumnTypeSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::UpdateColumnTypeRequest>
+                    for UpdateColumnTypeSvc<T> {
+                        type Response = super::UpdateColumnTypeResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateColumnTypeRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::update_column_type(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateColumnTypeSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/CreateIndex" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateIndexSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::CreateIndexRequest>
+                    for CreateIndexSvc<T> {
+                        type Response = super::CreateIndexResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateIndexRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::create_index(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateIndexSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/DropIndex" => {
+                    #[allow(non_camel_case_types)]
+                    struct DropIndexSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::DropIndexRequest>
+                    for DropIndexSvc<T> {
+                        type Response = super::DropIndexResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DropIndexRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::drop_index(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DropIndexSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/ListIndexes" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListIndexesSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::ListIndexesRequest>
+                    for ListIndexesSvc<T> {
+                        type Response = super::ListIndexesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListIndexesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::list_indexes(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListIndexesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/GetTableStatistics" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTableStatisticsSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::GetTableStatisticsRequest>
+                    for GetTableStatisticsSvc<T> {
+                        type Response = super::GetTableStatisticsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetTableStatisticsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::get_table_statistics(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTableStatisticsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CatalogService/RefreshStatistics" => {
+                    #[allow(non_camel_case_types)]
+                    struct RefreshStatisticsSvc<T: CatalogService>(pub Arc<T>);
+                    impl<
+                        T: CatalogService,
+                    > tonic::server::UnaryService<super::RefreshStatisticsRequest>
+                    for RefreshStatisticsSvc<T> {
+                        type Response = super::RefreshStatisticsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RefreshStatisticsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CatalogService>::refresh_statistics(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RefreshStatisticsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for CatalogServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v1.CatalogService";
+    impl<T> tonic::server::NamedService for CatalogServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
     }
 }

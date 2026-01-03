@@ -3,313 +3,311 @@
 :toclevels: 2
 :icons: font
 
-image:https://img.shields.io/badge/version-0.1.5-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust]
-
 [.lead]
-**Unified Vector + Graph Database for AI Applications**
+**Developer‑first multi‑model database for vectors, documents, graphs, and observability data**
 
-ProximaDB combines semantic vector search with native graph traversal in a single database, eliminating the need to glue together separate systems for RAG, knowledge graphs, and recommendation engines.
+ProximaDB lets builders store and query embeddings, JSON documents, graph relationships, and
+observability logs/metrics in one system. It is optimized for early‑stage product teams who want
+one data plane for RAG, code search, recommendation graphs, and telemetry prototypes.
 
 ---
 
-== Why ProximaDB?
+== Why Developers Use ProximaDB
 
-=== The Problem
+* **One API surface** for embeddings, documents, graphs, and observability
+* **Unified WAL** for durability across vector, document, and observability writes
+* **Multi‑engine storage** tuned for write‑heavy, read‑heavy, or analytics workloads
+* **Cross‑model queries** (vector + document + graph + logs) in a single request
+* **SQL interface with extensions** - pgvector-compatible `<->` operator, GRAPH_QUERY, DOCUMENT_QUERY
 
-Building AI applications today requires multiple databases:
+=== Multi-Model: The Key Differentiator
+
+Traditional vector databases (Pinecone, Weaviate, Milvus, Qdrant) are single-model. They excel at vector search but require external systems for graphs, documents, and logs. ProximaDB unifies all data models behind a single SQL interface:
+
+|===
+| Capability | Pinecone | Weaviate | Milvus | ProximaDB
+
+| Vector Search | Yes | Yes | Yes | Yes
+| Graph Traversal | No | No | No | *Yes* (ORION engine)
+| Document Store | No | Limited | No | *Yes* (WAL-backed)
+| Observability | No | No | No | *Yes* (Logs + Metrics)
+| Cross-Model Joins | No | No | No | *Yes* (SQL)
+| SQL Interface | No | GraphQL | Limited | *Full SQL + Extensions*
+|===
+
+*Example cross-model query:*
+[source,sql]
+----
+-- Find similar products for a user, then get reviews from the document store
+SELECT u.name, v.product_id, v.score, d.review_text
+FROM users u
+JOIN LATERAL VECTOR_SEARCH('products', u.preference_vector, 10) v ON true
+JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') d ON true;
+----
+
+---
+
+== Architecture At A Glance
 
 [source,mermaid]
 ----
 %%{init: {"theme": "neutral"}}%%
-graph LR
-    subgraph TRADITIONAL["Traditional Approach"]
-        A[Vector DB] -->|ETL| B[Graph DB]
-        B -->|Sync| C[Metadata Store]
-        C -->|Join| A
-    end
+flowchart TB
+  subgraph API[API Layer]
+    UNIFIED[Unified Port :5678
+REST + gRPC + Arrow Flight]
+    PG[Postgres Wire :5433]
+  end
 
-    subgraph PROXIMADB["ProximaDB"]
-        D[Unified Engine]
-    end
+  subgraph Services[Services]
+    VEC[Vector Ops]
+    DOC[Document Ops]
+    GRAPH[Graph Ops]
+    OBS[Observability Ops]
+    UQ[Unified Query]
+  end
 
-    style TRADITIONAL fill:#ffe6e6,stroke:#e06666
-    style PROXIMADB fill:#e6ffe6,stroke:#93c47d
+  subgraph DataPlane[Data Plane]
+    WAL[Unified WAL]
+    MEM[Memtables]
+    ENG[Vector Engines
+(SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR)]
+    GRAPHENG[Graph Engines
+(ORION, PULSAR, QUASAR)]
+    OBSSTORE[Observability Storage
+(partitioned logs, time‑series, traces)]
+  end
+
+  API --> Services --> WAL --> MEM
+  MEM --> ENG
+  MEM --> GRAPHENG
+  MEM --> OBSSTORE
 ----
-
-* **Vector databases** find similar items but lose relationship context
-* **Graph databases** capture relationships but lack semantic understanding
-* **Gluing them together** adds latency, complexity, and consistency issues
-
-=== The Solution
-
-ProximaDB provides **hybrid queries** that combine vector similarity with graph traversal:
-
-[source,python]
-----
-# Find similar papers AND their citation network in one query
-results = db.hybrid_search(
-    vector=query_embedding,      # Semantic similarity
-    graph_traversal="2-hop",     # Relationship context
-    filters={"year": ">2020"}    # Metadata constraints
-)
-# Returns: Similar papers + their citations + shared authors
-----
-
-**Result**: Sub-3ms hybrid queries instead of 50-100ms with separate systems.
-
----
-
-== What ProximaDB Offers
-
-[cols="2,3", options="header"]
-|===
-| Capability | Description
-
-| **Semantic Knowledge Store (SKS)**
-| Unified vector + graph queries for knowledge-intensive applications
-
-| **6 Storage Engines**
-| Auto-selected based on workload (write-heavy, read-heavy, analytics)
-
-| **Type-Safe Filtering**
-| Metadata filters that often *speed up* queries (measured -20%)
-
-| **100% Recall**
-| Exact search guarantees - no missed results
-
-| **Single Binary**
-| No dependencies, no distributed setup for getting started
-|===
-
-=== Performance Characteristics
-
-[cols="1,2,2", options="header"]
-|===
-| Workload | Engine | Characteristics
-
-| **Real-time writes**
-| SST (LZ4)
-| ~5ms search, balanced read/write
-
-| **Spatial/clustered data**
-| HELIX
-| Hilbert curves, PCA optimization
-
-| **Analytics/batch**
-| VIPER
-| Columnar Parquet, 70% compression
-
-| **Low-latency**
-| SWIFT
-| 28ms flush, frequent updates
-
-| **Graph traversal**
-| ORION
-| CSR format, <1μs node lookup
-|===
-
----
-
-== How It Works
-
-=== Architecture
-
-[source,mermaid]
-----
-%%{init: {"theme": "neutral"}}%%
-graph TB
-    API["REST/gRPC API"] --> SKS["Semantic Knowledge Store"]
-
-    SKS --> VECTOR["Vector Search<br/>(6 engines)"]
-    SKS --> GRAPH["Graph Traversal<br/>(CSR format)"]
-
-    VECTOR --> STORAGE["Unified Storage<br/>(WAL + Persistence)"]
-    GRAPH --> STORAGE
-
-    style SKS fill:#e6f3ff,stroke:#4a90e2,stroke-width:3px
-    style VECTOR fill:#e6ffe6,stroke:#93c47d
-    style GRAPH fill:#fff3e6,stroke:#f4a261
-----
-
-=== Data Flow
-
-1. **Ingest**: Vectors + metadata + relationships stored atomically
-2. **Index**: Auto-selected engine builds optimized indexes
-3. **Query**: Hybrid search combines similarity + traversal + filters
-4. **Return**: Unified results with provenance and relationships
 
 ---
 
 == Quick Start
 
-=== 1. Run ProximaDB
+=== Docker
 
 [source,bash]
 ----
-# From source (Rust 1.88+)
+docker run -it --rm \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  proximadb/proximadb:latest
+----
+
+=== From Source (Rust)
+
+[source,bash]
+----
 git clone https://github.com/vjsingh1984/proximaDB
-cd proximaDB && cargo run --release --bin proximadb-server
+cd proximaDB
+cargo run --release --bin proximadb-server
 ----
 
-=== 2. Create a Collection
+---
 
-[source,bash]
-----
-curl -X POST http://localhost:5678/api/v1/collections \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "documents",
-    "dimension": 768,
-    "filterable_columns": [
-      {"name": "category", "data_type": "STRING"},
-      {"name": "date", "data_type": "INT64"}
-    ]
-  }'
-----
+== Core Models
 
-=== 3. Search with Filters
+=== Vectors
+Embeddings + metadata with similarity search and filtering.
+
+=== Documents
+JSON documents with WAL‑backed durability and indexed paths (read path is in‑memory today).
+
+=== Graphs
+Nodes/edges with traversal support (ORION engine default).
+
+=== Observability
+Logs and metrics with WAL‑backed ingestion, partitioned storage, and aggregation.
+
+---
+
+== API Examples (REST)
+
+=== Vector Search
 
 [source,bash]
 ----
 curl -X POST http://localhost:5678/api/v1/search \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "documents",
-    "query_vector": [0.1, 0.2, ...],
+    "collection_id": "docs",
+    "query_vector": [0.1, 0.2, 0.3],
     "top_k": 10,
-    "filter_expression": {
-      "field": "category", "operator": "EQUALS", "value": "technical"
-    }
+    "metadata_filters": [
+      {"field": "category", "operator": "EQUALS", "value": {"stringValue": "tech"}}
+    ]
+  }'
+----
+
+=== Document Insert
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/documents/collections/docs/documents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document": {"title": "Runbook", "service": "api", "severity": "warn"}
+  }'
+----
+
+=== Graph Traverse
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/traverse \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_node_id": "service-api",
+    "max_depth": 2
+  }'
+----
+
+=== Log Ingestion
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/observability/namespaces/prod/logs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "request failed",
+    "severity": "error",
+    "service": "api"
+  }'
+----
+
+=== Federated SQL Query (Multi-Model)
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/unified/federated \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2, 0.3]', 10)"
   }'
 ----
 
 ---
 
-== Who Is This For?
+== SQL Extensions
 
-=== AI/ML Engineers
+ProximaDB extends standard SQL with functions for each data model:
 
-**Building RAG, recommendations, or knowledge graphs?**
+=== Vector Search
 
-ProximaDB eliminates the ETL pipeline between vector and graph databases:
+[source,sql]
+----
+-- pgvector-compatible distance operator
+SELECT * FROM products ORDER BY embedding <-> '[0.1,0.2,...]'::vector LIMIT 10;
 
-* Single API for embeddings + relationships
-* Atomic transactions across modalities
-* Built-in provenance tracking
+-- Explicit function call
+SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2, 0.3]', 10);
+----
 
-=== Backend Developers
+=== Graph Traversal
 
-**Need vector search with production constraints?**
+[source,sql]
+----
+-- Embedded Cypher syntax
+SELECT * FROM GRAPH_QUERY('MATCH (a:Person)-[:KNOWS]->(b) RETURN b.name');
 
-* Type-safe metadata filtering (not string-only)
-* Measured performance (all claims benchmarked)
-* Single binary deployment
+-- Find friends-of-friends
+SELECT * FROM GRAPH_QUERY('MATCH (a:Person {name: "Alice"})-[:KNOWS*2]->(fof) RETURN fof');
+----
 
-=== Architects
+=== Document Query
 
-**Evaluating vector database options?**
+[source,sql]
+----
+-- Query with JSON path filter
+SELECT * FROM DOCUMENT_QUERY('orders', 'status = "pending"');
+----
 
-[cols="1,2,2"]
+=== Observability
+
+[source,sql]
+----
+-- Query logs
+SELECT * FROM LOGS('production') WHERE timestamp > now() - interval '1h';
+
+-- Query metrics
+SELECT * FROM METRICS('system') WHERE metric_name = 'cpu_usage';
+----
+
+=== Cross-Model Joins
+
+[source,sql]
+----
+-- Vector + Document: Similar products with reviews
+SELECT v.product_id, v.score, d.review_text
+FROM VECTOR_SEARCH('products', '[0.1,0.2]', 10) v
+JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') d ON true;
+
+-- Vector + Graph: Similar items filtered by category relationships
+SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2]', 100)
+WHERE id IN (
+  SELECT target FROM GRAPH_QUERY('MATCH (:Category {name:"Electronics"})-[:CONTAINS]->(p) RETURN p.id')
+);
+
+-- Logs + Graph: Errors with service dependencies
+SELECT l.timestamp, l.message, g.dependency
+FROM LOGS('errors') l
+JOIN LATERAL GRAPH_QUERY('MATCH (s:Service {name: "' || l.service || '"})-[:DEPENDS_ON]->(d) RETURN d.name as dependency') g ON true;
+----
+
+---
+
+== Feature Status (Builder View)
+
 |===
-| Concern | ProximaDB | Typical Alternative
+| Capability | Status | Notes
 
-| **Consistency**
-| ACID across vector + graph
-| Eventually consistent
-
-| **Filtering**
-| -20% overhead (speeds up!)
-| +10-30% overhead
-
-| **Deployment**
-| Single binary
-| Multiple services
+| Vector search + filters | Stable | 6 storage engines, AXIS indexes, metadata filters
+| Document store | Stable | WAL‑backed, JSON path queries, full‑text search
+| Graph traversal | Stable | ORION (in‑memory CSR), WAL persistence, algorithms
+| Observability logs | Stable | WAL‑backed, partitioned storage, 6 SIEM adapters
+| Observability metrics | Stable | Time‑series aggregation, downsampling
+| Unified multi‑model query | Stable | Cross‑model joins, parallel execution
+| Postgres wire protocol | Stable | DDL/DML, prepared statements, pgvector compatible
+| Unified port mode | Stable | REST + gRPC + Arrow Flight on single port
+| Web UI dashboard | Stable | SQL editor, graph visualization, dark/light theme
+| Python SDK | Stable | Graph analytics, AutoML, observability, security
 |===
 
 ---
 
-== Use Cases
+== Web UI Dashboard
 
-[cols="2,3,2"]
-|===
-| Use Case | Why ProximaDB | Key Feature
+ProximaDB includes a built‑in React dashboard for data exploration:
 
-| **RAG Systems**
-| Source attribution + semantic search
-| Hybrid queries
+[source,bash]
+----
+cd ui && npm install && npm start
+----
 
-| **Knowledge Graphs**
-| Combine entity embeddings with relationships
-| SKS unified model
+Features:
 
-| **Recommendations**
-| User similarity + social graph
-| Graph traversal
-
-| **Fraud Detection**
-| Transaction patterns + account networks
-| Real-time filters
-
-| **Citation Networks**
-| Paper similarity + citation traversal
-| 2.14ms hybrid queries
-|===
+* **SQL Query Editor** - Monaco editor with ProximaDB syntax highlighting
+* **Graph Explorer** - Cytoscape.js visualization with multiple layouts
+* **System Metrics** - Real‑time performance monitoring
+* **Dark/Light Theme** - Toggle between themes
 
 ---
 
 == Documentation
 
-[cols="1,2"]
-|===
-| Resource | Description
-
-| link:docs/INDEX.adoc[Documentation Index]
-| Complete documentation map
-
-| link:docs/storage/[Engine Deep-Dives]
-| SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR architecture
-
-| link:docs/graph/[Graph Engines]
-| ORION, PULSAR, QUASAR design
-
-| link:CLAUDE.md[Development Guide]
-| Build, test, contribute
-
-| link:clients/python/[Python SDK]
-| Production-ready client
-|===
-
----
-
-== Project Status
-
-[cols="1,3"]
-|===
-| Status | Details
-
-| **Version**
-| 0.1.5 (stable)
-
-| **Maintenance**
-| Single developer (transparent)
-
-| **Testing**
-| 2625+ tests passing
-
-| **Production**
-| Ready for evaluation and early adoption
-|===
-
-**Transparency**: This is an early-stage project. Performance claims are measured and validated, but consider support requirements for production deployment.
+* link:docs/INDEX.adoc[Documentation Index]
+* link:docs/concepts/vision.adoc[Vision and Strategy]
+* link:docs/02-guides/unified-port-migration.adoc[Unified Port Migration Guide]
+* link:docs/concepts/storage-engines.adoc[Storage Engine Selection Guide]
+* link:docs/concepts/graph-engines.adoc[Graph Engine Selection Guide]
+* link:docs/02-guides/sdk-python-guide.adoc[Python SDK Guide]
 
 ---
 
 == License
 
 Apache License 2.0 - See link:LICENSE[LICENSE]
-
----
-
-[.text-center]
-**ProximaDB** — Unified Vector + Graph for AI +
-link:https://github.com/vjsingh1984/proximaDB[GitHub] | link:docs/INDEX.adoc[Docs] | link:CLAUDE.md[Contribute]

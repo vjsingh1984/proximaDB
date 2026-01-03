@@ -35,12 +35,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use super::manifest::{GlobalCheckpoint, GlobalManifestEntry, GlobalManifestService, WalEntryStatus};
+use super::manifest::{GlobalManifestEntry, GlobalManifestService};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Unique identifier for a backup
@@ -311,10 +310,7 @@ impl BackupCoordinator {
         let start_time = std::time::Instant::now();
         let backup_id = self.generate_backup_id(&options);
 
-        info!(
-            "📦 Creating {} backup: {}",
-            options.backup_type, backup_id
-        );
+        info!("📦 Creating {} backup: {}", options.backup_type, backup_id);
 
         // Determine if we need to force a full backup
         let actual_backup_type = if options.force_full {
@@ -325,10 +321,7 @@ impl BackupCoordinator {
 
         // Get parent backup for incremental/differential
         let parent_backup = self.get_parent_backup(&actual_backup_type).await?;
-        let start_lsn = parent_backup
-            .as_ref()
-            .map(|p| p.end_lsn + 1)
-            .unwrap_or(0);
+        let start_lsn = parent_backup.as_ref().map(|p| p.end_lsn + 1).unwrap_or(0);
         let current_lsn = self.manifest_service.current_lsn().await;
 
         // Initialize backup metadata
@@ -344,7 +337,10 @@ impl BackupCoordinator {
             wal_entries_count: 0,
             collections_count: 0,
             parent_backup_id: parent_backup.as_ref().map(|p| p.backup_id.clone()),
-            chain_depth: parent_backup.as_ref().map(|p| p.chain_depth + 1).unwrap_or(0),
+            chain_depth: parent_backup
+                .as_ref()
+                .map(|p| p.chain_depth + 1)
+                .unwrap_or(0),
             collections: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -384,7 +380,10 @@ impl BackupCoordinator {
 
         // Backup each collection
         for (collection_id, entries) in collection_entries {
-            match self.backup_collection(&backup_id, &collection_id, &entries).await {
+            match self
+                .backup_collection(&backup_id, &collection_id, &entries)
+                .await
+            {
                 Ok(info) => {
                     metadata.size_bytes += info.size_bytes;
                     metadata.collections.insert(collection_id, info);
@@ -484,16 +483,16 @@ impl BackupCoordinator {
         let mut warnings = Vec::new();
 
         if options.dry_run {
-            info!("🔍 Dry run: would restore {} collections", backup.collections_count);
+            info!(
+                "🔍 Dry run: would restore {} collections",
+                backup.collections_count
+            );
             warnings.push("Dry run mode - no actual restore performed".to_string());
         } else {
             // Build restore chain (for incremental backups)
             let restore_chain = self.build_restore_chain(&backup).await?;
 
-            info!(
-                "📋 Restore chain: {} backups to apply",
-                restore_chain.len()
-            );
+            info!("📋 Restore chain: {} backups to apply", restore_chain.len());
 
             // Apply each backup in the chain
             for chain_backup in restore_chain {
@@ -547,7 +546,8 @@ impl BackupCoordinator {
             if backup.parent_backup_id.as_deref() == Some(backup_id) {
                 return Err(anyhow::anyhow!(
                     "Cannot delete backup {}: backup {} depends on it",
-                    backup_id, id
+                    backup_id,
+                    id
                 ));
             }
         }
@@ -625,7 +625,12 @@ impl BackupCoordinator {
 
     async fn determine_backup_type(&self, options: &BackupOptions) -> Result<BackupType> {
         // If no previous backup exists, must do a full backup
-        let last_full = self.last_backup.read().await.get(&BackupType::Full).cloned();
+        let last_full = self
+            .last_backup
+            .read()
+            .await
+            .get(&BackupType::Full)
+            .cloned();
         if last_full.is_none() {
             info!("📋 No previous full backup found, creating full backup");
             return Ok(BackupType::Full);
@@ -633,7 +638,12 @@ impl BackupCoordinator {
 
         // Check chain length for incremental
         if options.backup_type == BackupType::Incremental {
-            let last_incr = self.last_backup.read().await.get(&BackupType::Incremental).cloned();
+            let last_incr = self
+                .last_backup
+                .read()
+                .await
+                .get(&BackupType::Incremental)
+                .cloned();
             if let Some(ref last_id) = last_incr {
                 if let Ok(last_backup) = self.get_backup_metadata(last_id).await {
                     if last_backup.chain_depth >= self.config.max_incremental_chain_length {
@@ -663,7 +673,11 @@ impl BackupCoordinator {
             }
             BackupType::Differential => {
                 // Parent is always the last full backup
-                self.last_backup.read().await.get(&BackupType::Full).cloned()
+                self.last_backup
+                    .read()
+                    .await
+                    .get(&BackupType::Full)
+                    .cloned()
             }
         };
 
@@ -686,7 +700,10 @@ impl BackupCoordinator {
             entries.len()
         );
 
-        let backup_dir = format!("{}/{}/{}", self.backup_storage_url, backup_id, collection_id);
+        let backup_dir = format!(
+            "{}/{}/{}",
+            self.backup_storage_url, backup_id, collection_id
+        );
         let fs = self.filesystem_factory.get_filesystem(&backup_dir)?;
 
         let mut info = CollectionBackupInfo {
@@ -714,13 +731,14 @@ impl BackupCoordinator {
 
             // Copy the file
             if source_fs.exists(&source_url).await.unwrap_or(false) {
-                let data = source_fs.read(&source_url).await.with_context(|| {
-                    format!("Failed to read WAL file: {}", source_url)
-                })?;
+                let data = source_fs
+                    .read(&source_url)
+                    .await
+                    .with_context(|| format!("Failed to read WAL file: {}", source_url))?;
 
-                fs.write(&dest_url, &data, None).await.with_context(|| {
-                    format!("Failed to write backup file: {}", dest_url)
-                })?;
+                fs.write(&dest_url, &data, None)
+                    .await
+                    .with_context(|| format!("Failed to write backup file: {}", dest_url))?;
 
                 info.storage_files.push(dest_file);
             } else {
@@ -757,7 +775,11 @@ impl BackupCoordinator {
         Ok(chain)
     }
 
-    async fn apply_backup(&self, backup: &BackupMetadata, _options: &RestoreOptions) -> Result<(u64, u64)> {
+    async fn apply_backup(
+        &self,
+        backup: &BackupMetadata,
+        _options: &RestoreOptions,
+    ) -> Result<(u64, u64)> {
         debug!("📥 Applying backup: {}", backup.backup_id);
 
         let mut entries_replayed = 0u64;
@@ -781,7 +803,9 @@ impl BackupCoordinator {
     }
 
     async fn load_backup_metadata(&self) -> Result<()> {
-        let fs = self.filesystem_factory.get_filesystem(&self.backup_storage_url)?;
+        let fs = self
+            .filesystem_factory
+            .get_filesystem(&self.backup_storage_url)?;
 
         // List all backup directories
         let entries = fs.list(&self.backup_storage_url).await.unwrap_or_default();
@@ -801,15 +825,23 @@ impl BackupCoordinator {
                                     let existing = last_backup.get(&metadata.backup_type);
                                     if existing.is_none() || {
                                         let existing_meta = backups.get(existing.unwrap());
-                                        existing_meta.map(|m| metadata.started_at > m.started_at).unwrap_or(true)
+                                        existing_meta
+                                            .map(|m| metadata.started_at > m.started_at)
+                                            .unwrap_or(true)
                                     } {
-                                        last_backup.insert(metadata.backup_type, metadata.backup_id.clone());
+                                        last_backup.insert(
+                                            metadata.backup_type,
+                                            metadata.backup_id.clone(),
+                                        );
                                     }
                                 }
                                 backups.insert(metadata.backup_id.clone(), metadata);
                             }
                             Err(e) => {
-                                warn!("⚠️  Failed to parse backup metadata {}: {}", metadata_url, e);
+                                warn!(
+                                    "⚠️  Failed to parse backup metadata {}: {}",
+                                    metadata_url, e
+                                );
                             }
                         }
                     }
@@ -820,10 +852,7 @@ impl BackupCoordinator {
             }
         }
 
-        info!(
-            "📋 Loaded {} existing backups",
-            backups.len()
-        );
+        info!("📋 Loaded {} existing backups", backups.len());
 
         Ok(())
     }
@@ -833,8 +862,8 @@ impl BackupCoordinator {
         let metadata_url = format!("{}/metadata.json", backup_dir);
         let fs = self.filesystem_factory.get_filesystem(&metadata_url)?;
 
-        let data = serde_json::to_vec_pretty(metadata)
-            .context("Failed to serialize backup metadata")?;
+        let data =
+            serde_json::to_vec_pretty(metadata).context("Failed to serialize backup metadata")?;
 
         fs.write(&metadata_url, &data, None)
             .await

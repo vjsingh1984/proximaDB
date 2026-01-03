@@ -26,14 +26,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use super::config::{PCAConfig, PCAManagerConfig};
-use super::manager::{InMemoryPCAManager, PCAModelManager};
+use super::config::PCAManagerConfig;
+use super::manager::PCAModelManager;
 use super::model::EnhancedPCAModel;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 use crate::storage::engines::core::formats::proximablocks::spatial_traits::{
-    CurveType, HilbertSpatialEncoder, SpatialCurveEncoder, SpatialEncoderFactory,
-    ZOrderSpatialEncoder,
+    CurveType, SpatialCurveEncoder, SpatialEncoderFactory,
 };
 use crate::storage::persistence::filesystem::FileSystem;
 
@@ -254,8 +253,12 @@ impl SpatialClusteringPipeline {
                 enable_incremental: false,
             };
 
-            let manager =
-                PCAModelManager::new(collection_id.clone(), pca_config, filesystem, collection_dir)?;
+            let manager = PCAModelManager::new(
+                collection_id.clone(),
+                pca_config,
+                filesystem,
+                collection_dir,
+            )?;
             manager.initialize().await?;
             Some(manager)
         } else {
@@ -386,10 +389,7 @@ impl SpatialClusteringPipeline {
             block.compute_centroid();
         }
 
-        let centroids: Vec<Vec<f32>> = blocks
-            .iter()
-            .filter_map(|b| b.centroid.clone())
-            .collect();
+        let centroids: Vec<Vec<f32>> = blocks.iter().filter_map(|b| b.centroid.clone()).collect();
 
         if centroids.is_empty() {
             return Ok(ClusteringResult::passthrough(blocks.len()));

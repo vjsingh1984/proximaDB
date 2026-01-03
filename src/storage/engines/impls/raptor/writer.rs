@@ -422,7 +422,7 @@ impl IvfClusteringBuilder {
             .max(p_min)
             .max(self.target_rowgroup_size);
 
-        let k = (n + p - 1) / p; // Number of clusters needed: k = ceil(n/p)
+        let k = n.div_ceil(p); // Number of clusters needed: k = ceil(n/p)
 
         let k_means_calcs = k * n; // AXIS k-means clustering
         let centroid_matrix_calcs = k * k; // K² matrix: Centroid-to-centroid distances
@@ -654,7 +654,7 @@ impl IvfClusteringBuilder {
             let p = self
                 .target_rowgroup_size
                 .max(constants::clustering::MIN_ROWGROUP_SIZE);
-            let k = (n + p - 1) / p;
+            let k = n.div_ceil(p);
             let mut clusters = vec![Vec::new(); k];
             for (idx, _node) in self.nodes.iter().enumerate() {
                 clusters[idx % k].push(idx as u32);
@@ -706,6 +706,8 @@ impl IvfClusteringBuilder {
             .iter()
             .enumerate()
             .map(|(node_idx, node)| {
+                // SAFETY: node.vector_id is guaranteed to be in id_to_node map because
+                // nodes are only created via add_node() which inserts into id_to_node.
                 let source_idx = *self.id_to_node.get(&node.vector_id).unwrap() as usize;
                 let source_cluster = Self::find_cluster_for_node_static(source_idx, clusters);
                 (node_idx, source_idx, source_cluster)
@@ -2648,7 +2650,7 @@ impl RaptorWriter {
             id: id.clone(),
             vector: fp32_vector.clone(), // Clone for CompactRow, original used for IVF
             quantized_vector,
-            binary_sketch,  // Binary sketch for progressive search (1-bit per dimension)
+            binary_sketch, // Binary sketch for progressive search (1-bit per dimension)
             metadata,
             timestamp: vector.timestamp.unwrap_or(0) as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
@@ -2958,7 +2960,7 @@ impl RaptorWriter {
                 metadata_stats: HashMap::new(),
                 min_timestamp: None,
                 max_timestamp: None,
-                centroid,  // FIXED: Set centroid for EACH rowgroup, not just the last
+                centroid, // FIXED: Set centroid for EACH rowgroup, not just the last
                 centroid_stats: None,
                 bloom_filter_offset: None, // Will be set when bloom filter is written
             };
@@ -4543,7 +4545,7 @@ impl RaptorWriter {
                 self.column_projections
                     .metadata_columns
                     .entry(key.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(bincode::serialize(&value).expect("Failed to serialize metadata value"));
             }
         }

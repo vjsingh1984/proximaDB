@@ -6,8 +6,8 @@
 //! 3. Temp edge accumulation: Small writes accumulate without rebuild
 //! 4. Query correctness: Queries see temp edges correctly
 
-use proximadb::graph::engines::orion::storage::CsrStorage;
 use proximadb::graph::EdgeId;
+use proximadb::graph::engines::orion::storage::CsrStorage;
 
 #[test]
 fn test_lazy_rebuild_flag() {
@@ -75,7 +75,11 @@ fn test_temp_edges_accumulate() {
 
     // Main CSR still empty
     let neighbors = csr.get_neighbors(0).unwrap();
-    assert_eq!(neighbors.len(), 0, "Main CSR should be empty before rebuild");
+    assert_eq!(
+        neighbors.len(),
+        0,
+        "Main CSR should be empty before rebuild"
+    );
 
     // After rebuild, edges appear in main CSR
     csr.rebuild().unwrap();
@@ -96,7 +100,11 @@ fn test_query_sees_temp_edges() {
 
     // Current behavior: temp edges NOT visible until rebuild
     let neighbors = csr.get_neighbors(0).unwrap();
-    assert_eq!(neighbors.len(), 0, "Temp edges not visible in get_neighbors (by design)");
+    assert_eq!(
+        neighbors.len(),
+        0,
+        "Temp edges not visible in get_neighbors (by design)"
+    );
 
     // After rebuild, edges are visible
     csr.rebuild().unwrap();
@@ -198,7 +206,8 @@ fn test_threshold_based_compaction_trigger() {
 
     // Add edges up to threshold - 1
     for i in 0..(THRESHOLD - 1) {
-        csr.add_edge(i % 100, (i + 1) % 100, format!("e{}", i)).unwrap();
+        csr.add_edge(i % 100, (i + 1) % 100, format!("e{}", i))
+            .unwrap();
     }
     assert_eq!(csr.temp_edge_count(), THRESHOLD - 1);
     assert!(csr.needs_rebuild());
@@ -274,14 +283,18 @@ mod integration_tests {
         // Measure time for 1000 insertions (should be ~1ms total)
         let start = Instant::now();
         for i in 0..1000 {
-            csr.add_edge(i % 100, (i + 1) % 100, format!("e{}", i)).unwrap();
+            csr.add_edge(i % 100, (i + 1) % 100, format!("e{}", i))
+                .unwrap();
         }
         let insert_time = start.elapsed();
 
         println!("1000 edge inserts: {:?}", insert_time);
 
         // Should be very fast (O(1) per edge, no rebuild)
-        assert!(insert_time.as_millis() < 100, "Inserts should be fast (< 100ms)");
+        assert!(
+            insert_time.as_millis() < 100,
+            "Inserts should be fast (< 100ms)"
+        );
 
         // Rebuild should be slower but still reasonable
         let start = Instant::now();
@@ -291,7 +304,10 @@ mod integration_tests {
         println!("Rebuild with 1000 edges: {:?}", rebuild_time);
 
         // Rebuild might take longer but should be < 1 second
-        assert!(rebuild_time.as_millis() < 1000, "Rebuild should complete < 1s");
+        assert!(
+            rebuild_time.as_millis() < 1000,
+            "Rebuild should complete < 1s"
+        );
     }
 }
 
@@ -401,7 +417,8 @@ mod csr_lean_tests {
 
         // Add 1000 edges
         for i in 0..1000 {
-            csr.add_edge(i % 100, (i + 1) % 100, format!("e{}", i)).unwrap();
+            csr.add_edge(i % 100, (i + 1) % 100, format!("e{}", i))
+                .unwrap();
         }
         csr.rebuild().unwrap();
 

@@ -4,84 +4,24 @@
 :icons: font
 
 [.lead]
-Secure your ProximaDB deployment with authentication, TLS, and access control.
+Security settings for developers running ProximaDB in local or single-node environments.
 
-== Quick Security Checklist
+== Status Notes
 
-|===
-| Item | Status | Priority
+* Auth, TLS, and audit hooks exist.
+* RBAC and tenant enforcement are still evolving in some code paths.
 
-| [ ] Enable authentication | Required | High
-| [ ] Configure TLS | Required | High
-| [ ] Set strong token secret | Required | High
-| [ ] Restrict network access | Required | High
-| [ ] Enable audit logging | Recommended | Medium
-| [ ] Configure rate limiting | Recommended | Medium
-|===
-
----
-
-== Authentication
-
-=== Enable Token Auth
+== Basic Auth Setup
 
 [source,toml]
 ----
 [security]
 auth_enabled = true
-token_secret = "your-32-char-minimum-secret-key"
+token_secret = "your-32-char-secret"
 token_expiry_hours = 24
 ----
 
-=== Generate Tokens
-
-[source,bash]
-----
-# Admin token
-curl -X POST http://localhost:5678/api/v1/auth/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "password": "admin-password",
-    "scope": ["read", "write", "admin"]
-  }'
-----
-
-**Response:**
-[source,json]
-----
-{
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "expires_at": "2025-01-16T10:30:00Z"
-}
-----
-
-=== Use Tokens
-
-[source,bash]
-----
-curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
-  http://localhost:5678/api/v1/collections
-----
-
----
-
-== TLS/HTTPS
-
-=== Generate Certificates
-
-[source,bash]
-----
-# Self-signed (development only)
-openssl req -x509 -newkey rsa:4096 \
-  -keyout key.pem -out cert.pem \
-  -days 365 -nodes \
-  -subj "/CN=proximadb.local"
-
-# Production: Use Let's Encrypt or your CA
-----
-
-=== Enable TLS
+== TLS (Optional)
 
 [source,toml]
 ----
@@ -89,163 +29,11 @@ openssl req -x509 -newkey rsa:4096 \
 enabled = true
 cert_path = "/etc/proximadb/cert.pem"
 key_path = "/etc/proximadb/key.pem"
-min_version = "1.2"
 ----
 
-=== Client Connection
+== Recommended Defaults For Builders
 
-[source,bash]
-----
-curl --cacert ca.pem https://proximadb.local:5678/health
-----
+* Bind to `127.0.0.1` unless you need external access.
+* Use a reverse proxy for TLS in development.
+* Keep auth enabled if exposing the service externally.
 
----
-
-== Access Control
-
-=== Scopes
-
-|===
-| Scope | Permissions
-
-| `read` | Search, get vectors, list collections
-| `write` | Insert, update, delete vectors
-| `admin` | Create/delete collections, manage users
-|===
-
-=== Per-Collection Permissions
-
-[source,toml]
-----
-[security.acl]
-enabled = true
-
-[[security.acl.rules]]
-collection = "public_data"
-scopes = ["read"]
-
-[[security.acl.rules]]
-collection = "private_data"
-scopes = ["read", "write"]
-users = ["admin", "data-team"]
-----
-
----
-
-== Network Security
-
-=== Firewall Rules
-
-[source,bash]
-----
-# Allow only internal network
-iptables -A INPUT -p tcp --dport 5678 -s 10.0.0.0/8 -j ACCEPT
-iptables -A INPUT -p tcp --dport 5678 -j DROP
-
-# Or use security groups in cloud
-----
-
-=== Bind to Localhost
-
-For single-machine deployments:
-
-[source,toml]
-----
-[server]
-bind_address = "127.0.0.1"  # Not 0.0.0.0
-----
-
-=== Reverse Proxy
-
-Put ProximaDB behind nginx/traefik:
-
-[source,nginx]
-----
-server {
-    listen 443 ssl;
-    server_name proximadb.example.com;
-
-    ssl_certificate /etc/ssl/proximadb.crt;
-    ssl_certificate_key /etc/ssl/proximadb.key;
-
-    location / {
-        proxy_pass http://127.0.0.1:5678;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-----
-
----
-
-== Rate Limiting
-
-[source,toml]
-----
-[api]
-rate_limit = 1000           # Global requests/sec
-rate_limit_per_ip = 100     # Per-IP requests/sec
-rate_limit_burst = 50       # Burst allowance
-----
-
----
-
-== Audit Logging
-
-=== Enable Audit Log
-
-[source,toml]
-----
-[security.audit]
-enabled = true
-log_path = "/var/log/proximadb/audit.log"
-log_reads = false           # Usually too verbose
-log_writes = true
-log_admin = true
-----
-
-=== Audit Log Format
-
-[source,json]
-----
-{
-  "timestamp": "2025-01-15T10:30:00Z",
-  "user": "admin",
-  "action": "create_collection",
-  "resource": "documents",
-  "ip": "10.0.1.50",
-  "success": true
-}
-----
-
----
-
-== Secrets Management
-
-=== Environment Variables
-
-[source,bash]
-----
-export PROXIMADB_TOKEN_SECRET="$(openssl rand -base64 32)"
-export PROXIMADB_TLS_CERT_PATH="/etc/proximadb/cert.pem"
-export PROXIMADB_TLS_KEY_PATH="/etc/proximadb/key.pem"
-----
-
-=== HashiCorp Vault
-
-[source,bash]
-----
-# Fetch secrets at startup
-export PROXIMADB_TOKEN_SECRET=$(vault kv get -field=secret proximadb/token)
-----
-
----
-
-== Security Best Practices
-
-1. **Rotate tokens regularly** - Set short expiry, refresh automatically
-2. **Use TLS everywhere** - Even internal traffic
-3. **Principle of least privilege** - Grant minimal scopes
-4. **Monitor audit logs** - Alert on suspicious patterns
-5. **Keep updated** - Apply security patches promptly
-6. **Backup encryption keys** - Securely store TLS keys and token secrets

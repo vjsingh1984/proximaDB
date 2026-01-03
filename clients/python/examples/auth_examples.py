@@ -4,7 +4,7 @@
 
 STATUS: ⚠️  Partial - Authentication API Incomplete
 SDK Version: v1.0+ (AuthResult API needs refinement)
-Server Version: v0.1.5+
+Server Version: v0.2.0+
 Test Result: PARTIAL - Authentication partially implemented
 
 ProximaDB Python SDK Authentication Examples

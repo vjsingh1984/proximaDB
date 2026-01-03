@@ -334,11 +334,7 @@ impl SharedSstFormatReader {
         // Try mmap first for local files (zero-copy)
         if self.unified_filesystem.supports_mmap() {
             if let Ok(Some(mmap)) = self.unified_filesystem.get_mmap(file_path).await {
-                tracing::debug!(
-                    "Using mmap for {} ({} bytes)",
-                    file_path,
-                    mmap.len()
-                );
+                tracing::debug!("Using mmap for {} ({} bytes)", file_path, mmap.len());
                 return Ok(MmapOrVec::Mmap(mmap));
             }
         }
@@ -362,7 +358,9 @@ impl SharedSstFormatReader {
         use_block_cache: bool,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Use mmap-first reading for zero-copy performance
-        let data = self.read_with_mmap_fallback(file_path, use_block_cache).await?;
+        let data = self
+            .read_with_mmap_fallback(file_path, use_block_cache)
+            .await?;
 
         // Deserialize blocks from raw data (works with both mmap and Vec)
         // For now, try to deserialize as a single block
@@ -388,7 +386,9 @@ impl SharedSstFormatReader {
         filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Use mmap-first reading for zero-copy performance
-        let data = self.read_with_mmap_fallback(file_path, enable_cache_lookup).await?;
+        let data = self
+            .read_with_mmap_fallback(file_path, enable_cache_lookup)
+            .await?;
 
         // Deserialize blocks
         // TODO: Implement multi-block file format
@@ -429,7 +429,9 @@ impl SharedSstFormatReader {
         _sequential_io: bool,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Use mmap-first reading (mmap is ideal for sequential compaction reads)
-        let data = self.read_with_mmap_fallback(file_path, use_disk_cache_if_exists).await?;
+        let data = self
+            .read_with_mmap_fallback(file_path, use_disk_cache_if_exists)
+            .await?;
 
         // Deserialize blocks
         // TODO: Implement multi-block file format

@@ -154,9 +154,6 @@ mod tests {
     fn test_manager_config_from_pca() {
         let pca_config = PCAConfig::default();
         let manager_config = PCAManagerConfig::from_pca_config(&pca_config);
-        assert_eq!(
-            manager_config.drift_threshold,
-            pca_config.drift_threshold
-        );
+        assert_eq!(manager_config.drift_threshold, pca_config.drift_threshold);
     }
 }

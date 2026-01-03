@@ -656,10 +656,7 @@ where
         .collect();
 
     // Sort by centroid score (deterministic ordering)
-    clustered.sort_by(|a, b| {
-        a.0.partial_cmp(&b.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    clustered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
     // Unzip into separate vectors maintaining clustered order
     let (blocks, index_entries): (Vec<B>, Vec<I>) = clustered
@@ -673,12 +670,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::compression::CompressionAlgorithm;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
     use crate::storage::engines::core::formats::proximablocks::block_structures::{
-        BlockStatistics, BlockCompressionConfig, ProximaBlockMetadata,
+        BlockCompressionConfig, BlockStatistics, ProximaBlockMetadata,
     };
-    use crate::core::compression::CompressionAlgorithm;
 
     #[test]
     fn test_memory_usage_calculation() {

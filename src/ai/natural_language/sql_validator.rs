@@ -310,7 +310,7 @@ impl SQLValidator {
         };
 
         if !has_limit {
-            use sqlparser::ast::{Expr, LimitClause, ValueWithSpan, Value};
+            use sqlparser::ast::{Expr, LimitClause, Value, ValueWithSpan};
             use sqlparser::tokenizer::Span;
 
             sanitized_query.limit_clause = Some(LimitClause::LimitOffset {

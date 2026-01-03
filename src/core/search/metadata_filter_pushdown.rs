@@ -97,7 +97,7 @@ impl MetadataFilterPushdown {
             for (key, value) in metadata {
                 column_data
                     .entry(key.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(Some(value));
             }
         }

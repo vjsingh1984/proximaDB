@@ -7,9 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use std::sync::{Arc, RwLock};
 use tracing::{debug, info, trace, warn};
 
-use super::{
-    GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig,
-};
+use super::{GlobalManifestEntry, GlobalManifestService, GlobalManifestServiceConfig};
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
 
 /// Global singleton instance - uses RwLock to support reset in embedded mode
@@ -40,10 +38,7 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
 
     // Get manifest location from explicit config or fallback to primary disk
     let wal_base_url = if let Some(ref explicit_url) = config.global_manifest_url {
-        debug!(
-            "Using explicit global manifest location: {}",
-            explicit_url
-        );
+        debug!("Using explicit global manifest location: {}", explicit_url);
         explicit_url.clone()
     } else {
         // Fallback: first data directory + /wal
@@ -101,10 +96,7 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
 
 /// Get the global manifest service (returns None if not initialized)
 pub fn get_service() -> Option<Arc<GlobalManifestService>> {
-    GLOBAL_MANIFEST
-        .read()
-        .ok()
-        .and_then(|guard| guard.clone())
+    GLOBAL_MANIFEST.read().ok().and_then(|guard| guard.clone())
 }
 
 /// Reset the global manifest singleton (for embedded mode)
@@ -124,7 +116,10 @@ pub async fn reset() -> Result<()> {
     if let Some(svc) = service {
         debug!("Shutting down existing global manifest before reset");
         if let Err(e) = svc.shutdown().await {
-            warn!("Error during manifest shutdown (continuing with reset): {}", e);
+            warn!(
+                "Error during manifest shutdown (continuing with reset): {}",
+                e
+            );
         }
     }
 

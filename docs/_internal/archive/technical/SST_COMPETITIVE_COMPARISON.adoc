@@ -64,7 +64,7 @@ ProximaDB's SST engine competes with modern columnar formats (Lance, Vortex, Nim
 |SST (adaptive)
 
 |**Maturity**
-|v0.1.5 production
+|v0.2.0 production
 |v2 development
 |SST (stable)
 |===
@@ -121,7 +121,7 @@ ProximaDB's SST engine competes with modern columnar formats (Lance, Vortex, Nim
 |SST (vector-focused)
 
 |**Maturity**
-|v0.1.5 production
+|v0.2.0 production
 |v0.36+ (format stable since 2024)
 |Similar
 
@@ -178,7 +178,7 @@ ProximaDB's SST engine competes with modern columnar formats (Lance, Vortex, Nim
 |SST (working)
 
 |**Maturity**
-|v0.1.5 production
+|v0.2.0 production
 |Under development, no stability
 |SST (stable)
 
@@ -289,7 +289,7 @@ graph TD
 
 === When to Choose SST (ProximaDB)
 
-✅ **Production deployments** (v0.1.5 stable vs Lance v2 dev)
+✅ **Production deployments** (v0.2.0 stable vs Lance v2 dev)
 ✅ **Flexible workloads** (6 engines vs 1 format)
 ✅ **Compression matters** (LZ4 improves performance)
 ✅ **Type-safe metadata** (validated filtering)
@@ -384,7 +384,7 @@ graph TD
 |No docs
 
 |**Production Status**
-|v0.1.5 stable
+|v0.2.0 stable
 |v2 dev
 |v0.36+ stable
 |No stability
@@ -445,7 +445,7 @@ graph TB
 **vs Lance**:
 - ✅ Configurable block size (1MB vs fixed 8KB)
 - ✅ Compression improves performance (Lance: compression hurts)
-- ✅ Production-ready v0.1.5 (Lance v2 in development)
+- ✅ Production-ready v0.2.0 (Lance v2 in development)
 - ✅ Type-safe metadata with performance benefit
 
 **vs Vortex**:
@@ -516,7 +516,7 @@ With Lance/Vortex/Nimble:
 **Use**: ProximaDB SST-LZ4
 - Measured: 5.34ms at 10K
 - Validated: 11% faster with compression
-- Production: v0.1.5 stable
+- Production: v0.2.0 stable
 
 **Why Not Competitors**:
 - Lance: v2 not stable yet
@@ -551,7 +551,7 @@ block_size_kb = 256  # Closer to Lance's 8KB pages
 
 **SST's competitive position**: Not claiming to be "100x faster" but offering:
 1. **Measured performance** (5.34ms at 10K, validated)
-2. **Production-ready** (v0.1.5, no development status)
+2. **Production-ready** (v0.2.0, no development status)
 3. **Flexible architecture** (6 engines, not locked in)
 4. **Unique optimizations** (compression improves performance)
 

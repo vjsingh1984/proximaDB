@@ -215,7 +215,7 @@ Analysis of modern vector database file formats (Lance, Nimble) compared to Prox
 
 ## 6. Recommended Roadmap for ProximaDB
 
-### **Phase 1: Quick Wins (v0.1.5 - Q1 2025)**
+### **Phase 1: Quick Wins (v0.2.0 - Q1 2025)**
 
 1. **8KB Page Alignment**
    - Update SST and SWIFT default block sizes to 8KB
@@ -429,7 +429,7 @@ pub enum MetadataFormat {
 
 ## 10. Action Items for ProximaDB
 
-### **High Priority** (Implement in v0.1.5)
+### **High Priority** (Implement in v0.2.0)
 
 1. **Add 8KB page size option for SST/SWIFT**
    - `proxima_block_size_kb` config parameter

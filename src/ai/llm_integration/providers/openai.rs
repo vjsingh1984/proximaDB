@@ -250,7 +250,7 @@ impl LLMClient for OpenAIClient {
         // Send request to OpenAI
         let response = self
             .client
-            .post(&format!("{}/chat/completions", self.base_url))
+            .post(format!("{}/chat/completions", self.base_url))
             .headers(headers)
             .json(&openai_request)
             .send()
@@ -338,7 +338,7 @@ impl LLMClient for OpenAIClient {
 
         let response = self
             .client
-            .post(&format!("{}/chat/completions", self.base_url))
+            .post(format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&test_request)

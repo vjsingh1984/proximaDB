@@ -242,7 +242,7 @@ pub async fn parallel_search(
                 &metric,
                 &dist_compute,
                 filter_clone.as_ref(),
-                None, // No candidate IDs for now
+                None,                                          // No candidate IDs for now
                 collection_clone.as_ref().map(|c| c.as_ref()), // Pass collection for type-safe metadata
                 &prune_config,
             )
@@ -516,7 +516,8 @@ pub async fn search_sstable_quantized(
 
                         // Convert to approximate similarity
                         let max_dist = (query_int8.len() as i64) * 255 * 255;
-                        let similarity = 1.0 - ((int8_dist as f64) / (max_dist as f64)).sqrt() as f32;
+                        let similarity =
+                            1.0 - ((int8_dist as f64) / (max_dist as f64)).sqrt() as f32;
 
                         // Get record ID and vector from block
                         if let Some(record) = block.records.get(vec_idx) {
@@ -553,7 +554,11 @@ pub async fn search_sstable_quantized(
     }
 
     // Sort by similarity (descending) and return top-k
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results.truncate(k);
 
     debug!(

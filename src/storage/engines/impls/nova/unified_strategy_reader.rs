@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::zone_maps::PruningStrategy;
 
@@ -158,8 +158,6 @@ impl UnifiedNOVAReader {
 
     /// Cached read with zone map pruning (for selective queries)
     async fn read_with_zone_maps(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        
-
         // Create reader with cached filesystem for metadata caching
         let dimension = 128; // TODO: Get from collection config
         let cached_fs = self

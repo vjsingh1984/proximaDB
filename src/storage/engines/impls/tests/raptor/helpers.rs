@@ -105,12 +105,47 @@ use crate::storage::engines::impls::raptor::config::RaptorConfig;
 use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Counter for generating unique test IDs
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generate a unique test path for test isolation
+/// Each test gets its own directory to prevent race conditions
+#[allow(dead_code)]
+pub fn generate_unique_test_path() -> String {
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let thread_id = std::thread::current().id();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!(
+        "/tmp/raptor_test_{}_{}_{}",
+        counter,
+        timestamp,
+        format!("{:?}", thread_id)
+            .replace("ThreadId(", "")
+            .replace(")", "")
+    )
+}
+
+/// Generate a unique collection ID for test isolation
+#[allow(dead_code)]
+pub fn generate_unique_collection_id() -> String {
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros();
+    format!("test_collection_{}_{}", counter, timestamp)
+}
 
 /// Create a test RAPTOR engine with default configuration
 /// Source: tests.rs
 #[allow(dead_code)]
 pub async fn create_test_engine() -> Result<RaptorEngine> {
-    cleanup_test_data().await?;
+    // Note: cleanup is now handled per-collection in create_test_collection_isolated
     RaptorEngine::new().await
 }
 
@@ -125,23 +160,23 @@ pub async fn create_test_engine_with_compression(
     RaptorEngine::new().await
 }
 
-/// Clean up test data directory before each test
+/// Clean up test data directory for a specific path
 /// Source: tests.rs
 #[allow(dead_code)]
-pub async fn cleanup_test_data() -> Result<()> {
+pub async fn cleanup_test_data_at_path(base_path: &str) -> Result<()> {
     // Create a filesystem instance using the factory
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let filesystem_factory =
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config).await?;
     let filesystem = filesystem_factory.get_unified_caching_filesystem(
-        "file:///tmp",
-        "test_collection".to_string(),
+        &format!("file://{}", base_path),
+        "cleanup".to_string(),
         "raptor".to_string(),
     )?;
 
-    // Try to remove the test collection data directory
-    let test_data_dir = "file:///tmp/test_collection";
-    match filesystem.remove_dir_all(test_data_dir).await {
+    // Try to remove the test data directory
+    let test_data_dir = format!("file://{}", base_path);
+    match filesystem.remove_dir_all(&test_data_dir).await {
         Ok(_) => {
             tracing::debug!("Cleaned up test data directory: {}", test_data_dir);
         }
@@ -156,6 +191,13 @@ pub async fn cleanup_test_data() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Clean up test data directory before each test (legacy, uses default path)
+/// Source: tests.rs
+#[allow(dead_code)]
+pub async fn cleanup_test_data() -> Result<()> {
+    cleanup_test_data_at_path("/tmp/test_collection").await
 }
 
 // ============================================================================
@@ -184,16 +226,18 @@ pub fn create_test_vector_records(count: usize, dimension: usize) -> Vec<VectorR
 // COLLECTION CONFIGURATION HELPERS
 // ============================================================================
 
-/// Create a collection with specific compression algorithm
+/// Create a collection with specific compression algorithm (isolated with unique path)
 /// Source: compression_tests.rs
 #[allow(dead_code)]
 pub fn create_collection_with_compression(compression: CompressionAlgorithm) -> Collection {
+    let unique_path = generate_unique_test_path();
+    let collection_id = generate_unique_collection_id();
     Collection {
-        id: "test_collection".to_string(),
+        id: collection_id,
         config: Some(CollectionConfig {
             dimension: 4,
             storage_config: Some(StorageConfig {
-                storage_path: Some("/tmp".to_string()),
+                storage_path: Some(unique_path.clone()),
                 data_paths: vec![],
                 compression: Some(compression as i32),
                 max_file_size_mb: Some(100),
@@ -202,55 +246,59 @@ pub fn create_collection_with_compression(compression: CompressionAlgorithm) -> 
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
-            primary_path: "/tmp".to_string(),
+            primary_path: unique_path.clone(),
             backup_paths: vec![],
             engine: StorageEngine::Raptor as i32,
             engine_config: HashMap::new(),
-            base_location: "/tmp".to_string(),
+            base_location: unique_path,
             assigned_at: chrono::Utc::now().timestamp(),
         }),
         ..Default::default()
     }
 }
 
-/// Create a default test collection
+/// Create a default test collection (isolated with unique path)
 /// Source: tests.rs
 #[allow(dead_code)]
 pub fn create_test_collection() -> Collection {
+    let unique_path = generate_unique_test_path();
+    let collection_id = generate_unique_collection_id();
     Collection {
-        id: "test_collection".to_string(),
+        id: collection_id,
         config: Some(CollectionConfig {
             dimension: 4,
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
-            primary_path: "/tmp".to_string(),
+            primary_path: unique_path.clone(),
             backup_paths: vec![],
             engine: StorageEngine::Raptor as i32,
             engine_config: HashMap::new(),
-            base_location: "/tmp".to_string(),
+            base_location: unique_path,
             assigned_at: chrono::Utc::now().timestamp(),
         }),
         ..Default::default()
     }
 }
 
-/// Create a test collection with custom dimension
+/// Create a test collection with custom dimension (isolated with unique path)
 /// Source: compression_tests.rs (modified)
 #[allow(dead_code)]
 pub fn create_test_collection_with_dimension(dimension: usize) -> Collection {
+    let unique_path = generate_unique_test_path();
+    let collection_id = generate_unique_collection_id();
     Collection {
-        id: "test_collection".to_string(),
+        id: collection_id,
         config: Some(CollectionConfig {
             dimension: dimension as u32,
             ..Default::default()
         }),
         storage_assignment: Some(StorageAssignment {
-            primary_path: "/tmp".to_string(),
+            primary_path: unique_path.clone(),
             backup_paths: vec![],
             engine: StorageEngine::Raptor as i32,
             engine_config: HashMap::new(),
-            base_location: "/tmp".to_string(),
+            base_location: unique_path,
             assigned_at: chrono::Utc::now().timestamp(),
         }),
         ..Default::default()

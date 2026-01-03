@@ -6,21 +6,23 @@
 //! 3. Use unified ApiError for consistent error handling
 
 use axum::{
-    extract::{Json, Path, Query, State},
+    extract::{Extension, Json, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse},
 };
 use std::sync::Arc;
-use tracing::{debug, error, info};
 #[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
 use tracing::warn;
+use tracing::{debug, error, info};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::health;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
+use crate::query::QueryFacadeAdapter;
 use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
 use crate::utils::uuid::Uuid;
@@ -31,15 +33,121 @@ use serde::{Deserialize, Serialize};
 pub struct AppState {
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
+    /// Data directory from config (e.g., server.data_dir from TOML)
+    pub data_dir: std::path::PathBuf,
+    /// Query facade adapter for unified query execution
+    /// Optional for backward compatibility during feature flag transition
+    pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
+}
+
+/// Parse search request from JSON, supporting both proto and simple formats
+/// Proto format: { "collection_id": "...", "queries": [{"vector": [...]}], "top_k": 10 }
+/// Simple format: { "collection": "...", "vector": [...], "top_k": 10 } (MVP-friendly)
+fn parse_search_request(value: serde_json::Value) -> Result<VectorSearchRequest, String> {
+    // Check if this is the simple format (has "collection" or "vector" at root level)
+    if let Some(obj) = value.as_object() {
+        let has_simple_collection = obj.contains_key("collection");
+        let has_simple_vector = obj.contains_key("vector");
+        let is_simple_format = has_simple_collection || has_simple_vector;
+
+        if is_simple_format {
+            // Parse as simple format and convert to proto format
+            let collection_id = obj
+                .get("collection")
+                .or_else(|| obj.get("collection_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let vector: Vec<f32> = obj
+                .get("vector")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let top_k = obj.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
+
+            // Parse optional filters from simple format
+            let filters = obj
+                .get("filters")
+                .and_then(|v| {
+                    serde_json::from_value::<
+                        std::collections::HashMap<String, proximadb_v1::SqlValue>,
+                    >(v.clone())
+                    .ok()
+                })
+                .unwrap_or_default();
+
+            // Create a single SearchQuery from the simple format
+            let query = proximadb_v1::SearchQuery {
+                vector,
+                filters,
+                advanced_filter: None,
+            };
+
+            return Ok(VectorSearchRequest {
+                collection_id,
+                queries: vec![query],
+                top_k,
+                include_fields: None,
+                search_params: None,
+                distance_metric_override: None,
+                search_optimization: None,
+            });
+        }
+    }
+
+    // Fall back to proto format
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
+/// Parse batch request from JSON, supporting both proto and simple formats
+fn parse_batch_request(value: serde_json::Value) -> Result<VectorBatchRequest, String> {
+    // Check if this is the simple format (has "collection" at root level)
+    if let Some(obj) = value.as_object() {
+        let has_simple_collection = obj.contains_key("collection");
+
+        if has_simple_collection {
+            // Parse as simple format and convert to proto format
+            let collection_id = obj
+                .get("collection")
+                .or_else(|| obj.get("collection_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Parse vectors array - already in proto-compatible format
+            let vectors: Vec<proximadb_v1::VectorRecord> = obj
+                .get("vectors")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+
+            return Ok(VectorBatchRequest {
+                collection_id,
+                vectors,
+            });
+        }
+    }
+
+    // Fall back to proto format
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
 /// Aligned vector search handler
+/// Accepts BOTH:
+/// 1. Proto format: { "collection_id": "...", "queries": [{"vector": [...]}], "top_k": 10 }
+/// 2. Simple format: { "collection": "...", "vector": [...], "top_k": 10 } (MVP-friendly)
 pub async fn vector_search(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorSearchRequest
-    let request: VectorSearchRequest = serde_json::from_value(value)
+    // Try to parse as simple format first, then fall back to proto format
+    let request: VectorSearchRequest = parse_search_request(value)
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     if request.collection_id.is_empty() {
@@ -48,6 +156,28 @@ pub async fn vector_search(
         ));
     }
 
+    // Log tenant context for audit trail
+    debug!(
+        "🔍 Vector search: collection='{}', tenant='{}', source='{}'",
+        request.collection_id, tenant.tenant_id, tenant.source
+    );
+
+    // Route through unified facade when adapter is available
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Using unified facade routing for vector search");
+        return match adapter.vector_search(request.clone()).await {
+            Ok(response) => Ok(JsonResponse(response)),
+            Err(e) => {
+                error!(
+                    "Vector search (facade) failed for collection '{}': {:?}",
+                    request.collection_id, e
+                );
+                Err(ApiError::Internal(format!("Search failed: {}", e)))
+            }
+        };
+    }
+
+    // Legacy path: route through unified_handlers directly
     match state
         .unified_handlers
         .handle_vector_search_v1(request.clone())
@@ -81,18 +211,23 @@ pub async fn vector_search(
 }
 
 /// Aligned vector batch operation handler
+/// Accepts BOTH:
+/// 1. Proto format: { "collection_id": "...", "vectors": [...] }
+/// 2. Simple format: { "collection": "...", "vectors": [...] } (MVP-friendly)
 pub async fn vector_batch(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorBatchRequest
-    let request: VectorBatchRequest = serde_json::from_value(value)
+    // Parse the JSON value into VectorBatchRequest (supports both formats)
+    let request: VectorBatchRequest = parse_batch_request(value)
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     info!(
-        "Vector batch operation for collection: {}, {} records",
+        "Vector batch operation for collection: {}, {} records (tenant: {})",
         request.collection_id,
-        request.vectors.len()
+        request.vectors.len(),
+        tenant.tenant_id
     );
 
     // Validate request
@@ -124,11 +259,7 @@ pub async fn get_vector(
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    debug!(
-        "Get vector: collection={}, id={}",
-        collection_id,
-        vector_id
-    );
+    debug!("Get vector: collection={}, id={}", collection_id, vector_id);
 
     // Validate parameters
     if collection_id.is_empty() || vector_id.is_empty() {
@@ -219,10 +350,12 @@ pub struct GetVectorParams {
 /// Aligned collection operation handler
 pub async fn collection_operation(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::CollectionResponse>> {
     info!(
-        "🔵 REST API: collection_operation called with payload: {}",
+        "🔵 REST API: collection_operation called (tenant: {}) with payload: {}",
+        tenant.tenant_id,
         serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string())
     );
 
@@ -286,7 +419,13 @@ pub async fn health_check(
 pub async fn get_collection(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> impl IntoResponse {
+    debug!(
+        "Get collection '{}' for tenant '{}'",
+        collection_id, tenant.tenant_id
+    );
+
     if collection_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
     }
@@ -330,8 +469,11 @@ pub struct ListCollectionsQuery {
 
 pub async fn list_collections(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Query(params): Query<ListCollectionsQuery>,
 ) -> impl IntoResponse {
+    debug!("Listing collections for tenant '{}'", tenant.tenant_id);
+
     let mut query_params = std::collections::HashMap::new();
 
     if let Some(limit) = params.limit {
@@ -369,7 +511,13 @@ pub async fn list_collections(
 pub async fn delete_collection(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> impl IntoResponse {
+    info!(
+        "Delete collection '{}' for tenant '{}'",
+        collection_id, tenant.tenant_id
+    );
+
     if collection_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
     }
@@ -406,18 +554,19 @@ pub async fn delete_collection(
 /// Example using JSON wrapper types for consistent structure
 pub async fn vector_search_with_metadata(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorSearchRequest
-    let request: VectorSearchRequest = serde_json::from_value(value)
+    // Parse the JSON value into VectorSearchRequest (supports both formats)
+    let request: VectorSearchRequest = parse_search_request(value)
         .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
     info!(
-        "Vector search request {} for collection: {}",
-        request_id, request.collection_id
+        "Vector search request {} for collection: {} (tenant: {})",
+        request_id, request.collection_id, tenant.tenant_id
     );
 
     // Execute search
@@ -500,7 +649,43 @@ pub async fn execute_sql(
         ));
     }
 
-    // Execute through v1 path (typed params and rows)
+    // Route through unified facade when adapter is available
+    if let Some(ref adapter) = state.query_adapter {
+        debug!("Using unified facade routing for SQL query");
+        return match adapter.sql_query(&request.query).await {
+            Ok(result) => {
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+                // Convert QueryResult to JSON response
+                let rows = match result.data {
+                    crate::query::QueryResultData::Rows(rows) => rows,
+                    crate::query::QueryResultData::Empty => vec![],
+                    _ => vec![], // Other types return empty for SQL endpoint
+                };
+
+                let json_data = serde_json::json!({
+                    "rows": rows,
+                    "execution_time_ms": execution_time_ms,
+                    "rows_returned": rows.len(),
+                    "row_count": rows.len(),
+                    "request_id": request_id
+                });
+
+                info!(
+                    "SQL query {} (facade) completed in {}ms",
+                    request_id, execution_time_ms
+                );
+
+                Ok(JsonResponse(json_data))
+            }
+            Err(e) => {
+                error!("SQL query {} (facade) failed: {}", request_id, e);
+                Err(ApiError::Internal(e.to_string()))
+            }
+        };
+    }
+
+    // Legacy path: Execute through v1 path (typed params and rows)
     // Optional: read seeding strategy from HTTP header (X-Seeding-Strategy) or from request.parameters via a special key
     let _seeding_strategy = crate::query::execution::SeedingStrategy::Average; // default
 
@@ -706,7 +891,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         entities::configure_routes().with_state(entity_state)
     };
 
-    let router = axum::Router::new()
+    let mut router = axum::Router::new()
         // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))
@@ -744,8 +929,129 @@ pub fn create_router(state: AppState) -> axum::Router {
             crate::network::rest::v1::graph::create_graph_router(),
         )
         // SKS entity endpoints (storage-coupled path)
-        .nest("/api", entities_router)
-        .with_state(state);
+        .nest("/api", entities_router);
+
+    // Document API endpoints (with WAL for durability)
+    let document_router = {
+        use crate::network::rest::v1::document::{self, DocumentApiState};
+        use crate::storage::document::DocumentService;
+
+        let engine = state
+            .unified_handlers
+            .vector_operations_service
+            .unified_engine();
+
+        // Use WAL-enabled constructor for durability (same as gRPC server)
+        // data_dir comes from TOML config (server.data_dir)
+        let doc_base_path = state.data_dir.join("documents");
+        let doc_path_str = doc_base_path.to_string_lossy().to_string();
+
+        let document_service = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
+                    Ok(svc) => Arc::new(svc),
+                    Err(e) => {
+                        tracing::warn!("Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
+                        Arc::new(DocumentService::new(engine))
+                    }
+                }
+            })
+        });
+
+        let doc_state = DocumentApiState { document_service };
+        document::create_document_router().with_state(doc_state)
+    };
+    router = router.nest("/api/v1/documents", document_router);
+    info!("✅ Document API endpoints enabled at /api/v1/documents (WAL-enabled)");
+
+    // Observability API endpoints (with WAL for durability)
+    // Create observability service first so it can be shared with unified query
+    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = {
+        use crate::observability::{ObservabilityService, ObservabilityStorage};
+
+        // Create storage in data directory with WAL for durability (same as gRPC server)
+        // data_dir comes from TOML config (server.data_dir)
+        let obs_base_path = state.data_dir.join("observability");
+        let obs_path_str = obs_base_path.to_string_lossy().to_string();
+
+        // Create service with WAL-enabled storage
+        match tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                // Try WAL-enabled storage first
+                let storage = match ObservabilityStorage::new_with_wal(&obs_path_str).await {
+                    Ok(s) => Arc::new(s),
+                    Err(e) => {
+                        tracing::warn!("Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.", e);
+                        Arc::new(ObservabilityStorage::new(&obs_path_str))
+                    }
+                };
+                ObservabilityService::new(storage).await
+            })
+        }) {
+            Ok(service) => Some(Arc::new(service)),
+            Err(e) => {
+                tracing::warn!("Observability service initialization failed: {}", e);
+                None
+            }
+        }
+    };
+
+    // Create observability router if service initialized successfully
+    if let Some(ref obs_service) = observability_service {
+        use crate::network::rest::v1::observability::{self, ObservabilityApiState};
+        let obs_state = ObservabilityApiState {
+            observability_service: obs_service.clone(),
+        };
+        router = router.nest(
+            "/api/v1/observability",
+            observability::create_observability_router().with_state(obs_state),
+        );
+        info!("✅ Observability API endpoints enabled at /api/v1/observability");
+    }
+
+    // Unified Multi-Model Query API endpoints
+    // Routes all queries through QueryFacadeAdapter for consistent execution
+    let unified_query_router = {
+        use crate::network::rest::v1::unified_query::{self, UnifiedQueryApiState};
+        use crate::storage::document::DocumentService;
+
+        let engine = state
+            .unified_handlers
+            .vector_operations_service
+            .unified_engine();
+
+        // Use WAL-enabled constructor for durability (same as document router)
+        // data_dir comes from TOML config (server.data_dir)
+        let doc_base_path = state.data_dir.join("documents");
+        let doc_path_str = doc_base_path.to_string_lossy().to_string();
+
+        let document_service = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
+                    Ok(svc) => Arc::new(svc),
+                    Err(e) => {
+                        tracing::warn!("Unified query: Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
+                        Arc::new(DocumentService::new(engine.clone()))
+                    }
+                }
+            })
+        });
+
+        // Get the query adapter from state (required for unified query execution)
+        let query_adapter = state.query_adapter.clone().expect(
+            "QueryFacadeAdapter must be configured in AppState for unified query endpoints",
+        );
+
+        // Use new_with_adapter to route all queries through QueryFacadeAdapter
+        let unified_state =
+            UnifiedQueryApiState::new_with_adapter(query_adapter, document_service, engine);
+        unified_query::create_router().with_state(unified_state)
+    };
+    router = router.nest("/api/v1/unified", unified_query_router);
+    info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
+
+    // Convert to Router<()> by providing state
+    let router = router.with_state(state);
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]

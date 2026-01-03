@@ -65,7 +65,9 @@ pub fn create_concurrency_limit_layer(
     config: &BackpressureConfig,
 ) -> Option<tower::limit::ConcurrencyLimitLayer> {
     if config.enabled {
-        Some(tower::limit::ConcurrencyLimitLayer::new(config.max_concurrent_requests))
+        Some(tower::limit::ConcurrencyLimitLayer::new(
+            config.max_concurrent_requests,
+        ))
     } else {
         None
     }

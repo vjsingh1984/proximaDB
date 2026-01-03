@@ -14,26 +14,22 @@
 //! - **Streaming**: Results produced incrementally, not materialized upfront
 //! - **Testability**: Each operator tested independently with mock engines
 
-use crate::core::error::ProximaDBError;
-use crate::graph::engines::GraphEngine;
 use crate::graph::query::execution_traits::{
     ColumnSpec, PhysicalOperator, QueryValue, ResultTuple, ValueType,
 };
-use crate::proto::proximadb_v1::{Edge, Node, PropertyFilter, PropertyFilterOperator};
-use anyhow::Result;
-use std::sync::Arc;
+use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator};
 
-pub mod scan;
 pub mod expand;
 pub mod filter;
-pub mod project;
 pub mod limit;
+pub mod project;
+pub mod scan;
 
-pub use scan::NodeScanOperator;
 pub use expand::ExpandOperator;
 pub use filter::FilterOperator;
-pub use project::ProjectOperator;
 pub use limit::LimitOperator;
+pub use project::ProjectOperator;
+pub use scan::NodeScanOperator;
 
 /// Edge direction for expansion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,13 +54,22 @@ pub fn evaluate_property_filter(
         None => return false,
     };
 
-    let operator = PropertyFilterOperator::try_from(filter.operator).unwrap_or(PropertyFilterOperator::Equals);
+    let operator =
+        PropertyFilterOperator::try_from(filter.operator).unwrap_or(PropertyFilterOperator::Equals);
 
     match operator {
-        PropertyFilterOperator::Equals => compare_property_values(actual_value, expected_value) == std::cmp::Ordering::Equal,
-        PropertyFilterOperator::NotEquals => compare_property_values(actual_value, expected_value) != std::cmp::Ordering::Equal,
-        PropertyFilterOperator::GreaterThan => compare_property_values(actual_value, expected_value) == std::cmp::Ordering::Greater,
-        PropertyFilterOperator::LessThan => compare_property_values(actual_value, expected_value) == std::cmp::Ordering::Less,
+        PropertyFilterOperator::Equals => {
+            compare_property_values(actual_value, expected_value) == std::cmp::Ordering::Equal
+        }
+        PropertyFilterOperator::NotEquals => {
+            compare_property_values(actual_value, expected_value) != std::cmp::Ordering::Equal
+        }
+        PropertyFilterOperator::GreaterThan => {
+            compare_property_values(actual_value, expected_value) == std::cmp::Ordering::Greater
+        }
+        PropertyFilterOperator::LessThan => {
+            compare_property_values(actual_value, expected_value) == std::cmp::Ordering::Less
+        }
         PropertyFilterOperator::GreaterEqual => {
             let cmp = compare_property_values(actual_value, expected_value);
             cmp == std::cmp::Ordering::Greater || cmp == std::cmp::Ordering::Equal
@@ -74,21 +79,30 @@ pub fn evaluate_property_filter(
             cmp == std::cmp::Ordering::Less || cmp == std::cmp::Ordering::Equal
         }
         PropertyFilterOperator::Contains => {
-            if let (Some(actual_str), Some(expected_str)) = (get_string_value(actual_value), get_string_value(expected_value)) {
+            if let (Some(actual_str), Some(expected_str)) = (
+                get_string_value(actual_value),
+                get_string_value(expected_value),
+            ) {
                 actual_str.contains(expected_str)
             } else {
                 false
             }
         }
         PropertyFilterOperator::StartsWith => {
-            if let (Some(actual_str), Some(expected_str)) = (get_string_value(actual_value), get_string_value(expected_value)) {
+            if let (Some(actual_str), Some(expected_str)) = (
+                get_string_value(actual_value),
+                get_string_value(expected_value),
+            ) {
                 actual_str.starts_with(expected_str)
             } else {
                 false
             }
         }
         PropertyFilterOperator::EndsWith => {
-            if let (Some(actual_str), Some(expected_str)) = (get_string_value(actual_value), get_string_value(expected_value)) {
+            if let (Some(actual_str), Some(expected_str)) = (
+                get_string_value(actual_value),
+                get_string_value(expected_value),
+            ) {
                 actual_str.ends_with(expected_str)
             } else {
                 false
@@ -130,8 +144,8 @@ fn get_string_value(value: &crate::proto::proximadb_v1::PropertyValue) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::property_value::Value;
     use crate::proto::proximadb_v1::PropertyValue;
+    use crate::proto::proximadb_v1::property_value::Value;
 
     #[test]
     fn test_evaluate_property_filter_equals() {

@@ -228,8 +228,8 @@ impl PrioritizedExperienceBuffer {
         Self {
             buffer: VecDeque::with_capacity(max_size.min(10_000)),
             max_size,
-            alpha: 0.6,  // How much to prioritize high TD-error
-            beta: 0.4,   // Importance sampling correction
+            alpha: 0.6, // How much to prioritize high TD-error
+            beta: 0.4,  // Importance sampling correction
         }
     }
 

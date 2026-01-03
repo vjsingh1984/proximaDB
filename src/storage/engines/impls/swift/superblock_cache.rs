@@ -1,7 +1,6 @@
 // SuperBlock Cache for SWIFT Engine - Tree-Based Navigation Optimized
 // Focused on SWIFT's actual design: hierarchical tree navigation with instant traversal
 
-use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::Result;
 use dashmap::DashMap;
 use std::collections::HashMap;

@@ -29,8 +29,8 @@
 //! - Scalability (performance vs graph size)
 
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::engines::GraphEngine;
+use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::hybrid::semantic_traversal::{SemanticBFSTraversal, SemanticTraversalInput};
 use proximadb::graph::{Edge, Node};
 use proximadb::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
@@ -48,9 +48,12 @@ fn generate_node(id: usize, dimension: usize) -> Node {
     properties.insert(
         "name".to_string(),
         proximadb::proto::proximadb_v1::PropertyValue {
-            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                format!("node_{}", id),
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::property_value::Value::StringValue(format!(
+                    "node_{}",
+                    id
+                )),
+            ),
         },
     );
 
@@ -242,7 +245,10 @@ async fn benchmark_semantic_search() {
 
     // Create graph with embeddings
     let node_count = 1000;
-    println!("  Preparing: Creating graph with {} nodes and embeddings...", node_count);
+    println!(
+        "  Preparing: Creating graph with {} nodes and embeddings...",
+        node_count
+    );
 
     for i in 0..node_count {
         let node = generate_node(i, 128);
@@ -288,7 +294,10 @@ async fn benchmark_semantic_search() {
     let throughput = search_count as f64 / duration.as_secs_f64();
     let latency_ms = duration.as_millis() as f64 / search_count as f64;
 
-    println!("  {} semantic searches (depth=3, threshold=0.8):", search_count);
+    println!(
+        "  {} semantic searches (depth=3, threshold=0.8):",
+        search_count
+    );
     println!("    Total time: {:.2}s", duration.as_secs_f64());
     println!("    Throughput: {:.2} searches/sec", throughput);
     println!("    Avg latency: {:.2}ms/search", latency_ms);
@@ -303,9 +312,7 @@ async fn benchmark_bulk_operations() {
 
     // Benchmark bulk node insertion
     let node_count = 1000;
-    let nodes: Vec<Node> = (0..node_count)
-        .map(|i| generate_node(i, 128))
-        .collect();
+    let nodes: Vec<Node> = (0..node_count).map(|i| generate_node(i, 128)).collect();
 
     let start = Instant::now();
     engine.bulk_insert_nodes(nodes).await.unwrap();
@@ -313,7 +320,10 @@ async fn benchmark_bulk_operations() {
 
     println!("  Bulk insert {} nodes:", node_count);
     println!("    Total time: {:.2}s", duration.as_secs_f64());
-    println!("    Throughput: {:.0} nodes/sec", node_count as f64 / duration.as_secs_f64());
+    println!(
+        "    Throughput: {:.0} nodes/sec",
+        node_count as f64 / duration.as_secs_f64()
+    );
 
     // Benchmark bulk edge insertion
     // Use unique edge IDs to avoid duplicates when from/to pairs repeat
@@ -341,7 +351,10 @@ async fn benchmark_bulk_operations() {
 
     println!("  Bulk insert {} edges:", edge_count);
     println!("    Total time: {:.2}s", duration.as_secs_f64());
-    println!("    Throughput: {:.0} edges/sec", edge_count as f64 / duration.as_secs_f64());
+    println!(
+        "    Throughput: {:.0} edges/sec",
+        edge_count as f64 / duration.as_secs_f64()
+    );
 }
 
 /// Benchmark: Scalability test (performance vs graph size)
@@ -389,8 +402,17 @@ async fn benchmark_scalability() {
         let traversal_duration = start.elapsed();
 
         println!("  Graph size: {} nodes, {} edges", size, size * 5);
-        println!("    Insert throughput: {:.0} nodes/sec", size as f64 / insert_duration.as_secs_f64());
-        println!("    Lookup latency: {:.2}µs", lookup_duration.as_micros() as f64 / lookup_count as f64);
-        println!("    Traversal latency: {:.2}µs", traversal_duration.as_micros() as f64 / lookup_count as f64);
+        println!(
+            "    Insert throughput: {:.0} nodes/sec",
+            size as f64 / insert_duration.as_secs_f64()
+        );
+        println!(
+            "    Lookup latency: {:.2}µs",
+            lookup_duration.as_micros() as f64 / lookup_count as f64
+        );
+        println!(
+            "    Traversal latency: {:.2}µs",
+            traversal_duration.as_micros() as f64 / lookup_count as f64
+        );
     }
 }

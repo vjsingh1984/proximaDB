@@ -20,10 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::{
-    MetadataItem, SqlValue,
-    VectorRecord, VectorSearchRequest,
-};
+use crate::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord, VectorSearchRequest};
 
 /// Write mode for Arrow IPC operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -351,7 +348,8 @@ impl ArrowProtoCodec {
         }
         let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
         let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
-        let vector_array = FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
+        let vector_array =
+            FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
 
         // Build metadata array (Struct<key, value>)
         let metadata_array = Self::build_metadata_struct_array(&records)?;
@@ -480,18 +478,134 @@ impl ArrowProtoCodec {
     /// Convert RecordBatch to FlightData
     pub fn batch_to_flight_data(
         batch: &RecordBatch,
-        options: &IpcWriteOptions,
+        _options: &IpcWriteOptions,
     ) -> Result<Vec<FlightData>> {
         Ok(arrow_flight::utils::batches_to_flight_data(
             &*batch.schema(),
             vec![batch.clone()],
         )?)
     }
+
+    /// Convert RecordBatch to FlightData with compression support
+    ///
+    /// This method encodes a RecordBatch into Arrow IPC FlightData format,
+    /// applying the specified compression codec if provided.
+    ///
+    /// ## Parameters
+    /// - `batch`: The RecordBatch to encode
+    /// - `compression`: Optional compression type (LZ4_FRAME or ZSTD)
+    ///
+    /// ## Returns
+    /// A vector of FlightData messages including schema and data
+    ///
+    /// ## Example
+    /// ```rust,ignore
+    /// use arrow_ipc::CompressionType;
+    ///
+    /// let flight_data = ArrowProtoCodec::batch_to_flight_data_with_compression(
+    ///     &batch,
+    ///     Some(CompressionType::LZ4_FRAME),
+    /// )?;
+    /// ```
+    pub fn batch_to_flight_data_with_compression(
+        batch: &RecordBatch,
+        compression: Option<arrow_ipc::CompressionType>,
+    ) -> Result<Vec<FlightData>> {
+        use arrow_ipc::writer::{CompressionContext, DictionaryTracker, IpcDataGenerator};
+
+        let schema = batch.schema();
+
+        // Create write options with compression if specified
+        let options = match compression {
+            Some(codec) => IpcWriteOptions::default()
+                .try_with_compression(Some(codec))
+                .context("Failed to configure compression")?,
+            None => IpcWriteOptions::default(),
+        };
+
+        // Create schema message
+        let schema_flight_data: FlightData =
+            arrow_flight::SchemaAsIpc::new(&schema, &options).into();
+
+        // Encode the batch with compression
+        let data_gen = IpcDataGenerator::default();
+        let mut dictionary_tracker = DictionaryTracker::new(false);
+        let mut compression_context = CompressionContext::default();
+
+        let (encoded_dictionaries, encoded_batch) = data_gen.encode(
+            batch,
+            &mut dictionary_tracker,
+            &options,
+            &mut compression_context,
+        )?;
+
+        // Build the result: schema + dictionaries + data
+        let mut stream = Vec::with_capacity(1 + encoded_dictionaries.len() + 1);
+        stream.push(schema_flight_data);
+        stream.extend(encoded_dictionaries.into_iter().map(Into::into));
+        stream.push(encoded_batch.into());
+
+        Ok(stream)
+    }
+
+    /// Convert multiple RecordBatches to FlightData with compression support
+    ///
+    /// This is a convenience method for encoding multiple batches with the same
+    /// compression settings. The schema is sent only once at the beginning.
+    pub fn batches_to_flight_data_with_compression(
+        batches: &[RecordBatch],
+        compression: Option<arrow_ipc::CompressionType>,
+    ) -> Result<Vec<FlightData>> {
+        if batches.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        use arrow_ipc::writer::{CompressionContext, DictionaryTracker, IpcDataGenerator};
+
+        let schema = batches[0].schema();
+
+        // Create write options with compression if specified
+        let options = match compression {
+            Some(codec) => IpcWriteOptions::default()
+                .try_with_compression(Some(codec))
+                .context("Failed to configure compression")?,
+            None => IpcWriteOptions::default(),
+        };
+
+        // Create schema message
+        let schema_flight_data: FlightData =
+            arrow_flight::SchemaAsIpc::new(&schema, &options).into();
+
+        let data_gen = IpcDataGenerator::default();
+        let mut dictionary_tracker = DictionaryTracker::new(false);
+        let mut compression_context = CompressionContext::default();
+
+        // Estimate capacity
+        let mut stream = Vec::with_capacity(1 + batches.len() * 2);
+        stream.push(schema_flight_data);
+
+        // Encode each batch
+        for batch in batches {
+            let (encoded_dictionaries, encoded_batch) = data_gen.encode(
+                batch,
+                &mut dictionary_tracker,
+                &options,
+                &mut compression_context,
+            )?;
+
+            stream.extend(encoded_dictionaries.into_iter().map(Into::into));
+            stream.push(encoded_batch.into());
+        }
+
+        Ok(stream)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::{ArrayRef, FixedSizeListArray, Float32Array, Int64Array, StringArray};
+    use arrow_schema::{DataType, Field};
 
     #[test]
     fn test_create_vector_schema() {
@@ -511,5 +625,167 @@ mod tests {
 
         let result = ArrowProtoCodec::deserialize_vector(&bytes).unwrap();
         assert_eq!(result, vec);
+    }
+
+    /// Helper to create a test RecordBatch
+    fn create_test_batch(num_rows: usize, dimension: i32) -> RecordBatch {
+        // Create id column
+        let ids: Vec<String> = (0..num_rows).map(|i| format!("id_{}", i)).collect();
+        let id_array = StringArray::from(ids);
+
+        // Create vector column
+        let flat_values: Vec<f32> = (0..(num_rows * dimension as usize))
+            .map(|i| (i as f32) * 0.1)
+            .collect();
+        let values_array = Arc::new(Float32Array::from(flat_values)) as ArrayRef;
+        let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let vector_array = FixedSizeListArray::new(vector_field, dimension, values_array, None);
+
+        // Create timestamp column
+        let timestamps: Vec<i64> = (0..num_rows).map(|i| i as i64 * 1000).collect();
+        let timestamp_array = Int64Array::from(timestamps);
+
+        // Create schema
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    dimension,
+                ),
+                false,
+            ),
+            Field::new("timestamp", DataType::Int64, true),
+        ]));
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_array),
+                Arc::new(vector_array),
+                Arc::new(timestamp_array),
+            ],
+        )
+        .expect("Failed to create test batch")
+    }
+
+    #[test]
+    fn test_batch_to_flight_data_no_compression() {
+        let batch = create_test_batch(10, 4);
+        let flight_data = ArrowProtoCodec::batch_to_flight_data_with_compression(&batch, None)
+            .expect("Failed to convert batch");
+
+        // Should have schema + data messages
+        assert!(!flight_data.is_empty());
+        // First message should be schema
+        assert!(!flight_data[0].data_header.is_empty());
+    }
+
+    #[test]
+    fn test_batch_to_flight_data_with_lz4_compression() {
+        let batch = create_test_batch(100, 128);
+        let flight_data = ArrowProtoCodec::batch_to_flight_data_with_compression(
+            &batch,
+            Some(arrow_ipc::CompressionType::LZ4_FRAME),
+        )
+        .expect("Failed to convert batch with LZ4");
+
+        assert!(!flight_data.is_empty());
+    }
+
+    #[test]
+    fn test_batch_to_flight_data_with_zstd_compression() {
+        let batch = create_test_batch(100, 128);
+        let flight_data = ArrowProtoCodec::batch_to_flight_data_with_compression(
+            &batch,
+            Some(arrow_ipc::CompressionType::ZSTD),
+        )
+        .expect("Failed to convert batch with ZSTD");
+
+        assert!(!flight_data.is_empty());
+    }
+
+    #[test]
+    fn test_batches_to_flight_data_empty() {
+        let flight_data = ArrowProtoCodec::batches_to_flight_data_with_compression(&[], None)
+            .expect("Failed to convert empty batches");
+
+        assert!(flight_data.is_empty());
+    }
+
+    #[test]
+    fn test_batches_to_flight_data_multiple_batches() {
+        let batch1 = create_test_batch(50, 64);
+        let batch2 = create_test_batch(30, 64);
+        let batches = vec![batch1, batch2];
+
+        let flight_data = ArrowProtoCodec::batches_to_flight_data_with_compression(
+            &batches,
+            Some(arrow_ipc::CompressionType::LZ4_FRAME),
+        )
+        .expect("Failed to convert batches");
+
+        // Should have schema + data for each batch
+        assert!(flight_data.len() >= 3); // At least schema + 2 data messages
+    }
+
+    #[test]
+    fn test_compression_reduces_size() {
+        // Create a batch with repetitive data that compresses well
+        let num_rows = 1000;
+        let dimension = 128;
+
+        // Create highly compressible data (all zeros)
+        let ids: Vec<String> = (0..num_rows).map(|i| format!("id_{}", i)).collect();
+        let id_array = StringArray::from(ids);
+
+        let flat_values: Vec<f32> = vec![0.0f32; num_rows * dimension];
+        let values_array = Arc::new(Float32Array::from(flat_values)) as ArrayRef;
+        let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let vector_array =
+            FixedSizeListArray::new(vector_field, dimension as i32, values_array, None);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    dimension as i32,
+                ),
+                false,
+            ),
+        ]));
+
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(id_array), Arc::new(vector_array)])
+            .expect("Failed to create batch");
+
+        // Get uncompressed size
+        let uncompressed =
+            ArrowProtoCodec::batches_to_flight_data_with_compression(&[batch.clone()], None)
+                .expect("Failed uncompressed");
+
+        // Get compressed size
+        let compressed = ArrowProtoCodec::batches_to_flight_data_with_compression(
+            &[batch],
+            Some(arrow_ipc::CompressionType::LZ4_FRAME),
+        )
+        .expect("Failed compressed");
+
+        // Calculate total data size
+        let uncompressed_size: usize = uncompressed.iter().map(|fd| fd.data_body.len()).sum();
+        let compressed_size: usize = compressed.iter().map(|fd| fd.data_body.len()).sum();
+
+        // Compressed should be smaller for highly repetitive data
+        // Note: For very small data, compression overhead might make it larger
+        if uncompressed_size > 1024 {
+            assert!(
+                compressed_size <= uncompressed_size,
+                "Compressed ({}) should be <= uncompressed ({}) for repetitive data",
+                compressed_size,
+                uncompressed_size
+            );
+        }
     }
 }

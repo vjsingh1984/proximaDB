@@ -22,7 +22,12 @@
 //! - Multi-region coordination
 //! - Cross-shard query execution
 
+// Feature-gated: requires distributed-graph feature which enables PULSAR/QUASAR
+// consensus, regions, and transaction modules
+#![cfg(feature = "distributed-graph")]
+
 use proximadb::cluster::consensus::ConsensusConfig;
+use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::engines::pulsar::consensus::{GraphCommand, GraphRaftNode};
 use proximadb::graph::engines::pulsar::regions::{
@@ -31,7 +36,6 @@ use proximadb::graph::engines::pulsar::regions::{
 use proximadb::graph::engines::pulsar::transactions::{
     GraphOperation, TransactionCoordinator, TransactionState, TwoPhaseCommitCoordinator,
 };
-use proximadb::graph::engines::GraphEngine;
 use proximadb::proto::proximadb_v1::Node;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -543,8 +547,11 @@ async fn test_end_to_end_distributed_workflow() {
     let shard2_engine = create_test_orion_engine("shard2");
 
     let config = ConsensusConfig::default();
-    let raft1 = GraphRaftNode::new(config.clone(), shard1_engine.clone() as Arc<dyn GraphEngine>)
-        .unwrap();
+    let raft1 = GraphRaftNode::new(
+        config.clone(),
+        shard1_engine.clone() as Arc<dyn GraphEngine>,
+    )
+    .unwrap();
     let raft2 = GraphRaftNode::new(config, shard2_engine.clone() as Arc<dyn GraphEngine>).unwrap();
 
     // Verify both nodes are leaders (single-node clusters)
@@ -657,5 +664,8 @@ async fn test_end_to_end_distributed_workflow() {
         region_coordinator.get_local_region().await.unwrap(),
         "primary-region"
     );
-    assert_eq!(region_coordinator.get_peer_regions().await.unwrap().len(), 1);
+    assert_eq!(
+        region_coordinator.get_peer_regions().await.unwrap().len(),
+        1
+    );
 }

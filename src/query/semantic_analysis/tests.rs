@@ -3,7 +3,7 @@
 use crate::core::config::StorageConfig;
 use crate::query::semantic_analysis::analyzer::Analyzer;
 use crate::query::semantic_analysis::scope::{DataType, Symbol};
-use crate::query::sql_frontend::SqlFrontendParser;
+use crate::query::sql_frontend::parser::SqlFrontendParser;
 use crate::services::collection::manager::CollectionService;
 use anyhow::Result;
 use std::sync::Arc;

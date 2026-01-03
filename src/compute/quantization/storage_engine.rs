@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::unified::{
-    InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata,
-    QuantizedVector, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+    InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata, QuantizedVector,
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 // Note: create_distance_calculator is available but not currently used
@@ -769,7 +769,7 @@ impl StorageQuantizationEngine {
 
     /// Convert FP32 to binary using threshold
     fn fp32_to_binary(&self, vector: &[f32]) -> Vec<u8> {
-        let mut binary = Vec::with_capacity((vector.len() + 7) / 8);
+        let mut binary = Vec::with_capacity(vector.len().div_ceil(8));
         let mut byte = 0u8;
         let mut bit_pos = 0;
 
@@ -803,7 +803,7 @@ impl StorageQuantizationEngine {
         metric: &DistanceMetric,
     ) -> Result<Vec<Vec<f32>>> {
         let num_centroids = 1 << bits_per_code;
-        let subvector_dim = (query.len() + num_subvectors - 1) / num_subvectors;
+        let subvector_dim = query.len().div_ceil(num_subvectors);
         let mut lookup_tables = Vec::with_capacity(num_subvectors);
 
         for subspace_idx in 0..num_subvectors {

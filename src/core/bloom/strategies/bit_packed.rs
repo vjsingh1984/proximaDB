@@ -32,7 +32,7 @@ impl BitPackedBloomFilter {
         let bits_per_key = config.bits_per_key.max(1).min(32);
         let expected_elements = expected_elements.max(1); // Ensure at least 1 element
         let num_bits = (expected_elements * bits_per_key as usize).max(64); // Minimum 64 bits
-        let num_u64s = (num_bits + 63) / 64;
+        let num_u64s = num_bits.div_ceil(64);
         let num_hashes = ((bits_per_key as f64 * 0.69).round() as u32).max(1);
 
         Self {

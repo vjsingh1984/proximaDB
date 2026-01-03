@@ -123,7 +123,7 @@ impl AcceleratedQuantization {
         let max = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let range = if max > min { max - min } else { 1.0 };
 
-        let mut packed = Vec::with_capacity((values.len() + 1) / 2);
+        let mut packed = Vec::with_capacity(values.len().div_ceil(2));
         let mut packed_byte = 0u8;
         let mut is_high_nibble = true;
 

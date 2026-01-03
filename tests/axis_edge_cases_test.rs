@@ -13,7 +13,9 @@ const ENGINES: &[&str] = &["sst", "helix", "viper", "swift", "nova", "raptor"];
 fn create_test_db() -> (TempDir, EmbeddedProximaDB) {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let config = EmbeddedConfig {
-        storage_locations: vec![StorageLocationConfig::new(temp_dir.path().to_str().unwrap())],
+        storage_locations: vec![StorageLocationConfig::new(
+            temp_dir.path().to_str().unwrap(),
+        )],
         metadata_path: format!("{}/metadata", temp_dir.path().to_str().unwrap()),
         cache_size_mb: 128,
         default_engine: "sst".to_string(),

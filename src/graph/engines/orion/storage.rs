@@ -156,7 +156,7 @@ impl CsrStorage {
         // Add to temporary storage for batch processing (O(1) operation)
         self.temp_edges
             .entry(from_index)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((to_index, edge_id));
 
         // Mark that CSR needs rebuild and increment temp count
@@ -368,7 +368,10 @@ impl CsrStorage {
     /// Trigger rebuild if needed (lazy rebuild for read path)
     pub fn rebuild_if_needed(&mut self) -> Result<()> {
         if self.needs_rebuild {
-            tracing::debug!("Lazy rebuild triggered: {} temp edges", self.temp_edge_count);
+            tracing::debug!(
+                "Lazy rebuild triggered: {} temp edges",
+                self.temp_edge_count
+            );
             self.rebuild()?;
         }
         Ok(())

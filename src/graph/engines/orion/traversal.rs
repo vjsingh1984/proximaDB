@@ -189,23 +189,26 @@ pub async fn breadth_first_search(
     // BFS main loop
     while !frontier.is_empty() {
         // Timeout/budget check
-        if let Some(ms) = config.timeout_ms {
-            if start_time.elapsed() >= std::time::Duration::from_millis(ms) {
-                break;
-            }
+        if config
+            .timeout_ms
+            .is_some_and(|ms| start_time.elapsed() >= std::time::Duration::from_millis(ms))
+        {
+            break;
         }
         // Check depth limit
-        if let Some(max_depth) = config.max_depth {
-            if current_depth > max_depth {
-                break;
-            }
+        if config
+            .max_depth
+            .is_some_and(|max_depth| current_depth > max_depth)
+        {
+            break;
         }
 
         // Check node limit
-        if let Some(max_nodes) = config.max_nodes {
-            if visited_nodes.len() >= max_nodes {
-                break;
-            }
+        if config
+            .max_nodes
+            .is_some_and(|max_nodes| visited_nodes.len() >= max_nodes)
+        {
+            break;
         }
 
         // Early termination check
@@ -221,10 +224,11 @@ pub async fn breadth_first_search(
         // Process current frontier
         while let Some(current_node_id) = frontier.pop_front() {
             // Timeout/budget check per-node
-            if let Some(ms) = config.timeout_ms {
-                if start_time.elapsed() >= std::time::Duration::from_millis(ms) {
-                    break;
-                }
+            if config
+                .timeout_ms
+                .is_some_and(|ms| start_time.elapsed() >= std::time::Duration::from_millis(ms))
+            {
+                break;
             }
             // Get current node
             let current_node = match engine.get_node(&current_node_id)? {
@@ -233,10 +237,12 @@ pub async fn breadth_first_search(
             };
 
             // Apply node filter
-            if let Some(ref filter) = config.node_filter {
-                if !filter(&current_node) {
-                    continue;
-                }
+            if config
+                .node_filter
+                .as_ref()
+                .is_some_and(|f| !f(&current_node))
+            {
+                continue;
             }
 
             result_nodes.push(current_node);
@@ -275,10 +281,12 @@ pub async fn breadth_first_search(
                         .track_access_async(edge_key, CacheType::GraphEdge);
                 }
                 // Filter by edge type if specified
-                if let Some(ref allowed_types) = config.edge_types {
-                    if !allowed_types.contains(&edge.edge_type) {
-                        continue;
-                    }
+                if config
+                    .edge_types
+                    .as_ref()
+                    .is_some_and(|allowed_types| !allowed_types.contains(&edge.edge_type))
+                {
+                    continue;
                 }
 
                 let neighbor_id = &edge.to_node_id;
@@ -298,21 +306,21 @@ pub async fn breadth_first_search(
                     traversed_edges.push(edge.clone()); // NEW
 
                     // Track path if enabled
-                    if config.track_paths {
-                        if let Some(current_path) = paths.get(&current_node_id) {
-                            let mut new_path = current_path.clone();
-                            new_path.push(neighbor_id.clone());
-                            paths.insert(neighbor_id.clone(), new_path);
-                        }
+                    if config.track_paths && paths.get(&current_node_id).is_some() {
+                        let mut new_path = paths.get(&current_node_id).unwrap().clone();
+                        new_path.push(neighbor_id.clone());
+                        paths.insert(neighbor_id.clone(), new_path);
                     }
 
                     // Hint orchestrator to prefetch adjacency for next frontier (bounded)
-                    if prefetch_budget > 0 && config.enable_prefetch {
-                        if let Some(orch) = CrossCacheOrchestrator::global() {
-                            let key = format!("adj::{}", neighbor_id);
-                            orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                            prefetch_budget -= 1;
-                        }
+                    if prefetch_budget > 0
+                        && config.enable_prefetch
+                        && CrossCacheOrchestrator::global().is_some()
+                    {
+                        let orch = CrossCacheOrchestrator::global().unwrap();
+                        let key = format!("adj::{}", neighbor_id);
+                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        prefetch_budget -= 1;
                     }
                 }
             }
@@ -385,10 +393,11 @@ pub async fn depth_first_search(
     // DFS main loop (iterative to avoid stack overflow)
     while let Some((current_node_id, depth)) = stack.pop() {
         // Timeout/budget check per-node
-        if let Some(ms) = config.timeout_ms {
-            if start_time.elapsed() >= std::time::Duration::from_millis(ms) {
-                break;
-            }
+        if config
+            .timeout_ms
+            .is_some_and(|ms| start_time.elapsed() >= std::time::Duration::from_millis(ms))
+        {
+            break;
         }
         // Check if already visited (can happen with cycles)
         if visited_nodes.contains(&current_node_id) {
@@ -396,17 +405,16 @@ pub async fn depth_first_search(
         }
 
         // Check depth limit
-        if let Some(max_depth) = config.max_depth {
-            if depth > max_depth {
-                continue;
-            }
+        if config.max_depth.is_some_and(|max_depth| depth > max_depth) {
+            continue;
         }
 
         // Check node limit
-        if let Some(max_nodes) = config.max_nodes {
-            if visited_nodes.len() >= max_nodes {
-                break;
-            }
+        if config
+            .max_nodes
+            .is_some_and(|max_nodes| visited_nodes.len() >= max_nodes)
+        {
+            break;
         }
 
         visited_nodes.insert(current_node_id.clone());
@@ -419,10 +427,12 @@ pub async fn depth_first_search(
         };
 
         // Apply node filter
-        if let Some(ref filter) = config.node_filter {
-            if !filter(&current_node) {
-                continue;
-            }
+        if config
+            .node_filter
+            .as_ref()
+            .is_some_and(|f| !f(&current_node))
+        {
+            continue;
         }
 
         result_nodes.push(current_node);
@@ -430,10 +440,12 @@ pub async fn depth_first_search(
         stats.nodes_visited += 1;
 
         // Early termination check
-        if let Some(ref early_stop) = config.early_stop {
-            if early_stop(&[current_node_id.clone()]) {
-                break;
-            }
+        if config
+            .early_stop
+            .as_ref()
+            .is_some_and(|early_stop| early_stop(&[current_node_id.clone()]))
+        {
+            break;
         }
 
         // Get neighbors and add to stack (reverse order for consistent DFS)
@@ -468,42 +480,40 @@ pub async fn depth_first_search(
                     .track_access_async(edge_key, CacheType::GraphEdge);
             }
             // Filter by edge type if specified
-            if let Some(ref allowed_types) = config.edge_types {
-                if !allowed_types.contains(&edge.edge_type) {
-                    continue;
-                }
+            if config
+                .edge_types
+                .as_ref()
+                .is_some_and(|allowed_types| !allowed_types.contains(&edge.edge_type))
+            {
+                continue;
             }
 
             let neighbor_id = &edge.to_node_id;
 
             if !visited_nodes.contains(neighbor_id) {
                 // Enforce frontier cap on stack size if configured
-                if let Some(cap) = config.max_frontier {
-                    if stack.len() < cap {
-                        stack.push((neighbor_id.clone(), depth + 1));
-                    }
-                } else {
+                if config.max_frontier.is_none_or(|cap| stack.len() < cap) {
                     stack.push((neighbor_id.clone(), depth + 1));
                 }
                 stats.edges_traversed += 1;
                 traversed_edges.push(edge.clone()); // NEW
 
                 // Track path if enabled
-                if config.track_paths {
-                    if let Some(current_path) = paths.get(&current_node_id) {
-                        let mut new_path = current_path.clone();
-                        new_path.push(neighbor_id.clone());
-                        paths.insert(neighbor_id.clone(), new_path);
-                    }
+                if config.track_paths && paths.get(&current_node_id).is_some() {
+                    let mut new_path = paths.get(&current_node_id).unwrap().clone();
+                    new_path.push(neighbor_id.clone());
+                    paths.insert(neighbor_id.clone(), new_path);
                 }
 
                 // Hint orchestrator to prefetch adjacency for next frontier (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch {
-                    if let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && CrossCacheOrchestrator::global().is_some()
+                {
+                    let orch = CrossCacheOrchestrator::global().unwrap();
+                    let key = format!("adj::{}", neighbor_id);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
                 }
             }
         }
@@ -541,7 +551,7 @@ pub async fn parallel_breadth_first_search(
     config: TraversalConfig,
 ) -> Result<TraversalResult> {
     use rayon::prelude::*;
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
 
     let start_time = std::time::Instant::now();
@@ -593,10 +603,16 @@ pub async fn parallel_breadth_first_search(
             .par_iter()
             .flat_map(|node_id| {
                 // Get neighbors for this node
-                let outgoing_edges = match engine.get_outgoing_edges(node_id,
+                let outgoing_edges = match engine.get_outgoing_edges(
+                    node_id,
                     config.edge_types.as_ref().and_then(|types| {
-                        if types.is_empty() { None } else { Some(types[0].as_str()) }
-                    })) {
+                        if types.is_empty() {
+                            None
+                        } else {
+                            Some(types[0].as_str())
+                        }
+                    }),
+                ) {
                     Ok(edges) => edges,
                     Err(_) => return Vec::new(),
                 };
@@ -694,7 +710,10 @@ pub async fn parallel_breadth_first_search(
 
     // Unwrap Arc<Mutex<>> collections
     let final_nodes = Arc::try_unwrap(result_nodes).unwrap().into_inner().unwrap();
-    let final_node_ids = Arc::try_unwrap(result_node_ids).unwrap().into_inner().unwrap();
+    let final_node_ids = Arc::try_unwrap(result_node_ids)
+        .unwrap()
+        .into_inner()
+        .unwrap();
     let final_paths = Arc::try_unwrap(result_paths).unwrap().into_inner().unwrap();
 
     Ok(TraversalResult {
@@ -1230,19 +1249,18 @@ pub async fn vector_guided_astar(
         };
 
         // Compute graph-based distance estimate (using target embedding if available)
-        let graph_distance = if let (Some(node_emb), Some(target_emb)) =
-            (&node.embedding, &target_embedding)
-        {
-            // L2 distance as graph estimate
-            let mut sum = 0.0_f64;
-            for (a, b) in node_emb.vector.iter().zip(target_emb.vector.iter()) {
-                let diff = (*a as f64) - (*b as f64);
-                sum += diff * diff;
-            }
-            sum.sqrt()
-        } else {
-            0.0 // Fallback to zero if embeddings missing
-        };
+        let graph_distance =
+            if let (Some(node_emb), Some(target_emb)) = (&node.embedding, &target_embedding) {
+                // L2 distance as graph estimate
+                let mut sum = 0.0_f64;
+                for (a, b) in node_emb.vector.iter().zip(target_emb.vector.iter()) {
+                    let diff = (*a as f64) - (*b as f64);
+                    sum += diff * diff;
+                }
+                sum.sqrt()
+            } else {
+                0.0 // Fallback to zero if embeddings missing
+            };
 
         // Hybrid heuristic: blend graph and semantic distances
         // h(n) = (1 - α) * graph_distance + α * semantic_distance
@@ -1944,11 +1962,7 @@ mod tests {
         }
 
         // Create edges: A->B, B->C, B->A
-        let edges = vec![
-            ("A", "B", "e1"),
-            ("B", "C", "e2"),
-            ("B", "A", "e3"),
-        ];
+        let edges = vec![("A", "B", "e1"), ("B", "C", "e2"), ("B", "A", "e3")];
 
         for (from, to, id) in edges {
             let edge = Edge {
@@ -1989,8 +2003,18 @@ mod tests {
         let norm_b = score_b / total;
         let norm_c = score_c / total;
 
-        assert!(norm_b > norm_a, "B should have higher normalized score than A: B={}, A={}", norm_b, norm_a);
-        assert!(norm_b > norm_c, "B should have higher normalized score than C: B={}, C={}", norm_b, norm_c);
+        assert!(
+            norm_b > norm_a,
+            "B should have higher normalized score than A: B={}, A={}",
+            norm_b,
+            norm_a
+        );
+        assert!(
+            norm_b > norm_c,
+            "B should have higher normalized score than C: B={}, C={}",
+            norm_b,
+            norm_c
+        );
     }
 
     #[tokio::test]
@@ -2035,11 +2059,23 @@ mod tests {
             .unwrap();
 
         // Verify we found all reachable nodes (may not include start node in some implementations)
-        assert!(result.nodes.len() >= 9, "Should find at least 9 nodes, found {}", result.nodes.len());
-        assert!(result.node_ids.len() >= 9, "Should have at least 9 node IDs, found {}", result.node_ids.len());
+        assert!(
+            result.nodes.len() >= 9,
+            "Should find at least 9 nodes, found {}",
+            result.nodes.len()
+        );
+        assert!(
+            result.node_ids.len() >= 9,
+            "Should have at least 9 node IDs, found {}",
+            result.node_ids.len()
+        );
 
         // Verify traversal stats
-        assert!(result.stats.nodes_visited >= 9, "Should visit at least 9 nodes, visited {}", result.stats.nodes_visited);
+        assert!(
+            result.stats.nodes_visited >= 9,
+            "Should visit at least 9 nodes, visited {}",
+            result.stats.nodes_visited
+        );
         assert!(result.stats.execution_time_microseconds > 0);
     }
 
@@ -2216,27 +2252,37 @@ mod tests {
         GraphEngine::insert_node(&engine, node_c).await.unwrap();
 
         // Create edges
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e1".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "B".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e2".to_string(),
-            from_node_id: "B".to_string(),
-            to_node_id: "C".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e2".to_string(),
+                from_node_id: "B".to_string(),
+                to_node_id: "C".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let guide_embedding = vec![0.5, 0.5, 0.5];
@@ -2347,49 +2393,69 @@ mod tests {
         GraphEngine::insert_node(&engine, node_d).await.unwrap();
 
         // Create diamond topology
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e1".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "B".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e2".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "C".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e2".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "C".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e3".to_string(),
-            from_node_id: "B".to_string(),
-            to_node_id: "D".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e3".to_string(),
+                from_node_id: "B".to_string(),
+                to_node_id: "D".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e4".to_string(),
-            from_node_id: "C".to_string(),
-            to_node_id: "D".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e4".to_string(),
+                from_node_id: "C".to_string(),
+                to_node_id: "D".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
@@ -2458,16 +2524,21 @@ mod tests {
         GraphEngine::insert_node(&engine, node_a).await.unwrap();
         GraphEngine::insert_node(&engine, node_b).await.unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e1".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "B".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let guide_embedding = vec![1.5];
@@ -2486,7 +2557,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.is_some(), "Should find a path even with out-of-range alpha");
+        assert!(
+            result.is_some(),
+            "Should find a path even with out-of-range alpha"
+        );
 
         // Test with alpha < 0.0 (should be clamped to 0.0)
         let result = vector_guided_astar(
@@ -2502,7 +2576,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.is_some(), "Should find a path even with negative alpha");
+        assert!(
+            result.is_some(),
+            "Should find a path even with negative alpha"
+        );
     }
 
     #[tokio::test]
@@ -2569,6 +2646,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.is_none(), "Should return None for disconnected graph");
+        assert!(
+            result.is_none(),
+            "Should return None for disconnected graph"
+        );
     }
 }

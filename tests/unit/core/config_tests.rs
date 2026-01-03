@@ -49,7 +49,10 @@ fn test_config_serialization_roundtrip() {
     assert_eq!(original.server.port, recovered.server.port);
     assert_eq!(original.api.rest_port, recovered.api.rest_port);
     assert_eq!(original.api.grpc_port, recovered.api.grpc_port);
-    assert_eq!(original.storage.cache_size_mb, recovered.storage.cache_size_mb);
+    assert_eq!(
+        original.storage.cache_size_mb,
+        recovered.storage.cache_size_mb
+    );
 }
 
 /*

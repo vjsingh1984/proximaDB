@@ -339,7 +339,10 @@ impl RecoveryManager {
     /// Recover a specific collection (public API)
     /// Returns RecoveryStats with detailed recovery information
     pub async fn recover_collection(&self, collection_id: &str) -> Result<RecoveryStats> {
-        eprintln!("🔍 DEBUG: RecoveryManager::recover_collection() called for: {}", collection_id);
+        eprintln!(
+            "🔍 DEBUG: RecoveryManager::recover_collection() called for: {}",
+            collection_id
+        );
 
         let (vectors_recovered, files_recovered) = Self::recover_collection_internal(
             collection_id,
@@ -352,8 +355,10 @@ impl RecoveryManager {
         )
         .await?;
 
-        eprintln!("✅ DEBUG: recover_collection_internal returned: {} vectors, {} files",
-            vectors_recovered, files_recovered);
+        eprintln!(
+            "✅ DEBUG: recover_collection_internal returned: {} vectors, {} files",
+            vectors_recovered, files_recovered
+        );
 
         // Update global stats
         if vectors_recovered > 0 {
@@ -411,7 +416,10 @@ impl RecoveryManager {
         progress_callback: Option<RecoveryProgressCallback>,
         metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<(u64, u64)> {
-        eprintln!("🔍 DEBUG: recover_collection_internal() for collection: {}", collection_id);
+        eprintln!(
+            "🔍 DEBUG: recover_collection_internal() for collection: {}",
+            collection_id
+        );
         info!(
             "🔄 Recovering collection: {} (mode: {:?})",
             collection_id, recovery_mode
@@ -420,12 +428,21 @@ impl RecoveryManager {
         if recovery_mode == RecoveryMode::DirectToStorage {
             eprintln!("🔍 DEBUG: Recovery mode is DirectToStorage, checking storage engine");
             let engines = storage_engines.read().await;
-            eprintln!("🔍 DEBUG: Total storage engines registered: {}", engines.len());
-            eprintln!("🔍 DEBUG: Looking for engine for collection: {}", collection_id);
+            eprintln!(
+                "🔍 DEBUG: Total storage engines registered: {}",
+                engines.len()
+            );
+            eprintln!(
+                "🔍 DEBUG: Looking for engine for collection: {}",
+                collection_id
+            );
 
             if !engines.contains_key(collection_id) {
-                eprintln!("⚠️ DEBUG: No storage engine registered for {}. Available engines: {:?}",
-                    collection_id, engines.keys().collect::<Vec<_>>());
+                eprintln!(
+                    "⚠️ DEBUG: No storage engine registered for {}. Available engines: {:?}",
+                    collection_id,
+                    engines.keys().collect::<Vec<_>>()
+                );
                 warn!(
                     "⏭️ Skipping recovery for collection {}: No storage engine registered. \
                     Collection will be initialized fresh if accessed.",
@@ -438,22 +455,38 @@ impl RecoveryManager {
         }
 
         // Get entries from global manifest
-        eprintln!("🔍 DEBUG: Getting WAL entries from global manifest for {}", collection_id);
+        eprintln!(
+            "🔍 DEBUG: Getting WAL entries from global manifest for {}",
+            collection_id
+        );
         let entries =
             crate::storage::persistence::write_ahead_log::manifest::get_collection_entries(
                 collection_id,
             )
             .await;
-        eprintln!("🔍 DEBUG: Found {} WAL entries for {}", entries.len(), collection_id);
+        eprintln!(
+            "🔍 DEBUG: Found {} WAL entries for {}",
+            entries.len(),
+            collection_id
+        );
 
         let mut vectors_recovered = 0u64;
         let mut files_recovered = 0u64;
 
-        eprintln!("🔍 DEBUG: Starting WAL entry recovery loop for {} entries", entries.len());
+        eprintln!(
+            "🔍 DEBUG: Starting WAL entry recovery loop for {} entries",
+            entries.len()
+        );
 
         for (idx, e) in entries.iter().enumerate() {
-            eprintln!("🔍 DEBUG: Processing WAL entry {}/{}: batch_id={}, lsn={}, size={}",
-                idx + 1, entries.len(), e.batch_id, e.global_lsn, e.size_bytes);
+            eprintln!(
+                "🔍 DEBUG: Processing WAL entry {}/{}: batch_id={}, lsn={}, size={}",
+                idx + 1,
+                entries.len(),
+                e.batch_id,
+                e.global_lsn,
+                e.size_bytes
+            );
 
             // Use full_url() from manifest entry (includes storage_url + file_path)
             let file_url = e.full_url();
@@ -488,7 +521,10 @@ impl RecoveryManager {
                     eprintln!("🔍 DEBUG: Validating checksum...");
                     let checksum = crate::utils::checksum::Crc32::checksum(&data);
                     if checksum != e.checksum_crc32 {
-                        eprintln!("❌ DEBUG: Checksum mismatch! Expected: {}, Got: {}", e.checksum_crc32, checksum);
+                        eprintln!(
+                            "❌ DEBUG: Checksum mismatch! Expected: {}, Got: {}",
+                            e.checksum_crc32, checksum
+                        );
                         warn!("Checksum mismatch for {}, skipping", file_info.file_url);
                         continue;
                     }
@@ -1090,7 +1126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_manager_direct_to_storage() {
-        let (disk_manager, flush_coordinator, mut recovery_manager, temp_dir) =
+        let (disk_manager, flush_coordinator, recovery_manager, temp_dir) =
             create_test_managers().await;
         let collection_id = "test_collection";
 

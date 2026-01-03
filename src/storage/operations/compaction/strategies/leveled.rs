@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use super::{
-    CompactionCostEstimate, CompactionParameters, CompactionPlan, CompactionStrategy,
-    FileMetadata, FileStatistics,
+    CompactionCostEstimate, CompactionParameters, CompactionPlan, CompactionStrategy, FileMetadata,
+    FileStatistics,
 };
 
 /// Leveled compaction strategy (LSM-tree style)
@@ -107,14 +107,8 @@ impl LeveledCompactionStrategy {
         target_level_files: &[&'a FileMetadata],
     ) -> Vec<&'a FileMetadata> {
         // Get key range from source files
-        let source_min = source_files
-            .iter()
-            .filter_map(|f| f.min_key.as_ref())
-            .min();
-        let source_max = source_files
-            .iter()
-            .filter_map(|f| f.max_key.as_ref())
-            .max();
+        let source_min = source_files.iter().filter_map(|f| f.min_key.as_ref()).min();
+        let source_max = source_files.iter().filter_map(|f| f.max_key.as_ref()).max();
 
         match (source_min, source_max) {
             (Some(min), Some(max)) => {
@@ -233,7 +227,8 @@ impl LeveledCompactionStrategy {
                     apply_requantization: false,
                     compression_level: 6,
                     rebuild_bloom_filters: true,
-                    max_output_files: ((estimated_output_size / self.target_file_size) + 1) as usize,
+                    max_output_files: ((estimated_output_size / self.target_file_size) + 1)
+                        as usize,
                 },
             });
         }
@@ -330,7 +325,10 @@ impl CompactionStrategy for LeveledCompactionStrategy {
     }
 
     fn applies_to_engine(&self, engine_name: &str) -> bool {
-        matches!(engine_name.to_lowercase().as_str(), "sst" | "nova" | "raptor")
+        matches!(
+            engine_name.to_lowercase().as_str(),
+            "sst" | "nova" | "raptor"
+        )
     }
 
     fn optimization_hints(&self) -> Vec<String> {
@@ -392,9 +390,8 @@ mod tests {
     #[tokio::test]
     async fn test_no_compaction_needed() {
         let strategy = LeveledCompactionStrategy::new();
-        let files = vec![
-            FileMetadata::new("l0_1", "/data/l0_1.sst", 32 * 1024 * 1024).with_level(0),
-        ];
+        let files =
+            vec![FileMetadata::new("l0_1", "/data/l0_1.sst", 32 * 1024 * 1024).with_level(0)];
 
         let plan = strategy.select_files("test", &files).await.unwrap();
         assert!(plan.is_none()); // Only 1 L0 file, no compaction needed

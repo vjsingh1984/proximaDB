@@ -18,82 +18,82 @@ use tracing::{debug, error};
 lazy_static! {
     /// Total events created by type
     pub static ref EVENTLOG_EVENTS_CREATED: CounterVec = register_counter_vec!(
-        "eventlog_events_created_total",
+        "proximadb_eventlog_events_created_total",
         "Total number of events created in EventLog",
         &["collection_id", "event_type", "storage_engine"]
-    ).expect("Failed to register eventlog_events_created metric");
-    
+    ).expect("Failed to register proximadb_eventlog_events_created metric");
+
     /// Total events processed by type
     pub static ref EVENTLOG_EVENTS_PROCESSED: CounterVec = register_counter_vec!(
-        "eventlog_events_processed_total",
+        "proximadb_eventlog_events_processed_total",
         "Total number of events processed from EventLog",
         &["collection_id", "event_type", "storage_engine", "status"]
-    ).expect("Failed to register eventlog_events_processed metric");
-    
+    ).expect("Failed to register proximadb_eventlog_events_processed metric");
+
     /// Current pending events
     pub static ref EVENTLOG_PENDING_EVENTS: GaugeVec = register_gauge_vec!(
-        "eventlog_pending_events",
+        "proximadb_eventlog_pending_events",
         "Current number of pending events in EventLog",
         &["collection_id", "event_type"]
-    ).expect("Failed to register eventlog_pending_events metric");
-    
+    ).expect("Failed to register proximadb_eventlog_pending_events metric");
+
     /// Event processing time
     pub static ref EVENTLOG_PROCESSING_TIME: HistogramVec = register_histogram_vec!(
-        "eventlog_processing_time_seconds",
+        "proximadb_eventlog_processing_time_seconds",
         "Time taken to process EventLog events",
         &["collection_id", "event_type", "operation"],
         exponential_buckets(0.001, 2.0, 15).unwrap() // 1ms to 16s
-    ).expect("Failed to register eventlog_processing_time metric");
-    
+    ).expect("Failed to register proximadb_eventlog_processing_time metric");
+
     /// Vector extraction count
     pub static ref EVENTLOG_VECTORS_EXTRACTED: CounterVec = register_counter_vec!(
-        "eventlog_vectors_extracted_total",
+        "proximadb_eventlog_vectors_extracted_total",
         "Total number of vectors extracted from storage files",
         &["collection_id", "storage_engine", "extraction_mode"]
-    ).expect("Failed to register eventlog_vectors_extracted metric");
-    
+    ).expect("Failed to register proximadb_eventlog_vectors_extracted metric");
+
     /// Files pending indexing
     pub static ref EVENTLOG_FILES_PENDING: GaugeVec = register_gauge_vec!(
-        "eventlog_files_pending_indexing",
+        "proximadb_eventlog_files_pending_indexing",
         "Current number of files pending AXIS indexing",
         &["collection_id", "storage_engine"]
-    ).expect("Failed to register eventlog_files_pending metric");
-    
+    ).expect("Failed to register proximadb_eventlog_files_pending metric");
+
     /// EventLog WAL size
     pub static ref EVENTLOG_WAL_SIZE_BYTES: GaugeVec = register_gauge_vec!(
-        "eventlog_wal_size_bytes",
+        "proximadb_eventlog_wal_size_bytes",
         "Current size of EventLog WAL in bytes",
         &["wal_type"]
-    ).expect("Failed to register eventlog_wal_size metric");
-    
+    ).expect("Failed to register proximadb_eventlog_wal_size metric");
+
     /// EventLog queue depth
     pub static ref EVENTLOG_QUEUE_DEPTH: GaugeVec = register_gauge_vec!(
-        "eventlog_queue_depth",
+        "proximadb_eventlog_queue_depth",
         "Current depth of EventLog queue",
         &["priority"]
-    ).expect("Failed to register eventlog_queue_depth metric");
-    
+    ).expect("Failed to register proximadb_eventlog_queue_depth metric");
+
     /// Consumer batch size
     pub static ref EVENTLOG_CONSUMER_BATCH_SIZE: HistogramVec = register_histogram_vec!(
-        "eventlog_consumer_batch_size",
+        "proximadb_eventlog_consumer_batch_size",
         "Number of events processed in each consumer batch",
         &["consumer_id"],
         exponential_buckets(1.0, 2.0, 10).unwrap() // 1 to 512
-    ).expect("Failed to register eventlog_consumer_batch_size metric");
-    
+    ).expect("Failed to register proximadb_eventlog_consumer_batch_size metric");
+
     /// Compaction blocked files
     pub static ref EVENTLOG_COMPACTION_BLOCKED_FILES: GaugeVec = register_gauge_vec!(
-        "eventlog_compaction_blocked_files",
+        "proximadb_eventlog_compaction_blocked_files",
         "Number of files blocked from compaction due to pending indexing",
         &["collection_id", "storage_engine"]
-    ).expect("Failed to register eventlog_compaction_blocked_files metric");
-    
+    ).expect("Failed to register proximadb_eventlog_compaction_blocked_files metric");
+
     /// Self-healing transitions
     pub static ref EVENTLOG_SELF_HEALING_TRANSITIONS: CounterVec = register_counter_vec!(
-        "eventlog_self_healing_transitions_total",
+        "proximadb_eventlog_self_healing_transitions_total",
         "Total number of files transitioning from pending to ready",
         &["collection_id", "storage_engine"]
-    ).expect("Failed to register eventlog_self_healing_transitions metric");
+    ).expect("Failed to register proximadb_eventlog_self_healing_transitions metric");
 }
 
 /// EventLog metrics collector

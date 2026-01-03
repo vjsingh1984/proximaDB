@@ -137,10 +137,10 @@ fn compare_sql_value_to_json(sql_val: &SqlVal, json_val: &serde_json::Value) -> 
 /// Compare number for less-than
 #[inline]
 fn compare_number_lt(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_f64) = filter_num.as_f64() {
-            return n < filter_f64;
-        }
+    if let serde_json::Value::Number(filter_num) = json_val
+        && let Some(filter_f64) = filter_num.as_f64()
+    {
+        return n < filter_f64;
     }
     false
 }
@@ -148,10 +148,10 @@ fn compare_number_lt(n: f64, json_val: &serde_json::Value) -> bool {
 /// Compare number for less-than-or-equal
 #[inline]
 fn compare_number_lte(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_f64) = filter_num.as_f64() {
-            return n <= filter_f64;
-        }
+    if let serde_json::Value::Number(filter_num) = json_val
+        && let Some(filter_f64) = filter_num.as_f64()
+    {
+        return n <= filter_f64;
     }
     false
 }
@@ -159,10 +159,10 @@ fn compare_number_lte(n: f64, json_val: &serde_json::Value) -> bool {
 /// Compare number for greater-than
 #[inline]
 fn compare_number_gt(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_f64) = filter_num.as_f64() {
-            return n > filter_f64;
-        }
+    if let serde_json::Value::Number(filter_num) = json_val
+        && let Some(filter_f64) = filter_num.as_f64()
+    {
+        return n > filter_f64;
     }
     false
 }
@@ -170,10 +170,10 @@ fn compare_number_gt(n: f64, json_val: &serde_json::Value) -> bool {
 /// Compare number for greater-than-or-equal
 #[inline]
 fn compare_number_gte(n: f64, json_val: &serde_json::Value) -> bool {
-    if let serde_json::Value::Number(filter_num) = json_val {
-        if let Some(filter_f64) = filter_num.as_f64() {
-            return n >= filter_f64;
-        }
+    if let serde_json::Value::Number(filter_num) = json_val
+        && let Some(filter_f64) = filter_num.as_f64()
+    {
+        return n >= filter_f64;
     }
     false
 }

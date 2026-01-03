@@ -121,9 +121,12 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "title".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
-                        format!("Research Paper {}", i),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::StringValue(format!(
+                            "Research Paper {}",
+                            i
+                        )),
+                    ),
                     indexed: true,
                     filterable: true,
                 },
@@ -131,9 +134,11 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "year".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::IntValue(
-                        2020 + (i % 5) as i64,
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::IntValue(
+                            2020 + (i % 5) as i64,
+                        ),
+                    ),
                     indexed: true,
                     filterable: true,
                 },
@@ -141,9 +146,11 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "citations".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::IntValue(
-                        rng.gen_range(0..100),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::IntValue(
+                            rng.gen_range(0..100),
+                        ),
+                    ),
                     indexed: true,
                     filterable: true,
                 },
@@ -223,9 +230,12 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "name".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
-                        format!("{} Product {}", category, i),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::StringValue(format!(
+                            "{} Product {}",
+                            category, i
+                        )),
+                    ),
                     indexed: true,
                     filterable: true,
                 },
@@ -233,9 +243,11 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "price".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::DoubleValue(
-                        rng.gen_range(10.0..1000.0),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::DoubleValue(
+                            rng.gen_range(10.0..1000.0),
+                        ),
+                    ),
                     indexed: true,
                     filterable: true,
                 },
@@ -243,9 +255,11 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "category".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
-                        category.to_string(),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
+                            category.to_string(),
+                        ),
+                    ),
                     indexed: true,
                     filterable: true,
                 },
@@ -253,9 +267,11 @@ impl TestKnowledgeGraph {
             fields.insert(
                 "rating".to_string(),
                 TypedField {
-                    value: Some(proximadb::proto::proximadb_v1::typed_field::Value::DoubleValue(
-                        rng.gen_range(3.0..5.0),
-                    )),
+                    value: Some(
+                        proximadb::proto::proximadb_v1::typed_field::Value::DoubleValue(
+                            rng.gen_range(3.0..5.0),
+                        ),
+                    ),
                     indexed: true,
                     filterable: true,
                 },

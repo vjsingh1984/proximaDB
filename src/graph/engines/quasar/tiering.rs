@@ -593,7 +593,9 @@ mod tests {
         assert_eq!(recommendations.hot_tier_utilization, 1.0);
         // With 100% utilization, should recommend migration to cold tier
         assert!(
-            recommendations.recommendation_reason.contains("over 90% full"),
+            recommendations
+                .recommendation_reason
+                .contains("over 90% full"),
             "Expected recommendation to contain 'over 90% full', but got: '{}'",
             recommendations.recommendation_reason
         );

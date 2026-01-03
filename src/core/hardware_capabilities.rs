@@ -838,51 +838,47 @@ impl HardwareCapabilities {
         let mut cache_sizes = CacheSizes::default();
 
         // L1 data cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l1dcachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l1dcachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l1_data = size;
-                }
-            }
+            cache_sizes.l1_data = size;
         }
 
         // L1 instruction cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l1icachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l1icachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l1_instruction = size;
-                }
-            }
+            cache_sizes.l1_instruction = size;
         }
 
         // L2 cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l2cachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l2cachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l2 = size;
-                }
-            }
+            cache_sizes.l2 = size;
         }
 
         // L3 cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l3cachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l3cachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l3 = size;
-                }
-            }
+            cache_sizes.l3 = size;
         }
 
         tracing::info!(
@@ -1066,13 +1062,14 @@ impl HardwareCapabilities {
                 if let Some(size) = Self::parse_arm_cache_size(&line) {
                     // ARM cpuinfo often doesn't specify cache level clearly
                     // Use heuristics based on size ranges
-                    if size <= 128 * 1024 {
-                        // Likely L1 cache
-                        if line_lower.contains("instruction") || line_lower.contains("icache") {
-                            cache_sizes.l1_instruction = size;
-                        } else {
-                            cache_sizes.l1_data = size;
-                        }
+                    if size <= 128 * 1024
+                        && (line_lower.contains("instruction") || line_lower.contains("icache"))
+                    {
+                        // Likely L1 instruction cache
+                        cache_sizes.l1_instruction = size;
+                    } else if size <= 128 * 1024 {
+                        // Likely L1 data cache
+                        cache_sizes.l1_data = size;
                     } else if size <= 4 * 1024 * 1024 {
                         // Likely L2 cache
                         cache_sizes.l2 = size;
@@ -1106,17 +1103,27 @@ impl HardwareCapabilities {
             let word_clean = word.trim_matches(|c: char| !c.is_alphanumeric());
 
             if word_clean.ends_with("kb") {
-                if let Ok(size) = word_clean[..word_clean.len() - 2].parse::<usize>() {
-                    return Some(size * 1024);
+                if let Some(size) = word_clean[..word_clean.len() - 2]
+                    .parse::<usize>()
+                    .ok()
+                    .map(|s| s * 1024)
+                {
+                    return Some(size);
                 }
             } else if word_clean.ends_with("mb") {
-                if let Ok(size) = word_clean[..word_clean.len() - 2].parse::<usize>() {
-                    return Some(size * 1024 * 1024);
+                if let Some(size) = word_clean[..word_clean.len() - 2]
+                    .parse::<usize>()
+                    .ok()
+                    .map(|s| s * 1024 * 1024)
+                {
+                    return Some(size);
                 }
-            } else if word_clean.ends_with("k") {
-                if let Ok(size) = word_clean[..word_clean.len() - 1].parse::<usize>() {
-                    return Some(size * 1024);
-                }
+            } else if let Some(size) = word_clean
+                .strip_suffix("k")
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|s| s * 1024)
+            {
+                return Some(size);
             }
         }
 
@@ -1205,7 +1212,10 @@ impl HardwareCapabilities {
                     });
                 }
                 Err(err) => {
-                    tracing::warn!("GPU detection failed, disabling GPU acceleration: {:?}", err);
+                    tracing::warn!(
+                        "GPU detection failed, disabling GPU acceleration: {:?}",
+                        err
+                    );
                     return Ok(GpuCapabilities {
                         backend: GpuBackend::None,
                         devices: vec![],
@@ -1461,18 +1471,12 @@ pub fn log_hardware_capabilities_summary() -> String {
     // Build summary
     let summary = format!(
         "Hardware: {} cores, {} SIMD, {:.1}GB/{:.1}GB RAM",
-        caps.cpu.physical_cores,
-        backend_str,
-        avail_mem_gb,
-        total_mem_gb
+        caps.cpu.physical_cores, backend_str, avail_mem_gb, total_mem_gb
     );
 
     info!(
         "🖥️  ProximaDB Hardware: {} ({} cores), {} SIMD, {:.1}GB available",
-        caps.cpu.model_name,
-        caps.cpu.physical_cores,
-        backend_str,
-        avail_mem_gb
+        caps.cpu.model_name, caps.cpu.physical_cores, backend_str, avail_mem_gb
     );
 
     summary

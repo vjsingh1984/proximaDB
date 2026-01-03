@@ -72,13 +72,25 @@ pub trait CostEstimator: Send + Sync {
     fn estimate_pattern_cost(&self, pattern: &CompiledPattern, stats: &GraphStatistics) -> f64;
 
     /// Estimate selectivity of node pattern
-    fn estimate_node_selectivity(&self, pattern: &super::ast::NodePattern, stats: &GraphStatistics) -> f64;
+    fn estimate_node_selectivity(
+        &self,
+        pattern: &super::ast::NodePattern,
+        stats: &GraphStatistics,
+    ) -> f64;
 
     /// Estimate selectivity of edge pattern
-    fn estimate_edge_selectivity(&self, pattern: &super::ast::EdgePattern, stats: &GraphStatistics) -> f64;
+    fn estimate_edge_selectivity(
+        &self,
+        pattern: &super::ast::EdgePattern,
+        stats: &GraphStatistics,
+    ) -> f64;
 
     /// Estimate selectivity of WHERE clause
-    fn estimate_where_selectivity(&self, clause: &super::ast::WhereClause, stats: &GraphStatistics) -> f64;
+    fn estimate_where_selectivity(
+        &self,
+        clause: &super::ast::WhereClause,
+        stats: &GraphStatistics,
+    ) -> f64;
 }
 
 /// Cost model parameters for estimation
@@ -400,7 +412,11 @@ impl CostEstimator for CostModel {
         total_cost
     }
 
-    fn estimate_node_selectivity(&self, pattern: &super::ast::NodePattern, stats: &GraphStatistics) -> f64 {
+    fn estimate_node_selectivity(
+        &self,
+        pattern: &super::ast::NodePattern,
+        stats: &GraphStatistics,
+    ) -> f64 {
         let mut selectivity = 1.0;
 
         // Apply label selectivity
@@ -442,7 +458,11 @@ impl CostEstimator for CostModel {
         selectivity.max(0.001) // Minimum selectivity of 0.1%
     }
 
-    fn estimate_edge_selectivity(&self, pattern: &super::ast::EdgePattern, stats: &GraphStatistics) -> f64 {
+    fn estimate_edge_selectivity(
+        &self,
+        pattern: &super::ast::EdgePattern,
+        stats: &GraphStatistics,
+    ) -> f64 {
         let mut selectivity = 1.0;
 
         // Apply edge type selectivity
@@ -469,11 +489,19 @@ impl CostEstimator for CostModel {
         selectivity.max(0.001)
     }
 
-    fn estimate_where_selectivity(&self, clause: &super::ast::WhereClause, stats: &GraphStatistics) -> f64 {
+    fn estimate_where_selectivity(
+        &self,
+        clause: &super::ast::WhereClause,
+        stats: &GraphStatistics,
+    ) -> f64 {
         use super::ast::WhereClause;
 
         match clause {
-            WhereClause::Property { property, constraint, .. } => {
+            WhereClause::Property {
+                property,
+                constraint,
+                ..
+            } => {
                 // Estimate based on property statistics and constraint type
                 if let Some(&distinct_values) = stats.property_selectivity.get(property) {
                     match constraint {
@@ -485,15 +513,15 @@ impl CostEstimator for CostModel {
                                 0.1
                             }
                         }
-                        super::ast::PropertyConstraint::GreaterThan(_) |
-                        super::ast::PropertyConstraint::LessThan(_) => {
+                        super::ast::PropertyConstraint::GreaterThan(_)
+                        | super::ast::PropertyConstraint::LessThan(_) => {
                             // Range: assume 30% selectivity
                             0.3
                         }
-                        super::ast::PropertyConstraint::GreaterThanOrEqual(_) |
-                        super::ast::PropertyConstraint::GreaterOrEqual(_) |
-                        super::ast::PropertyConstraint::LessThanOrEqual(_) |
-                        super::ast::PropertyConstraint::LessOrEqual(_) => {
+                        super::ast::PropertyConstraint::GreaterThanOrEqual(_)
+                        | super::ast::PropertyConstraint::GreaterOrEqual(_)
+                        | super::ast::PropertyConstraint::LessThanOrEqual(_)
+                        | super::ast::PropertyConstraint::LessOrEqual(_) => {
                             // Range with equality: assume 35% selectivity
                             0.35
                         }
@@ -513,9 +541,9 @@ impl CostEstimator for CostModel {
                                 0.5
                             }
                         }
-                        super::ast::PropertyConstraint::Contains(_) |
-                        super::ast::PropertyConstraint::StartsWith(_) |
-                        super::ast::PropertyConstraint::EndsWith(_) => {
+                        super::ast::PropertyConstraint::Contains(_)
+                        | super::ast::PropertyConstraint::StartsWith(_)
+                        | super::ast::PropertyConstraint::EndsWith(_) => {
                             // String operations: assume 20% selectivity
                             0.2
                         }
@@ -983,14 +1011,19 @@ impl QueryPlanner {
         let mut current_cardinality = start_cardinality;
 
         // Step 1: Initial node access (most selective)
-        let (node_step, node_cost) = self.plan_node_access(starting_node, start_cardinality, &stats)?;
+        let (node_step, node_cost) =
+            self.plan_node_access(starting_node, start_cardinality, &stats)?;
         steps.push(node_step);
         total_cost = total_cost.add(&node_cost);
 
         // Step 2: Optimize edge traversal order if edges exist
         if !pattern.edges.is_empty() && self.config.optimizations.optimize_joins {
-            let (edge_steps, edge_cost, edge_cardinality) =
-                self.optimize_edge_join_order(&pattern.edges, current_cardinality, &stats, cost_estimator)?;
+            let (edge_steps, edge_cost, edge_cardinality) = self.optimize_edge_join_order(
+                &pattern.edges,
+                current_cardinality,
+                &stats,
+                cost_estimator,
+            )?;
             steps.extend(edge_steps);
             total_cost = total_cost.add(&edge_cost);
             current_cardinality = edge_cardinality;
@@ -999,8 +1032,10 @@ impl QueryPlanner {
         // Step 3: Apply WHERE clauses with predicate pushdown
         if !pattern.where_clauses.is_empty() {
             for where_clause in &pattern.where_clauses {
-                let where_selectivity = cost_estimator.estimate_where_selectivity(where_clause, &stats);
-                let filter_cardinality = (current_cardinality as f64 * where_selectivity).max(1.0) as usize;
+                let where_selectivity =
+                    cost_estimator.estimate_where_selectivity(where_clause, &stats);
+                let filter_cardinality =
+                    (current_cardinality as f64 * where_selectivity).max(1.0) as usize;
 
                 let filter_step = PlanStep {
                     step_type: PlanStepType::Filter {
@@ -1033,11 +1068,15 @@ impl QueryPlanner {
                 .collect();
 
             let sort_step = PlanStep {
-                step_type: PlanStepType::Sort { fields: sort_fields },
+                step_type: PlanStepType::Sort {
+                    fields: sort_fields,
+                },
                 parameters: HashMap::new(),
                 cost: CostEstimate::new(
                     // O(n log n) sort cost
-                    current_cardinality as f64 * (current_cardinality as f64).log2() * self.config.cost_model.cpu_cost,
+                    current_cardinality as f64
+                        * (current_cardinality as f64).log2()
+                        * self.config.cost_model.cpu_cost,
                     0.0,
                     0.0,
                 ),
@@ -1048,7 +1087,8 @@ impl QueryPlanner {
         }
 
         // Step 5: Handle projections
-        if !pattern.return_spec.variables.is_empty() || !pattern.return_spec.projections.is_empty() {
+        if !pattern.return_spec.variables.is_empty() || !pattern.return_spec.projections.is_empty()
+        {
             let project_step = PlanStep {
                 step_type: PlanStepType::Project {
                     fields: pattern.return_spec.variables.clone(),
@@ -1187,8 +1227,14 @@ impl QueryPlanner {
             // Evaluate cost of each remaining edge
             for (i, (_, edge)) in remaining_edges.iter().enumerate() {
                 let edge_selectivity = cost_estimator.estimate_edge_selectivity(edge, stats);
-                let edge_output = (current_cardinality as f64 * stats.avg_node_degree * edge_selectivity).max(1.0) as usize;
-                let edge_cost = cost_estimator.estimate_expand_cost(current_cardinality, stats.avg_node_degree * edge_selectivity);
+                let edge_output = (current_cardinality as f64
+                    * stats.avg_node_degree
+                    * edge_selectivity)
+                    .max(1.0) as usize;
+                let edge_cost = cost_estimator.estimate_expand_cost(
+                    current_cardinality,
+                    stats.avg_node_degree * edge_selectivity,
+                );
 
                 if edge_cost < best_cost {
                     best_idx = i;
@@ -1366,8 +1412,8 @@ mod tests {
     use super::*;
     use crate::graph::GraphMemoryPool;
     use crate::graph::query::ast::{
-        NodePattern, EdgePattern, EdgeDirection, WhereClause, PropertyConstraint,
-        CompiledPattern, ReturnSpec,
+        CompiledPattern, EdgeDirection, EdgePattern, NodePattern, PropertyConstraint, ReturnSpec,
+        WhereClause,
     };
 
     #[test]
@@ -1480,7 +1526,8 @@ mod tests {
         let cost = cost_model.estimate_index_seek_cost(cardinality);
 
         // Should be fixed seek cost + cardinality * index_scan_cost
-        let expected = cost_model.index_seek_cost + (cardinality as f64 * cost_model.index_scan_cost);
+        let expected =
+            cost_model.index_seek_cost + (cardinality as f64 * cost_model.index_scan_cost);
         assert_eq!(cost, expected);
         assert!(cost > cost_model.index_seek_cost);
     }
@@ -1590,7 +1637,9 @@ mod tests {
         let cost_model = CostModel::default();
         let mut stats = GraphStatistics::default();
         stats.edge_count = 5000;
-        stats.edge_type_selectivity.insert("KNOWS".to_string(), 1500);
+        stats
+            .edge_type_selectivity
+            .insert("KNOWS".to_string(), 1500);
 
         let pattern = EdgePattern {
             variable: Some("r".to_string()),
@@ -1748,7 +1797,9 @@ mod tests {
         stats.node_count = 1000;
         stats.edge_count = 5000;
         stats.label_selectivity.insert("Person".to_string(), 300);
-        stats.edge_type_selectivity.insert("KNOWS".to_string(), 1500);
+        stats
+            .edge_type_selectivity
+            .insert("KNOWS".to_string(), 1500);
 
         let node1 = NodePattern {
             variable: "a".to_string(),
@@ -1841,7 +1892,9 @@ mod tests {
         stats.edge_count = 5000;
         stats.avg_node_degree = 5.0;
         stats.label_selectivity.insert("Person".to_string(), 300);
-        stats.edge_type_selectivity.insert("KNOWS".to_string(), 1500);
+        stats
+            .edge_type_selectivity
+            .insert("KNOWS".to_string(), 1500);
         drop(stats);
 
         let pattern = CompiledPattern {
@@ -1926,7 +1979,10 @@ mod tests {
 
         assert!(!plan.id.is_empty());
         // Should include filter step for WHERE clause
-        let has_filter = plan.steps.iter().any(|step| matches!(step.step_type, PlanStepType::Filter { .. }));
+        let has_filter = plan
+            .steps
+            .iter()
+            .any(|step| matches!(step.step_type, PlanStepType::Filter { .. }));
         assert!(has_filter);
     }
 
@@ -1963,7 +2019,10 @@ mod tests {
 
         assert!(!plan.id.is_empty());
         // Should include sort step for ORDER BY
-        let has_sort = plan.steps.iter().any(|step| matches!(step.step_type, PlanStepType::Sort { .. }));
+        let has_sort = plan
+            .steps
+            .iter()
+            .any(|step| matches!(step.step_type, PlanStepType::Sort { .. }));
         assert!(has_sort);
     }
 

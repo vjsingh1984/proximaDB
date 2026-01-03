@@ -146,8 +146,8 @@ impl LLMClient for AzureOpenAIClient {
 
         let response = self
             .client
-            .post(&self.build_azure_url())
-            .header("api-key", &self.config.api_key)
+            .post(self.build_azure_url())
+            .header("api-key", self.config.api_key.as_str())
             .header("Content-Type", "application/json")
             .json(&azure_request)
             .send()
@@ -237,8 +237,8 @@ impl LLMClient for AzureOpenAIClient {
 
         let response = self
             .client
-            .post(&self.build_azure_url())
-            .header("api-key", &self.config.api_key)
+            .post(self.build_azure_url())
+            .header("api-key", self.config.api_key.as_str())
             .header("Content-Type", "application/json")
             .json(&test_request)
             .send()

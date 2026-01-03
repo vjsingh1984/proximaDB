@@ -4,17 +4,17 @@
 //! Manages concurrent compactions and resource allocation.
 
 use anyhow::Result;
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::interval;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use super::strategies::{
-    CompactionCostEstimate, CompactionPlan, CompactionStrategyRegistry, FileMetadata,
-    CompactionExecutionResult,
+    CompactionCostEstimate, CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry,
+    FileMetadata,
 };
 
 /// Scheduled compaction task with priority ordering
@@ -228,7 +228,10 @@ impl CompactionScheduler {
     }
 
     /// Execute the next available task
-    pub async fn execute_next<F, Fut>(&self, executor: F) -> Result<Option<CompactionExecutionResult>>
+    pub async fn execute_next<F, Fut>(
+        &self,
+        executor: F,
+    ) -> Result<Option<CompactionExecutionResult>>
     where
         F: FnOnce(CompactionPlan) -> Fut,
         Fut: std::future::Future<Output = Result<CompactionExecutionResult>>,
@@ -384,7 +387,10 @@ impl CompactionScheduler {
         let original_len = queue.len();
 
         // Rebuild queue without the cancelled task
-        let tasks: Vec<ScheduledTask> = queue.drain().filter(|t| t.plan.plan_id != plan_id).collect();
+        let tasks: Vec<ScheduledTask> = queue
+            .drain()
+            .filter(|t| t.plan.plan_id != plan_id)
+            .collect();
 
         for task in tasks {
             queue.push(task);
@@ -419,16 +425,14 @@ impl Default for CompactionScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::strategies::{CompactionParameters, FileMetadata};
+    use super::*;
 
     fn create_test_plan(id: &str, priority: f64) -> CompactionPlan {
         CompactionPlan {
             plan_id: id.to_string(),
             collection_id: "test_collection".to_string(),
-            input_files: vec![
-                FileMetadata::new("f1", "/path/f1.sst", 10 * 1024 * 1024),
-            ],
+            input_files: vec![FileMetadata::new("f1", "/path/f1.sst", 10 * 1024 * 1024)],
             target_level: 1,
             estimated_output_size: 10 * 1024 * 1024,
             priority,
@@ -460,17 +464,20 @@ mod tests {
         assert_eq!(scheduler.pending_count().await, 2);
 
         // Execute should return high priority first
-        let result = scheduler.execute_next(|plan| async move {
-            Ok(CompactionExecutionResult {
-                plan_id: plan.plan_id,
-                files_removed: vec![],
-                files_created: vec![],
-                bytes_freed: 1000,
-                duration: Duration::from_secs(1),
-                success: true,
-                error_message: None,
+        let result = scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec![],
+                    files_created: vec![],
+                    bytes_freed: 1000,
+                    duration: Duration::from_secs(1),
+                    success: true,
+                    error_message: None,
+                })
             })
-        }).await.unwrap();
+            .await
+            .unwrap();
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().plan_id, "high");
@@ -498,17 +505,20 @@ mod tests {
         let plan = create_test_plan("stats_test", 50.0);
         scheduler.schedule(plan).await.unwrap();
 
-        scheduler.execute_next(|plan| async move {
-            Ok(CompactionExecutionResult {
-                plan_id: plan.plan_id,
-                files_removed: vec![],
-                files_created: vec![],
-                bytes_freed: 5000,
-                duration: Duration::from_millis(100),
-                success: true,
-                error_message: None,
+        scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec![],
+                    files_created: vec![],
+                    bytes_freed: 5000,
+                    duration: Duration::from_millis(100),
+                    success: true,
+                    error_message: None,
+                })
             })
-        }).await.unwrap();
+            .await
+            .unwrap();
 
         let stats = scheduler.get_stats().await;
         assert_eq!(stats.completed_compactions, 1);
@@ -526,17 +536,20 @@ mod tests {
         // Schedule and execute first compaction
         let plan1 = create_test_plan("first", 50.0);
         scheduler.schedule(plan1).await.unwrap();
-        scheduler.execute_next(|plan| async move {
-            Ok(CompactionExecutionResult {
-                plan_id: plan.plan_id,
-                files_removed: vec![],
-                files_created: vec![],
-                bytes_freed: 1000,
-                duration: Duration::from_secs(1),
-                success: true,
-                error_message: None,
+        scheduler
+            .execute_next(|plan| async move {
+                Ok(CompactionExecutionResult {
+                    plan_id: plan.plan_id,
+                    files_removed: vec![],
+                    files_created: vec![],
+                    bytes_freed: 1000,
+                    duration: Duration::from_secs(1),
+                    success: true,
+                    error_message: None,
+                })
             })
-        }).await.unwrap();
+            .await
+            .unwrap();
 
         // Try to schedule another for same collection - should fail due to rate limit
         let plan2 = create_test_plan("second", 50.0);
@@ -548,9 +561,18 @@ mod tests {
     async fn test_drain_pending() {
         let scheduler = CompactionScheduler::new();
 
-        scheduler.schedule(create_test_plan("p1", 50.0)).await.unwrap();
-        scheduler.schedule(create_test_plan("p2", 60.0)).await.unwrap();
-        scheduler.schedule(create_test_plan("p3", 70.0)).await.unwrap();
+        scheduler
+            .schedule(create_test_plan("p1", 50.0))
+            .await
+            .unwrap();
+        scheduler
+            .schedule(create_test_plan("p2", 60.0))
+            .await
+            .unwrap();
+        scheduler
+            .schedule(create_test_plan("p3", 70.0))
+            .await
+            .unwrap();
 
         assert_eq!(scheduler.pending_count().await, 3);
 

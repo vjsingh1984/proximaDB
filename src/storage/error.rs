@@ -239,8 +239,7 @@ impl StorageErrorKind {
         match self {
             StorageErrorKind::NotFound => 404,
             StorageErrorKind::PermissionDenied => 403,
-            StorageErrorKind::InvalidConfiguration
-            | StorageErrorKind::MissingConfiguration => 400,
+            StorageErrorKind::InvalidConfiguration | StorageErrorKind::MissingConfiguration => 400,
             StorageErrorKind::Conflict | StorageErrorKind::LockFailed => 409,
             StorageErrorKind::CapacityExceeded
             | StorageErrorKind::DiskFull
@@ -368,23 +367,21 @@ impl StorageError {
     /// Create a flush failed error
     pub fn flush_failed(collection_id: impl Into<String>, reason: impl Into<String>) -> Self {
         let msg = reason.into();
-        Self::new(StorageErrorKind::FlushFailed, msg.clone())
-            .with_context(
-                ErrorContext::new()
-                    .with_collection(collection_id)
-                    .with_operation("flush"),
-            )
+        Self::new(StorageErrorKind::FlushFailed, msg.clone()).with_context(
+            ErrorContext::new()
+                .with_collection(collection_id)
+                .with_operation("flush"),
+        )
     }
 
     /// Create a compaction failed error
     pub fn compaction_failed(collection_id: impl Into<String>, reason: impl Into<String>) -> Self {
         let msg = reason.into();
-        Self::new(StorageErrorKind::CompactionFailed, msg.clone())
-            .with_context(
-                ErrorContext::new()
-                    .with_collection(collection_id)
-                    .with_operation("compaction"),
-            )
+        Self::new(StorageErrorKind::CompactionFailed, msg.clone()).with_context(
+            ErrorContext::new()
+                .with_collection(collection_id)
+                .with_operation("compaction"),
+        )
     }
 
     /// Create a recovery failed error
@@ -470,7 +467,9 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source.as_ref().map(|s| s.as_ref() as &(dyn std::error::Error + 'static))
+        self.source
+            .as_ref()
+            .map(|s| s.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -518,17 +517,19 @@ mod tests {
 
     #[test]
     fn test_storage_error_with_context() {
-        let err = StorageError::corruption("Checksum mismatch")
-            .with_context(
-                ErrorContext::new()
-                    .with_file_path("/tmp/data/sst/001.sst")
-                    .with_collection("test_collection")
-                    .with_lsn(12345),
-            );
+        let err = StorageError::corruption("Checksum mismatch").with_context(
+            ErrorContext::new()
+                .with_file_path("/tmp/data/sst/001.sst")
+                .with_collection("test_collection")
+                .with_lsn(12345),
+        );
 
         assert_eq!(err.kind, StorageErrorKind::Corruption);
         assert!(err.context.file_path.is_some());
-        assert_eq!(err.context.file_path.as_deref(), Some("/tmp/data/sst/001.sst"));
+        assert_eq!(
+            err.context.file_path.as_deref(),
+            Some("/tmp/data/sst/001.sst")
+        );
         assert_eq!(err.context.lsn, Some(12345));
     }
 

@@ -113,11 +113,21 @@
 //!
 
 pub mod ast;
+pub mod cache; // C2: Query result caching for agentic AI workloads with repetitive queries
+pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
+pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
+pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
+pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine
 pub mod explain;
+pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
+pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
+pub mod materialized_view; // A1: Materialized views for complex dashboard queries
+pub mod prepared; // Prepared statements for parse-once-execute-many pattern
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
+pub mod unified; // Multi-model query engine (vector, document, graph, observability)
 pub mod unified_query_optimizer;
 pub mod vector_search;
 
@@ -130,3 +140,67 @@ pub use unified_query_optimizer::{
     UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };
 pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult};
+
+// Re-export federated query types
+pub use federated::{
+    CrossModelOptimizer, ExecutionResult as FederatedExecutionResult, FederatedExecutor,
+    FederatedParser, FederatedQuery, FederatedQueryContext, PlanNode,
+    QueryPlan as FederatedQueryPlan, QueryType as FederatedQueryType,
+};
+
+// Re-export compute bridge types for storage-compute separation
+pub use compute_bridge::{
+    BridgeConfig, BridgeStatistics, ComputeBridge, ExecutionResult as ComputeExecutionResult,
+    QueryContext as ComputeQueryContext,
+};
+
+// Re-export unified facade types - PREFERRED ENTRY POINT
+pub use facade::{
+    ExecutionMetrics,
+    FacadeConfig,
+    GraphQueryResult,
+    GraphStrategy,
+    QueryContent,
+    QueryContext,
+    // Protocol adapter for REST/gRPC handlers
+    QueryFacadeAdapter,
+    QueryParams,
+    QueryRequest,
+    QueryResult,
+    QueryResultData,
+    QueryStrategy,
+    QueryType,
+    SqlStrategy,
+    UnifiedQueryFacade,
+    VectorMatch,
+    // Real strategy implementations
+    VectorSearchStrategy,
+};
+
+// Re-export columnar types - M2 Dual Columnar Execution
+pub use columnar::{
+    ArrowInMemoryProvider, ColumnarAccessStats, ColumnarBatchStream, ColumnarCapabilities,
+    ColumnarRange, ColumnarReadProvider, ParquetRangePrunedProvider, PredicatePushdownConfig,
+};
+
+// Re-export prepared statement types - C3 Prepared Statements
+pub use prepared::{
+    CachedStatement, ParameterBinding, ParameterValue, PreparedStatement, PreparedStatementCache,
+    PreparedStatementConfig, PreparedStatementError, PreparedStatementId,
+};
+
+// Re-export query cache types - C2 Query Result Caching
+pub use cache::{
+    BroadcastInvalidator, CacheInvalidator, CachedResult, ChangeOperation, InvalidationConfig,
+    InvalidationEvent, InvalidationListener, InvalidationStats, InvalidationStatsSnapshot,
+    QueryCacheError, QueryCacheKey, QueryCacheResult, QueryCacheStats, QueryKey, QueryResultCache,
+    QueryResultCacheConfig,
+};
+
+// Re-export materialized view types - A1 Materialized Views
+pub use materialized_view::{
+    ColumnDef, MaterializedView, MaterializedViewConfig, MaterializedViewDefinition,
+    MaterializedViewError, MaterializedViewId, MaterializedViewParser, MaterializedViewResult,
+    MaterializedViewState, MaterializedViewStatement, MaterializedViewStats, RefreshContext,
+    RefreshEvent, RefreshEventType, RefreshResult, RefreshScheduler, RefreshStrategy,
+};

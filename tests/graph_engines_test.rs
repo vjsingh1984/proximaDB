@@ -17,19 +17,34 @@
 //! # Graph Engines Integration Tests
 //!
 //! Tests for PULSAR and QUASAR graph engines to verify basic functionality.
+//!
+//! **Note**: These tests require the respective feature flags to be enabled:
+//! - PULSAR tests require `distributed-graph` feature
+//! - QUASAR tests require `tiered-graph` feature
+//!
+//! Run with: `cargo test --test graph_engines_test --features distributed-graph,tiered-graph`
 
+#[cfg(feature = "distributed-graph")]
 use proximadb::graph::PropertyValue;
+#[cfg(feature = "distributed-graph")]
 use proximadb::graph::engines::GraphEngine;
+#[cfg(feature = "distributed-graph")]
 use proximadb::graph::engines::pulsar::PulsarConfig;
+#[cfg(feature = "tiered-graph")]
 use proximadb::graph::engines::quasar::QuasarConfig;
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 use proximadb::graph::{
     Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node, PulsarGraphEngine,
     QuasarGraphEngine,
 };
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 use proximadb::proto::proximadb_v1::property_value::Value;
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 use std::collections::HashMap;
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 use tempfile::TempDir;
 
+#[cfg(feature = "distributed-graph")]
 #[tokio::test]
 async fn test_pulsar_engine_basic_operations() {
     let config = PulsarConfig {
@@ -75,6 +90,7 @@ async fn test_pulsar_engine_basic_operations() {
     assert_eq!(stats.shards_active, 4);
 }
 
+#[cfg(feature = "tiered-graph")]
 #[tokio::test]
 async fn test_quasar_engine_basic_operations() {
     let temp_dir = TempDir::new().unwrap();
@@ -123,6 +139,7 @@ async fn test_quasar_engine_basic_operations() {
     assert!(stats.cache_hits >= 0);
 }
 
+#[cfg(feature = "distributed-graph")]
 #[tokio::test]
 async fn test_pulsar_edge_operations() {
     let engine = PulsarGraphEngine::new(PulsarConfig::default()).unwrap();
@@ -184,6 +201,7 @@ async fn test_pulsar_edge_operations() {
     assert_eq!(neighbors[0].id, "node2");
 }
 
+#[cfg(feature = "tiered-graph")]
 #[tokio::test]
 async fn test_quasar_tiering_behavior() {
     let temp_dir = TempDir::new().unwrap();
@@ -232,6 +250,7 @@ async fn test_quasar_tiering_behavior() {
     );
 }
 
+#[cfg(feature = "distributed-graph")]
 #[test]
 fn test_engine_factory() {
     // Test ORION engine creation
@@ -255,6 +274,7 @@ fn test_engine_factory() {
     assert_eq!(pulsar_engine.node_count().unwrap(), 0);
 }
 
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 #[test]
 fn test_engine_capabilities() {
     let orion_caps = GraphEngineFactory::get_engine_capabilities(GraphEngineType::Orion);
@@ -271,6 +291,7 @@ fn test_engine_capabilities() {
     assert!(quasar_caps.description.contains("Hybrid"));
 }
 
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 #[test]
 fn test_engine_type_from_string() {
     assert_eq!(
@@ -288,6 +309,7 @@ fn test_engine_type_from_string() {
     assert_eq!(GraphEngineFactory::engine_type_from_string("unknown"), None);
 }
 
+#[cfg(feature = "distributed-graph")]
 #[tokio::test]
 async fn test_pulsar_cross_shard_operations() {
     let config = PulsarConfig {
@@ -332,6 +354,7 @@ async fn test_pulsar_cross_shard_operations() {
     assert!(stats.cross_shard_queries > 0);
 }
 
+#[cfg(feature = "tiered-graph")]
 #[tokio::test]
 async fn test_quasar_access_pattern_tracking() {
     let temp_dir = TempDir::new().unwrap();

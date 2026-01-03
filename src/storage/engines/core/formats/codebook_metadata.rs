@@ -15,10 +15,7 @@ use std::sync::Arc;
 use crate::compute::quantization::{
     global_cache::{GlobalQuantizationCache, QuantizationCacheKey},
     storage_engine::StorageQuantizationEngine,
-    unified::{
-        Codebook, CodebookData, CodebookStore, QuantizationLevel,
-        UnifiedQuantizationEngine,
-    },
+    unified::{Codebook, CodebookData, QuantizationLevel, UnifiedQuantizationEngine},
 };
 
 /// Codebook metadata stored at file level
@@ -391,7 +388,7 @@ impl CodebookSerializer {
             let key = format!("pq{}_{}", bits, subvectors);
 
             // Create empty PQ codebook structure
-            let subvector_dim = (dimension + subvectors as usize - 1) / subvectors as usize;
+            let subvector_dim = dimension.div_ceil(subvectors as usize);
             let num_centroids = 1 << bits;
 
             metadata.pq_codebooks.insert(

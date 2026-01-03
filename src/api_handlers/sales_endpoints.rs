@@ -4,18 +4,20 @@
 //! NOTE: This module is not exposed from `api_handlers::mod` or routed in the REST server,
 //! so these endpoints are currently dormant until integrated.
 
-use crate::sales_enablement::{EnterpriseTrialManager, TrialCreationRequest, EnterpriseTrial, TrialType};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use crate::sales_enablement::{
+    EnterpriseTrial, EnterpriseTrialManager, TrialCreationRequest, TrialType,
+};
+use anyhow::Result;
 use axum::{
-    extract::{Query, State, Path},
+    Router,
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
 };
-use anyhow::Result;
-use tracing::{info, debug, warn, error};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
 /// Sales service state for API handlers
 #[derive(Clone)]
@@ -112,7 +114,10 @@ pub fn create_sales_router(sales_state: SalesServiceState) -> Router {
         .route("/sales/trials/:trial_id", get(handle_get_trial_status))
         .route("/sales/trials/:trial_id/extend", post(handle_extend_trial))
         .route("/sales/demos/ai-showcase", post(handle_ai_showcase_demo))
-        .route("/sales/competitive-analysis", get(handle_competitive_analysis))
+        .route(
+            "/sales/competitive-analysis",
+            get(handle_competitive_analysis),
+        )
         .with_state(sales_state)
 }
 
@@ -121,7 +126,10 @@ pub async fn handle_create_trial(
     State(sales_state): State<SalesServiceState>,
     Json(request): Json<CreateTrialRequest>,
 ) -> Result<Json<CreateTrialResponse>, (StatusCode, String)> {
-    info!("🎯 Creating enterprise trial for company: {}", request.company_name);
+    info!(
+        "🎯 Creating enterprise trial for company: {}",
+        request.company_name
+    );
 
     // Convert string trial type to enum
     let trial_type = match request.trial_type.as_str() {
@@ -145,7 +153,11 @@ pub async fn handle_create_trial(
     };
 
     // Create trial
-    match sales_state.trial_manager.create_enterprise_trial(trial_request).await {
+    match sales_state
+        .trial_manager
+        .create_enterprise_trial(trial_request)
+        .await
+    {
         Ok(trial) => {
             let response = CreateTrialResponse {
                 success: true,
@@ -161,11 +173,17 @@ pub async fn handle_create_trial(
                 expiration_date: trial.expires_at.format("%Y-%m-%d").to_string(),
             };
 
-            info!("✅ Enterprise trial created successfully: {} for {}", trial.trial_id, trial.company_name);
+            info!(
+                "✅ Enterprise trial created successfully: {} for {}",
+                trial.trial_id, trial.company_name
+            );
             Ok(Json(response))
         }
         Err(e) => {
-            error!("❌ Trial creation failed for {}: {}", request.company_name, e);
+            error!(
+                "❌ Trial creation failed for {}: {}",
+                request.company_name, e
+            );
             Err((
                 StatusCode::BAD_REQUEST,
                 format!("Trial creation failed: {}", e),
@@ -194,7 +212,7 @@ pub async fn handle_get_trial_status(
                 api_calls_today: trial.engagement_metrics.total_api_calls,
                 ai_queries_today: trial.engagement_metrics.ai_queries_executed,
                 collections_created: 0, // Would track actual collections
-                vectors_inserted: 0, // Would track actual vectors
+                vectors_inserted: 0,    // Would track actual vectors
                 dashboard_views: trial.engagement_metrics.dashboard_views,
             },
             evaluation_progress: ProgressSummary {
@@ -206,8 +224,10 @@ pub async fn handle_get_trial_status(
             next_steps: generate_next_steps(&trial.evaluation_progress),
         };
 
-        debug!("✅ Trial status retrieved: {:.1}% complete, {} days remaining",
-               response.evaluation_progress.completion_percentage, days_remaining);
+        debug!(
+            "✅ Trial status retrieved: {:.1}% complete, {} days remaining",
+            response.evaluation_progress.completion_percentage, days_remaining
+        );
 
         Ok(Json(response))
     } else {
@@ -226,14 +246,18 @@ fn create_getting_started_guide(trial_type: &TrialType) -> GettingStartedGuide {
                     title: "Test Natural Language Querying".to_string(),
                     description: "Try asking questions in plain English".to_string(),
                     api_example: Some("POST /api/v1/ai/natural-language/query".to_string()),
-                    expected_result: "AI converts your question to SQL and provides business insights".to_string(),
+                    expected_result:
+                        "AI converts your question to SQL and provides business insights"
+                            .to_string(),
                 },
                 QuickStartStep {
                     step_number: 2,
                     title: "Generate Executive Dashboard".to_string(),
                     description: "Create automated business intelligence summary".to_string(),
                     api_example: Some("POST /api/v1/ai/executive-dashboard".to_string()),
-                    expected_result: "Comprehensive business insights with AI-powered recommendations".to_string(),
+                    expected_result:
+                        "Comprehensive business insights with AI-powered recommendations"
+                            .to_string(),
                 },
             ],
             vec![
@@ -261,7 +285,8 @@ fn create_getting_started_guide(trial_type: &TrialType) -> GettingStartedGuide {
                     title: "Execute Performance Benchmarks".to_string(),
                     description: "Run similarity search performance tests".to_string(),
                     api_example: Some("POST /api/v1/search".to_string()),
-                    expected_result: "High-throughput vector search performance validation".to_string(),
+                    expected_result: "High-throughput vector search performance validation"
+                        .to_string(),
                 },
             ],
             vec![
@@ -276,15 +301,14 @@ fn create_getting_started_guide(trial_type: &TrialType) -> GettingStartedGuide {
             ],
         ),
         _ => (
-            vec![
-                QuickStartStep {
-                    step_number: 1,
-                    title: "Explore Platform Capabilities".to_string(),
-                    description: "Test vector search, AI features, and enterprise capabilities".to_string(),
-                    api_example: Some("GET /health".to_string()),
-                    expected_result: "Platform health and capability overview".to_string(),
-                },
-            ],
+            vec![QuickStartStep {
+                step_number: 1,
+                title: "Explore Platform Capabilities".to_string(),
+                description: "Test vector search, AI features, and enterprise capabilities"
+                    .to_string(),
+                api_example: Some("GET /health".to_string()),
+                expected_result: "Platform health and capability overview".to_string(),
+            }],
             vec!["Test basic vector search capabilities".to_string()],
             vec!["Comprehensive platform evaluation".to_string()],
         ),
@@ -324,16 +348,26 @@ pub async fn handle_ai_showcase_demo(
     State(sales_state): State<SalesServiceState>,
     Json(demo_request): Json<DemoRequest>,
 ) -> Result<Json<DemoResponse>, (StatusCode, String)> {
-    info!("🎭 Executing AI showcase demo for: {}", demo_request.trial_id);
+    info!(
+        "🎭 Executing AI showcase demo for: {}",
+        demo_request.trial_id
+    );
 
     // Validate trial exists and is active
     let trials = sales_state.trial_manager.active_trials.read().await;
-    let trial = trials.get(&demo_request.trial_id)
+    let trial = trials
+        .get(&demo_request.trial_id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Trial not found".to_string()))?;
 
     // Execute AI demonstration
-    let demo_result = execute_ai_showcase_demo(&demo_request, trial).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Demo execution failed: {}", e)))?;
+    let demo_result = execute_ai_showcase_demo(&demo_request, trial)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Demo execution failed: {}", e),
+            )
+        })?;
 
     Ok(Json(DemoResponse {
         success: true,
@@ -359,7 +393,8 @@ async fn execute_ai_showcase_demo(
         description: "Query business data using plain English".to_string(),
         example_query: "What are our top performing products this quarter?".to_string(),
         result_preview: "AI identified 5 top products with 25% revenue growth".to_string(),
-        business_value: "Enables executives to access complex data without SQL expertise".to_string(),
+        business_value: "Enables executives to access complex data without SQL expertise"
+            .to_string(),
         execution_time_ms: 2500,
     };
     demo_results.push(nl_result);
@@ -380,13 +415,17 @@ async fn execute_ai_showcase_demo(
         step_name: "AI Business Recommendations".to_string(),
         description: "Automated business recommendation generation".to_string(),
         example_query: "Generate recommendations for revenue optimization".to_string(),
-        result_preview: "AI provided 4 specific recommendations with implementation steps".to_string(),
+        result_preview: "AI provided 4 specific recommendations with implementation steps"
+            .to_string(),
         business_value: "Data-driven strategic recommendations for business growth".to_string(),
         execution_time_ms: 3100,
     };
     demo_results.push(recommendations_result);
 
-    info!("✅ AI showcase demo completed: {} steps executed", demo_results.len());
+    info!(
+        "✅ AI showcase demo completed: {} steps executed",
+        demo_results.len()
+    );
     Ok(demo_results)
 }
 
@@ -422,15 +461,17 @@ pub async fn initialize_sales_service_state() -> Result<SalesServiceState> {
     info!("🚀 Initializing sales enablement service state");
 
     // Initialize trial manager
-    let trial_config = crate::sales_enablement::trial_platform::trial_manager::TrialConfig::default();
-    let trial_manager = Arc::new(EnterpriseTrialManager::new(trial_config).await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize trial manager: {}", e))?);
+    let trial_config =
+        crate::sales_enablement::trial_platform::trial_manager::TrialConfig::default();
+    let trial_manager = Arc::new(
+        EnterpriseTrialManager::new(trial_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize trial manager: {}", e))?,
+    );
 
     info!("✅ Sales enablement service state initialized successfully");
 
-    Ok(SalesServiceState {
-        trial_manager,
-    })
+    Ok(SalesServiceState { trial_manager })
 }
 
 /// Handle competitive analysis endpoint
@@ -455,7 +496,8 @@ pub async fn handle_competitive_analysis(
             },
             CompetitorComparison {
                 competitor: "Qdrant".to_string(),
-                proximadb_advantage: "Executive dashboard automation vs. technical-only interface".to_string(),
+                proximadb_advantage: "Executive dashboard automation vs. technical-only interface"
+                    .to_string(),
                 positioning: "Business-friendly vs. developer-focused".to_string(),
             },
             CompetitorComparison {

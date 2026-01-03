@@ -131,6 +131,8 @@ impl RowGroups {
             row_group_ids.push(row_group_id);
 
             // Check if row group is now full
+            // SAFETY: row_group_id was obtained from row_group_ids() iterator above,
+            // so it must exist in the map. The iteration doesn't modify the map.
             let row_group = self.row_groups.get(&row_group_id).unwrap();
             if row_group.vector_count >= row_group.max_vectors {
                 self.complete_current_row_group().await?;
@@ -210,6 +212,8 @@ impl RowGroups {
             .collect();
 
         // Now get mutable reference and update
+        // SAFETY: row_group_id existence is checked by contains_key() above.
+        // The function returns early with error if row group doesn't exist.
         let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
 
         // Ensure columnar_data exists
@@ -227,6 +231,7 @@ impl RowGroups {
             });
         }
 
+        // SAFETY: columnar_data is guaranteed to be Some after the initialization above.
         let columnar_data = row_group.columnar_data.as_mut().unwrap();
 
         // Initialize transposed vectors if first batch
@@ -313,7 +318,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .string_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(Some(s));
                         }
                         serde_json::Value::Number(n) => {
@@ -321,7 +326,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .numeric_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(n.as_f64());
                         }
                         serde_json::Value::Bool(b) => {
@@ -329,7 +334,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .boolean_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(Some(b));
                         }
                         _ => {
@@ -338,7 +343,7 @@ impl RowGroups {
                                 .metadata_columns
                                 .string_columns
                                 .entry(key)
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .push(None);
                         }
                     }
@@ -430,21 +435,21 @@ impl RowGroups {
                     metadata_columns
                         .string_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(Some(s));
                 }
                 serde_json::Value::Number(n) => {
                     metadata_columns
                         .numeric_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(n.as_f64());
                 }
                 serde_json::Value::Bool(b) => {
                     metadata_columns
                         .boolean_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(Some(b));
                 }
                 _ => {
@@ -452,7 +457,7 @@ impl RowGroups {
                     metadata_columns
                         .string_columns
                         .entry(key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(Some(value.to_string()));
                 }
             }
@@ -579,7 +584,10 @@ impl RowGroups {
         let compression_ratio = original_size as f32 / compressed_size.max(1) as f32;
 
         // Update row group with SIMD-encoded data
+        // SAFETY: row_group_id is validated at function entry via get_mut().ok_or_else().
+        // We checked row_group existence earlier in this function.
         let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
+        // SAFETY: columnar_data is guaranteed to exist - we checked via is_none() guard above.
         let columnar_data = row_group.columnar_data.as_mut().unwrap();
 
         columnar_data.proxima_data = Some(ProximaEncodedData {
@@ -610,6 +618,7 @@ impl RowGroups {
             if row_group.columnar_data.is_none() {
                 row_group.columnar_data = Some(ColumnarBlock::default());
             }
+            // SAFETY: columnar_data is guaranteed to be Some after the initialization above.
             let columnar_data = row_group.columnar_data.as_mut().unwrap();
 
             // Reconstruct vectors for quantization (transpose back)

@@ -106,10 +106,7 @@ impl WALFlushCoordinator {
     }
 
     /// Set memtable manager for cleanup after flush
-    pub fn set_memtable_manager(
-        &mut self,
-        manager: Arc<super::memtable_manager::MemtableManager>,
-    ) {
+    pub fn set_memtable_manager(&mut self, manager: Arc<super::memtable_manager::MemtableManager>) {
         self.memtable_manager = Some(manager);
         info!("🔗 FlushCoordinator: Memtable manager registered for post-flush cleanup");
     }
@@ -854,7 +851,9 @@ impl WALFlushCoordinator {
         let collections_to_flush = write_buffer.list_collections_with_unflushed_data().await;
 
         if collections_to_flush.is_empty() {
-            info!("📋 FlushCoordinator: No collections have unflushed data, shutdown flush complete");
+            info!(
+                "📋 FlushCoordinator: No collections have unflushed data, shutdown flush complete"
+            );
             return Ok(FlushAllResult {
                 collections_flushed: 0,
                 total_vectors_flushed: 0,
@@ -876,7 +875,10 @@ impl WALFlushCoordinator {
 
         // Flush each collection
         for collection_id in &collections_to_flush {
-            info!("🔄 FlushCoordinator: Flushing collection '{}'", collection_id);
+            info!(
+                "🔄 FlushCoordinator: Flushing collection '{}'",
+                collection_id
+            );
 
             // Get unflushed batches for this collection
             match write_buffer.get_unflushed_batches(collection_id).await {

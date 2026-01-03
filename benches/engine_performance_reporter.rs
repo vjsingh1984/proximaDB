@@ -343,7 +343,6 @@ async fn benchmark_engine_configuration(
     })
 }
 
-
 /// Write results to CSV file
 fn write_csv_report(results: &[BenchmarkResult], filename: &str) -> Result<()> {
     let mut file = File::create(filename)?;
@@ -368,10 +367,26 @@ fn write_csv_report(results: &[BenchmarkResult], filename: &str) -> Result<()> {
         let batch_bytes = batch_vecs * bytes_per_vec;
         let total_mb = total_bytes / 1_000_000.0;
         let batch_mb = batch_bytes / 1_000_000.0;
-        let total_vecs_per_sec = if total_flush_s > 0.0 { total_vecs / total_flush_s } else { 0.0 };
-        let avg_batch_vecs_per_sec = if avg_flush_s > 0.0 { batch_vecs / avg_flush_s } else { 0.0 };
-        let total_mbps = if total_flush_s > 0.0 { total_mb / total_flush_s } else { 0.0 };
-        let avg_batch_mbps = if avg_flush_s > 0.0 { batch_mb / avg_flush_s } else { 0.0 };
+        let total_vecs_per_sec = if total_flush_s > 0.0 {
+            total_vecs / total_flush_s
+        } else {
+            0.0
+        };
+        let avg_batch_vecs_per_sec = if avg_flush_s > 0.0 {
+            batch_vecs / avg_flush_s
+        } else {
+            0.0
+        };
+        let total_mbps = if total_flush_s > 0.0 {
+            total_mb / total_flush_s
+        } else {
+            0.0
+        };
+        let avg_batch_mbps = if avg_flush_s > 0.0 {
+            batch_mb / avg_flush_s
+        } else {
+            0.0
+        };
         writeln!(
             file,
             "{},{},{},{},{},{},{},{},{},{},{:.3},{:.1},{},{},{},{},{},{:.1},{:.1},{:.2},{:.2},{:.2}",

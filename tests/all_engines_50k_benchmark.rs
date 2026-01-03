@@ -100,7 +100,11 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
     let collection_name = format!("bench_50k_{}", engine);
 
     println!("\n{}", "=".repeat(60));
-    println!("  ENGINE: {} - {} VECTORS", engine.to_uppercase(), VECTOR_COUNT);
+    println!(
+        "  ENGINE: {} - {} VECTORS",
+        engine.to_uppercase(),
+        VECTOR_COUNT
+    );
     println!("{}", "=".repeat(60));
 
     // Pre-generate all vectors
@@ -148,12 +152,17 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
     }
 
     // Insert vectors in batches
-    println!("  Inserting {} vectors in batches of {}...", VECTOR_COUNT, BATCH_SIZE);
+    println!(
+        "  Inserting {} vectors in batches of {}...",
+        VECTOR_COUNT, BATCH_SIZE
+    );
     let insert_start = Instant::now();
 
     for batch_start in (0..VECTOR_COUNT).step_by(BATCH_SIZE) {
         let batch_end = (batch_start + BATCH_SIZE).min(VECTOR_COUNT);
-        let batch_ids: Vec<String> = (batch_start..batch_end).map(|i| format!("vec_{}", i)).collect();
+        let batch_ids: Vec<String> = (batch_start..batch_end)
+            .map(|i| format!("vec_{}", i))
+            .collect();
         let batch_vectors: Vec<Vec<f32>> = vectors[batch_start..batch_end].to_vec();
 
         if let Err(e) = db.insert(&collection_name, batch_ids, batch_vectors, None) {
@@ -170,12 +179,19 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
                 error: Some(format!("Failed to insert batch: {}", e)),
             };
         }
-        println!("    Inserted batch {}/{}", batch_start / BATCH_SIZE + 1, (VECTOR_COUNT + BATCH_SIZE - 1) / BATCH_SIZE);
+        println!(
+            "    Inserted batch {}/{}",
+            batch_start / BATCH_SIZE + 1,
+            (VECTOR_COUNT + BATCH_SIZE - 1) / BATCH_SIZE
+        );
     }
 
     let insert_time = insert_start.elapsed().as_secs_f64();
     let insert_qps = VECTOR_COUNT as f64 / insert_time;
-    println!("  Insert completed: {:.2}s ({:.0} vec/s)", insert_time, insert_qps);
+    println!(
+        "  Insert completed: {:.2}s ({:.0} vec/s)",
+        insert_time, insert_qps
+    );
 
     // Flush
     println!("  Flushing to disk...");
@@ -332,7 +348,11 @@ fn test_all_engines_50k_benchmark() {
     // Ranking by latency
     println!("\n{:-^80}", " LATENCY RANKING ");
     let mut sorted_by_latency: Vec<_> = results.iter().filter(|r| r.error.is_none()).collect();
-    sorted_by_latency.sort_by(|a, b| a.avg_search_latency_ms.partial_cmp(&b.avg_search_latency_ms).unwrap());
+    sorted_by_latency.sort_by(|a, b| {
+        a.avg_search_latency_ms
+            .partial_cmp(&b.avg_search_latency_ms)
+            .unwrap()
+    });
     for (i, r) in sorted_by_latency.iter().enumerate() {
         println!(
             "  {}. {}: {:.1}ms avg, {:.0}% recall",
@@ -430,7 +450,11 @@ fn test_all_engines_quick_smoke_test() {
             .expect("Failed to search");
 
         assert!(!results.is_empty(), "{} returned no results", engine);
-        println!("    {} returned {} results", engine.to_uppercase(), results.len());
+        println!(
+            "    {} returned {} results",
+            engine.to_uppercase(),
+            results.len()
+        );
     }
 
     println!("\n{:-^60}", " ALL ENGINES PASSED ");

@@ -405,7 +405,11 @@ impl MetadataFilter {
 
         fn convert_condition(expr: &FilterExpression) -> Option<FilterCondition> {
             match expr {
-                FilterExpression::Comparison { field, operator, value } => {
+                FilterExpression::Comparison {
+                    field,
+                    operator,
+                    value,
+                } => {
                     match operator {
                         ComparisonOperator::Equals => {
                             Some(FilterCondition::Equals(field.clone(), value.clone()))
@@ -433,19 +437,26 @@ impl MetadataFilter {
                                 None
                             }
                         }
-                        ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+                        ComparisonOperator::GreaterThan
+                        | ComparisonOperator::GreaterThanOrEqual => {
                             // Range with open upper bound (use MAX values)
                             let max_val = serde_json::json!(f64::MAX);
-                            Some(FilterCondition::Range(field.clone(), value.clone(), max_val))
+                            Some(FilterCondition::Range(
+                                field.clone(),
+                                value.clone(),
+                                max_val,
+                            ))
                         }
                         ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
                             // Range with open lower bound (use MIN values)
                             let min_val = serde_json::json!(f64::MIN);
-                            Some(FilterCondition::Range(field.clone(), min_val, value.clone()))
+                            Some(FilterCondition::Range(
+                                field.clone(),
+                                min_val,
+                                value.clone(),
+                            ))
                         }
-                        ComparisonOperator::IsNull => {
-                            Some(FilterCondition::IsNull(field.clone()))
-                        }
+                        ComparisonOperator::IsNull => Some(FilterCondition::IsNull(field.clone())),
                         ComparisonOperator::IsNotNull => {
                             Some(FilterCondition::IsNotNull(field.clone()))
                         }
@@ -456,7 +467,11 @@ impl MetadataFilter {
             }
         }
 
-        fn collect_conditions(expr: &FilterExpression, conditions: &mut Vec<FilterCondition>, logic: &mut FilterLogic) {
+        fn collect_conditions(
+            expr: &FilterExpression,
+            conditions: &mut Vec<FilterCondition>,
+            logic: &mut FilterLogic,
+        ) {
             match expr {
                 FilterExpression::And(exprs) => {
                     *logic = FilterLogic::And;

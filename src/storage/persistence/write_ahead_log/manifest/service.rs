@@ -962,7 +962,7 @@ impl GlobalManifestService {
 
         // Close append channel by dropping the sender
         // This signals the background worker to exit after flushing pending entries
-        drop(self.append_tx.clone());  // Close the channel
+        drop(self.append_tx.clone()); // Close the channel
 
         // Give worker a moment to process the channel closure
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -971,9 +971,11 @@ impl GlobalManifestService {
         if let Some(handle) = self.worker_handle.lock().await.take() {
             // Use timeout to prevent indefinite hang
             match tokio::time::timeout(
-                tokio::time::Duration::from_secs(3),  // Reduced from 5s to 3s
-                handle
-            ).await {
+                tokio::time::Duration::from_secs(3), // Reduced from 5s to 3s
+                handle,
+            )
+            .await
+            {
                 Ok(Ok(())) => {
                     debug!("GlobalManifestService worker exited cleanly");
                 }

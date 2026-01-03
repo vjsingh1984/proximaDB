@@ -440,7 +440,10 @@ pub struct EngineBundle<E> {
 impl<E> EngineBundle<E> {
     /// Create a new engine bundle
     pub fn new(engine: E, capabilities: Box<dyn EngineCapabilities>) -> Self {
-        Self { engine, capabilities }
+        Self {
+            engine,
+            capabilities,
+        }
     }
 }
 
@@ -449,7 +452,9 @@ pub struct CapabilityFactory;
 
 impl CapabilityFactory {
     /// Create capabilities for a given engine strategy
-    pub fn create(strategy: crate::storage::traits::StorageEngineStrategy) -> Box<dyn EngineCapabilities> {
+    pub fn create(
+        strategy: crate::storage::traits::StorageEngineStrategy,
+    ) -> Box<dyn EngineCapabilities> {
         use crate::storage::traits::StorageEngineStrategy;
 
         match strategy {
@@ -468,7 +473,9 @@ impl CapabilityFactory {
     ///
     /// This method bridges the static `EngineCapabilities` utility with the trait-based
     /// capability system, enabling OCP compliance while maintaining the static API.
-    pub fn from_proto_engine(engine: crate::proto::proximadb_v1::StorageEngine) -> Box<dyn EngineCapabilities> {
+    pub fn from_proto_engine(
+        engine: crate::proto::proximadb_v1::StorageEngine,
+    ) -> Box<dyn EngineCapabilities> {
         use crate::proto::proximadb_v1::StorageEngine;
 
         match engine {

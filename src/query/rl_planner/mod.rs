@@ -80,12 +80,14 @@ pub use action::{
 };
 pub use bandit::ContextualBanditPlanner;
 pub use experience::ExperienceBuffer;
-pub use logging::{ExecutionLog, StageLog};
+pub use logging::{
+    ActionHistory, ExecutionLog, ExplainIntegration, RLDecisionContext, RLDecisionLogger, StageLog,
+};
 pub use reward::{OptimizationGoal, OptimizationTarget, RewardCalculator};
 pub use state::{FilterComplexity, PlannerState};
 
 // Re-export integration utilities
-pub use integration::{get_rl_planner, init_rl_planner, rl_select_action, RLPlannerIntegration};
+pub use integration::{RLPlannerIntegration, get_rl_planner, init_rl_planner, rl_select_action};
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -146,7 +148,8 @@ pub struct RLPlanner {
 impl RLPlanner {
     /// Create new RL planner with configuration
     pub fn new(config: RLPlannerConfig) -> Self {
-        let bandit = ContextualBanditPlanner::new(config.exploration_rate, config.thompson_sampling);
+        let bandit =
+            ContextualBanditPlanner::new(config.exploration_rate, config.thompson_sampling);
         let experience_buffer = ExperienceBuffer::new(config.experience_buffer_size);
         let logger = logging::ExecutionLogger::new(config.log_path.clone());
         let reward_calculator = RewardCalculator::new(config.default_goal);

@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 use super::impls::baseline::{BaselineDecoder, BaselineEncoder};
 use super::registry::ImplementationRegistry;
-use super::types::{Decodable, Encodable, ProximaScheme, TypeId};
+use super::types::{ProximaScheme, TypeId};
 use super::wire_format::WireFormatManager;
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]

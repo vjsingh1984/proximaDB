@@ -318,7 +318,7 @@ Logged events include:
   "event_type": "authentication",
   "user_id": "admin",
   "tenant_id": "tenant-1",
-  "source_ip": "10.0.1.50",
+  "source_ip": "10.0.2.00",
   "user_agent": "proximadb-python-sdk/0.1.0",
   "auth_method": "jwt",
   "result": "success",

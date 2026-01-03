@@ -4,7 +4,7 @@ This directory contains comprehensive examples demonstrating ProximaDB Python SD
 
 **Last Updated**: 2025-01-23
 **SDK Version**: v1.0
-**Server Version**: v0.1.5
+**Server Version**: v0.2.0
 
 ---
 
@@ -88,7 +88,7 @@ These examples work partially - some features depend on server-side capabilities
 | Example | What Works | What Doesn't Work | Server Version Needed |
 |---------|-----------|-------------------|----------------------|
 | **sql_queries.py** | Collection creation, vector insertion, BERT embeddings | SQL queries with vector similarity | v0.2.0+ |
-| **auth_examples.py** | Basic authentication flow | Complete AuthResult API | v0.1.5+ |
+| **auth_examples.py** | Basic authentication flow | Complete AuthResult API | v0.2.0+ |
 
 ---
 
@@ -371,7 +371,7 @@ pip install aiofiles
 
 ## Server Version Compatibility
 
-| Feature | v0.1.5 | v0.2.0+ (planned) |
+| Feature | v0.2.0 | v0.2.0+ (planned) |
 |---------|--------|-------------------|
 | Vector CRUD | ✅ | ✅ |
 | Semantic Search | ✅ | ✅ |
@@ -411,4 +411,4 @@ Found an issue with an example? Please report it:
 
 ---
 
-**Note**: All examples are tested against ProximaDB v0.1.5 and Python SDK v1.0. Status headers in each file show exact compatibility details.
+**Note**: All examples are tested against ProximaDB v0.2.0 and Python SDK v1.0. Status headers in each file show exact compatibility details.

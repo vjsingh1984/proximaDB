@@ -178,11 +178,13 @@ impl OrionPersistence {
 
             // Initialize WAL writer with path (not URL)
             tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
-            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone()).await.map_err(|e| {
-                ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
-                    e.to_string(),
-                ))
-            })?;
+            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
             tracing::debug!("WAL writer created successfully");
 
             (
@@ -576,7 +578,9 @@ impl OrionPersistence {
 
             tracing::debug!("Update node WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - update node operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - update node operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -609,7 +613,9 @@ impl OrionPersistence {
 
             tracing::debug!("Delete node WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - delete node operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - delete node operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -644,7 +650,9 @@ impl OrionPersistence {
 
             tracing::debug!("Update edge WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - update edge operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - update edge operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -677,7 +685,9 @@ impl OrionPersistence {
 
             tracing::debug!("Delete edge WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - delete edge operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - delete edge operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -775,11 +785,31 @@ impl OrionPersistence {
                 }
                 GraphOperation::UpdateNode {
                     graph_id: _,
-                    node_id: _,
-                    update: _,
+                    node_id,
+                    update,
                 } => {
-                    // Update operations need to be implemented in OrionGraphEngine
-                    warn!("Update node operation not yet implemented in ORION engine");
+                    // Get existing node from memory pool and apply update
+                    if let Some(existing_node) = engine.memory_pool.get_node(&node_id) {
+                        let mut updated_node = (*existing_node).clone();
+
+                        // Apply updates
+                        if let Some(labels) = update.labels {
+                            updated_node.labels = labels;
+                        }
+                        if let Some(properties) = update.properties {
+                            updated_node.properties = properties;
+                        }
+                        if let Some(embedding) = update.embedding {
+                            updated_node.embedding = Some(embedding);
+                        }
+
+                        // Update the node (without re-logging to WAL during replay)
+                        engine.memory_pool.remove_node(&node_id);
+                        engine.memory_pool.insert_node(updated_node);
+                        debug!("Replayed UpdateNode for node_id: {}", node_id);
+                    } else {
+                        warn!("UpdateNode replay: node {} not found, skipping", node_id);
+                    }
                 }
                 GraphOperation::DeleteNode {
                     graph_id: _,
@@ -809,11 +839,28 @@ impl OrionPersistence {
                 }
                 GraphOperation::UpdateEdge {
                     graph_id: _,
-                    edge_id: _,
-                    update: _,
+                    edge_id,
+                    update,
                 } => {
-                    // Update operations need to be implemented in OrionGraphEngine
-                    warn!("Update edge operation not yet implemented in ORION engine");
+                    // Get existing edge from memory pool and apply update
+                    if let Some(existing_edge) = engine.memory_pool.get_edge(&edge_id) {
+                        let mut updated_edge = (*existing_edge).clone();
+
+                        // Apply updates
+                        if let Some(properties) = update.properties {
+                            updated_edge.properties = properties;
+                        }
+                        if let Some(weight) = update.weight {
+                            updated_edge.weight = Some(weight);
+                        }
+
+                        // Update the edge (without re-logging to WAL during replay)
+                        engine.memory_pool.remove_edge(&edge_id);
+                        engine.memory_pool.insert_edge(updated_edge);
+                        debug!("Replayed UpdateEdge for edge_id: {}", edge_id);
+                    } else {
+                        warn!("UpdateEdge replay: edge {} not found, skipping", edge_id);
+                    }
                 }
                 GraphOperation::BatchOperation { operations } => {
                     // Apply each operation in the batch

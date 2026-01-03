@@ -322,7 +322,11 @@ mod tests {
 
         // For now, just verify that ground truth computation works
         // The full integration test requires inserting into the engine and searching
-        assert_eq!(ground_truth.len(), k, "Ground truth should have exactly k elements");
+        assert_eq!(
+            ground_truth.len(),
+            k,
+            "Ground truth should have exactly k elements"
+        );
 
         // Verify ground truth distances are sorted
         let gt_distances: Vec<f32> = distances.iter().take(k).map(|(_, d)| *d).collect();
@@ -354,7 +358,11 @@ mod tests {
 
     /// Helper: Compute recall@k between two result sets
     #[allow(dead_code)]
-    fn compute_recall_at_k(ground_truth_ids: &HashSet<String>, result_ids: &[String], k: usize) -> f32 {
+    fn compute_recall_at_k(
+        ground_truth_ids: &HashSet<String>,
+        result_ids: &[String],
+        k: usize,
+    ) -> f32 {
         let result_set: HashSet<&String> = result_ids.iter().take(k).collect();
         let gt_set: HashSet<&String> = ground_truth_ids.iter().collect();
 

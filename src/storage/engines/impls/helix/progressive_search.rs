@@ -12,7 +12,6 @@ use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::storage::persistence::filesystem::FileSystem;
 
 use super::clustering::HilbertKey;
 use super::{HelixConfig, SStableMetadata};

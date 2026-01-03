@@ -1546,4 +1546,4 @@ let status = migration_engine.get_migration_status(collection_id).await?;
 * https://ann-benchmarks.com/[ANN-Benchmarks: Performance comparison]
 
 ---
-_Last updated: January 2025 (v0.1.5)_
+_Last updated: December 2025 (v0.2.0)_

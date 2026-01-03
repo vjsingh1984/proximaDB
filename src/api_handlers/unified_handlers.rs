@@ -211,6 +211,7 @@ use crate::metrics::query_service::{MetricsQueryOptions, MetricsQueryService};
 use crate::proto::proximadb_v1::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorRecord,
 };
+use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;
 
@@ -233,6 +234,11 @@ pub struct UnifiedHandlers {
     /// Cache for collection ID resolution to reduce metadata backend lookups
     /// Reduces latency from ~5ms/request to ~0.1ms on cache hits
     collection_id_cache: CollectionIdCache,
+    /// Query facade adapter for unified query execution
+    /// Optional for backward compatibility during feature flag transition
+    /// When set, SQL queries route through the unified facade for consistent routing and metrics
+    /// Uses RwLock for thread-safe post-initialization setting (similar to hybrid_runtime)
+    query_adapter: std::sync::RwLock<Option<Arc<QueryFacadeAdapter>>>,
 }
 
 impl UnifiedHandlers {
@@ -265,6 +271,7 @@ impl UnifiedHandlers {
             metrics_query_service: None,
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
             collection_id_cache: CollectionIdCache::new(),
+            query_adapter: std::sync::RwLock::new(None),
         }
     }
 
@@ -284,7 +291,29 @@ impl UnifiedHandlers {
             metrics_query_service: Some(metrics_query_service),
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
             collection_id_cache: CollectionIdCache::new(),
+            query_adapter: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Set the query facade adapter for unified query routing (thread-safe; callable post-initialization)
+    ///
+    /// When set, SQL queries will be routed through the unified facade for:
+    /// - Consistent query metrics across all query types
+    /// - Unified strategy selection (SQL, federated, etc.)
+    /// - Centralized query logging and tracing
+    pub fn set_query_adapter(&self, adapter: Arc<QueryFacadeAdapter>) {
+        if let Ok(mut guard) = self.query_adapter.write() {
+            *guard = Some(adapter);
+            tracing::info!("QueryFacadeAdapter set on UnifiedHandlers for unified SQL routing");
+        }
+    }
+
+    /// Get the query facade adapter if set
+    pub fn get_query_adapter(&self) -> Option<Arc<QueryFacadeAdapter>> {
+        self.query_adapter
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
@@ -292,6 +321,14 @@ impl UnifiedHandlers {
         if let Ok(mut guard) = self.hybrid_runtime.write() {
             *guard = Some(cfg);
         }
+    }
+
+    /// Get storage configuration from collection service
+    ///
+    /// Returns the storage configuration containing storage locations.
+    /// Used by Arrow Flight service to locate .arrow files.
+    pub fn storage_config(&self) -> Option<&crate::core::config::StorageConfig> {
+        Some(self.collection_service.storage_config())
     }
 
     /// Resolve collection identifier to canonical ID with caching
@@ -1332,13 +1369,31 @@ impl UnifiedHandlers {
     }
 
     /// Execute SQL and return v1 ExecuteSqlResponse directly (typed rows and params)
+    ///
+    /// When the `unified-facade-routing` feature is enabled and a query adapter is set,
+    /// SQL queries are routed through the UnifiedQueryFacade for consistent metrics
+    /// and unified strategy selection.
     pub async fn execute_sql_v1(
         &self,
         query: String,
         parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         collection: Option<String>,
     ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
-        // Use the new sql_frontend path by default
+        let start_time = std::time::Instant::now();
+
+        // Route through unified facade when feature is enabled and adapter is available
+        #[cfg(feature = "unified-facade-routing")]
+        if let Some(adapter) = self.get_query_adapter() {
+            tracing::debug!("Routing SQL query through unified facade");
+
+            // Execute through the facade
+            let query_result = adapter.sql_query(&query).await?;
+
+            // Convert QueryResult to ExecuteSqlResponse
+            return self.convert_query_result_to_sql_response(query_result, start_time);
+        }
+
+        // Legacy path: Use sql_frontend directly
         // Do not perform string substitution; pass params along for the frontend to bind
         let result = self
             .execute_sql_frontend(query.clone(), parameters.clone(), collection.clone())
@@ -1371,6 +1426,87 @@ impl UnifiedHandlers {
             execution_time_ms: result.execution_time_ms as u64,
             columns: result.columns.iter().map(|c| c.0.clone()).collect(),
             column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
+        })
+    }
+
+    /// Convert QueryResult from unified facade to ExecuteSqlResponse
+    #[cfg(feature = "unified-facade-routing")]
+    fn convert_query_result_to_sql_response(
+        &self,
+        query_result: crate::query::QueryResult,
+        start_time: std::time::Instant,
+    ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
+        use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
+        use crate::query::QueryResultData;
+
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+        // Extract rows from QueryResult
+        let json_rows = match query_result.data {
+            QueryResultData::Rows(rows) => rows,
+            QueryResultData::VectorResults(matches) => {
+                // Convert vector matches to JSON rows
+                matches
+                    .into_iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "id": m.id,
+                            "score": m.score,
+                            "metadata": m.metadata
+                        })
+                    })
+                    .collect()
+            }
+            QueryResultData::Empty => vec![],
+            QueryResultData::Graph(graph_result) => {
+                // Convert graph results to JSON rows
+                graph_result
+                    .nodes
+                    .into_iter()
+                    .map(|node| serde_json::to_value(node).unwrap_or_default())
+                    .collect()
+            }
+        };
+
+        // Convert JSON rows to SqlRow format
+        let mut rows: Vec<SqlRow> = Vec::new();
+        let mut columns: Vec<String> = Vec::new();
+        let mut column_types: Vec<String> = Vec::new();
+
+        for row in &json_rows {
+            let mut fields_vec: Vec<SqlRowField> = Vec::new();
+            if let serde_json::Value::Object(map) = row {
+                // Build column list from first row
+                if columns.is_empty() {
+                    for (k, v) in map {
+                        columns.push(k.clone());
+                        column_types.push(self.infer_json_type(v));
+                    }
+                }
+
+                for (k, v) in map {
+                    let sv = Self::json_to_sql_value(v);
+                    fields_vec.push(SqlRowField {
+                        key: k.clone(),
+                        value: Some(sv),
+                    });
+                }
+            }
+            rows.push(SqlRow {
+                fields: fields_vec,
+                similarity: None,
+            });
+        }
+
+        let row_count = rows.len() as u64;
+
+        Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+            rows,
+            rows_scanned: 0,
+            rows_returned: row_count,
+            execution_time_ms,
+            columns,
+            column_types,
         })
     }
 

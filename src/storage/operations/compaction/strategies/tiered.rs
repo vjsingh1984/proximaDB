@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 use super::{
-    CompactionCostEstimate, CompactionParameters, CompactionPlan, CompactionStrategy,
-    FileMetadata, FileStatistics,
+    CompactionCostEstimate, CompactionParameters, CompactionPlan, CompactionStrategy, FileMetadata,
+    FileStatistics,
 };
 
 /// Tiered compaction strategy (STCS - Size-Tiered Compaction Strategy)
@@ -55,8 +55,8 @@ impl Default for TieredCompactionStrategy {
             min_threshold: 4,
             max_threshold: 32,
             size_tier_ratio: 4.0,
-            min_file_size: 4 * 1024 * 1024,       // 4MB
-            max_file_size: 512 * 1024 * 1024,     // 512MB
+            min_file_size: 4 * 1024 * 1024,   // 4MB
+            max_file_size: 512 * 1024 * 1024, // 512MB
             enable_clustering: false,
         }
     }
@@ -208,10 +208,7 @@ impl TieredCompactionStrategy {
         let estimated_output_size: u64 = input_files.iter().map(|f| f.size_bytes).sum();
 
         Some(CompactionPlan {
-            plan_id: format!(
-                "tiered_cluster_{}",
-                chrono::Utc::now().timestamp_millis()
-            ),
+            plan_id: format!("tiered_cluster_{}", chrono::Utc::now().timestamp_millis()),
             collection_id: collection_id.to_string(),
             input_files,
             target_level: 0, // Clustering doesn't change levels
@@ -386,8 +383,8 @@ mod tests {
     fn test_tier_calculation() {
         let strategy = TieredCompactionStrategy::new();
 
-        assert_eq!(strategy.get_tier_index(2 * 1024 * 1024), 0);  // 2MB → tier 0
-        assert_eq!(strategy.get_tier_index(4 * 1024 * 1024), 0);  // 4MB → tier 0
+        assert_eq!(strategy.get_tier_index(2 * 1024 * 1024), 0); // 2MB → tier 0
+        assert_eq!(strategy.get_tier_index(4 * 1024 * 1024), 0); // 4MB → tier 0
         assert_eq!(strategy.get_tier_index(16 * 1024 * 1024), 1); // 16MB → tier 1
         assert_eq!(strategy.get_tier_index(64 * 1024 * 1024), 2); // 64MB → tier 2
     }

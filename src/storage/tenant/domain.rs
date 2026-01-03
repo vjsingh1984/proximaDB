@@ -1,13 +1,12 @@
 //! Domain separation layer - clean business context implementation
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::info;
 
 use super::BusinessContext;
-use crate::storage::tenant::context::DataSensitivityLevel;
 use crate::storage::tenant::entity_store::UserContext;
 
 /// Domain manager for business context separation
@@ -360,6 +359,7 @@ pub type OptimizationRule = String; // Will be enhanced in future phases
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::tenant::context::DataSensitivityLevel;
     use crate::storage::tenant::{Industry, PerformanceRequirements};
 
     #[tokio::test]

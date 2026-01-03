@@ -71,9 +71,8 @@ pub mod batching;
 pub use codec::ProximaCodec;
 pub use registry::ImplementationRegistry;
 pub use strategy::{
-    CodecSelectionStrategy, DataAnalysis, DataDomain, SelectionContext,
-    IntegerAnalysisStrategy, MlEmbeddingStrategy, TimeSeriesStrategy, SparseDataStrategy,
-    StrategyRegistry,
+    CodecSelectionStrategy, DataAnalysis, DataDomain, IntegerAnalysisStrategy, MlEmbeddingStrategy,
+    SelectionContext, SparseDataStrategy, StrategyRegistry, TimeSeriesStrategy,
 };
 pub use traits::{RawDecoder, RawEncoder};
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};

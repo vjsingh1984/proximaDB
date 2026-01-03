@@ -246,7 +246,11 @@ impl PCAModelManager {
     }
 
     /// Train and immediately activate a model
-    pub async fn train_and_activate(&self, vectors: &[VectorRecord], n_components: usize) -> Result<u32> {
+    pub async fn train_and_activate(
+        &self,
+        vectors: &[VectorRecord],
+        n_components: usize,
+    ) -> Result<u32> {
         let version = self.train_model(vectors, n_components).await?;
         self.activate_version(version).await?;
         Ok(version)
@@ -385,7 +389,8 @@ impl PCAModelManager {
         let guard = self.active_model.read().await;
         let model = guard.as_ref()?;
 
-        let version_meta = self.version_history
+        let version_meta = self
+            .version_history
             .read()
             .await
             .iter()
@@ -412,7 +417,10 @@ impl PCAModelManager {
         let model = self.load_model(version).await?;
 
         // Cache it
-        self.model_cache.write().await.insert(version, model.clone());
+        self.model_cache
+            .write()
+            .await
+            .insert(version, model.clone());
 
         Ok(model)
     }

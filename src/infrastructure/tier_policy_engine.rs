@@ -792,15 +792,11 @@ impl RuleBasedTierPolicy {
                 min_accesses_per_day,
                 max_accesses_per_day,
             } => {
-                if let Some(min) = min_accesses_per_day {
-                    if access_frequency < *min {
-                        return false;
-                    }
+                if min_accesses_per_day.is_some_and(|min| access_frequency < min) {
+                    return false;
                 }
-                if let Some(max) = max_accesses_per_day {
-                    if access_frequency > *max {
-                        return false;
-                    }
+                if max_accesses_per_day.is_some_and(|max| access_frequency > max) {
+                    return false;
                 }
                 true
             }
@@ -808,15 +804,11 @@ impl RuleBasedTierPolicy {
                 min_age_days,
                 max_age_days,
             } => {
-                if let Some(min) = min_age_days {
-                    if age_days < *min {
-                        return false;
-                    }
+                if min_age_days.is_some_and(|min| age_days < min) {
+                    return false;
                 }
-                if let Some(max) = max_age_days {
-                    if age_days > *max {
-                        return false;
-                    }
+                if max_age_days.is_some_and(|max| age_days > max) {
+                    return false;
                 }
                 true
             }
@@ -1874,15 +1866,11 @@ impl SmartTierPolicy {
                 min_bytes,
                 max_bytes,
             } => {
-                if let Some(min) = min_bytes {
-                    if size_bytes < *min {
-                        return false;
-                    }
+                if min_bytes.is_some_and(|min| size_bytes < min) {
+                    return false;
                 }
-                if let Some(max) = max_bytes {
-                    if size_bytes > *max {
-                        return false;
-                    }
+                if max_bytes.is_some_and(|max| size_bytes > max) {
+                    return false;
                 }
                 true
             }
@@ -1891,15 +1879,11 @@ impl SmartTierPolicy {
                 min_accesses_per_day,
                 max_accesses_per_day,
             } => {
-                if let Some(min) = min_accesses_per_day {
-                    if access_frequency < *min {
-                        return false;
-                    }
+                if min_accesses_per_day.is_some_and(|min| access_frequency < min) {
+                    return false;
                 }
-                if let Some(max) = max_accesses_per_day {
-                    if access_frequency > *max {
-                        return false;
-                    }
+                if max_accesses_per_day.is_some_and(|max| access_frequency > max) {
+                    return false;
                 }
                 true
             }
@@ -1908,15 +1892,11 @@ impl SmartTierPolicy {
                 min_age_days,
                 max_age_days,
             } => {
-                if let Some(min) = min_age_days {
-                    if age_days < *min {
-                        return false;
-                    }
+                if min_age_days.is_some_and(|min| age_days < min) {
+                    return false;
                 }
-                if let Some(max) = max_age_days {
-                    if age_days > *max {
-                        return false;
-                    }
+                if max_age_days.is_some_and(|max| age_days > max) {
+                    return false;
                 }
                 true
             }
@@ -1935,15 +1915,11 @@ impl SmartTierPolicy {
                 max_priority,
             } => {
                 if let Some(prio) = priority {
-                    if let Some(min) = min_priority {
-                        if prio < *min {
-                            return false;
-                        }
+                    if min_priority.is_some_and(|min| prio < min) {
+                        return false;
                     }
-                    if let Some(max) = max_priority {
-                        if prio > *max {
-                            return false;
-                        }
+                    if max_priority.is_some_and(|max| prio > max) {
+                        return false;
                     }
                     true
                 } else {

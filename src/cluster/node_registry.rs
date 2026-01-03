@@ -396,7 +396,10 @@ mod tests {
         };
         registry.register_node(info).await.unwrap();
 
-        registry.update_role("node-1", NodeRole::Leader).await.unwrap();
+        registry
+            .update_role("node-1", NodeRole::Leader)
+            .await
+            .unwrap();
 
         let leader = registry.get_leader().await;
         assert!(leader.is_some());

@@ -3,8 +3,8 @@
 
 use super::NovaFile;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::formats::columnar::ParquetLocation;
 use crate::storage::engines::core::formats::VectorSerializer;
+use crate::storage::engines::core::formats::columnar::ParquetLocation;
 use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_array::array::{BinaryArray, StringArray};
@@ -315,7 +315,7 @@ pub async fn read_batch_optimized(
         if let Some(loc) = maybe_loc {
             grouped
                 .entry(loc.row_group_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(id.clone());
         }
     }
@@ -365,7 +365,7 @@ pub async fn prefetch_row_groups(
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
-            match load_row_group(rg_id, &vec![], &schema).await {
+            match load_row_group(rg_id, &[], &schema).await {
                 Ok(batch) => {
                     cache.put(rg_id, Arc::new(batch)).await;
                     debug!("Prefetched row group {}", rg_id);

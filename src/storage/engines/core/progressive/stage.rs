@@ -165,7 +165,11 @@ pub trait ProgressiveSearchStage: Send + Sync {
         top_k: usize,
     ) -> Vec<ScoredCandidate> {
         // Sort by score (ascending for distance)
-        candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Keep expansion_factor * top_k candidates
         let keep_count = ((top_k as f32) * expansion_factor).ceil() as usize;
@@ -198,7 +202,10 @@ pub struct BinaryStage {
 
 impl BinaryStage {
     /// Create a new binary stage with given threshold
-    pub fn new(hamming_threshold: f32, quantization_engine: Arc<UnifiedQuantizationEngine>) -> Self {
+    pub fn new(
+        hamming_threshold: f32,
+        quantization_engine: Arc<UnifiedQuantizationEngine>,
+    ) -> Self {
         Self {
             hamming_threshold,
             quantization_engine,
@@ -303,19 +310,15 @@ impl ProgressiveSearchStage for Int8Stage {
                     .map(|&x| x as f32 / self.scale_factor)
                     .collect();
 
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    &int8_as_f32,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, &int8_as_f32, &distance_metric);
                 candidate.score = result.rank_value;
             } else if let Some(ref vector) = candidate.vector {
                 // Fall back to FP32 if INT8 not available
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    vector,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, vector, &distance_metric);
                 candidate.score = result.rank_value;
             } else {
                 candidate.score = f32::MAX;
@@ -327,7 +330,9 @@ impl ProgressiveSearchStage for Int8Stage {
 
     fn can_skip(&self, candidates: &[ScoredCandidate]) -> bool {
         // Skip if no candidates have INT8 data and no FP32 fallback
-        candidates.iter().all(|c| c.int8_data.is_none() && c.vector.is_none())
+        candidates
+            .iter()
+            .all(|c| c.int8_data.is_none() && c.vector.is_none())
     }
 }
 
@@ -366,7 +371,9 @@ impl ProgressiveSearchStage for PqStage {
     }
 
     fn quantization_level(&self) -> QuantizationLevel {
-        QuantizationLevel::Pq { bits: self.bits_per_code }
+        QuantizationLevel::Pq {
+            bits: self.bits_per_code,
+        }
     }
 
     async fn compute_distances(
@@ -440,11 +447,9 @@ impl ProgressiveSearchStage for Fp32Stage {
     ) -> Result<Vec<ScoredCandidate>> {
         for candidate in &mut candidates {
             if let Some(ref vector) = candidate.vector {
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    vector,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, vector, &distance_metric);
                 candidate.score = result.rank_value;
             } else {
                 // No FP32 vector available - this shouldn't happen in final stage
@@ -493,8 +498,12 @@ mod tests {
 
         #[async_trait]
         impl ProgressiveSearchStage for MockStage {
-            fn name(&self) -> &'static str { "Mock" }
-            fn quantization_level(&self) -> QuantizationLevel { QuantizationLevel::Fp32 }
+            fn name(&self) -> &'static str {
+                "Mock"
+            }
+            fn quantization_level(&self) -> QuantizationLevel {
+                QuantizationLevel::Fp32
+            }
             async fn compute_distances(
                 &self,
                 _query: &[f32],

@@ -11,7 +11,6 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
-
 /// Handles all search operations for NOVA engine
 pub struct NovaSearchOperations {
     filesystem: Arc<FilesystemFactory>,
@@ -242,8 +241,7 @@ impl NovaSearchOperations {
         if total_files > 1 {
             debug!(
                 "📊 NOVA search: scanned {}/{} files",
-                files_scanned,
-                total_files
+                files_scanned, total_files
             );
         }
 

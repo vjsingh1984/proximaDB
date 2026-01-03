@@ -2,6 +2,7 @@
 //!
 //! Provides Proxima block-columnar and pure columnar storage formats shared by multiple engines
 
+pub mod arrow_block;
 pub mod codebook_metadata;
 pub mod columnar;
 pub mod common_quantization;
@@ -38,3 +39,8 @@ pub use codebook_metadata::{
 };
 
 pub use vector_serialization::VectorSerializer;
+
+pub use arrow_block::{
+    ArrowBlockConfig, ArrowBlockError, ArrowBlockIndex, ArrowBlockMetadata, ArrowBlockReader,
+    ArrowBlockResult, ArrowBlockWriter, ArrowIndexEntry,
+};

@@ -2,7 +2,6 @@
 // ID indexing, bloom filters, and hierarchical index management
 
 use anyhow::Result;
-use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
 use super::block_structures::BlockLocation;

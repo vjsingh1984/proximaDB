@@ -132,7 +132,7 @@ impl CompressionMetricsTracker {
         let mut buffer = self
             .operation_buffer
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         buffer.push(result.clone());
 

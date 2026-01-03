@@ -216,11 +216,12 @@ class ProximaDBSyncGrpcClient:
         max_message_size: int = 64 * 1024 * 1024
     ):
         """Initialize sync gRPC client with connection pool
-        
+
         Args:
-            server_address: gRPC server address (e.g., "localhost:5679") 
+            server_address: gRPC server address. Use "localhost:5678" for unified port mode
+                           (recommended) or "localhost:5679" for legacy multi-port mode.
             timeout: Request timeout in seconds
-            enable_compression: Enable gRPC compression (default: True)
+            enable_compression: Enable gRPC compression (default: False - server requires config)
             compression_algorithm: Compression algorithm ('gzip', default: 'gzip')
             pool_size: Number of gRPC channels in pool (default: 5)
             max_message_size: Maximum message size in bytes (default: 64MB)

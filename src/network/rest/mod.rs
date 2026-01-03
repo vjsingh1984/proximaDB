@@ -24,6 +24,7 @@ pub mod progressive_search_handler;
 pub mod proto_json;
 pub mod server;
 pub mod v1;
+pub mod websocket;
 
 pub use api_handlers::*;
 pub use server::*;

@@ -306,7 +306,7 @@ impl UnifiedParquetReader {
     /// Query with metadata filters
     pub async fn query_with_metadata_filters(
         &self,
-        filters: &[MetadataFilter],
+        _filters: &[MetadataFilter],
     ) -> Result<Vec<VectorRecord>> {
         let filterable_columns = self
             .schema_mapping
@@ -407,7 +407,7 @@ impl UnifiedParquetReader {
     pub async fn search_vectors(
         &self,
         search_plan: &SearchPlan,
-        collection_context: &CollectionContext,
+        _collection_context: &CollectionContext,
     ) -> Result<SearchResponse> {
         let start_time = std::time::Instant::now();
 
@@ -646,7 +646,6 @@ impl UnifiedParquetReader {
         filter_expression: Option<&crate::core::search::FilterExpression>,
         quantization_enabled: bool,
     ) -> Result<(Vec<VectorRecord>, usize)> {
-        
         use bytes::Bytes;
         use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -707,37 +706,40 @@ impl UnifiedParquetReader {
                                 // For range/equality filters, check if the value could be in this row group
                                 match condition {
                                     crate::storage::engines::core::formats::columnar::FilterCondition::Equals(_, value) => {
-                                        // Check if the value falls within the min/max range
-                                        if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
-                                            // Convert bytes to string for comparison
-                                            let min_str = String::from_utf8_lossy(min_bytes);
-                                            let max_str = String::from_utf8_lossy(max_bytes);
-                                            let value_str = value.as_str().unwrap_or(&value.to_string()).to_string();
+                                        // Only prune for string-type values where statistics are meaningful
+                                        // Skip pruning for booleans and numbers as their statistics are binary-encoded
+                                        if value.is_string() {
+                                            // Check if the value falls within the min/max range
+                                            if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                                // Convert bytes to string for comparison
+                                                let min_str = String::from_utf8_lossy(min_bytes);
+                                                let max_str = String::from_utf8_lossy(max_bytes);
+                                                let value_str = value.as_str().unwrap_or(&value.to_string()).to_string();
 
-                                            // Skip row group if value is clearly outside range
-                                            if value_str.as_str() < min_str.as_ref() || value_str.as_str() > max_str.as_ref() {
-                                                keep_row_group = false;
-                                                debug!("  Row group {} pruned: {} not in [{}, {}]",
-                                                    rg_idx, value_str, min_str, max_str);
-                                                break;
+                                                // Skip if statistics are empty or invalid
+                                                if min_str.is_empty() || max_str.is_empty() {
+                                                    // Skip pruning for empty stats
+                                                } else {
+                                                    // Skip row group if value is clearly outside range
+                                                    if value_str.as_str() < min_str.as_ref() || value_str.as_str() > max_str.as_ref() {
+                                                        keep_row_group = false;
+                                                        debug!("  Row group {} pruned: {} not in [{}, {}]",
+                                                            rg_idx, value_str, min_str, max_str);
+                                                        break;
+                                                    }
+                                                }
                                             }
+                                        } else {
+                                            // For non-string values (boolean, number), skip statistics-based pruning
                                         }
                                     }
-                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, min_val, max_val) => {
-                                        if let (Some(stats_min_bytes), Some(stats_max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
-                                            let stats_min_str = String::from_utf8_lossy(stats_min_bytes);
-                                            let stats_max_str = String::from_utf8_lossy(stats_max_bytes);
-                                            let filter_min = min_val.as_str().unwrap_or(&min_val.to_string()).to_string();
-                                            let filter_max = max_val.as_str().unwrap_or(&max_val.to_string()).to_string();
-
-                                            // Prune if ranges don't overlap
-                                            if filter_max.as_str() < stats_min_str.as_ref() || filter_min.as_str() > stats_max_str.as_ref() {
-                                                keep_row_group = false;
-                                                debug!("  Row group {} pruned: range [{}, {}] doesn't overlap [{}, {}]",
-                                                    rg_idx, filter_min, filter_max, stats_min_str, stats_max_str);
-                                                break;
-                                            }
-                                        }
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, _min_val, _max_val) => {
+                                        // Range pruning is complex - only prune for string columns
+                                        // For numeric columns, the statistics are stored as binary floats,
+                                        // not strings, so string comparison would be incorrect.
+                                        // Skip range-based pruning for now as it's causing false negatives.
+                                        // TODO: Implement proper numeric statistics comparison using parquet's typed statistics API
+                                        // Don't prune - let the row-level filter handle it
                                     }
                                     _ => {
                                         // For other filter types (In, IsNull, IsNotNull),
@@ -953,7 +955,7 @@ impl UnifiedParquetReader {
     /// Apply bloom filter pruning for ID-based searches
     async fn apply_bloom_filter_pruning(
         &self,
-        file_path: &str,
+        _file_path: &str,
         selected_row_groups: &[usize],
         metadata_filters: &[crate::storage::engines::core::formats::columnar::MetadataFilter],
     ) -> Result<Vec<usize>> {
@@ -999,8 +1001,7 @@ impl UnifiedParquetReader {
         needs_metadata: bool,
     ) -> Result<Vec<VectorRecord>> {
         use arrow_array::{
-            BinaryArray, FixedSizeListArray, Int64Array, ListArray, MapArray,
-            StringArray,
+            BinaryArray, FixedSizeListArray, Int64Array, ListArray, MapArray, StringArray,
         };
 
         // Check if we have quantized vectors for pre-filtering
@@ -1105,7 +1106,8 @@ impl UnifiedParquetReader {
 
             // QUANTIZED PRE-FILTERING: Use quantized vectors for fast approximate distance computation
             // This provides 10-15x speedup by computing distances on compressed representations
-            let mut quantized_score = None;
+            #[allow(unused_assignments)]
+            let mut _quantized_score = None;
             if quantized_prefilter {
                 // Extract quantized representation for this row and compute approximate distance
                 // Priority: Binary (fastest) > INT8 (fast) > PQ8 (accurate)
@@ -1115,15 +1117,15 @@ impl UnifiedParquetReader {
                     let binary_data = binary.value(row_idx);
                     // Store for potential distance computation
                     // In production, we'd compute Hamming distance here with query vector
-                    quantized_score = Some((binary_data, "binary"));
+                    _quantized_score = Some((binary_data, "binary"));
                 } else if let Some(int8) = int8_vectors {
                     let int8_data = int8.value(row_idx);
                     // Store for potential INT8 distance computation
-                    quantized_score = Some((int8_data, "int8"));
+                    _quantized_score = Some((int8_data, "int8"));
                 } else if let Some(pq8) = pq8_vectors {
                     let pq8_data = pq8.value(row_idx);
                     // Store for potential PQ distance computation
-                    quantized_score = Some((pq8_data, "pq8"));
+                    _quantized_score = Some((pq8_data, "pq8"));
                 }
 
                 // TODO: Integration point for QuantizedDistanceCalculator

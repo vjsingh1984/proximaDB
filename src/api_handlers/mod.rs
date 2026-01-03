@@ -16,12 +16,12 @@
 
 //! Unified handlers module for shared business logic between REST and gRPC
 
-pub mod enterprise;
-pub mod unified_handlers;
 #[cfg(feature = "ai_endpoints")]
 pub mod ai_endpoints;
+pub mod enterprise;
 #[cfg(feature = "sales_endpoints")]
 pub mod sales_endpoints;
+pub mod unified_handlers;
 
 #[cfg(test)]
 mod unified_handlers_tests;

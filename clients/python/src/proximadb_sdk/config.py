@@ -26,9 +26,16 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 class Protocol(str, Enum):
     """Supported communication protocols"""
-    AUTO = "auto"      # Auto-select best available
-    GRPC = "grpc"      # gRPC (high performance, binary protocol)
-    REST = "rest"      # REST (web compatibility)
+    AUTO = "auto"           # Auto-select best available
+    GRPC = "grpc"           # gRPC (high performance, binary protocol)
+    REST = "rest"           # REST (web compatibility)
+    ARROW_FLIGHT = "arrow_flight"  # Apache Arrow Flight (bulk data transfer)
+
+
+class PortMode(str, Enum):
+    """Server port configuration mode"""
+    MULTI = "multi"    # Legacy multi-port mode (different ports for REST/gRPC)
+    UNIFIED = "unified"  # New unified port mode (single port for all protocols)
 
 
 class LogLevel(str, Enum):
@@ -76,11 +83,12 @@ class TLSConfig(BaseModel):
 
 class ClientConfig(BaseModel):
     """Complete client configuration"""
-    
+
     # Connection settings
     url: str = Field(..., description="ProximaDB server URL")
     api_key: Optional[str] = Field(default=None, description="API key for authentication")
     protocol: Protocol = Field(default=Protocol.AUTO, description="Communication protocol")
+    port_mode: PortMode = Field(default=PortMode.UNIFIED, description="Server port mode (unified or multi)")
     
     # Timeouts
     timeout: float = Field(default=30.0, ge=0.1, le=300.0, description="Default request timeout")
@@ -160,6 +168,8 @@ class ClientConfig(BaseModel):
             config_dict["api_key"] = api_key
         if protocol := os.getenv("PROXIMADB_PROTOCOL"):
             config_dict["protocol"] = Protocol(protocol.lower())
+        if port_mode := os.getenv("PROXIMADB_PORT_MODE"):
+            config_dict["port_mode"] = PortMode(port_mode.lower())
         if timeout := os.getenv("PROXIMADB_TIMEOUT"):
             config_dict["timeout"] = float(timeout)
         
@@ -290,27 +300,46 @@ class ClientConfig(BaseModel):
             return True
     
     def get_protocol_url(self, target_protocol: Protocol) -> str:
-        """Get URL for specific protocol with correct port"""
+        """Get URL for specific protocol with correct port.
+
+        In unified mode, returns the same URL for all protocols since they
+        share a single port. In multi-port mode, returns protocol-specific URLs.
+        """
         parsed = urlparse(self.url)
         host = parsed.hostname or "localhost"
         scheme = parsed.scheme or "http"
-        
-        # ProximaDB standard port allocation
+
+        # Unified mode: all protocols share the same port
+        if self.port_mode == PortMode.UNIFIED:
+            # Use the port from the URL, or default unified port (5678)
+            port = parsed.port or 5678
+            # For gRPC and Arrow Flight, return host:port format (without scheme)
+            if target_protocol in (Protocol.GRPC, Protocol.ARROW_FLIGHT):
+                return f"{host}:{port}"
+            else:
+                return f"{scheme}://{host}:{port}"
+
+        # Multi-port mode (legacy): different ports for each protocol
+        # Note: In unified mode (default), all protocols share port 5678
         if target_protocol == Protocol.REST:
-            port = 5678  # REST API port (same for HTTP/HTTPS) 
+            port = 5678  # REST API port
         elif target_protocol == Protocol.GRPC:
-            port = 5679  # gRPC API port (same for HTTP/HTTPS)  
-        elif target_protocol == Protocol.AVRO:
-            port = 5683 if scheme == "https" else 5682
+            port = 5679  # Legacy gRPC API port (use unified mode for single port)
+        elif target_protocol == Protocol.ARROW_FLIGHT:
+            port = 5680  # Legacy Arrow Flight port (use unified mode for single port)
         else:
             # Keep original port for AUTO or unknown protocols
             port = parsed.port or (443 if scheme == "https" else 80)
-        
-        # For gRPC, don't include scheme in the endpoint
-        if target_protocol == Protocol.GRPC:
+
+        # For gRPC and Arrow Flight, don't include scheme in the endpoint
+        if target_protocol in (Protocol.GRPC, Protocol.ARROW_FLIGHT):
             return f"{host}:{port}"
         else:
             return f"{scheme}://{host}:{port}"
+
+    def is_unified_mode(self) -> bool:
+        """Check if client is configured for unified port mode."""
+        return self.port_mode == PortMode.UNIFIED
 
 
 # Default configuration instance

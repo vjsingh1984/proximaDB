@@ -139,10 +139,8 @@ impl CompressedBloom {
 
         while i + 2 < self.compressed_data.len() {
             // Read run length (2 bytes)
-            let run_length = u16::from_le_bytes([
-                self.compressed_data[i],
-                self.compressed_data[i + 1],
-            ]);
+            let run_length =
+                u16::from_le_bytes([self.compressed_data[i], self.compressed_data[i + 1]]);
             i += 2;
 
             // Read byte value
@@ -170,14 +168,13 @@ impl CompressedBloom {
         Ok(positions.iter().all(|&pos| {
             let byte_index = pos / 8;
             let bit_index = pos % 8;
-            byte_index < decompressed.len()
-                && (decompressed[byte_index] & (1 << bit_index)) != 0
+            byte_index < decompressed.len() && (decompressed[byte_index] & (1 << bit_index)) != 0
         }))
     }
 
     /// Get memory savings in bytes
     pub fn memory_savings(&self) -> usize {
-        let uncompressed_bytes = (self.original_size + 7) / 8;
+        let uncompressed_bytes = self.original_size.div_ceil(8);
         uncompressed_bytes.saturating_sub(self.compressed_data.len())
     }
 
@@ -198,7 +195,7 @@ pub struct CompressedBloomBuilder {
 impl CompressedBloomBuilder {
     /// Create a new builder
     pub fn new(num_bits: usize, num_hashes: usize) -> Self {
-        let num_bytes = (num_bits + 7) / 8;
+        let num_bytes = num_bits.div_ceil(8);
         Self {
             bits: vec![0; num_bytes],
             num_bits,
@@ -245,7 +242,7 @@ mod tests {
         // With RLE, each run costs 3 bytes [len:2][val:1], so we need longer runs
         let mut sparse_data = vec![0u8; 100]; // 100 zeros
         sparse_data.extend_from_slice(&[255, 255, 255]); // 3 times 255
-        sparse_data.extend_from_slice(&vec![0u8; 100]); // 100 more zeros
+        sparse_data.extend_from_slice(&[0u8; 100]); // 100 more zeros
         // Total: 203 bytes original
         // RLE: [100:2][0:1] + [3:2][255:1] + [100:2][0:1] = 9 bytes
         // Ratio: 9/203 = 0.044 << 1.0
@@ -253,8 +250,11 @@ mod tests {
         let compressed = CompressedBloom::compress(&sparse_data, 3);
 
         // Should compress well (ratio << 1.0)
-        assert!(compressed.compression_ratio < 0.1,
-            "Expected compression ratio < 0.1, got {}", compressed.compression_ratio);
+        assert!(
+            compressed.compression_ratio < 0.1,
+            "Expected compression ratio < 0.1, got {}",
+            compressed.compression_ratio
+        );
         assert!(compressed.is_compressed());
 
         // Decompress and verify

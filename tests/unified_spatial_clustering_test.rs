@@ -172,10 +172,7 @@ fn test_spatial_locality_via_block_selection() {
         vec![0.9, 0.9, 0.9, 0.9], // Far corner
     ];
 
-    let block_codes: Vec<SpatialCode> = block_centroids
-        .iter()
-        .map(|c| encoder.encode(c))
-        .collect();
+    let block_codes: Vec<SpatialCode> = block_centroids.iter().map(|c| encoder.encode(c)).collect();
 
     // Query near the center
     let query = vec![0.55, 0.55, 0.55, 0.55];
@@ -237,9 +234,7 @@ fn test_spatial_pruner_sqrt_mode() {
 
     // Create 100 blocks
     let query_code = SpatialCode::Code64(500);
-    let block_codes: Vec<SpatialCode> = (0..100)
-        .map(|i| SpatialCode::Code64(i * 10))
-        .collect();
+    let block_codes: Vec<SpatialCode> = (0..100).map(|i| SpatialCode::Code64(i * 10)).collect();
 
     let selected = pruner.select_blocks_by_code(&query_code, &block_codes);
 
@@ -458,7 +453,10 @@ fn test_curve_type_locality_comparison() {
     // Basic sanity check: first 4 points should have closer codes than point 5
     let z_dist_01 = code_distance(&zorder_codes[0], &zorder_codes[1]);
     let z_dist_04 = code_distance(&zorder_codes[0], &zorder_codes[4]);
-    assert!(z_dist_01 < z_dist_04, "Close points should have close Z-order codes");
+    assert!(
+        z_dist_01 < z_dist_04,
+        "Close points should have close Z-order codes"
+    );
 }
 
 #[test]

@@ -16,11 +16,26 @@ use crate::storage::persistence::write_ahead_log::{
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, error, info};
 
-/// Create test configuration
-fn create_test_config() -> WALConfig {
-    WALConfig {
+/// Counter for generating unique test paths
+static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generate a unique test path for test isolation
+fn generate_unique_test_path() -> String {
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("/tmp/proximadb-bincode-test_{}_{}", counter, timestamp)
+}
+
+/// Create test configuration with unique path, returning both config and path
+fn create_test_config_with_path() -> (WALConfig, String) {
+    let unique_path = generate_unique_test_path();
+    let config = WALConfig {
         memtable: crate::storage::persistence::write_ahead_log::config::MemTableConfig {
             memtable_type:
                 crate::storage::persistence::write_ahead_log::config::MemTableType::default(),
@@ -29,7 +44,7 @@ fn create_test_config() -> WALConfig {
             enable_concurrency: true,
         },
         multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
-            data_directories: vec!["/tmp/proximadb-bincode-test".to_string()],
+            data_directories: vec![unique_path.clone()],
             ..Default::default()
         },
         performance: crate::storage::persistence::write_ahead_log::config::PerformanceConfig {
@@ -39,7 +54,13 @@ fn create_test_config() -> WALConfig {
         },
         enable_mvcc: true,
         ..Default::default()
-    }
+    };
+    (config, unique_path)
+}
+
+/// Create test configuration with unique path (convenience wrapper)
+fn create_test_config() -> WALConfig {
+    create_test_config_with_path().0
 }
 
 /// Create test vector with specific patterns
@@ -88,9 +109,9 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
     }
 }
 
-/// Create WriteBuffer directory for collection
-async fn create_collection_write_buffer_dir(collection_id: &str) {
-    let write_buffer_dir = std::path::Path::new("/tmp/proximadb-bincode-test")
+/// Create WriteBuffer directory for collection with specific base path
+async fn create_collection_write_buffer_dir_at(base_path: &str, collection_id: &str) {
+    let write_buffer_dir = std::path::Path::new(base_path)
         .join(collection_id)
         .join("write_buffer");
     tokio::fs::create_dir_all(&write_buffer_dir)
@@ -112,7 +133,7 @@ async fn test_bincode_strategy_initialization() {
 
 #[tokio::test]
 async fn test_bincode_binary_serialization() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
@@ -120,7 +141,7 @@ async fn test_bincode_binary_serialization() {
 
     let collection_id = "binary_test";
 
-    create_collection_write_buffer_dir(collection_id).await;
+    create_collection_write_buffer_dir_at(&base_path, collection_id).await;
     // Test with various vector sizes to verify binary efficiency
     let test_sizes = vec![64, 128, 256, 512, 1024];
 
@@ -151,14 +172,14 @@ async fn test_bincode_binary_serialization() {
 
 #[tokio::test]
 async fn test_bincode_large_batch_performance() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
 
     let collection_id = "perf_test";
-    create_collection_write_buffer_dir(collection_id).await;
+    create_collection_write_buffer_dir_at(&base_path, collection_id).await;
 
     // Create a large batch to test performance
     let mut vectors = Vec::new();
@@ -198,18 +219,18 @@ async fn test_bincode_large_batch_performance() {
 
 #[tokio::test]
 async fn test_bincode_similarity_search_accuracy() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
 
     let collection_id = "similarity_accuracy_test";
-    create_collection_write_buffer_dir(collection_id).await;
+    create_collection_write_buffer_dir_at(&base_path, collection_id).await;
 
     // Create vectors with known distances
     // For cosine similarity, we need vectors with different directions, not just magnitudes
-    let mut exact_vec = create_test_vector("exact_match", 128, 1.0);
+    let exact_vec = create_test_vector("exact_match", 128, 1.0);
 
     let mut close_vec = create_test_vector("close_match", 128, 0.95);
     // Perturb slightly to create different direction
@@ -257,14 +278,14 @@ async fn test_bincode_similarity_search_accuracy() {
 
 #[tokio::test]
 async fn test_bincode_memory_management() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
 
     let collection_id = "memory_test";
-    create_collection_write_buffer_dir(collection_id).await;
+    create_collection_write_buffer_dir_at(&base_path, collection_id).await;
 
     // Skip stats for now - method not yet implemented
     // TODO: Implement stats() method on BincodeSerializationStrategy
@@ -296,7 +317,7 @@ async fn test_bincode_memory_management() {
 
 #[tokio::test]
 async fn test_bincode_concurrent_writes() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = Arc::new(
         BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
@@ -309,9 +330,10 @@ async fn test_bincode_concurrent_writes() {
 
     for task_id in 0..5 {
         let strategy_clone = strategy.clone();
+        let base_path_clone = base_path.clone();
         let handle = tokio::spawn(async move {
             let collection_id = format!("concurrent_{}", task_id);
-            create_collection_write_buffer_dir(&collection_id).await;
+            create_collection_write_buffer_dir_at(&base_path_clone, &collection_id).await;
 
             for batch_id in 0..10 {
                 let vectors = vec![create_test_vector(
@@ -349,7 +371,7 @@ async fn test_bincode_concurrent_writes() {
 
 #[tokio::test]
 async fn test_bincode_edge_cases() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
@@ -357,7 +379,7 @@ async fn test_bincode_edge_cases() {
 
     let collection_id = "edge_cases";
 
-    create_collection_write_buffer_dir(collection_id).await;
+    create_collection_write_buffer_dir_at(&base_path, collection_id).await;
     // Test empty batch
     let empty_batch = create_test_batch(vec![]);
     let empty_sequences = strategy
@@ -397,7 +419,7 @@ async fn test_bincode_edge_cases() {
 
 #[tokio::test]
 async fn test_bincode_collection_isolation() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
@@ -407,7 +429,7 @@ async fn test_bincode_collection_isolation() {
     let collections = vec!["col_a", "col_b", "col_c"];
 
     for (idx, collection_id) in collections.iter().enumerate() {
-        create_collection_write_buffer_dir(collection_id).await;
+        create_collection_write_buffer_dir_at(&base_path, collection_id).await;
         let vectors = vec![
             create_test_vector(&format!("{}_vec1", collection_id), 64, idx as f32),
             create_test_vector(&format!("{}_vec2", collection_id), 64, idx as f32 + 0.5),
@@ -444,14 +466,14 @@ async fn test_bincode_collection_isolation() {
 
 #[tokio::test]
 async fn test_bincode_batch_metadata() {
-    let config = create_test_config();
+    let (config, base_path) = create_test_config_with_path();
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let strategy = BincodeSerializationStrategy::new(&config, filesystem_factory.clone())
         .await
         .expect("Failed to create strategy");
 
     let collection_id = "metadata_test";
-    create_collection_write_buffer_dir(collection_id).await;
+    create_collection_write_buffer_dir_at(&base_path, collection_id).await;
 
     // Create vectors with complex metadata
     let mut vectors = Vec::new();

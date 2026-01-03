@@ -44,6 +44,14 @@ pub enum ApiError {
     #[error("Already exists: {0}")]
     AlreadyExists(String),
 
+    /// Generic resource not found (for non-collection resources like prepared statements)
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    /// Resource has expired or been removed (HTTP 410 Gone)
+    #[error("Gone: {0}")]
+    Gone(String),
+
     /// Vector dimension mismatch
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
@@ -72,6 +80,8 @@ impl From<ApiError> for tonic::Status {
             ApiError::NotImplemented(msg) => tonic::Status::unimplemented(msg),
             ApiError::DeadlineExceeded(msg) => tonic::Status::deadline_exceeded(msg),
             ApiError::AlreadyExists(msg) => tonic::Status::already_exists(msg),
+            ApiError::NotFound(msg) => tonic::Status::not_found(msg),
+            ApiError::Gone(msg) => tonic::Status::not_found(format!("Resource expired: {}", msg)),
             ApiError::DimensionMismatch { expected, actual } => {
                 tonic::Status::invalid_argument(format!(
                     "Vector dimension mismatch: expected {}, got {}",
@@ -97,6 +107,8 @@ impl IntoResponse for ApiError {
             ApiError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             ApiError::DeadlineExceeded(_) => (StatusCode::REQUEST_TIMEOUT, "deadline_exceeded"),
             ApiError::AlreadyExists(_) => (StatusCode::CONFLICT, "already_exists"),
+            ApiError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
+            ApiError::Gone(_) => (StatusCode::GONE, "gone"),
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
         };
@@ -166,12 +178,13 @@ impl From<crate::core::error::ProtocolError> for ApiError {
             ProtocolError::PermissionDenied { action } => {
                 ApiError::Unauthorized(format!("Permission denied: {}", action))
             }
-            ProtocolError::Timeout { operation, duration_ms } => {
-                ApiError::DeadlineExceeded(format!(
-                    "Operation '{}' timed out after {}ms",
-                    operation, duration_ms
-                ))
-            }
+            ProtocolError::Timeout {
+                operation,
+                duration_ms,
+            } => ApiError::DeadlineExceeded(format!(
+                "Operation '{}' timed out after {}ms",
+                operation, duration_ms
+            )),
             ProtocolError::ResourceExhausted { details } => ApiError::ResourceExhausted(details),
             ProtocolError::PreconditionFailed { details } => ApiError::InvalidArgument(details),
         }

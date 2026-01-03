@@ -849,30 +849,32 @@ unsafe fn compute_offsets_sse2(values: &[f32], base_i32: i32) -> Vec<i32> {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> { unsafe {
-    use std::arch::aarch64::*;
-    let mut offsets = Vec::with_capacity(values.len());
-    let base_vec = vdupq_n_s32(base_i32);
-    let chunks = values.len() / 4;
+unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
+    unsafe {
+        use std::arch::aarch64::*;
+        let mut offsets = Vec::with_capacity(values.len());
+        let base_vec = vdupq_n_s32(base_i32);
+        let chunks = values.len() / 4;
 
-    for i in 0..chunks {
-        let offset = i * 4;
-        let vals = vld1q_f32(values.as_ptr().add(offset));
-        let bits = vreinterpretq_s32_f32(vals);
-        let offset_vec = vsubq_s32(bits, base_vec);
+        for i in 0..chunks {
+            let offset = i * 4;
+            let vals = vld1q_f32(values.as_ptr().add(offset));
+            let bits = vreinterpretq_s32_f32(vals);
+            let offset_vec = vsubq_s32(bits, base_vec);
 
-        let mut temp = [0i32; 4];
-        vst1q_s32(temp.as_mut_ptr(), offset_vec);
-        offsets.extend_from_slice(&temp);
+            let mut temp = [0i32; 4];
+            vst1q_s32(temp.as_mut_ptr(), offset_vec);
+            offsets.extend_from_slice(&temp);
+        }
+
+        for &v in &values[chunks * 4..] {
+            let v_bits = v.to_bits() as i32;
+            offsets.push(v_bits.wrapping_sub(base_i32));
+        }
+
+        offsets
     }
-
-    for &v in &values[chunks * 4..] {
-        let v_bits = v.to_bits() as i32;
-        offsets.push(v_bits.wrapping_sub(base_i32));
-    }
-
-    offsets
-}}
+}
 
 // ===== FrameOfReference Decode Helpers (SIMD Reconstruction) =====
 
@@ -934,39 +936,41 @@ unsafe fn reconstruct_for_decode_avx2(offsets: &[i32], base_i32: i32) -> Result<
 /// - Processes 4 values per iteration (NEON 128-bit)
 /// - Expected speedup: 2-4x vs scalar
 #[cfg(target_arch = "aarch64")]
-unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<Vec<f32>> { unsafe {
-    use std::arch::aarch64::*;
+unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<Vec<f32>> {
+    unsafe {
+        use std::arch::aarch64::*;
 
-    let mut result = Vec::with_capacity(offsets.len());
-    let base_vec = vdupq_n_s32(base_i32);
-    let chunks = offsets.len() / 4;
+        let mut result = Vec::with_capacity(offsets.len());
+        let base_vec = vdupq_n_s32(base_i32);
+        let chunks = offsets.len() / 4;
 
-    for i in 0..chunks {
-        let offset = i * 4;
+        for i in 0..chunks {
+            let offset = i * 4;
 
-        // Load 4 offsets
-        let offsets_vec = vld1q_s32(offsets.as_ptr().add(offset));
+            // Load 4 offsets
+            let offsets_vec = vld1q_s32(offsets.as_ptr().add(offset));
 
-        // Add base to all 4 offsets (SIMD addition)
-        let values_vec = vaddq_s32(offsets_vec, base_vec);
+            // Add base to all 4 offsets (SIMD addition)
+            let values_vec = vaddq_s32(offsets_vec, base_vec);
 
-        // Reinterpret i32 as f32
-        let f32_vec = vreinterpretq_f32_s32(values_vec);
+            // Reinterpret i32 as f32
+            let f32_vec = vreinterpretq_f32_s32(values_vec);
 
-        // Store 4 f32 values
-        let mut temp = [0.0f32; 4];
-        vst1q_f32(temp.as_mut_ptr(), f32_vec);
-        result.extend_from_slice(&temp);
+            // Store 4 f32 values
+            let mut temp = [0.0f32; 4];
+            vst1q_f32(temp.as_mut_ptr(), f32_vec);
+            result.extend_from_slice(&temp);
+        }
+
+        // Handle remaining values (scalar)
+        for &offset in &offsets[chunks * 4..] {
+            let value_bits = base_i32.wrapping_add(offset) as u32;
+            result.push(f32::from_bits(value_bits));
+        }
+
+        Ok(result)
     }
-
-    // Handle remaining values (scalar)
-    for &offset in &offsets[chunks * 4..] {
-        let value_bits = base_i32.wrapping_add(offset) as u32;
-        result.push(f32::from_bits(value_bits));
-    }
-
-    Ok(result)
-}}
+}
 
 /// SIMD-accelerated Frame of Reference decoding for f32
 ///
@@ -1276,30 +1280,32 @@ unsafe fn compute_deltas_pfor_sse2(values: &[f32], base_i32: i32) -> Vec<i32> {
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> { unsafe {
-    use std::arch::aarch64::*;
-    let mut deltas = Vec::with_capacity(values.len());
-    let base_vec = vdupq_n_s32(base_i32);
-    let chunks = values.len() / 4;
+unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
+    unsafe {
+        use std::arch::aarch64::*;
+        let mut deltas = Vec::with_capacity(values.len());
+        let base_vec = vdupq_n_s32(base_i32);
+        let chunks = values.len() / 4;
 
-    for i in 0..chunks {
-        let offset = i * 4;
-        let vals = vld1q_f32(values.as_ptr().add(offset));
-        let bits = vreinterpretq_s32_f32(vals);
-        let delta_vec = vsubq_s32(bits, base_vec);
+        for i in 0..chunks {
+            let offset = i * 4;
+            let vals = vld1q_f32(values.as_ptr().add(offset));
+            let bits = vreinterpretq_s32_f32(vals);
+            let delta_vec = vsubq_s32(bits, base_vec);
 
-        let mut temp = [0i32; 4];
-        vst1q_s32(temp.as_mut_ptr(), delta_vec);
-        deltas.extend_from_slice(&temp);
+            let mut temp = [0i32; 4];
+            vst1q_s32(temp.as_mut_ptr(), delta_vec);
+            deltas.extend_from_slice(&temp);
+        }
+
+        for &v in &values[chunks * 4..] {
+            let v_bits = v.to_bits() as i32;
+            deltas.push(v_bits.wrapping_sub(base_i32));
+        }
+
+        deltas
     }
-
-    for &v in &values[chunks * 4..] {
-        let v_bits = v.to_bits() as i32;
-        deltas.push(v_bits.wrapping_sub(base_i32));
-    }
-
-    deltas
-}}
+}
 
 /// Bit-pack i32 values (helper for Frame of Reference and PForDelta)
 /// Helper: Pack i32 values into bits (delegates to baseline)
@@ -1428,42 +1434,44 @@ unsafe fn reconstruct_pfor_decode_avx2(deltas: &[i64], base_i32: i32) -> Result<
 /// # Note
 /// Using i64 arithmetic prevents overflow when base and delta are large i32 values
 #[cfg(target_arch = "aarch64")]
-unsafe fn reconstruct_pfor_decode_neon(deltas: &[i64], base_i32: i32) -> Result<Vec<f32>> { unsafe {
-    use std::arch::aarch64::*;
+unsafe fn reconstruct_pfor_decode_neon(deltas: &[i64], base_i32: i32) -> Result<Vec<f32>> {
+    unsafe {
+        use std::arch::aarch64::*;
 
-    let mut result = Vec::with_capacity(deltas.len());
-    let base_i64 = base_i32 as i64;
-    let base_vec = vdupq_n_s64(base_i64);
-    let chunks = deltas.len() / 2;
+        let mut result = Vec::with_capacity(deltas.len());
+        let base_i64 = base_i32 as i64;
+        let base_vec = vdupq_n_s64(base_i64);
+        let chunks = deltas.len() / 2;
 
-    for i in 0..chunks {
-        let offset = i * 2;
+        for i in 0..chunks {
+            let offset = i * 2;
 
-        // Load 2 i64 deltas
-        let deltas_vec = vld1q_s64(deltas.as_ptr().add(offset));
+            // Load 2 i64 deltas
+            let deltas_vec = vld1q_s64(deltas.as_ptr().add(offset));
 
-        // Add base to both deltas (i64 SIMD addition - NO OVERFLOW!)
-        let values_i64_vec = vaddq_s64(deltas_vec, base_vec);
+            // Add base to both deltas (i64 SIMD addition - NO OVERFLOW!)
+            let values_i64_vec = vaddq_s64(deltas_vec, base_vec);
 
-        // Extract i64 values and convert to f32
-        let mut temp_i64 = [0i64; 2];
-        vst1q_s64(temp_i64.as_mut_ptr(), values_i64_vec);
+            // Extract i64 values and convert to f32
+            let mut temp_i64 = [0i64; 2];
+            vst1q_s64(temp_i64.as_mut_ptr(), values_i64_vec);
 
-        for &val_i64 in &temp_i64 {
-            let val_i32 = val_i64 as i32 as u32;
-            result.push(f32::from_bits(val_i32));
+            for &val_i64 in &temp_i64 {
+                let val_i32 = val_i64 as i32 as u32;
+                result.push(f32::from_bits(val_i32));
+            }
         }
-    }
 
-    // Handle remaining values (scalar)
-    for &delta in &deltas[chunks * 2..] {
-        let reconstructed_i64 = base_i64 + delta;
-        let reconstructed_i32 = reconstructed_i64 as i32 as u32;
-        result.push(f32::from_bits(reconstructed_i32));
-    }
+        // Handle remaining values (scalar)
+        for &delta in &deltas[chunks * 2..] {
+            let reconstructed_i64 = base_i64 + delta;
+            let reconstructed_i32 = reconstructed_i64 as i32 as u32;
+            result.push(f32::from_bits(reconstructed_i32));
+        }
 
-    Ok(result)
-}}
+        Ok(result)
+    }
+}
 
 // ===== DoubleDelta SIMD Functions =====
 

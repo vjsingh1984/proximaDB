@@ -81,9 +81,7 @@ impl RateLimitConfig {
     /// **WARNING**: Only use for development/testing. Production should always
     /// have rate limiting enabled to prevent abuse.
     pub fn disabled() -> Self {
-        tracing::warn!(
-            "🚨 Rate limiting is DISABLED. This is a security risk in production!"
-        );
+        tracing::warn!("🚨 Rate limiting is DISABLED. This is a security risk in production!");
         Self {
             enabled: false,
             ..Default::default()

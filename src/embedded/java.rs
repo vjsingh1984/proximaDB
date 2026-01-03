@@ -3,9 +3,9 @@
 //! This module provides JNI (Java Native Interface) bindings for using
 //! ProximaDB as an embedded database in Java applications.
 
+use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JObjectArray, JString, JValue};
 use jni::sys::{jfloatArray, jint, jlong, jobject, jobjectArray, jsize, jstring};
-use jni::JNIEnv;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,7 +93,8 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeCreate(
             wal_sync_mode: "batch".to_string(),
         };
 
-        let db = EmbeddedProximaDB::new(config).map_err(|e| format!("Failed to create database: {}", e))?;
+        let db = EmbeddedProximaDB::new(config)
+            .map_err(|e| format!("Failed to create database: {}", e))?;
 
         let jni_db = Box::new(JniProximaDB { db: Arc::new(db) });
         set_db_pointer(&mut env, &obj, jni_db)?;
@@ -136,8 +137,12 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeCreateMultiDi
             let weight = if !disk_weights.is_null() {
                 let mut weights = vec![0.0f32; 1];
                 unsafe {
-                    env.get_float_array_region(&jni::objects::JFloatArray::from_raw(disk_weights), i, &mut weights)
-                        .map_err(|e| format!("Failed to get weight: {}", e))?;
+                    env.get_float_array_region(
+                        &jni::objects::JFloatArray::from_raw(disk_weights),
+                        i,
+                        &mut weights,
+                    )
+                    .map_err(|e| format!("Failed to get weight: {}", e))?;
                 }
                 weights[0] as u32
             } else {
@@ -168,7 +173,8 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeCreateMultiDi
             wal_sync_mode: "batch".to_string(),
         };
 
-        let db = EmbeddedProximaDB::new(config).map_err(|e| format!("Failed to create database: {}", e))?;
+        let db = EmbeddedProximaDB::new(config)
+            .map_err(|e| format!("Failed to create database: {}", e))?;
 
         let jni_db = Box::new(JniProximaDB { db: Arc::new(db) });
         set_db_pointer(&mut env, &obj, jni_db)?;
@@ -275,9 +281,9 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeInsert(
         let collection_name = jstring_to_string(&mut env, &collection)?;
 
         // Get IDs
-        let id_count = env
-            .get_array_length(&ids)
-            .map_err(|e| format!("Failed to get IDs length: {}", e))? as usize;
+        let id_count =
+            env.get_array_length(&ids)
+                .map_err(|e| format!("Failed to get IDs length: {}", e))? as usize;
 
         let mut rust_ids = Vec::with_capacity(id_count);
         for i in 0..id_count as jsize {
@@ -289,9 +295,9 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeInsert(
         }
 
         // Get vectors
-        let vec_count = env
-            .get_array_length(&vectors)
-            .map_err(|e| format!("Failed to get vectors length: {}", e))? as usize;
+        let vec_count =
+            env.get_array_length(&vectors)
+                .map_err(|e| format!("Failed to get vectors length: {}", e))? as usize;
 
         if vec_count != id_count {
             return Err("IDs and vectors must have same length".to_string());
@@ -306,7 +312,8 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeInsert(
             let float_array = jni::objects::JFloatArray::from(vec_obj);
             let vec_len = env
                 .get_array_length(&float_array)
-                .map_err(|e| format!("Failed to get vector length: {}", e))? as usize;
+                .map_err(|e| format!("Failed to get vector length: {}", e))?
+                as usize;
 
             let mut vec_data = vec![0.0f32; vec_len];
             env.get_float_array_region(&float_array, 0, &mut vec_data)
@@ -347,9 +354,9 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeSearch(
 
         // Get query vector
         let query_array = unsafe { jni::objects::JFloatArray::from_raw(query) };
-        let query_len = env
-            .get_array_length(&query_array)
-            .map_err(|e| format!("Failed to get query length: {}", e))? as usize;
+        let query_len =
+            env.get_array_length(&query_array)
+                .map_err(|e| format!("Failed to get query length: {}", e))? as usize;
 
         let mut query_vec = vec![0.0f32; query_len];
         env.get_float_array_region(&query_array, 0, &mut query_vec)
@@ -367,7 +374,11 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeSearch(
             .map_err(|e| format!("Failed to find SearchResult class: {}", e))?;
 
         let result_array = env
-            .new_object_array(results.len() as jsize, &search_result_class, JObject::null())
+            .new_object_array(
+                results.len() as jsize,
+                &search_result_class,
+                JObject::null(),
+            )
             .map_err(|e| format!("Failed to create result array: {}", e))?;
 
         for (i, result) in results.iter().enumerate() {

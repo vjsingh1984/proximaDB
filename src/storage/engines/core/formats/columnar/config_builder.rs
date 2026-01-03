@@ -9,10 +9,10 @@ use crate::storage::engines::core::formats::columnar::constants::{
     DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
 };
 use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
+use crate::storage::engines::core::formats::columnar::utilities::recommend_page_size_for_dimension;
 use crate::storage::engines::core::formats::columnar::{
     FooterCacheConfig, HybridWriterConfig, WriterMode,
 };
-use crate::storage::engines::core::formats::columnar::utilities::recommend_page_size_for_dimension;
 use parquet::basic::Compression;
 use std::time::Duration;
 

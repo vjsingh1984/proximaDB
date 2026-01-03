@@ -94,7 +94,7 @@ use crate::index::axis::{
     clustering::AxisClusteringEngine,
     clustering::ClusteringConfig,
     management::adaptive_engine::AdaptiveIndexEngine,
-    types::{AxisConfig, Data, IndexSelectionStrategy},
+    types::{AxisConfig, Data, IndexAlgorithm, IndexSelectionStrategy},
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
@@ -224,13 +224,21 @@ pub struct AxisManager {
     /// Maps collection_id → AxisHnswIndex instance
     /// These are the actual in-memory HNSW indexes that store and query vectors
     /// NOTE: HNSW has poor recall with incremental indexing - prefer IVF for production
-    hnsw_indexes: Arc<RwLock<HashMap<String, Arc<crate::index::axis::indexes::hnsw_index::AxisHnswIndex>>>>,
+    hnsw_indexes:
+        Arc<RwLock<HashMap<String, Arc<crate::index::axis::indexes::hnsw_index::AxisHnswIndex>>>>,
 
     /// Real IVF indexes per collection for vector similarity search (DEFAULT)
     /// Maps collection_id → UnifiedIvfIndex instance
     /// IVF is better suited for incremental workloads as new vectors are simply
     /// assigned to their nearest cluster without degrading graph quality
-    ivf_indexes: Arc<RwLock<HashMap<String, Arc<tokio::sync::RwLock<crate::index::axis::indexes::ivf_unified::UnifiedIvfIndex>>>>>,
+    ivf_indexes: Arc<
+        RwLock<
+            HashMap<
+                String,
+                Arc<tokio::sync::RwLock<crate::index::axis::indexes::ivf_unified::UnifiedIvfIndex>>,
+            >,
+        >,
+    >,
 
     /// Pending vectors buffer for IVF training
     /// IVF requires k-means training before vectors can be added
@@ -346,7 +354,7 @@ impl AxisManager {
             collection_service: None, // Will be set later via set_collection_service
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
-            ivf_indexes: Arc::new(RwLock::new(HashMap::new())),  // Real IVF indexes per collection (DEFAULT)
+            ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
             ivf_pending_vectors: Arc::new(RwLock::new(HashMap::new())), // Buffer for IVF training
         })
     }
@@ -480,8 +488,24 @@ impl AxisManager {
                     self.metadata_index.insert(&processed_vector).await?;
                 }
                 Data::DenseVector { .. } => {
-                    // Insert into real IVF index (better for incremental indexing than HNSW)
-                    self.insert_into_ivf(collection_id, &processed_vector).await?;
+                    // Choose index based on algorithm type in strategy
+                    // HNSW: O(log N) search, O(log N) insert - search optimized
+                    // IVF: O(√N) search, O(1) insert after training - insert optimized
+                    match &index_spec.algorithm {
+                        IndexAlgorithm::HNSW { .. } => {
+                            self.insert_into_hnsw(collection_id, &processed_vector)
+                                .await?;
+                        }
+                        IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
+                            self.insert_into_ivf(collection_id, &processed_vector)
+                                .await?;
+                        }
+                        _ => {
+                            // Default to HNSW for other/unspecified algorithms
+                            self.insert_into_hnsw(collection_id, &processed_vector)
+                                .await?;
+                        }
+                    }
                 }
                 Data::SparseVector { .. } => {
                     self.sparse_vector_index.insert(&processed_vector).await?;
@@ -546,8 +570,25 @@ impl AxisManager {
 
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
-        // Query the real IVF index (better for incremental workloads than HNSW)
-        let results = self.query_ivf(collection_id, &query).await?;
+        // Query using the appropriate index based on strategy algorithm
+        // HNSW: O(log N) search - best for search latency
+        // IVF: O(√N) search - acceptable if insert-optimized
+        let results = {
+            // Find the dense vector index spec to determine algorithm
+            let use_ivf = search_strategy.indexes.iter().any(|spec| {
+                matches!(spec.data_type, Data::DenseVector { .. })
+                    && matches!(
+                        spec.algorithm,
+                        IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. }
+                    )
+            });
+
+            if use_ivf {
+                self.query_ivf(collection_id, &query).await?
+            } else {
+                self.query_hnsw(collection_id, &query).await?
+            }
+        };
 
         // Filter out expired results (MVCC)
         let active_results: Vec<_> = results
@@ -571,8 +612,9 @@ impl AxisManager {
 
     /// Insert a vector into the real HNSW index for a collection
     async fn insert_into_hnsw(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
-        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
+        use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::index_factory::AxisVectorIndex;
+        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
 
         // Get or create HNSW index for this collection
         let dimension = vector.vector.len();
@@ -585,8 +627,24 @@ impl AxisManager {
             let indexes = self.hnsw_indexes.read().await;
             if !indexes.contains_key(collection_id) {
                 drop(indexes);
-                // Create new HNSW index for this collection
-                let config = AxisHnswConfig::default();
+
+                // Get collection's distance metric from its config
+                // This ensures HNSW uses the same metric as the collection
+                let distance_metric = self
+                    .get_collection_distance_metric(collection_id)
+                    .await
+                    .unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
+
+                // Create HNSW config with collection's distance metric
+                let mut config = AxisHnswConfig::default();
+                config.distance_metric = distance_metric;
+
+                tracing::info!(
+                    "🔗 AXIS: Creating HNSW index for collection {} with metric {:?}",
+                    collection_id,
+                    distance_metric
+                );
+
                 let index = AxisHnswIndex::new_with_collection(
                     Some(collection_id.to_string()),
                     config,
@@ -595,9 +653,10 @@ impl AxisManager {
                 let mut indexes = self.hnsw_indexes.write().await;
                 indexes.insert(collection_id.to_string(), Arc::new(index));
                 tracing::debug!(
-                    "🔗 AXIS: Created new HNSW index for collection {} (dimension={})",
+                    "🔗 AXIS: Created new HNSW index for collection {} (dimension={}, metric={:?})",
                     collection_id,
-                    dimension
+                    dimension,
+                    distance_metric
                 );
             }
         }
@@ -612,7 +671,11 @@ impl AxisManager {
     }
 
     /// Query vectors from the real HNSW index
-    async fn query_hnsw(&self, collection_id: &str, query: &HybridQuery) -> Result<Vec<ScoredResult>> {
+    async fn query_hnsw(
+        &self,
+        collection_id: &str,
+        query: &HybridQuery,
+    ) -> Result<Vec<ScoredResult>> {
         use crate::index::axis::index_factory::AxisVectorIndex;
 
         let indexes = self.hnsw_indexes.read().await;
@@ -644,8 +707,8 @@ impl AxisManager {
     /// 3. Add all buffered vectors to trained index
     /// 4. Future inserts go directly to trained index
     async fn insert_into_ivf(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
-        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
         use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 
         let dimension = vector.vector.len();
         if dimension == 0 || vector.id.is_empty() {
@@ -670,7 +733,8 @@ impl AxisManager {
             let indexes = self.ivf_indexes.read().await;
             if let Some(index) = indexes.get(collection_id) {
                 let idx = index.read().await;
-                idx.add_vector(vector.id.clone(), vector.vector.clone(), None).await?;
+                idx.add_vector(vector.id.clone(), vector.vector.clone(), None)
+                    .await?;
             }
             return Ok(());
         }
@@ -678,7 +742,9 @@ impl AxisManager {
         // Buffer the vector for training
         {
             let mut pending = self.ivf_pending_vectors.write().await;
-            let buffer = pending.entry(collection_id.to_string()).or_insert_with(Vec::new);
+            let buffer = pending
+                .entry(collection_id.to_string())
+                .or_insert_with(Vec::new);
             buffer.push((vector.id.clone(), vector.vector.clone()));
 
             // Check if we have enough vectors to train
@@ -715,7 +781,9 @@ impl AxisManager {
 
                 tracing::debug!(
                     "🔧 AXIS: IVF config for collection {} - clusters: {}, n_probe: {} (sqrt-based)",
-                    collection_id, n_clusters, n_probe
+                    collection_id,
+                    n_clusters,
+                    n_probe
                 );
 
                 let config = UnifiedIvfConfig {
@@ -730,7 +798,8 @@ impl AxisManager {
                 let mut index = UnifiedIvfIndex::new(collection_id.to_string(), config)?;
 
                 // Train with just the vector data (not IDs)
-                let vector_data: Vec<Vec<f32>> = training_vectors.iter().map(|(_, v)| v.clone()).collect();
+                let vector_data: Vec<Vec<f32>> =
+                    training_vectors.iter().map(|(_, v)| v.clone()).collect();
                 index.train(vector_data).await?;
 
                 tracing::info!(
@@ -752,7 +821,10 @@ impl AxisManager {
 
                 // Store the trained index
                 let mut indexes = self.ivf_indexes.write().await;
-                indexes.insert(collection_id.to_string(), Arc::new(tokio::sync::RwLock::new(index)));
+                indexes.insert(
+                    collection_id.to_string(),
+                    Arc::new(tokio::sync::RwLock::new(index)),
+                );
             }
         }
 
@@ -760,7 +832,11 @@ impl AxisManager {
     }
 
     /// Query vectors from the IVF index (DEFAULT)
-    async fn query_ivf(&self, collection_id: &str, query: &HybridQuery) -> Result<Vec<ScoredResult>> {
+    async fn query_ivf(
+        &self,
+        collection_id: &str,
+        query: &HybridQuery,
+    ) -> Result<Vec<ScoredResult>> {
         use crate::index::axis::index_factory::AxisVectorIndex;
 
         let indexes = self.ivf_indexes.read().await;
@@ -983,6 +1059,37 @@ impl AxisManager {
         let mut strategies = self.collection_strategies.write().await;
         strategies.insert(collection_id.to_string(), search_strategy);
         Ok(())
+    }
+
+    /// Get the distance metric configured for a collection
+    /// This ensures indexes use the same metric as the collection's stored config
+    async fn get_collection_distance_metric(
+        &self,
+        collection_id: &str,
+    ) -> Option<crate::compute::distance_computation::DistanceMetric> {
+        use crate::compute::distance_computation::conversion::proto_distance_to_internal;
+
+        // Try to get from shared cache first
+        if let Some(cache) = &self.shared_collection_cache {
+            if let Some(collection) = cache.get(collection_id) {
+                if let Some(config) = &collection.config {
+                    let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+                    return Some(proto_distance_to_internal(metric_code));
+                }
+            }
+        }
+
+        // Fall back to collection service
+        if let Some(collection_service) = &self.collection_service {
+            if let Ok(Some(collection)) = collection_service.collection(collection_id).await {
+                if let Some(config) = &collection.config {
+                    let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+                    return Some(proto_distance_to_internal(metric_code));
+                }
+            }
+        }
+
+        None
     }
 
     /// Maybe evaluate if search_strategy should change
@@ -1377,9 +1484,13 @@ impl AxisManager {
     /// For N vectors:
     /// - n_clusters = clamp(sqrt(N) * 2, 16, 256)
     /// - n_probe = max(n_clusters/2, sqrt(n_clusters)*3)
-    async fn train_ivf_for_batch(&self, collection_id: &str, vectors: &[VectorRecord]) -> Result<()> {
-        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
+    async fn train_ivf_for_batch(
+        &self,
+        collection_id: &str,
+        vectors: &[VectorRecord],
+    ) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 
         if vectors.is_empty() {
             return Ok(());
@@ -1447,7 +1558,8 @@ impl AxisManager {
             // Sample for very large batches to avoid memory issues
             let sample_size = 50000;
             let step = batch_size / sample_size;
-            vectors.iter()
+            vectors
+                .iter()
                 .step_by(step.max(1))
                 .take(sample_size)
                 .map(|v| v.vector.clone())
@@ -1466,7 +1578,10 @@ impl AxisManager {
 
         // Store the trained index
         let mut indexes = self.ivf_indexes.write().await;
-        indexes.insert(collection_id.to_string(), Arc::new(tokio::sync::RwLock::new(index)));
+        indexes.insert(
+            collection_id.to_string(),
+            Arc::new(tokio::sync::RwLock::new(index)),
+        );
 
         // Clear pending vectors buffer since we've trained
         {

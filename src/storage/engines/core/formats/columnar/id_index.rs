@@ -91,7 +91,7 @@ impl BloomFilter {
         let hash_count = Self::optimal_hash_count(size, expected_items);
 
         Self {
-            bits: vec![0; (size + 63) / 64],
+            bits: vec![0; size.div_ceil(64)],
             size,
             hash_count,
         }
@@ -515,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_columnar_id_index() {
-        let mut index = ColumnarIdIndex::new("test.parquet".to_string());
+        let index = ColumnarIdIndex::new("test.parquet".to_string());
 
         // Simulate adding IDs
         {

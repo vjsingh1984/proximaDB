@@ -94,10 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // QuantizationConfig: Only derive Serialize - custom Deserialize in serde_impls.rs
         // handles SDK compatibility (flat fields) and proto format (custom_levels)
-        .type_attribute(
-            "QuantizationConfig",
-            "#[derive(serde::Serialize)]",
-        )
+        .type_attribute("QuantizationConfig", "#[derive(serde::Serialize)]")
         // Add serde to specific config types used by IndexConfig
         .type_attribute(
             "HnswConfig",
@@ -476,6 +473,321 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // oneof types (SqlValue, PropertyValue, etc.) get custom serde from serde_impls.rs
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
+        // Document storage types
+        .type_attribute(
+            "DocumentContent",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocumentCollectionConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "IndexDefinition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocIndexType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocumentFilter",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocFilterCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocFilterOperator",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocumentUpdate",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "UpdateOperation",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SortField",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SortOrder",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DocumentResult",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Observability simple enum types (no oneof)
+        .type_attribute(
+            "ObservabilityType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Severity",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "IngestionFormat",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SpanKind",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SpanStatus",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SpanEvent",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "LogEntry",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "MetricSample",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AlertSeverity",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AlertState",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Metric nested types (simple structs)
+        .type_attribute(
+            "HistogramValue",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SummaryValue",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Quantile",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AggregationTemporality",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Trace nested types (simple structs)
+        .type_attribute(
+            "SpanLink",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SpanStatusCode",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Alert condition nested types (simple structs)
+        .type_attribute(
+            "ThresholdCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "RateCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PatternCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AnomalyCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ComparisonOperator",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Notification nested types (simple structs)
+        .type_attribute(
+            "WebhookNotification",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SlackNotification",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "PagerDutyNotification",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "EmailNotification",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Config types (simple structs)
+        .type_attribute(
+            "RetentionConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "IngestionConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ObservabilityAccessControl",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Log filter types (simple structs)
+        .type_attribute(
+            "LogFilter",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Metric aggregation types
+        .type_attribute(
+            "MetricAggregation",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TimeSeriesResult",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "DataPoint",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // NOTE: Types with oneof fields need custom serde implementations:
+        // - MetricData (has metric_data::Value oneof)
+        // - TraceData (contains SpanLink which is OK but has map<string, SqlValue>)
+        // - AlertRule (has AlertCondition and NotificationChannel oneof)
+        // - Alert (simple struct, should work)
+        // - AlertCondition (has alert_condition::Condition oneof)
+        // - NotificationChannel (has notification_channel::Channel oneof)
+        // - ObservabilityContent (has MetricData and TraceData)
+        // - ObservabilityNamespaceConfig (has AlertRule)
+        // - UnifiedRecord (has unified_record::Content oneof)
+        // Custom serde implementations will be added to serde_impls.rs
+        // Add serde to Alert (simple struct - no oneof)
+        .type_attribute("Alert", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to the oneof wrapper types so their container types can be serialized
+        // The oneof enum variants use proto path notation: MessageName.oneof_field_name
+        .type_attribute(
+            "AlertCondition.condition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "NotificationChannel.channel",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "MetricData.value",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Now add types that contain these (once oneof variants have serde)
+        .type_attribute(
+            "AlertCondition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "NotificationChannel",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "MetricData",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AlertRule",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ObservabilityNamespaceConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // Unified record simple types (RecordType is just an enum)
+        .type_attribute(
+            "RecordType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "CommonMetadata",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // NOTE: UnifiedRecord, GraphNodeContent, GraphEdgeContent, VectorContent, BatchOperation
+        // have oneof or contain SqlValue maps - need custom serde in serde_impls.rs
+        // Document aggregation types (simple structs)
+        .type_attribute(
+            "MatchStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "GroupStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ProjectStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SortStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "LimitStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SkipStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "UnwindStage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "Aggregation",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "AggregationType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // NOTE: AggregationStage has oneof - needs custom serde in serde_impls.rs
+        // Real-time streaming types
+        .type_attribute(
+            "proximadb.streaming.v1.BackpressureLevel",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.QueryUpdateType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.OrderingMode",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.DeliverySemantics",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.SessionState",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.BackpressureSignal",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.SessionConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "proximadb.streaming.v1.SessionStats",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         .compile_protos(
             &[
                 "proto/proximadb/v1/entity.proto",
@@ -489,6 +801,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/collection.proto",
                 "proto/proximadb/v1/sql.proto",
                 "proto/proximadb/v1/graph_collection.proto",
+                // Multi-model storage types
+                "proto/proximadb/v1/document.proto",
+                "proto/proximadb/v1/observability.proto",
+                "proto/proximadb/v1/unified.proto",
+                // Catalog system
+                "proto/proximadb/v1/catalog.proto",
+                // Real-time streaming
+                "proto/proximadb/v1/streaming.proto",
+                // Cluster RPC services
+                "proto/proximadb/v1/cluster.proto",
             ],
             &["proto"],
         )?;
@@ -501,6 +823,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto/proximadb/v1/vector_types.proto");
     println!("cargo:rerun-if-changed=proto/proximadb/v1/collection_types.proto");
     println!("cargo:rerun-if-changed=proto/proximadb/v1/collection.proto");
+    // Multi-model storage protos
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/document.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/observability.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/unified.proto");
+    // Catalog system
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/catalog.proto");
+    // Real-time streaming
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/streaming.proto");
     Ok(())
 }
 

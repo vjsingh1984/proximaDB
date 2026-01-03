@@ -619,7 +619,7 @@ Quarterly:
 curl http://localhost:5678/health | jq .version
 
 # Download new version
-wget https://releases.proximadb.com/v0.1.5/proximadb-linux-x64.tar.gz
+wget https://releases.proximadb.com/v0.2.0/proximadb-linux-x64.tar.gz
 
 # Backup current installation
 cp /usr/local/bin/proximadb-server /usr/local/bin/proximadb-server.backup

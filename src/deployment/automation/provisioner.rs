@@ -3,14 +3,8 @@
 //! Orchestrates one-click enterprise deployment across different platforms
 //! with automatic configuration generation and validation.
 
-use crate::deployment::discovery::{
-    BackupStrategy, CapacityEstimate, DeploymentRecommendation, DeploymentStrategy,
-    DetectedEnvironment, EncryptionRequirements, MonitoringConfig, OptimalConfig,
-    PerformanceProfile, PlatformType, ResourceAvailability, ScalingConfig, SecurityConstraints,
-};
-use crate::server::NetworkConfig;
-use crate::storage::tenant::ComplianceFramework;
-use anyhow::{anyhow, Result};
+use crate::deployment::discovery::{DetectedEnvironment, PlatformType};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -855,7 +849,7 @@ impl ValidationEngine {
         });
 
         match client
-            .post(&format!(
+            .post(format!(
                 "{}/api/v1/ai/natural-language/query",
                 endpoints.rest_api
             ))
@@ -970,10 +964,9 @@ pub struct TroubleshootingInfo {
 mod tests {
     use super::*;
     use crate::deployment::discovery::{
-        ResourceAvailability, CapacityEstimate, NetworkConfig, SecurityConstraints,
-        EncryptionRequirements, OptimalConfig, DeploymentRecommendation,
-        DeploymentStrategy, ScalingConfig, BackupStrategy, PerformanceProfile,
-        ComplianceFramework
+        BackupStrategy, CapacityEstimate, ComplianceFramework, DeploymentRecommendation,
+        DeploymentStrategy, EncryptionRequirements, MonitoringConfig, NetworkConfig, OptimalConfig,
+        PerformanceProfile, ResourceAvailability, ScalingConfig, SecurityConstraints,
     };
 
     #[tokio::test]

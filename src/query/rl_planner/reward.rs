@@ -74,7 +74,7 @@ pub struct OptimizationTarget {
 impl Default for OptimizationTarget {
     fn default() -> Self {
         Self {
-            max_latency_ms: 50.0,  // 50ms max acceptable latency
+            max_latency_ms: 50.0, // 50ms max acceptable latency
             min_recall: 0.90,     // 90% minimum recall
             min_qps: 100.0,       // 100 QPS minimum
             goal: OptimizationGoal::Balanced,
@@ -143,8 +143,8 @@ pub struct LatencyModel {
 impl Default for LatencyModel {
     fn default() -> Self {
         Self {
-            base_latency_ms: 1.0,        // 1ms base overhead
-            per_log_vectors_ms: 5.0,     // +5ms per order of magnitude
+            base_latency_ms: 1.0,    // 1ms base overhead
+            per_log_vectors_ms: 5.0, // +5ms per order of magnitude
         }
     }
 }
@@ -262,7 +262,8 @@ impl RewardCalculator {
         };
 
         // Weighted combination
-        let reward = latency_w * latency_score + recall_w * recall_score + throughput_w * throughput_score;
+        let reward =
+            latency_w * latency_score + recall_w * recall_score + throughput_w * throughput_score;
 
         // Clip to [0, 1]
         reward.max(0.0).min(1.0)
@@ -297,7 +298,9 @@ impl RewardCalculator {
         // Use collection-size-aware latency scoring
         // Expected latency scales with log10(collection_size)
         let expected_latency = self.latency_model.expected_latency(collection_size);
-        let normalized_ratio = self.latency_model.normalized_latency(latency_ms, collection_size);
+        let normalized_ratio = self
+            .latency_model
+            .normalized_latency(latency_ms, collection_size);
 
         // Latency score based on how we compare to expected performance:
         // - ratio < 0.5: Excellent (faster than expected) → score 0.75 to 1.0
@@ -346,13 +349,17 @@ impl RewardCalculator {
         };
 
         // Weighted combination
-        let reward = latency_w * latency_score + recall_w * recall_score + throughput_w * throughput_score;
+        let reward =
+            latency_w * latency_score + recall_w * recall_score + throughput_w * throughput_score;
 
         tracing::debug!(
             "[RL Reward] latency_score={:.3} (w={:.2}), recall_score={:.3} (w={:.2}), throughput_score={:.3} (w={:.2}) → reward={:.3}",
-            latency_score, latency_w,
-            recall_score, recall_w,
-            throughput_score, throughput_w,
+            latency_score,
+            latency_w,
+            recall_score,
+            recall_w,
+            throughput_score,
+            throughput_w,
             reward
         );
 
@@ -476,10 +483,16 @@ mod tests {
     #[test]
     fn test_goal_weights() {
         let (lat, rec, thr) = OptimizationGoal::MinLatency.weights();
-        assert!(lat > rec && lat > thr, "MinLatency should weight latency highest");
+        assert!(
+            lat > rec && lat > thr,
+            "MinLatency should weight latency highest"
+        );
 
         let (lat, rec, thr) = OptimizationGoal::MaxRecall.weights();
-        assert!(rec > lat && rec > thr, "MaxRecall should weight recall highest");
+        assert!(
+            rec > lat && rec > thr,
+            "MaxRecall should weight recall highest"
+        );
 
         let (lat, rec, thr) = OptimizationGoal::MaxThroughput.weights();
         assert!(
@@ -488,7 +501,10 @@ mod tests {
         );
 
         let (lat, rec, _) = OptimizationGoal::Balanced.weights();
-        assert!((lat - rec).abs() < 0.01, "Balanced should weight lat/rec equally");
+        assert!(
+            (lat - rec).abs() < 0.01,
+            "Balanced should weight lat/rec equally"
+        );
     }
 
     #[test]

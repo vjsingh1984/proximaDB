@@ -26,10 +26,10 @@
 
 use dashmap::DashMap;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::graph::engines::orion::traversal::vector_guided_astar;
+use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::engines::orion::traversal::TraversalConfig;
-use proximadb::graph::engines::GraphEngine;
+use proximadb::graph::engines::orion::traversal::vector_guided_astar;
 use proximadb::graph::hybrid::ranking::{HybridRankingStrategy, RankingContext, RankingStrategy};
 use proximadb::graph::hybrid::semantic_traversal::{SemanticBFSTraversal, SemanticTraversalInput};
 use proximadb::graph::{Edge, Node};
@@ -43,9 +43,11 @@ fn create_test_node(id: &str, label: &str, embedding: Vec<f32>, name: &str) -> N
     properties.insert(
         "name".to_string(),
         proximadb::proto::proximadb_v1::PropertyValue {
-            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                name.to_string(),
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
+                    name.to_string(),
+                ),
+            ),
         },
     );
 
@@ -91,19 +93,32 @@ async fn build_test_knowledge_graph() -> Arc<OrionGraphEngine> {
     // Embeddings are positioned to test semantic similarity and clustering
     let nodes = vec![
         // AI cluster (close embeddings)
-        create_test_node("AI", "Topic", vec![1.0, 0.0, 0.0], "Artificial Intelligence"),
+        create_test_node(
+            "AI",
+            "Topic",
+            vec![1.0, 0.0, 0.0],
+            "Artificial Intelligence",
+        ),
         create_test_node("ML", "Topic", vec![0.95, 0.05, 0.0], "Machine Learning"),
         create_test_node("DL", "Topic", vec![0.9, 0.1, 0.05], "Deep Learning"),
-        create_test_node("NLP", "Topic", vec![0.85, 0.0, 0.15], "Natural Language Processing"),
-
+        create_test_node(
+            "NLP",
+            "Topic",
+            vec![0.85, 0.0, 0.15],
+            "Natural Language Processing",
+        ),
         // Data cluster (different embeddings)
         create_test_node("DB", "Topic", vec![0.0, 1.0, 0.0], "Databases"),
         create_test_node("BigData", "Topic", vec![0.05, 0.95, 0.0], "Big Data"),
         create_test_node("Analytics", "Topic", vec![0.1, 0.9, 0.05], "Data Analytics"),
-
         // Systems cluster
         create_test_node("Cloud", "Topic", vec![0.0, 0.0, 1.0], "Cloud Computing"),
-        create_test_node("Distributed", "Topic", vec![0.05, 0.0, 0.95], "Distributed Systems"),
+        create_test_node(
+            "Distributed",
+            "Topic",
+            vec![0.05, 0.0, 0.95],
+            "Distributed Systems",
+        ),
     ];
 
     for node in nodes {
@@ -117,15 +132,12 @@ async fn build_test_knowledge_graph() -> Arc<OrionGraphEngine> {
         create_test_edge("ML", "DL", "INCLUDES"),
         create_test_edge("ML", "NLP", "INCLUDES"),
         create_test_edge("AI", "NLP", "RELATED_TO"),
-
         // Data cluster connections (3 edges)
         create_test_edge("DB", "BigData", "ENABLES"),
         create_test_edge("BigData", "Analytics", "ENABLES"),
         create_test_edge("DB", "Analytics", "SUPPORTS"),
-
         // Systems cluster connections (1 edge)
         create_test_edge("Cloud", "Distributed", "IMPLEMENTS"),
-
         // Cross-cluster connections (3 edges)
         create_test_edge("ML", "BigData", "USES"),
         create_test_edge("Analytics", "ML", "APPLIES"),
@@ -174,7 +186,9 @@ async fn test_e2e_graph_basic_operations() {
 
     // Test 4: Edge type filtering
     println!("4. Testing edge type filtering...");
-    let includes_edges = engine.get_outgoing_edges(&"AI".to_string(), Some("INCLUDES")).unwrap();
+    let includes_edges = engine
+        .get_outgoing_edges(&"AI".to_string(), Some("INCLUDES"))
+        .unwrap();
     println!("   AI has {} INCLUDES edges", includes_edges.len());
     assert!(includes_edges.len() > 0);
 
@@ -183,8 +197,14 @@ async fn test_e2e_graph_basic_operations() {
     let stats = engine.get_stats().await;
     let node_count = engine.get_all_nodes().unwrap().len();
     let edge_count = engine.edge_count().unwrap();
-    println!("   Operations - Created: {} nodes, {} edges", stats.nodes_created, stats.edges_created);
-    println!("   Current count: {} nodes, {} edges", node_count, edge_count);
+    println!(
+        "   Operations - Created: {} nodes, {} edges",
+        stats.nodes_created, stats.edges_created
+    );
+    println!(
+        "   Current count: {} nodes, {} edges",
+        node_count, edge_count
+    );
     assert_eq!(node_count, 9);
     assert_eq!(edge_count, 11);
 
@@ -214,7 +234,10 @@ async fn test_e2e_phase4_hybrid_vector_graph() {
     };
 
     let result = semantic_bfs.execute(input).unwrap();
-    println!("   Found {} semantically similar nodes", result.matches_found);
+    println!(
+        "   Found {} semantically similar nodes",
+        result.matches_found
+    );
     assert!(result.matches_found >= 3); // Should find AI, ML, DL at minimum
 
     // Verify AI is in results with high similarity
@@ -253,10 +276,10 @@ async fn test_e2e_phase4_hybrid_vector_graph() {
     // Build centrality cache (using mock values for E2E test)
     // In production, these would come from computed graph metrics
     let centrality_cache = Arc::new(DashMap::new());
-    centrality_cache.insert("AI".to_string(), 0.9);    // High centrality
-    centrality_cache.insert("ML".to_string(), 0.85);   // High centrality
-    centrality_cache.insert("DL".to_string(), 0.7);    // Medium centrality
-    centrality_cache.insert("NLP".to_string(), 0.6);   // Medium centrality
+    centrality_cache.insert("AI".to_string(), 0.9); // High centrality
+    centrality_cache.insert("ML".to_string(), 0.85); // High centrality
+    centrality_cache.insert("DL".to_string(), 0.7); // Medium centrality
+    centrality_cache.insert("NLP".to_string(), 0.6); // Medium centrality
 
     let strategy = HybridRankingStrategy::balanced(
         Arc::clone(&distance_compute),
@@ -360,8 +383,13 @@ async fn test_e2e_full_pipeline_integration() {
 
     println!("   Ranked results (top 5):");
     for (i, (id, score, similarity)) in ranked.iter().take(5).enumerate() {
-        println!("     {}. {} (hybrid: {:.3}, similarity: {:.3})",
-            i + 1, id, score, similarity);
+        println!(
+            "     {}. {} (hybrid: {:.3}, similarity: {:.3})",
+            i + 1,
+            id,
+            score,
+            similarity
+        );
     }
 
     assert!(!ranked.is_empty());
@@ -417,28 +445,41 @@ async fn test_e2e_cross_cluster_relationships() {
     let ai_embedding = &ai_node.embedding.as_ref().unwrap().vector;
     let db_embedding = &db_node.embedding.as_ref().unwrap().vector;
 
-    let similarity = distance_compute.calculate_distance(ai_embedding, db_embedding, &DistanceMetric::Cosine);
+    let similarity =
+        distance_compute.calculate_distance(ai_embedding, db_embedding, &DistanceMetric::Cosine);
     println!("   Semantic distance (AI-DB): {:.3}", similarity.distance);
     println!("   Normalized score: {:.3}", similarity.normalized_score);
 
     // Different clusters should have lower similarity
-    assert!(similarity.normalized_score < 0.7, "Different clusters should be semantically distant");
+    assert!(
+        similarity.normalized_score < 0.7,
+        "Different clusters should be semantically distant"
+    );
 
     // Test 3: Verify graph connectivity
     println!("3. Testing graph connectivity...");
     let node_count = engine.get_all_nodes().unwrap().len();
     let edge_count = engine.edge_count().unwrap();
-    println!("   Total nodes: {}, Total edges: {}", node_count, edge_count);
+    println!(
+        "   Total nodes: {}, Total edges: {}",
+        node_count, edge_count
+    );
     assert_eq!(node_count, 9);
     assert_eq!(edge_count, 11);
 
     // Test 4: Multi-hop traversal
     println!("4. Testing multi-hop traversal (AI -> ML -> BigData)...");
     let ai_neighbors = engine.get_neighbors(&"AI".to_string(), None).unwrap();
-    assert!(ai_neighbors.iter().any(|n| n.id == "ML"), "AI should connect to ML");
+    assert!(
+        ai_neighbors.iter().any(|n| n.id == "ML"),
+        "AI should connect to ML"
+    );
 
     let ml_neighbors = engine.get_neighbors(&"ML".to_string(), None).unwrap();
-    assert!(ml_neighbors.iter().any(|n| n.id == "BigData"), "ML should connect to BigData");
+    assert!(
+        ml_neighbors.iter().any(|n| n.id == "BigData"),
+        "ML should connect to BigData"
+    );
     println!("   ✓ Multi-hop path verified: AI -> ML -> BigData");
 
     println!("✅ Cross-Cluster Relationships: PASS\n");

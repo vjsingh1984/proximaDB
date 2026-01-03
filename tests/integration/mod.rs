@@ -134,4 +134,11 @@ pub mod quantization_stats_test;
 pub mod sst_quantization_blocks_test;
 pub mod sst_quantization_comprehensive_test; // Comprehensive quantization coverage
 
+// Query facade integration tests - REST/gRPC parity validation
+pub mod query_facade;
+
+// SQL frontend integration tests
+// Note: sql_frontend module only contains unified_query_tests.rs which needs a mod.rs
+// TODO: Add mod.rs to sql_frontend directory when tests are ready
+
 // Middleware integration tests are at this level since they cross-cut concerns

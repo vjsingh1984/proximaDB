@@ -20,7 +20,9 @@
 //! - Avoids duplication of capability definitions
 
 use crate::proto::proximadb_v1::CompressionAlgorithm;
-use crate::storage::trait_components::capabilities::{CapabilityFactory, EngineCapabilities as EngineCapabilitiesTrait};
+use crate::storage::trait_components::capabilities::{
+    CapabilityFactory, EngineCapabilities as EngineCapabilitiesTrait,
+};
 use std::collections::HashSet;
 
 // Re-export StorageEngine for external use
@@ -261,10 +263,7 @@ impl EngineCapabilities {
                 SearchIndexType::IVF,
                 SearchIndexType::HilbertCurve, // Specialized for HELIX
             ],
-            StorageEngine::Viper => vec![
-                SearchIndexType::Flat,
-                SearchIndexType::IVF,
-            ],
+            StorageEngine::Viper => vec![SearchIndexType::Flat, SearchIndexType::IVF],
             StorageEngine::Swift => vec![
                 SearchIndexType::Flat,
                 SearchIndexType::HNSW,
@@ -285,7 +284,9 @@ impl EngineCapabilities {
     }
 
     /// Get supported quantization levels for a storage engine
-    pub fn get_supported_quantization_levels(engine: StorageEngine) -> Vec<SearchQuantizationLevel> {
+    pub fn get_supported_quantization_levels(
+        engine: StorageEngine,
+    ) -> Vec<SearchQuantizationLevel> {
         match engine {
             StorageEngine::Sst => vec![
                 SearchQuantizationLevel::FP32,
@@ -298,10 +299,9 @@ impl EngineCapabilities {
                 SearchQuantizationLevel::Binary,
                 SearchQuantizationLevel::PQ8,
             ],
-            StorageEngine::Viper => vec![
-                SearchQuantizationLevel::FP32,
-                SearchQuantizationLevel::INT8,
-            ],
+            StorageEngine::Viper => {
+                vec![SearchQuantizationLevel::FP32, SearchQuantizationLevel::INT8]
+            }
             StorageEngine::Swift => vec![
                 SearchQuantizationLevel::FP32,
                 SearchQuantizationLevel::INT8,
@@ -314,10 +314,9 @@ impl EngineCapabilities {
                 SearchQuantizationLevel::INT8,
                 SearchQuantizationLevel::Binary,
             ],
-            StorageEngine::Raptor => vec![
-                SearchQuantizationLevel::FP32,
-                SearchQuantizationLevel::INT8,
-            ],
+            StorageEngine::Raptor => {
+                vec![SearchQuantizationLevel::FP32, SearchQuantizationLevel::INT8]
+            }
             _ => vec![SearchQuantizationLevel::FP32],
         }
     }
@@ -406,7 +405,13 @@ impl EngineCapabilities {
             pruning,
             use_progressive,
             expected_recall: if use_index { 0.95 } else { 1.0 },
-            expected_latency_factor: if use_progressive { 0.3 } else if use_index { 0.5 } else { 1.0 },
+            expected_latency_factor: if use_progressive {
+                0.3
+            } else if use_index {
+                0.5
+            } else {
+                1.0
+            },
         }
     }
 }

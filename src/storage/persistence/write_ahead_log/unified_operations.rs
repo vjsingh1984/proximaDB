@@ -19,20 +19,27 @@
 //! Extends the WAL system to handle both vector and graph operations,
 //! enabling atomic hybrid transactions across both data types.
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, VectorRecord};
+use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Unified WAL operation supporting both vector and graph operations
+/// Unified WAL operation supporting vector, graph, document, and observability operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnifiedWALOperation {
     /// Vector operation (existing)
     VectorOp(VectorOperation),
 
-    /// Graph operation (new)
+    /// Graph operation
     GraphOp(GraphOperation),
+
+    /// Document operation
+    DocumentOp(DocumentOperation),
+
+    /// Observability operation (logs, metrics, traces)
+    ObservabilityOp(ObservabilityOperation),
 
     /// Hybrid operation combining vector and graph operations
     HybridOp {
@@ -53,10 +60,80 @@ pub enum UnifiedWALOperation {
     Checkpoint {
         sequence_number: u64,
         timestamp_ms: u64,
-        /// Collections/graphs included in checkpoint
+        /// Collections/graphs/document-collections/observability namespaces included in checkpoint
         collections: Vec<String>,
         graphs: Vec<String>,
+        document_collections: Vec<String>,
+        observability_namespaces: Vec<String>,
     },
+}
+
+/// Document operations for WAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DocumentOperation {
+    /// Insert or update a document
+    InsertDocument {
+        collection_id: String,
+        document: DocumentRecord,
+    },
+    /// Update a document with patch operations
+    UpdateDocument {
+        collection_id: String,
+        document_id: String,
+        updates: Vec<DocumentUpdate>,
+        new_version: u64,
+    },
+    /// Delete a document
+    DeleteDocument {
+        collection_id: String,
+        document_id: String,
+    },
+    /// Batch insert documents
+    BatchDocuments {
+        collection_id: String,
+        documents: Vec<DocumentRecord>,
+    },
+    /// Create document collection
+    CreateCollection {
+        collection_id: String,
+        config_json: String, // Serialized DocumentCollectionConfig
+    },
+    /// Delete document collection
+    DeleteCollection { collection_id: String },
+}
+
+/// Observability operations for WAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ObservabilityOperation {
+    /// Write a log entry
+    WriteLog { namespace: String, log: LogEntry },
+    /// Write a batch of logs
+    WriteLogs {
+        namespace: String,
+        logs: Vec<LogEntry>,
+    },
+    /// Write a metric sample
+    WriteMetric {
+        namespace: String,
+        metric: MetricSample,
+    },
+    /// Write a batch of metrics
+    WriteMetrics {
+        namespace: String,
+        metrics: Vec<MetricSample>,
+    },
+    /// Write a trace span (serialized as JSON for flexibility)
+    WriteSpan {
+        namespace: String,
+        span_json: String,
+    },
+    /// Create observability namespace
+    CreateNamespace {
+        namespace: String,
+        config_json: String,
+    },
+    /// Delete observability namespace
+    DeleteNamespace { namespace: String },
 }
 
 /// Vector operations (existing functionality)
@@ -164,6 +241,16 @@ impl UnifiedWALEntry {
             &self.operation,
             UnifiedWALOperation::VectorOp(_) | UnifiedWALOperation::HybridOp { .. }
         )
+    }
+
+    /// Check if this is a document operation
+    pub fn is_document_operation(&self) -> bool {
+        matches!(&self.operation, UnifiedWALOperation::DocumentOp(_))
+    }
+
+    /// Check if this is an observability operation
+    pub fn is_observability_operation(&self) -> bool {
+        matches!(&self.operation, UnifiedWALOperation::ObservabilityOp(_))
     }
 }
 
@@ -382,14 +469,22 @@ impl UnifiedWALReader {
         }
 
         let data = fs.read(&url).await?;
-        tracing::debug!("Reading WAL segment {}: {} total bytes", segment_number, data.len());
+        tracing::debug!(
+            "Reading WAL segment {}: {} total bytes",
+            segment_number,
+            data.len()
+        );
         let mut entries = Vec::new();
         let mut cursor = 0;
 
         while cursor < data.len() {
             // Read size header
             if cursor + 4 > data.len() {
-                tracing::debug!("End of WAL segment at cursor {}, {} bytes remaining", cursor, data.len() - cursor);
+                tracing::debug!(
+                    "End of WAL segment at cursor {}, {} bytes remaining",
+                    cursor,
+                    data.len() - cursor
+                );
                 break;
             }
 
@@ -442,7 +537,11 @@ impl UnifiedWALReader {
                     );
                     // Log first few bytes for debugging
                     let preview = &entry_data[..entry_data.len().min(32)];
-                    tracing::debug!("Entry data preview (first {} bytes): {:?}", preview.len(), preview);
+                    tracing::debug!(
+                        "Entry data preview (first {} bytes): {:?}",
+                        preview.len(),
+                        preview
+                    );
                     // Continue trying to read more entries
                 }
             }

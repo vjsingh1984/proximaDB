@@ -38,7 +38,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
     def __init__(
         self,
-        server_address: str = "localhost:5679",
+        server_address: str = "localhost:5678",
         timeout: float = 60.0,
         pool_size: int = 5,
         max_message_size: int = 64 * 1024 * 1024,
@@ -47,7 +47,8 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         """Initialize gRPC protocol adapter.
 
         Args:
-            server_address: gRPC server address (host:port)
+            server_address: gRPC server address (host:port). Default is unified port 5678
+                           which handles both REST and gRPC via TCP multiplexing.
             timeout: Request timeout in seconds
             pool_size: Number of gRPC channels in connection pool
             max_message_size: Maximum message size in bytes

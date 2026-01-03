@@ -90,7 +90,7 @@ async fn test_strategy_with_filters() {
 #[tokio::test]
 async fn test_strategy_with_quantization() {
     let reader = create_test_reader().await;
-    let mut context = create_test_context();
+    let context = create_test_context();
     // Note: quantization_columns field removed from CollectionContext
 
     let params = SearchParams {

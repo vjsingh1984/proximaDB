@@ -181,7 +181,9 @@ impl LouvainCommunityDetection {
 
                 for &neighbor_idx in neighbors {
                     let neighbor_community = communities[&neighbor_idx];
-                    *neighbor_communities.entry(neighbor_community).or_insert(0.0) += 1.0;
+                    *neighbor_communities
+                        .entry(neighbor_community)
+                        .or_insert(0.0) += 1.0;
                 }
 
                 // Compute modularity gain for each candidate community
@@ -256,14 +258,20 @@ impl LouvainCommunityDetection {
             .map(|n| n.len() as f64)
             .unwrap_or(0.0);
 
-        let target_tot = community_weights.get(&target_community).copied().unwrap_or(0.0);
-        let source_tot = community_weights.get(&source_community).copied().unwrap_or(0.0);
+        let target_tot = community_weights
+            .get(&target_community)
+            .copied()
+            .unwrap_or(0.0);
+        let source_tot = community_weights
+            .get(&source_community)
+            .copied()
+            .unwrap_or(0.0);
 
         let m2 = 2.0 * self.total_weight;
 
         // Gain from joining target community
-        let gain = edge_weight_to_target / m2
-            - self.resolution * node_degree * target_tot / (m2 * m2);
+        let gain =
+            edge_weight_to_target / m2 - self.resolution * node_degree * target_tot / (m2 * m2);
 
         // Loss from leaving source community
         let loss = 0.0 - self.resolution * node_degree * (source_tot - node_degree) / (m2 * m2);
@@ -308,7 +316,10 @@ impl LouvainCommunityDetection {
 
             // Count internal edges
             for &neighbor_idx in neighbors {
-                let neighbor_community = communities.get(&neighbor_idx).copied().unwrap_or(neighbor_idx);
+                let neighbor_community = communities
+                    .get(&neighbor_idx)
+                    .copied()
+                    .unwrap_or(neighbor_idx);
                 if neighbor_community == community {
                     *community_internal_edges.entry(community).or_insert(0.0) += 1.0;
                 }
@@ -317,7 +328,10 @@ impl LouvainCommunityDetection {
 
         // Compute modularity
         for (community_id, internal_edges) in community_internal_edges.iter() {
-            let total_degree = community_total_degree.get(community_id).copied().unwrap_or(0.0);
+            let total_degree = community_total_degree
+                .get(community_id)
+                .copied()
+                .unwrap_or(0.0);
 
             let e_c = internal_edges / m2; // Fraction of edges within community
             let a_c = total_degree / m2; // Fraction of total degree in community
@@ -386,7 +400,10 @@ impl ParallelAlgorithm for LouvainCommunityDetection {
                 let mut neighbor_communities: HashMap<usize, usize> = HashMap::new();
 
                 for &neighbor_idx in neighbors {
-                    let neighbor_community = communities.get(&neighbor_idx).copied().unwrap_or(neighbor_idx);
+                    let neighbor_community = communities
+                        .get(&neighbor_idx)
+                        .copied()
+                        .unwrap_or(neighbor_idx);
                     *neighbor_communities.entry(neighbor_community).or_insert(0) += 1;
                 }
 
@@ -451,8 +468,9 @@ impl IncrementalAlgorithm for LouvainCommunityDetection {
     fn is_incremental_beneficial(&self, change: &GraphChange) -> bool {
         // Incremental updates beneficial for small changes
         match change {
-            GraphChange::NodePropertiesUpdated { .. }
-            | GraphChange::EdgeWeightUpdated { .. } => false, // Property changes don't affect topology
+            GraphChange::NodePropertiesUpdated { .. } | GraphChange::EdgeWeightUpdated { .. } => {
+                false
+            } // Property changes don't affect topology
             GraphChange::EdgeAdded { .. } | GraphChange::NodeAdded { .. } => true,
             GraphChange::EdgeRemoved { .. } | GraphChange::NodeRemoved { .. } => {
                 // Removal of central nodes may invalidate large portions of community structure
@@ -524,7 +542,11 @@ mod tests {
 
         // Modularity computation should return a valid number
         // Note: For small graphs with simple implementation, modularity may be negative
-        assert!(modularity.is_finite(), "Modularity should be finite: {}", modularity);
+        assert!(
+            modularity.is_finite(),
+            "Modularity should be finite: {}",
+            modularity
+        );
     }
 
     #[test]

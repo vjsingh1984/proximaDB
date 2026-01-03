@@ -67,13 +67,97 @@ log_all_executions = true
 default_goal = "Balanced"
 
 [api]
+# Unified Port Mode - all protocols on single port
+unified_mode = true
+
+# Multi-Port Mode
 grpc_port = 5679
 rest_port = 5678
+arrow_flight_port = 5680
+
+# Protocol-specific settings (apply in both modes)
+[api.protocols.rest]
+enabled = true
+compression = false
+
+[api.protocols.grpc]
+enabled = true
+max_message_size_mb = 64
+compression = true
+reflection = true
+
+[api.protocols.arrow_flight]
+enabled = true
+max_message_size_mb = 512
 
 [monitoring]
 log_level = "info"
 # Dashboard refresh interval in seconds (default: 60, minimum: 15)
 dashboard_refresh_interval_seconds = 60
+
+# ==============================================================================
+# LLM Integration Configuration (Q4 2025)
+# ==============================================================================
+# Enables embedding generation, RAG pipelines, and semantic caching.
+# Uses Victor (codingagent) framework for LLM/embedding providers.
+
+[llm]
+# Enable LLM integration
+enabled = true
+# Default collection for embeddings
+default_collection = "embeddings"
+# Cache TTL in hours
+cache_ttl_hours = 24
+
+[llm.embedding]
+# Embedding provider: sentence-transformers (local), openai, cohere, ollama
+provider = "sentence-transformers"
+# Model name for the provider
+model_name = "all-MiniLM-L12-v2"
+# Batch size for embedding generation
+batch_size = 32
+
+# OpenAI embedding configuration (when provider = "openai")
+# [llm.embedding.openai]
+# api_key = "${OPENAI_API_KEY}"
+# model_name = "text-embedding-3-small"
+
+# Ollama embedding configuration (when provider = "ollama")
+# [llm.embedding.ollama]
+# base_url = "http://localhost:11434"
+# model_name = "qwen3-embedding:8b"
+
+[llm.rag]
+# Enable RAG pipeline
+enabled = true
+# Number of documents to retrieve
+retrieval_top_k = 10
+# Number of documents to include in context
+context_top_k = 5
+# Maximum tokens in context
+max_context_tokens = 2000
+# Similarity threshold for retrieval (0.0-1.0)
+similarity_threshold = 0.5
+# Default LLM provider for generation
+llm_provider = "ollama"
+# Default LLM model for generation
+llm_model = "llama3.1:8b"
+# Generation temperature
+temperature = 0.7
+# Maximum response tokens
+max_tokens = 1024
+
+[llm.semantic_cache]
+# Enable semantic caching for RAG responses
+enabled = true
+# Collection name for cache storage
+collection_name = "_rag_cache"
+# Similarity threshold for cache hits (0.0-1.0, higher = stricter)
+similarity_threshold = 0.95
+# Cache TTL in hours
+ttl_hours = 24
+# Maximum cache entries
+max_entries = 10000
 
 # Advanced Configuration (optional - smart defaults applied)
 # Uncomment and modify only if you need to override defaults
@@ -99,25 +183,225 @@ collection_affinity = true
 # [cache]
 # total_memory_mb = 512
 
-# [security]
-# enabled = false  # Enable for production
-# mode = "development"  # development | production | enterprise
-# [security.authentication]
-# enabled = false  # When true and a SecurityCoordinator is configured, REST auth middleware is enabled
-# methods = ["api_key", "jwt"]
-# require_authentication = true
-# default_session_timeout_minutes = 60
-# # Example API key (replace in production)
-# [security.authentication.api_keys]
-# "local-dev-key" = { user_id = "devuser", permissions = ["*"] }
-# [security.authentication.jwt]
-# enabled = false
-# secret = "change-me"
-# access_token_expiration_minutes = 60
-# refresh_token_expiration_days = 7
-# issuer = "proximadb"
-# audience = "proximadb-clients"
-# algorithm = "HS256"
-# [security.authentication.sso]
-# enabled = false
-# providers = []
+[security]
+enabled = false  # Enable for production
+mode = "development"  # development | production | enterprise
+
+[security.authentication]
+enabled = false
+methods = ["api_key"]
+require_authentication = false
+default_session_timeout_minutes = 60
+
+[security.authentication.api_keys]
+"dev-key" = { user_id = "devuser", permissions = ["*"], ip_restrictions = [] }
+
+[security.authentication.jwt]
+enabled = false
+secret = "dev-secret-change-me"
+access_token_expiration_minutes = 60
+refresh_token_expiration_days = 7
+issuer = "proximadb"
+audience = "proximadb-clients"
+algorithm = "HS256"
+
+[security.authentication.sso]
+enabled = false
+providers = []
+token_cache_ttl_minutes = 60
+
+[security.rbac]
+enabled = false
+enable_field_level_permissions = false
+enable_audit_logging = false
+default_deny = false
+cache_permissions = true
+permission_cache_ttl_minutes = 60
+
+[security.audit]
+enable_audit_logging = false
+encryption_enabled = false
+retention_days = 30
+enable_real_time_alerts = false
+compliance_frameworks = []
+
+[security.audit.storage_backend]
+File = { directory = "/tmp/proximadb/audit" }
+
+[security.compliance]
+frameworks = []
+encryption_at_rest = false
+encryption_in_transit = false
+
+# ==============================================================================
+# TLS/mTLS Configuration
+# ==============================================================================
+# Enables encrypted connections and optional mutual TLS authentication.
+#
+# ## TLS Modes:
+# - Standard TLS: Server presents certificate, client validates server
+# - mTLS: Both server and client present certificates for mutual authentication
+#
+# ## Quick Setup:
+# 1. Development (auto-generated certs):
+#    - Set `auto_generate = true` and `enabled = true`
+#    - Certs will be created in data_dir/certs/
+#
+# 2. Production (existing certs):
+#    - Set `enabled = true`
+#    - Provide paths to cert_file, key_file
+#    - For mTLS, also provide ca_file and set require_client_certs = true
+#
+# ## Certificate Management:
+# ProximaDB includes built-in certificate generation using rcgen.
+# For production, use certificates from a proper CA (Let's Encrypt, etc.)
+
+[security.tls]
+# Enable TLS for all server endpoints (REST, gRPC, Arrow Flight)
+enabled = false
+# Server certificate file (PEM format)
+cert_file = ""
+# Server private key file (PEM format)
+key_file = ""
+# CA certificate file for mTLS client verification
+ca_file = ""
+# Require client certificates (enables mTLS mode)
+require_client_certificates = false
+# Auto-generate self-signed certificates for development
+# WARNING: Only use in development - self-signed certs should not be used in production
+auto_generate = false
+# Certificate validity period in days (for auto-generated certs)
+validity_days = 365
+# Days before expiration to trigger renewal warnings
+renewal_threshold_days = 30
+
+# Subject information for auto-generated certificates
+[security.tls.subject]
+common_name = "localhost"
+organization = "ProximaDB"
+organizational_unit = "Development"
+country = "US"
+state = ""
+locality = ""
+email = ""
+
+# Subject Alternative Names for auto-generated certificates
+# Required for browsers to accept the certificate
+[security.tls.san]
+dns_names = ["localhost", "proximadb", "*.local"]
+ip_addresses = ["127.0.0.1", "::1"]
+
+# mTLS (mutual TLS) authentication configuration
+# When enabled, clients must present valid certificates signed by the CA
+[security.mtls]
+# Enable mTLS authentication
+enabled = false
+# Allowed CN patterns for client certificates
+# Supports exact match and wildcards (*.example.com matches client.example.com)
+# Empty list = allow all valid certificates from trusted CA
+allowed_cn_patterns = []
+# Default roles assigned to mTLS authenticated users
+# These roles can be used for authorization decisions
+default_roles = ["reader"]
+# Reject expired client certificates
+reject_expired = true
+# Check certificate revocation (requires CRL/OCSP configuration)
+check_revocation = false
+
+# Map certificate CNs to user IDs
+# Useful for mapping service account certificates to specific identities
+# If CN is not in mapping, the CN itself is used as the user ID
+[security.mtls.cn_to_user_mapping]
+# "service-a.internal" = "service-account-a"
+# "admin.internal" = "admin-user"
+
+# ==============================================================================
+# Distributed Operations Configuration (Q3 2025)
+# ==============================================================================
+# Enables horizontal scaling through sharding and replication.
+# Set enabled = true for multi-node deployments.
+
+[distributed]
+# Enable distributed mode (multi-node cluster)
+enabled = false
+# Unique cluster identifier
+cluster_id = "proximadb-cluster"
+# Node ID (use environment variable for dynamic assignment)
+# node_id = "${NODE_ID}"
+
+[distributed.sharding]
+# Enable automatic sharding for collections
+enabled = true
+# Default number of shards per collection
+default_shard_count = 3
+# Minimum shards per collection
+min_shards = 1
+# Maximum shards per collection
+max_shards = 256
+# Enable automatic rebalancing
+auto_rebalance = true
+# Rebalance threshold (load imbalance percentage, 0.0-1.0)
+rebalance_threshold = 0.2
+# Maximum concurrent rebalance operations
+max_concurrent_rebalance = 2
+
+[distributed.replication]
+# Default replication factor for new collections
+default_factor = 2
+# Default consistency level: One, Quorum, All, LocalQuorum
+default_consistency = "Quorum"
+# Maximum replication lag in milliseconds
+max_lag_ms = 1000
+# Replication timeout in milliseconds
+timeout_ms = 5000
+# Enable async replication (eventual consistency)
+async_mode = false
+# Enable compression for replication traffic
+compression = true
+# Batch size for replication entries
+batch_size = 100
+
+[distributed.routing]
+# Load balancing strategy: RoundRobin, LeastLoaded, LeastLatency, Random, WeightedRoundRobin
+load_balancing = "RoundRobin"
+# Enable read replicas for load distribution
+enable_read_replicas = true
+# Maximum retries for failed requests
+max_retries = 3
+# Routing decision timeout in milliseconds
+timeout_ms = 100
+# Enable sticky sessions for consistency
+sticky_sessions = false
+# Enable locality-aware routing (prefer local nodes)
+locality_aware = true
+
+[distributed.consensus]
+# Consensus algorithm: raft (default)
+algorithm = "raft"
+# Election timeout in milliseconds
+election_timeout_ms = 1000
+# Heartbeat interval in milliseconds
+heartbeat_interval_ms = 150
+# Snapshot interval (number of log entries)
+snapshot_interval = 10000
+# External etcd endpoints (optional, for etcd-based consensus)
+# etcd_endpoints = ["localhost:2379"]
+
+[distributed.nodes]
+# Seed nodes for cluster discovery
+# seed_nodes = ["node1:5679", "node2:5679", "node3:5679"]
+# Advertise address for this node
+# advertise_addr = "127.0.0.1:5679"
+
+# Node health check configuration
+[distributed.health]
+# Health check interval in seconds
+check_interval_seconds = 5
+# Timeout for health checks in milliseconds
+timeout_ms = 2000
+# Number of failed checks before marking node unhealthy
+failure_threshold = 3
+# Enable automatic node removal after sustained failures
+auto_remove_failed = false
+# Time before removing failed node (seconds)
+removal_delay_seconds = 300

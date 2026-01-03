@@ -188,32 +188,17 @@ pub enum PropertyProjection {
     /// Simple variable (e.g., RETURN n)
     Variable(String),
     /// Property access (e.g., RETURN n.name)
-    Property {
-        variable: String,
-        property: String,
-    },
+    Property { variable: String, property: String },
     /// COUNT(*) aggregation
     Count,
     /// SUM(variable.property) aggregation
-    Sum {
-        variable: String,
-        property: String,
-    },
+    Sum { variable: String, property: String },
     /// AVG(variable.property) aggregation
-    Avg {
-        variable: String,
-        property: String,
-    },
+    Avg { variable: String, property: String },
     /// MIN(variable.property) aggregation
-    Min {
-        variable: String,
-        property: String,
-    },
+    Min { variable: String, property: String },
     /// MAX(variable.property) aggregation
-    Max {
-        variable: String,
-        property: String,
-    },
+    Max { variable: String, property: String },
 }
 
 /// Order by specification
@@ -259,4 +244,366 @@ pub struct MatchResult {
 pub struct FoundPath {
     pub elements: Vec<PathElement>,
     pub length: u32,
+}
+
+// ==================== Mutation Operation Types ====================
+
+/// A complete Cypher query with all clauses
+#[derive(Debug, Clone)]
+pub struct CypherQuery {
+    /// Reading clauses (MATCH, OPTIONAL MATCH)
+    pub reading_clauses: Vec<ReadingClause>,
+    /// Updating clauses (CREATE, DELETE, SET, REMOVE, MERGE)
+    pub updating_clauses: Vec<UpdatingClause>,
+    /// WITH clauses for intermediate projections
+    pub with_clauses: Vec<WithClause>,
+    /// Final RETURN specification (optional for update-only queries)
+    pub return_spec: Option<ReturnSpec>,
+}
+
+/// Reading clause types
+#[derive(Debug, Clone)]
+pub enum ReadingClause {
+    /// Standard MATCH clause
+    Match {
+        pattern: MatchPattern,
+        optional: bool,
+    },
+    /// UNWIND clause for list expansion
+    Unwind {
+        expression: String,
+        variable: String,
+    },
+    /// CALL clause for procedure calls
+    Call {
+        procedure: String,
+        arguments: Vec<serde_json::Value>,
+        yield_items: Vec<String>,
+    },
+}
+
+/// Match pattern (nodes and edges together)
+#[derive(Debug, Clone)]
+pub struct MatchPattern {
+    /// Node patterns
+    pub nodes: Vec<NodePattern>,
+    /// Edge patterns
+    pub edges: Vec<EdgePattern>,
+    /// Path patterns
+    pub paths: Vec<PathPattern>,
+    /// WHERE clause for this MATCH
+    pub where_clause: Option<WhereClause>,
+}
+
+/// Updating clause types
+#[derive(Debug, Clone)]
+pub enum UpdatingClause {
+    /// CREATE clause for creating nodes/edges
+    Create(CreateClause),
+    /// DELETE clause for removing nodes/edges
+    Delete(DeleteClause),
+    /// SET clause for updating properties
+    Set(SetClause),
+    /// REMOVE clause for removing properties/labels
+    Remove(RemoveClause),
+    /// MERGE clause for create-if-not-exists
+    Merge(MergeClause),
+    /// FOREACH clause for iteration
+    ForEach(ForEachClause),
+}
+
+/// CREATE clause for creating nodes and relationships
+#[derive(Debug, Clone)]
+pub struct CreateClause {
+    /// Nodes to create
+    pub nodes: Vec<CreateNodeSpec>,
+    /// Edges to create
+    pub edges: Vec<CreateEdgeSpec>,
+}
+
+/// Specification for creating a node
+#[derive(Debug, Clone)]
+pub struct CreateNodeSpec {
+    /// Variable name for the created node
+    pub variable: Option<String>,
+    /// Labels for the new node
+    pub labels: Vec<String>,
+    /// Properties for the new node
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+/// Specification for creating an edge
+#[derive(Debug, Clone)]
+pub struct CreateEdgeSpec {
+    /// Variable name for the created edge
+    pub variable: Option<String>,
+    /// Source node variable
+    pub from_variable: String,
+    /// Target node variable
+    pub to_variable: String,
+    /// Edge type
+    pub edge_type: String,
+    /// Properties for the new edge
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+/// DELETE clause for removing nodes and relationships
+#[derive(Debug, Clone)]
+pub struct DeleteClause {
+    /// Variables to delete
+    pub variables: Vec<String>,
+    /// Whether to use DETACH DELETE (delete edges too)
+    pub detach: bool,
+}
+
+/// SET clause for updating properties
+#[derive(Debug, Clone)]
+pub struct SetClause {
+    /// Property updates
+    pub items: Vec<SetItem>,
+}
+
+/// Individual SET item
+#[derive(Debug, Clone)]
+pub enum SetItem {
+    /// Set a single property: SET n.name = 'Alice'
+    Property {
+        variable: String,
+        property: String,
+        value: serde_json::Value,
+    },
+    /// Set all properties: SET n = {name: 'Alice', age: 30}
+    AllProperties {
+        variable: String,
+        properties: HashMap<String, serde_json::Value>,
+    },
+    /// Add/merge properties: SET n += {age: 31}
+    MergeProperties {
+        variable: String,
+        properties: HashMap<String, serde_json::Value>,
+    },
+    /// Add label: SET n:NewLabel
+    AddLabel { variable: String, label: String },
+}
+
+/// REMOVE clause for removing properties and labels
+#[derive(Debug, Clone)]
+pub struct RemoveClause {
+    /// Items to remove
+    pub items: Vec<RemoveItem>,
+}
+
+/// Individual REMOVE item
+#[derive(Debug, Clone)]
+pub enum RemoveItem {
+    /// Remove a property: REMOVE n.property
+    Property { variable: String, property: String },
+    /// Remove a label: REMOVE n:Label
+    Label { variable: String, label: String },
+}
+
+/// MERGE clause for create-if-not-exists pattern
+#[derive(Debug, Clone)]
+pub struct MergeClause {
+    /// Pattern to match or create
+    pub pattern: MatchPattern,
+    /// Actions to perform when creating
+    pub on_create: Option<SetClause>,
+    /// Actions to perform when matching existing
+    pub on_match: Option<SetClause>,
+}
+
+/// FOREACH clause for iteration
+#[derive(Debug, Clone)]
+pub struct ForEachClause {
+    /// Variable name for iteration
+    pub variable: String,
+    /// Expression to iterate over
+    pub expression: String,
+    /// Updating clauses to apply
+    pub updating_clauses: Vec<UpdatingClause>,
+}
+
+/// WITH clause for intermediate projections
+#[derive(Debug, Clone)]
+pub struct WithClause {
+    /// Projection specification (same as RETURN)
+    pub projections: Vec<(String, PropertyProjection)>,
+    /// Whether to use DISTINCT
+    pub distinct: bool,
+    /// ORDER BY specifications
+    pub order_by: Vec<(String, bool)>,
+    /// LIMIT
+    pub limit: Option<usize>,
+    /// SKIP
+    pub skip: Option<usize>,
+    /// WHERE clause for filtering after WITH
+    pub where_clause: Option<WhereClause>,
+}
+
+// ==================== Query Builder Helpers ====================
+
+impl CypherQuery {
+    /// Create a new empty query
+    pub fn new() -> Self {
+        Self {
+            reading_clauses: Vec::new(),
+            updating_clauses: Vec::new(),
+            with_clauses: Vec::new(),
+            return_spec: None,
+        }
+    }
+
+    /// Check if this is a read-only query
+    pub fn is_read_only(&self) -> bool {
+        self.updating_clauses.is_empty()
+    }
+
+    /// Check if this query has any MATCH clauses
+    pub fn has_match(&self) -> bool {
+        self.reading_clauses
+            .iter()
+            .any(|c| matches!(c, ReadingClause::Match { .. }))
+    }
+
+    /// Check if this query has any CREATE clauses
+    pub fn has_create(&self) -> bool {
+        self.updating_clauses
+            .iter()
+            .any(|c| matches!(c, UpdatingClause::Create(_)))
+    }
+
+    /// Check if this query has any DELETE clauses
+    pub fn has_delete(&self) -> bool {
+        self.updating_clauses
+            .iter()
+            .any(|c| matches!(c, UpdatingClause::Delete(_)))
+    }
+
+    /// Check if this query has any MERGE clauses
+    pub fn has_merge(&self) -> bool {
+        self.updating_clauses
+            .iter()
+            .any(|c| matches!(c, UpdatingClause::Merge(_)))
+    }
+}
+
+impl Default for CypherQuery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CreateClause {
+    /// Create a new empty CREATE clause
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+
+    /// Add a node to create
+    pub fn add_node(mut self, node: CreateNodeSpec) -> Self {
+        self.nodes.push(node);
+        self
+    }
+
+    /// Add an edge to create
+    pub fn add_edge(mut self, edge: CreateEdgeSpec) -> Self {
+        self.edges.push(edge);
+        self
+    }
+}
+
+impl Default for CreateClause {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DeleteClause {
+    /// Create a new DELETE clause
+    pub fn new(variables: Vec<String>) -> Self {
+        Self {
+            variables,
+            detach: false,
+        }
+    }
+
+    /// Create a DETACH DELETE clause
+    pub fn detach(variables: Vec<String>) -> Self {
+        Self {
+            variables,
+            detach: true,
+        }
+    }
+}
+
+impl SetClause {
+    /// Create a new empty SET clause
+    pub fn new() -> Self {
+        Self { items: Vec::new() }
+    }
+
+    /// Add a property set
+    pub fn set_property(
+        mut self,
+        variable: &str,
+        property: &str,
+        value: serde_json::Value,
+    ) -> Self {
+        self.items.push(SetItem::Property {
+            variable: variable.to_string(),
+            property: property.to_string(),
+            value,
+        });
+        self
+    }
+
+    /// Add a label
+    pub fn add_label(mut self, variable: &str, label: &str) -> Self {
+        self.items.push(SetItem::AddLabel {
+            variable: variable.to_string(),
+            label: label.to_string(),
+        });
+        self
+    }
+}
+
+impl Default for SetClause {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RemoveClause {
+    /// Create a new empty REMOVE clause
+    pub fn new() -> Self {
+        Self { items: Vec::new() }
+    }
+
+    /// Remove a property
+    pub fn remove_property(mut self, variable: &str, property: &str) -> Self {
+        self.items.push(RemoveItem::Property {
+            variable: variable.to_string(),
+            property: property.to_string(),
+        });
+        self
+    }
+
+    /// Remove a label
+    pub fn remove_label(mut self, variable: &str, label: &str) -> Self {
+        self.items.push(RemoveItem::Label {
+            variable: variable.to_string(),
+            label: label.to_string(),
+        });
+        self
+    }
+}
+
+impl Default for RemoveClause {
+    fn default() -> Self {
+        Self::new()
+    }
 }

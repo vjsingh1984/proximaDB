@@ -219,7 +219,7 @@
 //! 4. Background threads handle compaction asynchronously
 
 // bloom_filter now in core module for unified implementation
-use crate::core::bloom::{self as bloom_filter, BloomFilterStrategy};
+use crate::core::bloom as bloom_filter;
 pub mod compaction;
 pub mod decompression_cache;
 pub mod error;
@@ -238,6 +238,7 @@ pub mod unified_reader;
 pub mod writer;
 
 // New modular structure
+pub mod block_format;
 pub mod blocks;
 #[allow(dead_code)]
 mod blocks_archive; // Legacy types preserved for reference
@@ -246,11 +247,12 @@ pub mod collections;
 pub mod core;
 pub mod flush;
 pub mod manifest;
-pub mod search;
-pub mod trait_impl;
-pub mod utils;
-pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
+pub mod progressive_stages; // ISP-compliant progressive search stages
+pub mod search;
+pub mod tiering_integration;
+pub mod trait_impl;
+pub mod utils; // Tiered storage integration (opt-in)
 
 // Test modules
 #[cfg(test)]
@@ -275,6 +277,9 @@ pub use flush::{FlushCoordinator, FlushOperations, FlushOptimizer, SortStats};
 pub use search::{SearchCoordinator, SearchOperations, SearchOptimizer};
 pub use utils::{MemoryEstimate, SortingStats, SstableFileInfo, SstableFileUtils};
 
+// Tiering integration exports (opt-in feature)
+pub use tiering_integration::{SstTieringConfig, SstTieringIntegration, TieringIntegrationStatus};
+
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::{SstConfig, VectorRecord};
@@ -284,7 +289,6 @@ use crate::core::search::json_value_serde;
 use crate::core::compression::CompressionAlgorithm;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
 // SortingStats now comes from utils module
-use crate::storage::persistence::filesystem::FileSystem;
 // Unified search engine removed - using direct search methods
 // MetadataItem is part of VectorRecord proto
 use serde::{Deserialize, Serialize};
@@ -634,13 +638,22 @@ pub struct SstableHeader {
     // Stores the centroid (mean vector) of all vectors in this SST file
     // Used for partition-aware search to skip irrelevant SST files
     #[serde(default)]
-    pub centroid: Option<Vec<f32>>,              // Centroid vector (mean of all vectors)
+    pub centroid: Option<Vec<f32>>, // Centroid vector (mean of all vectors)
     #[serde(default)]
-    pub centroid_distance_sum: Option<f32>,      // Sum of distances to centroid (for variance)
+    pub centroid_distance_sum: Option<f32>, // Sum of distances to centroid (for variance)
     #[serde(default)]
-    pub min_distance_to_centroid: Option<f32>,   // Minimum distance from any vector to centroid
+    pub min_distance_to_centroid: Option<f32>, // Minimum distance from any vector to centroid
     #[serde(default)]
-    pub max_distance_to_centroid: Option<f32>,   // Maximum distance from any vector to centroid
+    pub max_distance_to_centroid: Option<f32>, // Maximum distance from any vector to centroid
+
+    // NEW: ProximaSchema integration for compute engine compatibility
+    // Schema reference for DataFusion/Spark/Trino integration
+    #[serde(default)]
+    pub schema_id: Option<String>, // Reference to schema in SchemaRegistry
+    #[serde(default)]
+    pub schema_version: Option<u32>, // Schema version for compatibility checking
+    #[serde(default)]
+    pub schema_fingerprint: Option<u64>, // Fast schema comparison (xxhash64)
 }
 
 // SST compression now uses unified_compression::CompressionAlgorithm directly
@@ -686,10 +699,7 @@ pub fn fp16_to_fp32(fp16_values: &[u16]) -> Vec<f32> {
 
 /// Get centroid in FP32 format, converting from FP16 if needed
 /// Prefers FP16 for storage efficiency, falls back to FP32 for backward compatibility
-pub fn get_centroid_fp32(
-    fp16_centroid: &Option<Vec<u16>>,
-    fp32_centroid: &[f32],
-) -> Vec<f32> {
+pub fn get_centroid_fp32(fp16_centroid: &Option<Vec<u16>>, fp32_centroid: &[f32]) -> Vec<f32> {
     match fp16_centroid {
         Some(fp16) => fp16_to_fp32(fp16),
         None => fp32_centroid.to_vec(),
@@ -733,8 +743,9 @@ pub struct IndexEntry {
     /// Z-Order code (Morton code) for this block's centroid after PCA projection
     /// Enables efficient spatial range queries and pruning (supports up to 64 PCA dims)
     #[serde(default)]
-    pub zorder_code: Option<crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode>,
-
+    pub zorder_code: Option<
+        crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode,
+    >,
     // REMOVED: compression_ratio - can be calculated on-demand from size and DataBlock.uncompressed_size
 }
 
@@ -774,7 +785,10 @@ impl BPlusTreeIndex {
 
         for (i, chunk) in entries.chunks(fanout).enumerate() {
             let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
-            let end_key = chunk.last().map(|e| e.key.clone()).unwrap_or_else(|| start_key.clone());
+            let end_key = chunk
+                .last()
+                .map(|e| e.key.clone())
+                .unwrap_or_else(|| start_key.clone());
             leaves.push(BPlusLeaf {
                 start_key,
                 end_key,
@@ -840,7 +854,7 @@ impl BPlusTreeIndex {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstableIndex {
     pub entries: Vec<IndexEntry>,
-    pub metadata_stats: HashMap<String, MetadataStats>, 
+    pub metadata_stats: HashMap<String, MetadataStats>,
     pub vector_count: usize,
     pub min_key: String,
     pub max_key: String,
@@ -865,22 +879,22 @@ impl SstableIndex {
     pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
         use std::io::Write;
         let mut buffer = Vec::new();
-        
+
         // Magic header for version 1
-        buffer.write_all(b"IDX1")?; 
-        
+        buffer.write_all(b"IDX1")?;
+
         // Min/Max keys
         let min_bytes = self.min_key.as_bytes();
         buffer.write_all(&(min_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(min_bytes)?;
-        
+
         let max_bytes = self.max_key.as_bytes();
         buffer.write_all(&(max_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(max_bytes)?;
-        
+
         // Vector count
         buffer.write_all(&(self.vector_count as u64).to_le_bytes())?;
-        
+
         // Entries
         buffer.write_all(&(self.entries.len() as u64).to_le_bytes())?;
         for entry in &self.entries {
@@ -889,7 +903,7 @@ impl SstableIndex {
             buffer.write_all(&(entry_bytes.len() as u32).to_le_bytes())?;
             buffer.write_all(&entry_bytes)?;
         }
-        
+
         // B+ Tree (safe to use bincode here as it contains no JSON Values)
         match &self.bplus_tree {
             Some(tree) => {
@@ -900,10 +914,10 @@ impl SstableIndex {
             }
             None => buffer.write_all(&0u8.to_le_bytes())?,
         }
-        
+
         // Metadata Stats (placeholder - writing 0 count)
-        buffer.write_all(&0u32.to_le_bytes())?; 
-        
+        buffer.write_all(&0u32.to_le_bytes())?;
+
         Ok(buffer)
     }
 
@@ -911,15 +925,18 @@ impl SstableIndex {
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
-        
+
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
-        
+
         // Check magic header
         if &magic != b"IDX1" {
-             return Err(anyhow::anyhow!("Invalid SstableIndex format: expected IDX1, got {:?}", std::str::from_utf8(&magic).unwrap_or("????")));
+            return Err(anyhow::anyhow!(
+                "Invalid SstableIndex format: expected IDX1, got {:?}",
+                std::str::from_utf8(&magic).unwrap_or("????")
+            ));
         }
-        
+
         // Min Key
         let mut len_buf = [0u8; 4];
         cursor.read_exact(&mut len_buf)?;
@@ -934,56 +951,56 @@ impl SstableIndex {
         let mut max_bytes = vec![0u8; max_len];
         cursor.read_exact(&mut max_bytes)?;
         let max_key = String::from_utf8(max_bytes)?;
-        
+
         // Vector Count
         let mut u64_buf = [0u8; 8];
         cursor.read_exact(&mut u64_buf)?;
         let vector_count = u64::from_le_bytes(u64_buf) as usize;
-        
+
         // Entries
         cursor.read_exact(&mut u64_buf)?;
         let entries_count = u64::from_le_bytes(u64_buf) as usize;
         let mut entries = Vec::with_capacity(entries_count);
-        
+
         for _ in 0..entries_count {
-             cursor.read_exact(&mut len_buf)?;
-             let entry_len = u32::from_le_bytes(len_buf) as usize;
-             
-             let start = cursor.position() as usize;
-             if start + entry_len > data.len() {
-                 return Err(anyhow::anyhow!("Truncated index entry"));
-             }
-             
-             let entry_data = &data[start..start+entry_len];
-             entries.push(IndexEntry::deserialize(entry_data)?);
-             
-             cursor.set_position((start + entry_len) as u64);
+            cursor.read_exact(&mut len_buf)?;
+            let entry_len = u32::from_le_bytes(len_buf) as usize;
+
+            let start = cursor.position() as usize;
+            if start + entry_len > data.len() {
+                return Err(anyhow::anyhow!("Truncated index entry"));
+            }
+
+            let entry_data = &data[start..start + entry_len];
+            entries.push(IndexEntry::deserialize(entry_data)?);
+
+            cursor.set_position((start + entry_len) as u64);
         }
-        
+
         // B+ Tree
         let mut bool_buf = [0u8; 1];
         cursor.read_exact(&mut bool_buf)?;
         let bplus_tree = if bool_buf[0] == 1 {
             cursor.read_exact(&mut len_buf)?;
             let tree_len = u32::from_le_bytes(len_buf) as usize;
-            
+
             let start = cursor.position() as usize;
             if start + tree_len > data.len() {
                 return Err(anyhow::anyhow!("Truncated B+ tree data"));
             }
-            
-            let tree = bincode::deserialize(&data[start..start+tree_len])?;
+
+            let tree = bincode::deserialize(&data[start..start + tree_len])?;
             cursor.set_position((start + tree_len) as u64);
             Some(tree)
         } else {
             None
         };
-        
+
         // Metadata Stats (consume count)
         if cursor.position() < data.len() as u64 {
             let _ = cursor.read_exact(&mut len_buf);
         }
-        
+
         Ok(Self {
             entries,
             metadata_stats: HashMap::new(),
@@ -1276,7 +1293,7 @@ impl IndexEntry {
             block_key_bloom,
             block_metadata_bloom,
             vector_format,
-            zorder_code: None,  // Deserialized separately if present
+            zorder_code: None, // Deserialized separately if present
         })
     }
 }
@@ -1510,8 +1527,7 @@ mod compression_helpers {
 /// Target: 2000-2500 vectors per block
 pub fn optimal_block_size(vector_dim: usize) -> usize {
     crate::storage::engines::core::formats::proximablocks::utils::recommend_block_size_for_dimension(
-        vector_dim,
-        200, // metadata overhead estimate retained from previous logic
+        vector_dim, 200, // metadata overhead estimate retained from previous logic
     )
 }
 
@@ -1523,11 +1539,11 @@ pub fn optimal_block_size(vector_dim: usize) -> usize {
 // SST-specific utility functions for ProximaDataBlock
 mod block_utils {
     use super::*;
-    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
     use crate::core::bloom::{
-        adaptive::AdaptiveBloomConfig, factory::BloomFilterFactory, BloomFilterConfig,
-        BloomFilterStats, BloomFilterStrategy, SstableBloomFilter,
+        BloomFilterStats, SstableBloomFilter, adaptive::AdaptiveBloomConfig,
+        factory::BloomFilterFactory,
     };
+    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     /// Create a new ProximaDataBlock for SST usage with automatic bloom filter generation
     pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> ProximaDataBlock {

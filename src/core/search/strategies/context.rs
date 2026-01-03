@@ -77,7 +77,8 @@ pub trait SearchContext: Send + Sync {
 
     /// Calculate effective nprobe for approximate search
     fn effective_nprobe(&self, num_partitions: usize, dataset_size: usize) -> usize {
-        self.search_mode().effective_nprobe(num_partitions, dataset_size)
+        self.search_mode()
+            .effective_nprobe(num_partitions, dataset_size)
     }
 }
 
@@ -119,11 +120,7 @@ impl SearchContextImpl {
     }
 
     /// Create a new context with explicit parameters
-    pub fn new(
-        query_vector: Vec<f32>,
-        top_k: usize,
-        distance_metric: DistanceMetric,
-    ) -> Self {
+    pub fn new(query_vector: Vec<f32>, top_k: usize, distance_metric: DistanceMetric) -> Self {
         Self {
             query_vector,
             top_k,
@@ -227,11 +224,7 @@ mod tests {
 
     #[test]
     fn test_search_context_creation() {
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 2.0, 3.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let ctx = SearchContextImpl::new(vec![1.0, 2.0, 3.0], 10, DistanceMetric::Cosine);
 
         assert_eq!(ctx.query_vector().len(), 3);
         assert_eq!(ctx.top_k(), 10);
@@ -241,14 +234,10 @@ mod tests {
 
     #[test]
     fn test_search_context_builder() {
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 2.0, 3.0],
-            10,
-            DistanceMetric::Euclidean,
-        )
-        .with_search_mode(SearchMode::approximate())
-        .with_accuracy_threshold(0.9)
-        .with_timeout_ms(1000);
+        let ctx = SearchContextImpl::new(vec![1.0, 2.0, 3.0], 10, DistanceMetric::Euclidean)
+            .with_search_mode(SearchMode::approximate())
+            .with_accuracy_threshold(0.9)
+            .with_timeout_ms(1000);
 
         assert!(!ctx.is_exact_mode());
         assert_eq!(ctx.accuracy_threshold(), 0.9);
@@ -257,22 +246,14 @@ mod tests {
 
     #[test]
     fn test_effective_nprobe() {
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 2.0, 3.0],
-            10,
-            DistanceMetric::Cosine,
-        )
-        .with_search_mode(SearchMode::Approximate { nprobe: Some(5) });
+        let ctx = SearchContextImpl::new(vec![1.0, 2.0, 3.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Approximate { nprobe: Some(5) });
 
         // With explicit nprobe
         assert_eq!(ctx.effective_nprobe(100, 10000), 5);
 
         // With exact mode
-        let exact_ctx = SearchContextImpl::new(
-            vec![1.0, 2.0, 3.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let exact_ctx = SearchContextImpl::new(vec![1.0, 2.0, 3.0], 10, DistanceMetric::Cosine);
         assert_eq!(exact_ctx.effective_nprobe(100, 10000), 100);
     }
 }

@@ -407,19 +407,19 @@ impl EntityStore for ProximaEntityStore {
                 Option<TemporalInfo>,
             )>(&bytes)
             {
-                Ok((typed_metadata, flexible_metadata, provenance, temporal)) => {
-                    EntityHeader {
-                        typed_metadata,
-                        flexible_metadata,
-                        provenance,
-                        temporal,
-                    }
-                }
+                Ok((typed_metadata, flexible_metadata, provenance, temporal)) => EntityHeader {
+                    typed_metadata,
+                    flexible_metadata,
+                    provenance,
+                    temporal,
+                },
                 Err(_e) => {
                     // If deserialization fails, check test_entity_headers in test mode
                     #[cfg(test)]
                     {
-                        if let Some(test_header) = self.test_entity_headers.read().unwrap().get(&header_key) {
+                        if let Some(test_header) =
+                            self.test_entity_headers.read().unwrap().get(&header_key)
+                        {
                             test_header.clone()
                         } else {
                             EntityHeader {
@@ -487,7 +487,10 @@ impl EntityStore for ProximaEntityStore {
 
             #[cfg(test)]
             {
-                self.test_entity_headers.write().unwrap().remove(&header_key);
+                self.test_entity_headers
+                    .write()
+                    .unwrap()
+                    .remove(&header_key);
             }
 
             // Remove from KV store
@@ -861,7 +864,7 @@ impl ProximaEntityStore {
         #[cfg(not(test))]
         let total_count = self.headers.read().unwrap().len();
 
-        let num_batches = (total_count + batch_size - 1) / batch_size;
+        let num_batches = total_count.div_ceil(batch_size);
 
         stream::iter(0..num_batches).then(move |batch_idx| async move {
             let start_idx = batch_idx * batch_size;
@@ -922,7 +925,9 @@ impl ProximaEntityStore {
 
             #[cfg(not(test))]
             {
-                for (entity_id, _header_bytes) in self.headers.read().unwrap().iter().skip(start_idx) {
+                for (entity_id, _header_bytes) in
+                    self.headers.read().unwrap().iter().skip(start_idx)
+                {
                     if count >= batch_size {
                         break;
                     }

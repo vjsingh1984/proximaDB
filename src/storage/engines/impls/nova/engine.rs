@@ -419,7 +419,9 @@ impl NovaEngine {
                         Ok(zm) => {
                             tracing::debug!(
                                 "[NOVA] Zone maps computed for file {}: {} dimensions, {} vectors",
-                                file_path.name, dimension, vectors.len()
+                                file_path.name,
+                                dimension,
+                                vectors.len()
                             );
                             Some(zm)
                         }
@@ -907,8 +909,8 @@ impl NovaEngine {
         records: &[VectorRecord],
         schema: &Arc<arrow_schema::Schema>,
     ) -> Result<arrow_array::RecordBatch> {
-        use arrow_array::builder::{FixedSizeBinaryBuilder, FixedSizeListBuilder, Int8Builder};
         use arrow_array::builder::*;
+        use arrow_array::builder::{FixedSizeBinaryBuilder, FixedSizeListBuilder, Int8Builder};
         use std::sync::Arc;
 
         // Build arrays for each field
@@ -1429,9 +1431,9 @@ impl UnifiedStorageEngine for NovaEngine {
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let collection_id = ctx.collection_id();
-        let query_vector = ctx.query_vector().ok_or_else(|| {
-            anyhow!("Query vector required for search")
-        })?;
+        let query_vector = ctx
+            .query_vector()
+            .ok_or_else(|| anyhow!("Query vector required for search"))?;
         let k = ctx.top_k();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
 
@@ -1685,7 +1687,9 @@ impl NovaEngine {
     /// Returns the optional AXIS manager for HNSW/IVF-based search.
     /// When available, AXIS provides O(log N) approximate nearest neighbor search
     /// that is significantly faster than progressive columnar search.
-    pub fn axis_manager(&self) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
         self.axis_manager.as_ref()
     }
 
@@ -1693,7 +1697,9 @@ impl NovaEngine {
     ///
     /// This helper converts our internal FilterExpression type to AXIS's
     /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(filter_expression: Option<&crate::core::search::FilterExpression>) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+    fn convert_filter_to_axis(
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
         use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
 
@@ -1755,7 +1761,6 @@ impl NovaEngine {
 
 // Additional helper methods for NovaEngine
 impl NovaEngine {
-
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
         &self,

@@ -31,11 +31,7 @@ mod helix_cold_search_recall {
     const TOP_K: usize = 10;
 
     /// Create a collection config for testing
-    fn create_collection(
-        collection_id: &str,
-        temp_dir: &TempDir,
-        engine_type: i32,
-    ) -> Collection {
+    fn create_collection(collection_id: &str, temp_dir: &TempDir, engine_type: i32) -> Collection {
         Collection {
             id: collection_id.to_string(),
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
@@ -86,7 +82,10 @@ mod helix_cold_search_recall {
     }
 
     /// Calculate recall percentage - checks if expected_id is in results
-    fn check_found(results: &[proximadb::core::search::results::OptimizedSearchRecord], expected_id: &str) -> bool {
+    fn check_found(
+        results: &[proximadb::core::search::results::OptimizedSearchRecord],
+        expected_id: &str,
+    ) -> bool {
         results.iter().any(|r| r.id == expected_id)
     }
 
@@ -140,7 +139,8 @@ mod helix_cold_search_recall {
         let collection_id = "cold_search_test";
 
         // Generate deterministic test vectors
-        let vectors = vector_generator::random_seeded_with_prefix("vec", vector_count, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", vector_count, DIMENSION, 42);
 
         // Store query vectors and expected IDs (first 10 vectors)
         let query_vectors: Vec<Vec<f32>> = vectors[0..TOP_K.min(vector_count)]
@@ -195,7 +195,8 @@ mod helix_cold_search_recall {
             let collection_arc = Arc::new(collection.clone());
 
             for (i, query) in query_vectors.iter().enumerate() {
-                let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Exact);
+                let ctx =
+                    create_search_context(query.clone(), collection_arc.clone(), SearchMode::Exact);
                 let results = engine.search_vectors_unified(&ctx).await.unwrap();
 
                 if results.is_empty() {
@@ -214,7 +215,13 @@ mod helix_cold_search_recall {
             }
 
             // Calculate warm recall - check all queries
-            warm_recall = calculate_recall_multi(&engine, &query_vectors, &expected_ids, collection_arc.clone()).await;
+            warm_recall = calculate_recall_multi(
+                &engine,
+                &query_vectors,
+                &expected_ids,
+                collection_arc.clone(),
+            )
+            .await;
             eprintln!("\nWarm search recall: {:.1}%", warm_recall);
 
             // Engine drops here
@@ -231,7 +238,8 @@ mod helix_cold_search_recall {
         // the new engine can find the files
 
         for (i, query) in query_vectors.iter().enumerate() {
-            let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Exact);
+            let ctx =
+                create_search_context(query.clone(), collection_arc.clone(), SearchMode::Exact);
             let results = engine2.search_vectors_unified(&ctx).await.unwrap();
 
             if results.is_empty() {
@@ -249,7 +257,13 @@ mod helix_cold_search_recall {
             }
         }
 
-        let cold_recall = calculate_recall_multi(&engine2, &query_vectors, &expected_ids, collection_arc.clone()).await;
+        let cold_recall = calculate_recall_multi(
+            &engine2,
+            &query_vectors,
+            &expected_ids,
+            collection_arc.clone(),
+        )
+        .await;
         eprintln!("\nCold search recall: {:.1}%", cold_recall);
 
         // ========== Summary ==========
@@ -327,7 +341,12 @@ mod helix_cold_search_recall {
 
         eprintln!("Results: {} found", results.len());
         for (i, r) in results.iter().take(5).enumerate() {
-            eprintln!("  {}: id={}, similarity={:.4}", i, r.id, r.similarity.unwrap_or(0.0));
+            eprintln!(
+                "  {}: id={}, similarity={:.4}",
+                i,
+                r.id,
+                r.similarity.unwrap_or(0.0)
+            );
         }
 
         let found = results.iter().any(|r| r.id == expected_id);

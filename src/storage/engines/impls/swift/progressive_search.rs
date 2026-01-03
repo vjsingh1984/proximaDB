@@ -5,7 +5,6 @@ use anyhow::{Result, anyhow};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use super::{MetadataFilter, SwiftFile};
@@ -260,7 +259,7 @@ async fn phase1_binary_filtering(
     n_candidates: usize,
     filter: &Option<MetadataFilter>,
     threshold: f32,
-    quantization_engine: &StorageQuantizationEngine,
+    _quantization_engine: &StorageQuantizationEngine,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<Candidate>> {
     // Use binary quantization approach - create a simple binary representation
@@ -279,19 +278,21 @@ async fn phase1_binary_filtering(
     let metric = parse_distance_metric(&sst.header.distance_metric);
 
     // Apply AdaCurves pruning at superblock level (first-stage hierarchical pruning)
-    let superblock_indices = if let Some(filtered) = filter_superblocks_by_adacurve(query, &sst.superblocks) {
-        if filtered.len() < sst.superblocks.len() {
-            filtered
+    let superblock_indices =
+        if let Some(filtered) = filter_superblocks_by_adacurve(query, &sst.superblocks) {
+            if filtered.len() < sst.superblocks.len() {
+                filtered
+            } else {
+                (0..sst.superblocks.len()).collect()
+            }
         } else {
             (0..sst.superblocks.len()).collect()
-        }
-    } else {
-        (0..sst.superblocks.len()).collect()
-    };
+        };
 
     // Iterate only over filtered superblocks
     for sb_idx in superblock_indices {
         let superblock = &sst.superblocks[sb_idx];
+
         // Quick check with superblock signature
         let sb_binary = BinarySketch {
             bits: superblock.quantized_signature.clone(),
@@ -316,8 +317,9 @@ async fn phase1_binary_filtering(
                 }
             }
 
-            // Check each vector in block using binary sketches
+            // Check each vector in block using binary sketches or fallback to direct comparison
             if let Some(ref sketches) = block.quantized_vectors {
+                // Use binary sketches for fast filtering
                 for (v_idx, sketch) in sketches.iter().enumerate() {
                     let sketch_binary = BinarySketch {
                         bits: sketch.clone(),
@@ -337,6 +339,23 @@ async fn phase1_binary_filtering(
                         if candidates.len() > n_candidates {
                             candidates.pop();
                         }
+                    }
+                }
+            } else {
+                // Fallback: No quantized vectors, add all vectors as candidates
+                // This ensures search works even without quantization enabled
+                for v_idx in 0..block.records.len() {
+                    // When no quantization, use a low similarity score so all pass to next phase
+                    candidates.push(Candidate {
+                        superblock_idx: sb_idx as u32,
+                        block_idx: b_idx as u32,
+                        vector_idx: v_idx as u32,
+                        similarity: 0.0, // Will be refined in later phases
+                    });
+
+                    // Keep only top candidates
+                    if candidates.len() > n_candidates {
+                        candidates.pop();
                     }
                 }
             }
@@ -416,6 +435,19 @@ async fn phase2_int8_filtering(
                         }
                     }
                 }
+            } else {
+                // Fallback: No quantized vectors, pass all candidates through to Phase 3
+                // Use 0.0 similarity since we can't compute INT8 distance
+                candidates.push(Candidate {
+                    superblock_idx: sb_idx,
+                    block_idx: b_idx,
+                    vector_idx: v_idx as u32,
+                    similarity: 0.0,
+                });
+
+                if candidates.len() > n_candidates {
+                    candidates.pop();
+                }
             }
         }
     }
@@ -440,7 +472,7 @@ async fn phase3_pq_refinement(
 ) -> Result<Vec<Candidate>> {
     // Create distance computation engine for PQ operations
     // Note: Skip PQ distance table computation for now, use direct computation
-    let distance_table: Option<Vec<Vec<f32>>> =
+    let _distance_table: Option<Vec<Vec<f32>>> =
         if sst.header.quantization.pq_codebooks.unwrap_or(0) > 0 {
             // TODO: Implement proper PQ distance table computation
             None
@@ -456,7 +488,7 @@ async fn phase3_pq_refinement(
         .quantize_batch_with_level(&[query.to_vec()], UnifiedQuantizationLevel::int8())
         .await?;
 
-    let int8_query = if let Some(q) = quantized_query.first() {
+    let _int8_query = if let Some(q) = quantized_query.first() {
         if let Some(primary) = &q.primary {
             primary.data.iter().map(|&b| b as i8).collect::<Vec<_>>()
         } else {
@@ -509,6 +541,19 @@ async fn phase3_pq_refinement(
                         }
                     }
                 }
+            } else {
+                // Fallback: No quantized vectors, pass all candidates through to Phase 4
+                // Use 0.0 similarity since we can't compute PQ distance
+                candidates.push(Candidate {
+                    superblock_idx: sb_idx,
+                    block_idx: b_idx,
+                    vector_idx: v_idx as u32,
+                    similarity: 0.0,
+                });
+
+                if candidates.len() > n_candidates {
+                    candidates.pop();
+                }
             }
         }
     }
@@ -530,10 +575,10 @@ async fn phase4_full_precision(
     pq_candidates: Vec<Candidate>,
     top_k: usize,
     filter: Option<MetadataFilter>,
-    max_concurrent: usize,
+    _max_concurrent: usize,
 ) -> Result<Vec<VectorRecord>> {
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let mut handles = Vec::new();
+    let metric = parse_distance_metric(&sst.header.distance_metric);
+    let mut all_results = Vec::new();
 
     // Group by block for efficient loading
     let mut blocks_to_load = std::collections::HashMap::new();
@@ -544,42 +589,17 @@ async fn phase4_full_precision(
             .push(candidate.vector_idx);
     }
 
-    // Load blocks in parallel and compute full precision distances
+    // Process blocks synchronously (data is already in memory)
     for ((sb_idx, b_idx), vector_indices) in blocks_to_load {
-        let sem = semaphore.clone();
-        let query = query.to_vec();
-        let filter = filter.clone();
-        let distance_metric = sst.header.distance_metric.clone();
+        let block = &sst.superblocks[sb_idx as usize].blocks[b_idx as usize];
 
-        let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
-
-            // In real implementation, would load block from disk
-            // For now, we'll simulate with the in-memory block
-            let results = Vec::new();
-
-            // This would actually load the block
-            // let block = sst.load_block(sb_idx, b_idx).await?;
-
-            // Compute distances for vectors in this block
-            for v_idx in vector_indices {
-                // let record = &block.records[v_idx as usize];
-                // let compute = UnifiedDistanceCompute::new(distance_metric);
-                // let result = compute.calculate_distance(&query, &record.vector, &distance_metric);
-                // results.push((record.clone(), result.similarity));
+        for v_idx in vector_indices {
+            if let Some(record) = block.records.get(v_idx as usize) {
+                // Compute full precision distance
+                let distance = compute_distance(query, &record.vector, &metric);
+                all_results.push((record.clone(), distance));
             }
-
-            Ok::<Vec<(VectorRecord, f32)>, anyhow::Error>(results)
-        });
-
-        handles.push(handle);
-    }
-
-    // Collect all results
-    let mut all_results = Vec::new();
-    for handle in handles {
-        let block_results = handle.await??;
-        all_results.extend(block_results);
+        }
     }
 
     // Apply final metadata filter if needed
@@ -653,9 +673,9 @@ fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
     bits
 }
 
-fn block_matches_filter(block: &ProximaDataBlock, filter: &MetadataFilter) -> bool {
+fn block_matches_filter(block: &ProximaDataBlock, _filter: &MetadataFilter) -> bool {
     // Check block-level statistics against filter if available
-    if let Some(ref stats) = block.metadata_stats {
+    if let Some(ref _stats) = block.metadata_stats {
         // Convert BlockMetadataStats to expected format
         // For now, skip block-level filtering if stats format doesn't match
         // TODO: Properly convert BlockMetadataStats to HashMap<String, ColumnStats>
@@ -756,6 +776,53 @@ fn parse_distance_metric(name: &str) -> crate::compute::distance_computation::Di
     }
 }
 
+/// Compute distance between two vectors using the specified metric
+fn compute_distance(
+    a: &[f32],
+    b: &[f32],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+) -> f32 {
+    use crate::compute::distance_computation::DistanceMetric;
+
+    match metric {
+        DistanceMetric::Euclidean => a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| {
+                let diff = x - y;
+                diff * diff
+            })
+            .sum::<f32>()
+            .sqrt(),
+        DistanceMetric::Cosine => {
+            let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+            let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm_a > 0.0 && norm_b > 0.0 {
+                1.0 - (dot / (norm_a * norm_b))
+            } else {
+                1.0
+            }
+        }
+        DistanceMetric::DotProduct => -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>(),
+        DistanceMetric::Manhattan => a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum(),
+        DistanceMetric::Hamming => {
+            // Hamming distance for float vectors (count non-equal elements)
+            a.iter().zip(b.iter()).filter(|(x, y)| x != y).count() as f32
+        }
+        // Default to Euclidean for unspecified or other metrics
+        _ => a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| {
+                let diff = x - y;
+                diff * diff
+            })
+            .sum::<f32>()
+            .sqrt(),
+    }
+}
+
 // ============================================================================
 // AdaCurves Pruning Helper Functions
 // ============================================================================
@@ -771,12 +838,9 @@ fn parse_distance_metric(name: &str) -> crate::compute::distance_computation::Di
 ///
 /// # Returns
 /// AdaCurve code for the query, or None if insufficient data
-fn compute_query_adacurve_code(
-    query: &[f32],
-    superblocks: &[super::SuperBlock],
-) -> Option<u64> {
+fn compute_query_adacurve_code(query: &[f32], superblocks: &[super::SuperBlock]) -> Option<u64> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
-        IncrementalPCA, AdaCurve,
+        AdaCurve, IncrementalPCA,
     };
 
     if superblocks.is_empty() || query.is_empty() {
@@ -819,10 +883,7 @@ fn compute_query_adacurve_code(
     pca.finalize();
 
     // Transform centroids to PCA space for AdaCurve training
-    let pca_coords: Vec<Vec<f32>> = centroids
-        .iter()
-        .map(|c| pca.transform(c))
-        .collect();
+    let pca_coords: Vec<Vec<f32>> = centroids.iter().map(|c| pca.transform(c)).collect();
 
     // Train AdaCurve from PCA coords (same as during write)
     let num_segments = pca_coords.len().min(256).max(8);
@@ -944,7 +1005,9 @@ fn select_blocks_by_centroid(
 
     // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
     use crate::storage::engines::core::constants::pruning;
-    let min_blocks_threshold = prune.min_blocks_override.unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    let min_blocks_threshold = prune
+        .min_blocks_override
+        .unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
     if superblock.blocks.len() < min_blocks_threshold {
         tracing::debug!(
             "SWIFT block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
@@ -1018,7 +1081,9 @@ mod tests {
     use super::*;
     use crate::compute::UnifiedDistanceCompute;
     use crate::proto::proximadb_v1::DistanceMetric;
-    use crate::storage::engines::impls::swift::{SuperBlock, SwiftSuperBlockMetadata, SwiftSpecificData, ProximaBlockMetadata};
+    use crate::storage::engines::impls::swift::{
+        ProximaBlockMetadata, SuperBlock, SwiftSpecificData, SwiftSuperBlockMetadata,
+    };
 
     #[test]
     fn test_candidate_ordering() {
@@ -1112,7 +1177,12 @@ mod tests {
             blocks: Vec::new(),
             superblock_encoding_marker: 0,
             centroid: vec![],
-            block_centroids: vec![vec![0.1, 0.1], vec![3.0, 3.0], vec![0.2, 0.2], vec![6.0, 6.0]],
+            block_centroids: vec![
+                vec![0.1, 0.1],
+                vec![3.0, 3.0],
+                vec![0.2, 0.2],
+                vec![6.0, 6.0],
+            ],
             quantized_signature: Vec::new(),
             adacurve_code: None,
             block_centroids_fp16: None,
@@ -1229,7 +1299,11 @@ mod tests {
     // AdaCurves Pruning Tests
     // ========================================================================
 
-    fn create_test_superblock(id: usize, centroid: Vec<f32>, adacurve_code: Option<u64>) -> SuperBlock {
+    fn create_test_superblock(
+        id: usize,
+        centroid: Vec<f32>,
+        adacurve_code: Option<u64>,
+    ) -> SuperBlock {
         SuperBlock {
             superblock_id: id,
             name: format!("sb_{}", id),
@@ -1289,9 +1363,7 @@ mod tests {
 
     #[test]
     fn test_calculate_adacurve_epsilon_no_codes() {
-        let superblocks = vec![
-            create_test_superblock(0, vec![0.0, 0.0], None),
-        ];
+        let superblocks = vec![create_test_superblock(0, vec![0.0, 0.0], None)];
 
         let epsilon = calculate_adacurve_epsilon_superblock(&superblocks);
         assert_eq!(epsilon, u64::MAX, "Should return MAX for no codes");
@@ -1328,11 +1400,17 @@ mod tests {
         ];
 
         let filtered = filter_superblocks_by_adacurve(&query, &superblocks);
-        assert!(filtered.is_some(), "Should handle mix of coded/non-coded superblocks");
+        assert!(
+            filtered.is_some(),
+            "Should handle mix of coded/non-coded superblocks"
+        );
 
         let indices = filtered.unwrap();
         // Superblock without code should be included
-        assert!(indices.contains(&0), "Should include superblock without AdaCurve code");
+        assert!(
+            indices.contains(&0),
+            "Should include superblock without AdaCurve code"
+        );
     }
 
     #[test]
@@ -1342,9 +1420,9 @@ mod tests {
 
         // Create superblocks with varying distances
         let superblocks = vec![
-            create_test_superblock(0, vec![0.9, 0.9], Some(5000)),    // Close
+            create_test_superblock(0, vec![0.9, 0.9], Some(5000)), // Close
             create_test_superblock(1, vec![50.0, 50.0], Some(100000)), // Far
-            create_test_superblock(2, vec![1.1, 1.1], Some(5100)),    // Close
+            create_test_superblock(2, vec![1.1, 1.1], Some(5100)), // Close
         ];
 
         let filtered = filter_superblocks_by_adacurve(&query, &superblocks);
@@ -1353,7 +1431,10 @@ mod tests {
         let indices = filtered.unwrap();
         // Expect hierarchical pruning to keep nearby superblocks
         // The exact count depends on epsilon calculation, but should prune at least the far one
-        assert!(indices.len() < 3 || indices.len() == 3,
-            "Hierarchical pruning should work (got {} superblocks)", indices.len());
+        assert!(
+            indices.len() < 3 || indices.len() == 3,
+            "Hierarchical pruning should work (got {} superblocks)",
+            indices.len()
+        );
     }
 }

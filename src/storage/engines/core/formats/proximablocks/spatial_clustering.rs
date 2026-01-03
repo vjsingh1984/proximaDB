@@ -215,7 +215,10 @@ impl ZOrderEncoder {
     /// - 17-32 dims: 256-bit codes
     /// - 33-64 dims: 512-bit codes
     pub fn new(dimensions: usize, bits_per_dim: usize) -> Self {
-        assert!(dimensions > 0 && dimensions <= 64, "Dimensions must be 1-64");
+        assert!(
+            dimensions > 0 && dimensions <= 64,
+            "Dimensions must be 1-64"
+        );
         assert!(
             bits_per_dim > 0 && bits_per_dim <= 16,
             "Bits per dim must be 1-16"
@@ -573,7 +576,11 @@ impl ZOrderEncoder {
     ///
     /// Returns (min_code, max_code) that covers the query region.
     /// Blocks outside this range can be pruned.
-    pub fn range_for_box(&self, min_coords: &[f32], max_coords: &[f32]) -> (SpatialCode, SpatialCode) {
+    pub fn range_for_box(
+        &self,
+        min_coords: &[f32],
+        max_coords: &[f32],
+    ) -> (SpatialCode, SpatialCode) {
         let min_code = self.encode(min_coords);
         let max_code = self.encode(max_coords);
         (min_code, max_code)
@@ -645,8 +652,8 @@ impl AdaptivePcaConfig {
 /// Returns: (blocks, index_entries, zorder_codes) where zorder_codes[i]
 /// is the Z-Order code for index_entries[i] after clustering.
 pub fn cluster_blocks_pca_zorder<B, I, F>(
-    mut blocks: Vec<B>,
-    mut index_entries: Vec<I>,
+    blocks: Vec<B>,
+    index_entries: Vec<I>,
     get_centroid: F,
     target_dimensions: usize,
 ) -> (Vec<B>, Vec<I>, Vec<SpatialCode>)
@@ -982,8 +989,8 @@ fn optimize_traversal_order(control_points: &[Vec<f32>]) -> Vec<usize> {
 ///
 /// AdaCurves still return u64 codes (48-bit segment + 16-bit offset).
 pub fn cluster_blocks_pca_adacurves<B, I, F>(
-    mut blocks: Vec<B>,
-    mut index_entries: Vec<I>,
+    blocks: Vec<B>,
+    index_entries: Vec<I>,
     get_centroid: F,
     target_dimensions: usize,
 ) -> (Vec<B>, Vec<I>, Vec<u64>)

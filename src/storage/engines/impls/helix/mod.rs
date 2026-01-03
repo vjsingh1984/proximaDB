@@ -118,8 +118,8 @@ pub mod unified_strategy_reader;
 pub mod zone_maps;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::core::search::SearchMode;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::core::search::{BlockPruneConfig, SearchMode};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::EventLog;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
@@ -508,7 +508,9 @@ impl HelixEngine {
     /// - HNSW-based approximate nearest neighbor search
     /// - IVF partition pruning
     /// - Hybrid vector + metadata queries
-    pub fn axis_manager(&self) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
         self.axis_manager.as_ref()
     }
 
@@ -516,7 +518,9 @@ impl HelixEngine {
     ///
     /// This helper converts our internal FilterExpression type to AXIS's
     /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(filter_expression: Option<&crate::core::search::FilterExpression>) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+    fn convert_filter_to_axis(
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
         use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
 
@@ -739,13 +743,12 @@ impl HelixEngine {
         ));
 
         // Create progressive search coordinator for multi-stage quantized search
-        let progressive_search_coordinator = Arc::new(
-            progressive_search::ProgressiveSearchCoordinator::new(
+        let progressive_search_coordinator =
+            Arc::new(progressive_search::ProgressiveSearchCoordinator::new(
                 config.clone(),
                 distance_compute.clone(),
                 storage_quantization_engine.clone(),
-            ),
-        );
+            ));
 
         // Create engine instance (stateless - no collection-specific state)
         let engine = Self {
@@ -772,7 +775,7 @@ impl HelixEngine {
         // Model will be loaded on first flush/search when we have the actual collection_id
         if false {
             // Placeholder - will be loaded at runtime
-            if let Ok(_model) = bincode::deserialize::<PCAModel>(&vec![]) {
+            if let Ok(_model) = bincode::deserialize::<PCAModel>(&[]) {
                 // Model loading happens at runtime
                 info!("Loaded existing PCA model for HELIX engine");
             }
@@ -854,10 +857,9 @@ impl HelixEngine {
                     .ok();
 
                 // Read num_vectors from file header
-                let num_vectors =
-                    Self::read_num_vectors_static(filesystem, &file.url)
-                        .await
-                        .unwrap_or(0) as usize;
+                let num_vectors = Self::read_num_vectors_static(filesystem, &file.url)
+                    .await
+                    .unwrap_or(0) as usize;
 
                 let metadata = SStableMetadata {
                     path: PathBuf::from(&file.url),
@@ -880,7 +882,9 @@ impl HelixEngine {
     /// Read Hilbert range and vector count from unified header (static version for load_levels)
     /// Uses the new unified header format from proxima.rs
     async fn read_file_metadata_from_header(
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         file_path: &str,
     ) -> Result<(Option<(u64, u64)>, u64)> {
         use std::path::Path;
@@ -918,16 +922,21 @@ impl HelixEngine {
 
     /// Read Hilbert range from unified header (static version for load_levels)
     async fn read_hilbert_range_static(
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         file_path: &str,
     ) -> Result<(u64, u64)> {
-        let (hilbert_range, _) = Self::read_file_metadata_from_header(filesystem, file_path).await?;
+        let (hilbert_range, _) =
+            Self::read_file_metadata_from_header(filesystem, file_path).await?;
         hilbert_range.ok_or_else(|| anyhow::anyhow!("No Hilbert range found in file"))
     }
 
     /// Read num_vectors from unified header (static version for load_levels)
     async fn read_num_vectors_static(
-        filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: &Arc<
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+        >,
         file_path: &str,
     ) -> Result<u64> {
         let (_, num_vectors) = Self::read_file_metadata_from_header(filesystem, file_path).await?;
@@ -1319,8 +1328,7 @@ impl UnifiedStorageEngine for HelixEngine {
 
                 for record in &records {
                     let reduced = model.transform(&record.vector)?;
-                    let hilbert_key =
-                        clustering::compute_hilbert_key_with_config(&reduced, bits);
+                    let hilbert_key = clustering::compute_hilbert_key_with_config(&reduced, bits);
                     keys.push(hilbert_key);
                 }
             } else {
@@ -1340,31 +1348,31 @@ impl UnifiedStorageEngine for HelixEngine {
         };
 
         // Step 3: Sort records by Hilbert key (if available) and prepare for write
-        let (sorted_records, hilbert_keys_for_write, hilbert_range) = if let Some(keys) = hilbert_keys
-        {
-            // Sort by Hilbert key for spatial locality
-            let mut indexed_records: Vec<(u64, VectorRecord)> =
-                keys.into_iter().zip(records.into_iter()).collect();
-            indexed_records.sort_by_key(|(key, _)| *key);
+        let (sorted_records, hilbert_keys_for_write, hilbert_range) =
+            if let Some(keys) = hilbert_keys {
+                // Sort by Hilbert key for spatial locality
+                let mut indexed_records: Vec<(u64, VectorRecord)> =
+                    keys.into_iter().zip(records.into_iter()).collect();
+                indexed_records.sort_by_key(|(key, _)| *key);
 
-            let sorted: Vec<VectorRecord> = indexed_records
-                .iter()
-                .map(|(_, record)| record.clone())
-                .collect();
-            let keys_vec: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
-            let range = if !indexed_records.is_empty() {
-                Some((
-                    indexed_records.first().unwrap().0,
-                    indexed_records.last().unwrap().0,
-                ))
+                let sorted: Vec<VectorRecord> = indexed_records
+                    .iter()
+                    .map(|(_, record)| record.clone())
+                    .collect();
+                let keys_vec: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
+                let range = if !indexed_records.is_empty() {
+                    Some((
+                        indexed_records.first().unwrap().0,
+                        indexed_records.last().unwrap().0,
+                    ))
+                } else {
+                    None
+                };
+                (sorted, Some(keys_vec), range)
             } else {
-                None
+                // Small batch: no sorting needed, brute force search
+                (records, None, None)
             };
-            (sorted, Some(keys_vec), range)
-        } else {
-            // Small batch: no sorting needed, brute force search
-            (records, None, None)
-        };
 
         // Create Level-0 SSTable
         let filename = self.generate_sstable_filename(0);
@@ -1603,19 +1611,22 @@ impl UnifiedStorageEngine for HelixEngine {
                     );
 
                     // Convert AXIS results to OptimizedSearchRecord
-                    let results: Vec<crate::core::search::results::OptimizedSearchRecord> = axis_results
-                        .results
-                        .into_iter()
-                        .take(k)
-                        .map(|scored| crate::core::search::results::OptimizedSearchRecord {
-                            id: scored.vector_id.to_string(),
-                            vector_id: Some(scored.vector_id.to_string()),
-                            score: scored.similarity,
-                            similarity: Some(scored.similarity),
-                            vector: None, // AXIS doesn't return vectors by default
-                            ..Default::default()
-                        })
-                        .collect();
+                    let results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                        axis_results
+                            .results
+                            .into_iter()
+                            .take(k)
+                            .map(
+                                |scored| crate::core::search::results::OptimizedSearchRecord {
+                                    id: scored.vector_id.to_string(),
+                                    vector_id: Some(scored.vector_id.to_string()),
+                                    score: scored.similarity,
+                                    similarity: Some(scored.similarity),
+                                    vector: None, // AXIS doesn't return vectors by default
+                                    ..Default::default()
+                                },
+                            )
+                            .collect();
 
                     // If we got results, return them
                     if !results.is_empty() {
@@ -1696,10 +1707,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 self.config.hilbert_bits_per_dimension
             };
 
-            let hilbert_key = model.project_and_compute_hilbert_with_config(
-                query_vector,
-                bits,
-            )?;
+            let hilbert_key = model.project_and_compute_hilbert_with_config(query_vector, bits)?;
             debug!(
                 "[HELIX] ✅ Query Hilbert key calculated: {} (PCA model version: {}, n_components: {}, bits: {})",
                 hilbert_key, model.version, model.n_components, bits
@@ -1904,7 +1912,10 @@ impl UnifiedStorageEngine for HelixEngine {
 
         // OPTIMIZATION: Route approximate searches through progressive search pipeline
         // This provides 2-3x speedup via Binary → INT8 → FP32 filtering stages
-        if matches!(ctx.search_params.search_mode, SearchMode::Approximate { .. }) {
+        if matches!(
+            ctx.search_params.search_mode,
+            SearchMode::Approximate { .. }
+        ) {
             info!(
                 "[HELIX] Using progressive search for approximate mode ({} SSTables)",
                 sstables_to_search.len()

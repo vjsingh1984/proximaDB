@@ -509,8 +509,11 @@ impl SstableWriter {
             32
         };
 
-        info!("🔬 SST: Applying unified PCA + Z-Order clustering to {} blocks (target: {}D)",
-            data_blocks.len(), target_dims);
+        info!(
+            "🔬 SST: Applying unified PCA + Z-Order clustering to {} blocks (target: {}D)",
+            data_blocks.len(),
+            target_dims
+        );
 
         // Extract centroids from index entries
         let centroids: Vec<Vec<f32>> = index_entries
@@ -535,14 +538,26 @@ impl SstableWriter {
             .collect();
 
         // Assign spatial codes to index entries (in sorted order)
-        for (entry, orig_idx) in layout_index_entries.iter_mut().zip(clustering_result.sorted_indices.iter()) {
+        for (entry, orig_idx) in layout_index_entries
+            .iter_mut()
+            .zip(clustering_result.sorted_indices.iter())
+        {
             entry.zorder_code = Some(clustering_result.spatial_codes[*orig_idx].clone());
         }
 
         let default_code = SpatialCode::Code64(0);
-        info!("🔬 SST: Z-Order clustering complete - codes range: {} to {}",
-            clustering_result.spatial_codes.iter().min().unwrap_or(&default_code),
-            clustering_result.spatial_codes.iter().max().unwrap_or(&default_code)
+        info!(
+            "🔬 SST: Z-Order clustering complete - codes range: {} to {}",
+            clustering_result
+                .spatial_codes
+                .iter()
+                .min()
+                .unwrap_or(&default_code),
+            clustering_result
+                .spatial_codes
+                .iter()
+                .max()
+                .unwrap_or(&default_code)
         );
 
         // Continue with rest of the write process (reuse existing logic)
@@ -568,9 +583,7 @@ impl SstableWriter {
         // ✅ STEP 3: Use unified bloom filter module for consistency
         // Create bloom filter using the factory with proper configuration
         let combined_bloom_filter = {
-            use crate::core::bloom::{
-                BloomFilterBuilder, HashAlgorithm,
-            };
+            use crate::core::bloom::{BloomFilterBuilder, HashAlgorithm};
 
             // Use XXHash for speed - configured in bloom config
             let mut bloom_config = self.bloom_config.clone();
@@ -650,7 +663,7 @@ impl SstableWriter {
             index_offset: 0, // Will be set after bloom filter
             index_size: layout_index_entries
                 .iter()
-                .map(|e| 4 + e.serialize().unwrap().len())  // Include 4-byte length prefix!
+                .map(|e| 4 + e.serialize().unwrap().len()) // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
             total_records: processed_count as u64,
             min_timestamp: 0,        // TODO: extract from data
@@ -716,6 +729,10 @@ impl SstableWriter {
             centroid_distance_sum,
             min_distance_to_centroid,
             max_distance_to_centroid,
+            // ProximaSchema integration (None = legacy VectorRecord format)
+            schema_id: None,
+            schema_version: None,
+            schema_fingerprint: None,
         };
         // Serialize header without compression (minimal savings not worth complexity)
         let header_bytes = bincode::serialize(&header)?;
@@ -756,9 +773,9 @@ impl SstableWriter {
                 let block_total_size = 4 + serialized_block.len(); // length prefix + data
 
                 // Account for cache line padding
-                let aligned_size =
-                    ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
-                        * CACHE_LINE_SIZE;
+                let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1)
+                    / CACHE_LINE_SIZE)
+                    * CACHE_LINE_SIZE;
                 let padding = aligned_size - serialized_block.len();
                 let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
                     block_total_size + padding
@@ -851,7 +868,10 @@ impl SstableWriter {
 
         // Replace the header in output_data (skip SST1 magic and header_len, replace header_bytes)
         let header_start = 8; // After SST1 (4 bytes) + header_len (4 bytes)
-        output_data.splice(header_start..header_start + header_len as usize, updated_header_bytes.iter().cloned());
+        output_data.splice(
+            header_start..header_start + header_len as usize,
+            updated_header_bytes.iter().cloned(),
+        );
 
         // Write all data atomically
         let write_path = self.path.to_string_lossy();
@@ -921,20 +941,24 @@ impl SstableWriter {
             let dimension = vectors[0].len();
 
             // Compute binary quantization (1-bit per dimension, 32x compression)
-            let binary_vectors: Vec<Vec<u8>> = vectors.iter().map(|v| {
-                // Simple sign-based binary quantization
-                let mut binary = vec![0u8; (dimension + 7) / 8];
-                for (i, &val) in v.iter().enumerate() {
-                    if val > 0.0 {
-                        binary[i / 8] |= 1 << (i % 8);
+            let binary_vectors: Vec<Vec<u8>> = vectors
+                .iter()
+                .map(|v| {
+                    // Simple sign-based binary quantization
+                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    for (i, &val) in v.iter().enumerate() {
+                        if val > 0.0 {
+                            binary[i / 8] |= 1 << (i % 8);
+                        }
                     }
-                }
-                binary
-            }).collect();
+                    binary
+                })
+                .collect();
 
             // Compute INT8 quantization (4x compression, ~95% recall)
             // Find global min/max for this block
-            let (min_val, max_val) = vectors.iter()
+            let (min_val, max_val) = vectors
+                .iter()
                 .flat_map(|v| v.iter())
                 .fold((f32::MAX, f32::MIN), |(min, max), &val| {
                     (min.min(val), max.max(val))
@@ -946,13 +970,18 @@ impl SstableWriter {
                 1.0
             };
 
-            let int8_vectors: Vec<Vec<i8>> = vectors.iter().map(|v| {
-                v.iter().map(|&val| {
-                    let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
-                    // Convert u8 [0,255] to i8 [-128,127] by subtracting 128
-                    (normalized as i16 - 128) as i8
-                }).collect()
-            }).collect();
+            let int8_vectors: Vec<Vec<i8>> = vectors
+                .iter()
+                .map(|v| {
+                    v.iter()
+                        .map(|&val| {
+                            let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
+                            // Convert u8 [0,255] to i8 [-128,127] by subtracting 128
+                            (normalized as i16 - 128) as i8
+                        })
+                        .collect()
+                })
+                .collect();
 
             // Create quantized section
             data_block.quantized_section = Some(QuantizedSection {
@@ -1051,7 +1080,7 @@ impl SstableWriter {
                     .as_ref()
                     .and_then(|f| f.serialize().ok()),
                 vector_format,
-                zorder_code: None,  // Will be populated during clustering
+                zorder_code: None, // Will be populated during clustering
             });
         }
 
@@ -1226,6 +1255,10 @@ impl SstableWriter {
             centroid_distance_sum,
             min_distance_to_centroid,
             max_distance_to_centroid,
+            // ProximaSchema integration (None = legacy VectorRecord format)
+            schema_id: None,
+            schema_version: None,
+            schema_fingerprint: None,
         };
         let header_bytes = bincode::serialize(&header)?;
         let header_len = header_bytes.len() as u32;

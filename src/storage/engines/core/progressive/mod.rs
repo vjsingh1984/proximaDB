@@ -32,29 +32,15 @@
 //! let results = coordinator.search(query, candidates, top_k, expansion_factor).await?;
 //! ```
 
-mod stage;
 mod coordinator;
 mod factory;
+mod stage;
 
 pub use stage::{
-    ProgressiveSearchStage,
-    StageResult,
-    ScoredCandidate,
-    QuantizationLevel,
-    BinaryStage,
-    Int8Stage,
-    PqStage,
-    Fp32Stage,
+    BinaryStage, Fp32Stage, Int8Stage, PqStage, ProgressiveSearchStage, QuantizationLevel,
+    ScoredCandidate, StageResult,
 };
 
-pub use coordinator::{
-    ProgressiveSearchCoordinator,
-    CoordinatorConfig,
-    StageStats,
-};
+pub use coordinator::{CoordinatorConfig, ProgressiveSearchCoordinator, StageStats};
 
-pub use factory::{
-    ProgressivePipelineFactory,
-    ProgressiveEngineType,
-    PipelineStage,
-};
+pub use factory::{PipelineStage, ProgressiveEngineType, ProgressivePipelineFactory};

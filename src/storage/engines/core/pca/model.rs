@@ -7,7 +7,6 @@
 use anyhow::Result;
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::VectorRecord;
 
@@ -445,6 +444,7 @@ pub struct ModelQuality {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn create_test_records(n: usize, dim: usize) -> Vec<VectorRecord> {
         (0..n)

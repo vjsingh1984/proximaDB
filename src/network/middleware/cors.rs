@@ -44,7 +44,7 @@
 //! let layer = create_cors_layer(&config);
 //! ```
 
-use axum::http::{header, Method};
+use axum::http::{Method, header};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -276,10 +276,7 @@ pub fn create_cors_layer(config: &CorsConfig) -> CorsLayer {
             }
         }));
 
-        tracing::info!(
-            "CORS: Allowing origins: {:?}",
-            config.allowed_origins
-        );
+        tracing::info!("CORS: Allowing origins: {:?}", config.allowed_origins);
     }
 
     // Configure allowed methods
@@ -369,8 +366,7 @@ mod tests {
 
     #[test]
     fn test_origin_checking() {
-        let config = CorsConfig::production()
-            .allow_origin("https://example.com");
+        let config = CorsConfig::production().allow_origin("https://example.com");
 
         assert!(config.is_origin_allowed("https://example.com"));
         assert!(!config.is_origin_allowed("https://other.com"));

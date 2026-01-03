@@ -44,8 +44,8 @@ pub fn recommend_page_size_for_dimension(
     // Target around 4 pages per row group, but clamp to 2–8 pages.
     let target_pages = 4;
     let candidate = (total_bytes / target_pages.max(1)).max(1);
-    let min_for_eight_pages = (total_bytes + 7) / 8; // ensure ≤8 pages
-    let max_for_two_pages = (total_bytes + 1) / 2; // ensure ≥2 pages
+    let min_for_eight_pages = total_bytes.div_ceil(8); // ensure ≤8 pages
+    let max_for_two_pages = total_bytes.div_ceil(2); // ensure ≥2 pages
     let bounded = candidate.clamp(min_for_eight_pages, max_for_two_pages);
 
     // Global clamps to keep pages practical
@@ -106,7 +106,7 @@ impl ColumnarUtilities {
                     action: format!(
                         "Compact {} small row groups into {} optimal groups",
                         stats.row_group_count,
-                        (stats.total_vectors + optimal_row_group_size - 1) / optimal_row_group_size
+                        stats.total_vectors.div_ceil(optimal_row_group_size)
                     ),
                     priority: RecommendationPriority::High,
                 });
@@ -193,7 +193,7 @@ impl ColumnarUtilities {
         const TARGET_ROW_GROUPS_PER_FILE: usize = 10;
 
         let vectors_per_file = row_group_size * TARGET_ROW_GROUPS_PER_FILE;
-        (total_vectors + vectors_per_file - 1) / vectors_per_file
+        total_vectors.div_ceil(vectors_per_file)
     }
 
     /// Analyze query patterns for optimization

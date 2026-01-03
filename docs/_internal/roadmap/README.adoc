@@ -2,172 +2,142 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: January 2025
+:last-updated: December 2025
 
 [.lead]
-**Feature-based roadmap organization with priority rankings and completion tracking**
+**Vision-aligned roadmap with phase-based organization and feature tracking**
 
-== 📊 Status Overview
+== Key Documents
 
-Roadmap statuses are based on current code (v0.1.5). See the Master Feature Dashboard for the authoritative, up‑to‑date list of Completed, In Progress, and Future items.
+|===
+| Document | Purpose | Status
 
-== 🗂️ Documentation Structure
+| link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] | **Start here** - Vision-aligned phase planning | ✅ Authoritative
+| link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | All 135 features with status by phase | ✅ Current
+| link:CURRENT_ROADMAP.adoc[Current Roadmap] | Quarterly focus areas | ✅ Current
+| link:../DOCUMENTATION_STATUS.adoc[Documentation Status] | All docs with phase and status | ✅ Current
+|===
 
-This roadmap is organized by **feature completion status** and **priority ranking**, not by quarters:
+== Vision Phase Alignment
+
+Features are organized into three phases from the link:../../concepts/vision.adoc[Vision Document]:
+
+|===
+| Phase | Focus | Status | Features
+
+| **Phase 1** | Format & Catalog Contract (MVP) | ✅ Complete | 40 features
+| **Phase 2** | Cross-Model Query & Indexing | ✅ Complete | 43 features
+| **Phase 3** | Ecosystem Integration | 🔄 In Progress | 42 features
+|===
+
+== Status Overview
+
+=== Phase 1: Format & Catalog (Foundation) ✅
+
+* ✅ 6 storage engines (SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR)
+* ✅ Unified WAL with crash recovery
+* ✅ REST + gRPC + Arrow Flight APIs
+* ✅ PostgreSQL wire protocol
+* ✅ AXIS index framework (HNSW, IVF, LSH, Annoy)
+* ✅ Quantization (Binary, INT8, PQ)
+* ✅ DataFusion TableProvider integration
+
+=== Phase 2: Cross-Model Query (Differentiation) ✅
+
+* ✅ ORION graph engine with WAL persistence
+* ✅ Document store with JSON path queries
+* ✅ Observability store (logs + metrics)
+* ✅ FederatedQueryContext for cross-model SQL
+* ✅ VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY functions
+* ✅ Cross-model LATERAL joins
+* ✅ Multi-modal search with reranking
+
+=== Phase 3: Ecosystem Integration (Scale) 🔄
+
+* 🔄 PULSAR/QUASAR distributed graph engines
+* 🔄 External catalog integration (Iceberg, Delta Lake, Glue)
+* 📅 Streaming infrastructure
+* 📅 CDC connectors
+* 📅 Multi-language SDKs (Go, Java, Node.js)
+* 📅 Trino/Spark compute adapters
+
+== Directory Structure
 
 ```
-09-roadmap/
+roadmap/
+├── STRATEGIC_ROADMAP.adoc     # Vision-aligned (authoritative)
 ├── MASTER_FEATURE_DASHBOARD.adoc
-├── completed/
+├── CURRENT_ROADMAP.adoc
+├── README.adoc                 # This file
+├── completed/                  # Completed feature docs
 │   ├── 01-storage-engines.adoc
 │   ├── 02-index-algorithms.adoc
-│   └── 036-039-graph-database.adoc
-├── in-progress/
-│   ├── 076-multi-modal-search.adoc
-│   └── DOCS_ALIGNMENT_PLAN.adoc
-├── future/
-│   ├── 040-051-enterprise-security.adoc
-│   ├── 052-061-ai-intelligence.adoc
+│   ├── 079-108 (documentation)
+│   └── ...
+├── in-progress/               # Active work
+│   └── 076-multi-modal-search.adoc
+├── future/                    # P3 feature specs
 │   ├── 109-cross-modal-reranking.adoc
 │   └── 110-unified-query-language.adoc
-└── implementation/
-    ├── Q1_2025_IMPLEMENTATION.adoc
-    ├── PRIORITY_ACTION_PLAN.adoc
-    └── HOLISTIC_QUANTIZATION_FRAMEWORK.adoc
+├── specifications/            # Detailed specs for P3
+│   ├── 111-streaming
+│   ├── 112-cdc
+│   └── 114-121-sdks
+└── implementation/           # Implementation guides
+    ├── active/               # Current quarter
+    ├── completed/            # Finished implementations
+    └── archive/              # Historical plans
 ```
 
-== 🎯 Priority Rankings
+== Status Legend
 
-Features are ranked 01-59 by priority, not by quarter:
+|===
+| Symbol | Meaning
 
-=== Top 10 Priorities (All Complete ✅)
-1. **01** - UnifiedStorageEngine Architecture
-2. **02** - Proto-first Pipeline
-3. **03** - UnifiedCachingFilesystem
-4. **04** - WAL & Recovery System
-5. **05** - HNSW Index Algorithm
-6. **06** - IVF Index Algorithm
-7. **07** - UnifiedQuantizationEngine
-8. **08** - Multi-Level Quantization
-9. **09** - Hardware Acceleration
-10. **10** - REST & gRPC APIs
+| ✅ | Complete - Production ready
+| 🔄 | In Progress - Active development
+| 📅 | Planned - Scheduled for future phase
+| 💡 | Nice to Have - Optional/opportunistic
+| 🚫 | Out of Scope - Not aligned with vision
+| ⚠️ | Obsolete - Superseded or deprecated
+|===
 
-=== Currently Active (🔄)
-* **54** - Multi-Modal Search (75% complete, Q1 2025 target)
+== MVP Definition
 
-=== Upcoming Priorities (❌)
-* **55** - Cross-Modal Reranking (Q2 2025)
-* **56** - Unified Query Language (Q2 2025)
-* **58** - Java SDK (Q3 2025)
-* **59** - C++ SDK (Q3 2025)
+ProximaDB v1.0 MVP includes all Phase 1 and Phase 2 features:
 
-== 📈 Progress Tracking
+* **96% complete** (80 of 83 MVP features)
+* All storage engines, indexes, quantization
+* Full cross-model query support
+* Graph, document, observability stores
+* Python SDK
+
+Phase 3 features are post-MVP enhancements.
+
+== Quick Navigation
+
+=== By Status
+* link:completed/[✅ Completed Features] - Phase 1 + Phase 2
+* link:in-progress/[🔄 In Progress] - Active P3 work
+* link:future/[📅 Future Features] - P3 specifications
 
 === By Category
-[cols="2,1,1", options="header"]
-|===
-| Category | Features | Completion
-| Core Infrastructure | 12 | 100% ✅
-| Storage Engines | 6 | 100% ✅
-| Index Algorithms | 8 | 100% ✅
-| Enterprise Security | 10 | 100% ✅
-| AI & Intelligence | 8 | 100% ✅
-| Performance | 6 | 100% ✅
-| Graph Database | 4 | 100% ✅
-| Platform Capabilities | 4 | 75% 🔄
-| Developer Experience | 5 | 60% 🔄
-|===
-
-=== Key Achievements
-* ✅ 6 storage engines implemented (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX)
-* ✅ Index algorithms implemented: HNSW, IVF, LSH, Annoy (AXIS framework)
-* ✅ Graph engines available: ORION (in‑memory), PULSAR (sharded), QUASAR (hybrid)
-* ⚠️ Security: authentication/auditing present; MFA/SSO/rate‑limiting pending
-* ⚙️ AI integration: Python SDK and examples in `clients/python/`
-* 🚧 AutoML: foundation present; advanced features under active development
-
-== 🔗 Quick Navigation
-
-=== Dashboards
-* link:MASTER_FEATURE_DASHBOARD.adoc[📊 Master Feature Dashboard] - Complete feature list with rankings
-* link:completed/[✅ Completed Features] - 56 features
-* link:in-progress/[🔄 In Progress] - 1 feature
-* link:future/[❌ Future Features] - 2 features
-
-=== Key Documents
 * link:completed/01-storage-engines.adoc[Storage Engines]
 * link:completed/02-index-algorithms.adoc[Index Algorithms]
 * link:completed/036-039-graph-database.adoc[Graph Database]
-* link:future/040-051-enterprise-security.adoc[Enterprise Security (plan + status)]
-* link:future/052-061-ai-intelligence.adoc[AI Integration (plan + status)]
+* link:specifications/[P3 Specifications]
 
 === Implementation Guides
-* link:implementation/Q1_2025_IMPLEMENTATION.adoc[Q1 2025 Implementation]
-* link:implementation/PRIORITY_ACTION_PLAN.adoc[Priority Actions]
+* link:implementation/active/[Active Quarter]
+* link:implementation/completed/[Completed Implementations]
 
-== 📝 Notes on Organization
-
-=== Why Feature-Based, Not Quarter-Based?
-1. **Reality**: Most features are already complete
-2. **Clarity**: Shows actual status vs planned timelines
-3. **Priority**: Rankings show true importance
-4. **Flexibility**: Easier to adjust without quarterly constraints
-
-=== Document Naming Convention
-* **Completed**: `{rank}-{feature-name}.adoc` (e.g., `01-storage-engines.adoc`)
-* **In Progress**: `{rank}-{feature-name}.adoc` (e.g., `51-multi-modal-search.adoc`)
-* **Future**: `{rank}-{feature-name}.adoc` (e.g., `55-cross-modal-reranking.adoc`)
-
-=== Ranking System
-* **01-10**: Critical infrastructure (must-have)
-* **11-20**: Core features (essential)
-* **21-30**: Enterprise features (important)
-* **31-40**: Advanced capabilities (valuable)
-* **41-50**: Optimizations (performance)
-* **51-59**: Platform expansion (growth)
-
-== 🚀 Next Steps
-
-1. **Complete Multi-Modal Search** (Rank 54) - Q1 2025
-2. **Assess Distributed Operations** (Rank 57) - Q1 2025
-3. **Implement Cross-Modal Reranking** (Rank 55) - Q2 2025
-4. **Design Unified Query Language** (Rank 56) - Q2 2025
-5. **Develop Additional SDKs** (Ranks 58-59) - Q3 2025
-
-== 📅 Historical Context
-
-The original roadmap was organized by quarters (Q1-Q4 2025), but analysis revealed that 95% of planned features were already implemented ahead of schedule. This reorganization reflects the actual state of the codebase as of January 2025.
-
-**Key Discovery**: What were thought to be placeholder implementations (especially index algorithms) are actually fully functional, production-ready code with thousands of lines of sophisticated implementation.
-
-== 🏆 Production Readiness
-
-ProximaDB is **production-ready** with:
-* ✅ All core features implemented
-* ✅ Comprehensive test coverage
-* ✅ Performance targets achieved
-* ✅ Enterprise security complete
-* ✅ Documentation comprehensive
-* ✅ Multiple storage backends
-* ✅ Hardware acceleration
-* ✅ Cloud-native design
-
-== Completed Projects
-
-=== Previous Quarters
-See link:completed/[completed projects] for historical development milestones and achievements.
-
-== Contributing to the Roadmap
-
-We welcome community input on our roadmap priorities:
+== Contributing
 
 * **Feature Requests**: Submit via GitHub Issues
-* **Community Feedback**: Join our Discord for discussions
-* **Enterprise Requirements**: Contact founders@proximadb.com
+* **Phase 3 Priorities**: See link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap]
+* **Documentation Updates**: Follow link:../DOCUMENTATION_STATUS.adoc[Documentation Status]
 
-== Roadmap Status Legend
+---
 
-* ✅ **Complete**: Feature implemented and available
-* 🔄 **In Progress**: Active development underway
-* 📋 **Planned**: Scheduled for upcoming quarter
-* 🔍 **Research**: Investigation and design phase
+_Last Updated_: December 30, 2025 +
+_Version_: 0.2.0

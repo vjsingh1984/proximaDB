@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from .config import ClientConfig, load_config, Protocol
+from .config import ClientConfig, load_config, Protocol, PortMode
 from .protocol_selector import (
     ProtocolSelector,
     SelectionStrategy,
@@ -84,6 +84,7 @@ class ProximaDBClient:
         url: Optional[str] = None,
         api_key: Optional[str] = None,
         protocol: Union[Protocol, str] = Protocol.AUTO,
+        port_mode: Union[PortMode, str] = PortMode.UNIFIED,
         config: Optional[ClientConfig] = None,
         auth_config: Optional[AuthConfig] = None,
         auth_method: Optional[AuthMethod] = None,
@@ -103,11 +104,15 @@ class ProximaDBClient:
     ):
         """
         Initialize ProximaDB client
-        
+
         Args:
-            url: ProximaDB server URL
+            url: ProximaDB server URL. In unified mode (default), a single URL
+                 is used for all protocols (e.g., "http://localhost:5678").
+                 In multi-port mode, this is the REST URL.
             api_key: API key for authentication (legacy - use auth_config instead)
             protocol: Communication protocol (auto, grpc, rest)
+            port_mode: Server port mode - "unified" (single port for all protocols)
+                       or "multi" (separate ports for REST/gRPC). Default: unified.
             config: Client configuration object
             auth_config: Authentication configuration (AuthConfig object)
             auth_method: Authentication method (API_KEY, JWT, OAUTH2, CLIENT_CERT)
@@ -123,10 +128,35 @@ class ProximaDBClient:
             routing_strategy: Strategy for operation routing (HYBRID, PERFORMANCE_BASED, etc.)
             routing_config: Custom routing configuration
             **kwargs: Additional configuration parameters
+
+        Examples:
+            # Unified mode (recommended for new deployments):
+            client = ProximaDBClient(url="http://localhost:5678")
+
+            # Multi-port mode (legacy, for backward compatibility):
+            client = ProximaDBClient(
+                url="http://localhost:5678",
+                port_mode="multi"
+            )
+
+            # Auto-protocol selection with unified port:
+            client = ProximaDBClient(
+                url="http://localhost:5678",
+                protocol="auto"  # Selects gRPC for performance, REST as fallback
+            )
         """
+        # Convert port_mode to enum if string
+        if isinstance(port_mode, str):
+            port_mode = PortMode(port_mode.lower())
+
         if config is None:
             config = load_config(url=url, api_key=api_key, **kwargs)
-        
+            # Apply port_mode to config
+            config.port_mode = port_mode
+        elif port_mode != PortMode.UNIFIED:
+            # Override port_mode if explicitly specified
+            config.port_mode = port_mode
+
         # Setup authentication
         self._setup_authentication(
             auth_config=auth_config,
@@ -2273,3 +2303,125 @@ def connect_rest(
 ) -> ProximaDBClient:
     """Create a ProximaDB client using REST protocol (web compatibility)"""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.REST, **kwargs)
+
+
+def connect_unified(
+    url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    protocol: Union[Protocol, str] = Protocol.AUTO,
+    **kwargs
+) -> ProximaDBClient:
+    """Create a ProximaDB client for unified port mode (single port for all protocols).
+
+    This is the recommended connection method for ProximaDB servers running in
+    unified port mode (default since v0.2.0). A single URL is used for all
+    protocols, and the server automatically detects and routes requests.
+
+    Args:
+        url: ProximaDB server URL (e.g., "http://localhost:5678")
+        api_key: Optional API key for authentication
+        protocol: Protocol to use - "auto" (default), "grpc", or "rest".
+                  With "auto", the client will use gRPC for performance
+                  with automatic fallback to REST if needed.
+        **kwargs: Additional client configuration parameters
+
+    Returns:
+        ProximaDBClient configured for unified port mode
+
+    Example:
+        # Simple unified connection (recommended)
+        client = connect_unified("http://localhost:5678")
+
+        # With explicit protocol selection
+        client = connect_unified(
+            url="http://localhost:5678",
+            protocol="grpc"  # Force gRPC even on unified port
+        )
+    """
+    return ProximaDBClient(
+        url=url,
+        api_key=api_key,
+        protocol=protocol,
+        port_mode=PortMode.UNIFIED,
+        **kwargs
+    )
+
+
+def connect_legacy(
+    url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    protocol: Union[Protocol, str] = Protocol.AUTO,
+    **kwargs
+) -> ProximaDBClient:
+    """Create a ProximaDB client for legacy multi-port mode.
+
+    Use this for older ProximaDB deployments that use separate ports for
+    REST (5678) and gRPC (5679). For new deployments, use connect_unified().
+
+    Args:
+        url: ProximaDB REST server URL (e.g., "http://localhost:5678")
+        api_key: Optional API key for authentication
+        protocol: Protocol to use - "auto" (default), "grpc", or "rest"
+        **kwargs: Additional client configuration parameters
+
+    Returns:
+        ProximaDBClient configured for multi-port mode
+    """
+    return ProximaDBClient(
+        url=url,
+        api_key=api_key,
+        protocol=protocol,
+        port_mode=PortMode.MULTI,
+        **kwargs
+    )
+
+
+def connect_arrow_flight(
+    url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    port_mode: Union[PortMode, str] = PortMode.UNIFIED,
+    **kwargs
+) -> ProximaDBClient:
+    """Create a ProximaDB client using Arrow Flight protocol for bulk data transfer.
+
+    Arrow Flight is optimized for high-throughput bulk operations like:
+    - Large batch vector inserts (millions of vectors)
+    - Bulk data export/import
+    - Streaming large result sets
+
+    In unified mode (default), Arrow Flight uses the same port as REST/gRPC.
+    In multi-port mode, Arrow Flight uses port 5680.
+
+    Args:
+        url: ProximaDB server URL (e.g., "http://localhost:5678")
+        api_key: Optional API key for authentication
+        port_mode: Server port mode - "unified" (default) or "multi"
+        **kwargs: Additional client configuration parameters
+
+    Returns:
+        ProximaDBClient configured for Arrow Flight protocol
+
+    Example:
+        # Unified mode (recommended)
+        client = connect_arrow_flight("http://localhost:5678")
+
+        # Multi-port mode (legacy)
+        client = connect_arrow_flight(
+            url="http://localhost:5680",  # Arrow Flight port
+            port_mode="multi"
+        )
+
+    Note:
+        Arrow Flight requires pyarrow to be installed:
+        pip install pyarrow
+    """
+    if isinstance(port_mode, str):
+        port_mode = PortMode(port_mode.lower())
+
+    return ProximaDBClient(
+        url=url,
+        api_key=api_key,
+        protocol=Protocol.ARROW_FLIGHT,
+        port_mode=port_mode,
+        **kwargs
+    )

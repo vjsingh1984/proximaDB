@@ -602,5 +602,5 @@ rate(vectors_inserted_total[5m])
 ---
 
 _Benchmarks validated December 17, 2025_ +
-_ProximaDB Version: 0.1.5_ +
+_ProximaDB Version: 0.2.0_ +
 _For detailed benchmark logs, see repository bench_output files_

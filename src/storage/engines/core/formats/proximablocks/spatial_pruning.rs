@@ -26,7 +26,7 @@
 use std::cmp::Ordering;
 
 use super::spatial_encoding::SpatialCode;
-use super::spatial_traits::{CurveType, SpatialCurveEncoder};
+use super::spatial_traits::CurveType;
 use crate::compute::distance_computation::DistanceMetric;
 
 /// Pruning mode for block selection
@@ -355,11 +355,7 @@ impl SpatialPruner {
     fn vector_distance(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.config.distance_metric {
             DistanceMetric::Euclidean => {
-                let sum: f32 = a
-                    .iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| (x - y).powi(2))
-                    .sum();
+                let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
                 sum.sqrt()
             }
             DistanceMetric::Cosine => {
@@ -379,11 +375,7 @@ impl SpatialPruner {
             }
             _ => {
                 // Default to Euclidean for other metrics
-                let sum: f32 = a
-                    .iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| (x - y).powi(2))
-                    .sum();
+                let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
                 sum.sqrt()
             }
         }
@@ -416,7 +408,11 @@ impl SpatialPruner {
 
         scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
 
-        scored.into_iter().take(num_to_select).map(|(_, idx)| idx).collect()
+        scored
+            .into_iter()
+            .take(num_to_select)
+            .map(|(_, idx)| idx)
+            .collect()
     }
 
     /// Get the configured pruning mode
@@ -487,10 +483,10 @@ mod tests {
 
         let query_code = SpatialCode::Code64(100);
         let block_codes = vec![
-            SpatialCode::Code64(50),   // distance 50
-            SpatialCode::Code64(200),  // distance 100
-            SpatialCode::Code64(110),  // distance 10 (closest)
-            SpatialCode::Code64(500),  // distance 400
+            SpatialCode::Code64(50),  // distance 50
+            SpatialCode::Code64(200), // distance 100
+            SpatialCode::Code64(110), // distance 10 (closest)
+            SpatialCode::Code64(500), // distance 400
         ];
 
         let selected = pruner.select_blocks_by_code(&query_code, &block_codes);
@@ -515,16 +511,8 @@ mod tests {
         let query_vector = vec![1.0, 0.0, 0.0, 0.0];
 
         let blocks = vec![
-            BlockPruningInfo::with_centroid(
-                0,
-                SpatialCode::Code64(50),
-                vec![0.9, 0.1, 0.0, 0.0],
-            ),
-            BlockPruningInfo::with_centroid(
-                1,
-                SpatialCode::Code64(200),
-                vec![0.5, 0.5, 0.0, 0.0],
-            ),
+            BlockPruningInfo::with_centroid(0, SpatialCode::Code64(50), vec![0.9, 0.1, 0.0, 0.0]),
+            BlockPruningInfo::with_centroid(1, SpatialCode::Code64(200), vec![0.5, 0.5, 0.0, 0.0]),
             BlockPruningInfo::with_centroid(
                 2,
                 SpatialCode::Code64(110),

@@ -193,10 +193,7 @@ impl SpatialCode {
             (Self::Code64(v), Self::Code64(mn), Self::Code64(mx)) => v >= mn && v <= mx,
             (Self::Code128(v), Self::Code128(mn), Self::Code128(mx)) => v >= mn && v <= mx,
             (
-                Self::Code256 {
-                    low: vl,
-                    high: vh,
-                },
+                Self::Code256 { low: vl, high: vh },
                 Self::Code256 {
                     low: mnl,
                     high: mnh,
@@ -240,16 +237,7 @@ impl SpatialCode {
                 let epsilon = ((range as f64) * (percentage as f64 / 100.0)) as u128;
                 Self::Code128(epsilon.max(min_epsilon as u128))
             }
-            (
-                Self::Code256 {
-                    low: al,
-                    high: ah,
-                },
-                Self::Code256 {
-                    low: bl,
-                    high: bh,
-                },
-            ) => {
+            (Self::Code256 { low: al, high: ah }, Self::Code256 { low: bl, high: bh }) => {
                 // Approximate: use high part for range calculation
                 let range = ah.abs_diff(*bh);
                 let epsilon_high = ((range as f64) * (percentage as f64 / 100.0)) as u128;
@@ -273,16 +261,7 @@ impl SpatialCode {
         match (self, other) {
             (Self::Code64(a), Self::Code64(b)) => Self::Code64(a.saturating_sub(*b)),
             (Self::Code128(a), Self::Code128(b)) => Self::Code128(a.saturating_sub(*b)),
-            (
-                Self::Code256 {
-                    low: al,
-                    high: ah,
-                },
-                Self::Code256 {
-                    low: bl,
-                    high: bh,
-                },
-            ) => {
+            (Self::Code256 { low: al, high: ah }, Self::Code256 { low: bl, high: bh }) => {
                 let (low, borrow) = al.overflowing_sub(*bl);
                 let high = if borrow {
                     ah.saturating_sub(*bh).saturating_sub(1)
@@ -301,16 +280,7 @@ impl SpatialCode {
         match (self, other) {
             (Self::Code64(a), Self::Code64(b)) => Self::Code64(a.saturating_add(*b)),
             (Self::Code128(a), Self::Code128(b)) => Self::Code128(a.saturating_add(*b)),
-            (
-                Self::Code256 {
-                    low: al,
-                    high: ah,
-                },
-                Self::Code256 {
-                    low: bl,
-                    high: bh,
-                },
-            ) => {
+            (Self::Code256 { low: al, high: ah }, Self::Code256 { low: bl, high: bh }) => {
                 let (low, carry) = al.overflowing_add(*bl);
                 let high = if carry {
                     ah.saturating_add(*bh).saturating_add(1)
@@ -346,16 +316,7 @@ impl Ord for SpatialCode {
         match (self, other) {
             (Self::Code64(a), Self::Code64(b)) => a.cmp(b),
             (Self::Code128(a), Self::Code128(b)) => a.cmp(b),
-            (
-                Self::Code256 {
-                    low: al,
-                    high: ah,
-                },
-                Self::Code256 {
-                    low: bl,
-                    high: bh,
-                },
-            ) => {
+            (Self::Code256 { low: al, high: ah }, Self::Code256 { low: bl, high: bh }) => {
                 // Compare high parts first (most significant), then low parts
                 match ah.cmp(bh) {
                     Ordering::Equal => al.cmp(bl),
@@ -514,10 +475,7 @@ impl CodeType {
         } else if total_bits <= 512 {
             Self::Bits512
         } else {
-            panic!(
-                "Total bits ({}) exceeds maximum (512)",
-                total_bits
-            );
+            panic!("Total bits ({}) exceeds maximum (512)", total_bits);
         }
     }
 }

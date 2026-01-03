@@ -22,6 +22,7 @@
 //! - **Consensus**: Raft-based distributed consensus
 //! - **Routing**: Shard-aware request routing
 //! - **Shard**: Data sharding and placement
+//! - **RPC**: SOLID-compliant RPC abstractions for inter-node communication
 //!
 //! ## Architecture
 //!
@@ -38,24 +39,64 @@
 //! │  │   Routing    │  │    Shard     │                    │
 //! │  │   Service    │  │   Manager    │                    │
 //! │  └──────────────┘  └──────────────┘                    │
+//! ├─────────────────────────────────────────────────────────┤
+//! │  ┌──────────────────────────────────────────────────┐  │
+//! │  │                 RPC Layer                         │  │
+//! │  │  ConsensusTransport | ReplicationSink |          │  │
+//! │  │  SearchFanout | HealthChecker                    │  │
+//! │  └──────────────────────────────────────────────────┘  │
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
 pub mod consensus;
+pub mod distributed_ops;
 pub mod metadata_service;
 pub mod node_registry;
+pub mod replication;
 pub mod routing;
 pub mod shard;
+
+// RPC abstraction layer for inter-node communication
+// Provides SOLID-compliant traits for consensus, replication, search fanout, and health
+pub mod rpc;
 
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
+pub use distributed_ops::{
+    ConsistencyLevel, DistributedCollectionOps, DistributedOpsConfig, DistributedSearchRequest,
+    DistributedSearchResult, DistributedWriteRequest, DistributedWriteResult, QueryContext,
+    RetryConfig, SearchResult, WriteRecord,
+};
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
-pub use node_registry::{NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus};
-pub use routing::{RouteDecision, RoutingConfig, RoutingService};
-pub use shard::{Shard, ShardConfig, ShardId, ShardManager, ShardPlacement, ShardState};
+pub use node_registry::{
+    NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,
+};
+pub use replication::{
+    EngineReplication, ReplicaState, ReplicationAck, ReplicationConfig, ReplicationEntry,
+    ReplicationHealth, ReplicationOperation, ReplicationRetryConfig, ReplicationStatsSummary,
+};
+pub use routing::{RouteContext, RouteDecision, RoutingConfig, RoutingService};
+pub use shard::{
+    MetadataBounds, PartitionConfig, PartitionStrategy, Shard, ShardConfig, ShardId, ShardManager,
+    ShardPlacement, ShardState,
+};
+
+// Re-export RPC abstractions for inter-node communication
+pub use rpc::{
+    // Traits
+    ConsensusTransport,
+    HealthChecker,
+    NodeClient,
+    // Common types
+    NodeEndpoint,
+    ReplicationSink,
+    RpcError,
+    RpcResult,
+    SearchFanout,
+};
 
 /// Cluster configuration
 #[derive(Debug, Clone)]
@@ -213,7 +254,10 @@ impl ClusterManager {
     /// Get cluster health summary
     pub async fn health(&self) -> ClusterHealth {
         let nodes = self.node_registry.list_nodes().await;
-        let healthy_nodes = nodes.iter().filter(|n| n.health == NodeHealth::Healthy).count();
+        let healthy_nodes = nodes
+            .iter()
+            .filter(|n| n.health == NodeHealth::Healthy)
+            .count();
         let total_nodes = nodes.len();
 
         ClusterHealth {

@@ -98,18 +98,22 @@ impl HelixSIMDWriter {
             let dimension = vectors[0].len();
 
             // Compute binary quantization (1-bit per dimension, 32x compression)
-            let binary_vectors: Vec<Vec<u8>> = vectors.iter().map(|v| {
-                let mut binary = vec![0u8; (dimension + 7) / 8];
-                for (i, &val) in v.iter().enumerate() {
-                    if val > 0.0 {
-                        binary[i / 8] |= 1 << (i % 8);
+            let binary_vectors: Vec<Vec<u8>> = vectors
+                .iter()
+                .map(|v| {
+                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    for (i, &val) in v.iter().enumerate() {
+                        if val > 0.0 {
+                            binary[i / 8] |= 1 << (i % 8);
+                        }
                     }
-                }
-                binary
-            }).collect();
+                    binary
+                })
+                .collect();
 
             // Compute INT8 quantization (4x compression, ~95% recall)
-            let (min_val, max_val) = vectors.iter()
+            let (min_val, max_val) = vectors
+                .iter()
                 .flat_map(|v| v.iter())
                 .fold((f32::MAX, f32::MIN), |(min, max), &val| {
                     (min.min(val), max.max(val))
@@ -121,12 +125,17 @@ impl HelixSIMDWriter {
                 1.0
             };
 
-            let int8_vectors: Vec<Vec<i8>> = vectors.iter().map(|v| {
-                v.iter().map(|&val| {
-                    let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
-                    (normalized as i16 - 128) as i8
-                }).collect()
-            }).collect();
+            let int8_vectors: Vec<Vec<i8>> = vectors
+                .iter()
+                .map(|v| {
+                    v.iter()
+                        .map(|&val| {
+                            let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
+                            (normalized as i16 - 128) as i8
+                        })
+                        .collect()
+                })
+                .collect();
 
             // Create quantized section for progressive search
             block.quantized_section = Some(QuantizedSection {
@@ -294,24 +303,24 @@ impl HelixBlockMetadata {
     pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
         use std::io::Write;
         let mut buffer = Vec::new();
-        
+
         // Header
         buffer.write_all(b"HLX1")?;
-        
+
         // Proxima Metadata (custom serialize)
         let proxima_bytes = self.proxima_metadata.serialize()?;
         buffer.write_all(&(proxima_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(&proxima_bytes)?;
-        
+
         // Other fields (safe for bincode)
         let rest = bincode::serialize(&(
             &self.hilbert_range,
             &self.block_centroid,
             &self.pca_stats,
-            &self.clustering_hints
+            &self.clustering_hints,
         ))?;
         buffer.write_all(&rest)?;
-        
+
         Ok(buffer)
     }
 
@@ -319,25 +328,26 @@ impl HelixBlockMetadata {
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
-        
+
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
         if &magic != b"HLX1" {
-             return Err(anyhow::anyhow!("Invalid HelixBlockMetadata magic"));
+            return Err(anyhow::anyhow!("Invalid HelixBlockMetadata magic"));
         }
-        
+
         let mut len_buf = [0u8; 4];
         cursor.read_exact(&mut len_buf)?;
         let proxima_len = u32::from_le_bytes(len_buf) as usize;
-        
+
         let mut proxima_bytes = vec![0u8; proxima_len];
         cursor.read_exact(&mut proxima_bytes)?;
         let proxima_metadata = ProximaBlockMetadata::deserialize(&proxima_bytes)?;
-        
+
         let mut rest = Vec::new();
         cursor.read_to_end(&mut rest)?;
-        let (hilbert_range, block_centroid, pca_stats, clustering_hints) = bincode::deserialize(&rest)?;
-        
+        let (hilbert_range, block_centroid, pca_stats, clustering_hints) =
+            bincode::deserialize(&rest)?;
+
         Ok(Self {
             proxima_metadata,
             hilbert_range,
@@ -438,7 +448,7 @@ pub async fn write_helix_sstable(
     file_data.put_u32_le(2); // Version 2 for SIMD-enhanced format
 
     // Calculate block count
-    let num_blocks = (records.len() + block_size - 1) / block_size;
+    let num_blocks = records.len().div_ceil(block_size);
     file_data.put_u32_le(num_blocks as u32);
 
     let mut block_offsets = Vec::new();
@@ -581,7 +591,7 @@ pub async fn write_helix_sstable(
         block_metadata_bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
         block_metadata_bytes.extend_from_slice(&meta_bytes);
     }
-    
+
     header_bytes.put_u32_le(block_metadata_bytes.len() as u32);
     header_bytes.put_slice(&block_metadata_bytes);
 
@@ -733,25 +743,25 @@ pub(crate) async fn read_helix_header_optimized(
 
     let mut metadata_bytes = vec![0u8; metadata_len];
     std::io::Read::read_exact(&mut cursor, &mut metadata_bytes)?;
-    
+
     // Custom deserialization loop
     let mut meta_cursor = std::io::Cursor::new(&metadata_bytes);
     let mut u64_buf = [0u8; 8];
     std::io::Read::read_exact(&mut meta_cursor, &mut u64_buf)
         .map_err(|e| anyhow::anyhow!("Failed to read metadata count: {}", e))?;
     let meta_count = u64::from_le_bytes(u64_buf) as usize;
-    
+
     let mut block_metadata = Vec::with_capacity(meta_count);
     for _ in 0..meta_count {
         let mut len_buf = [0u8; 4];
         std::io::Read::read_exact(&mut meta_cursor, &mut len_buf)
             .map_err(|e| anyhow::anyhow!("Failed to read metadata entry length: {}", e))?;
         let entry_len = u32::from_le_bytes(len_buf) as usize;
-        
+
         let mut entry_bytes = vec![0u8; entry_len];
         std::io::Read::read_exact(&mut meta_cursor, &mut entry_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to read metadata entry data: {}", e))?;
-        
+
         block_metadata.push(HelixBlockMetadata::deserialize(&entry_bytes)?);
     }
 
@@ -961,7 +971,9 @@ fn select_blocks_by_centroid(
     // Hilbert code computation and centroid distance calculations have overhead
     // that only pays off with many blocks to prune.
     use crate::storage::engines::core::constants::pruning;
-    let min_blocks_threshold = prune.min_blocks_override.unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    let min_blocks_threshold = prune
+        .min_blocks_override
+        .unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
     if metas.len() < min_blocks_threshold {
         tracing::debug!(
             "HELIX block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
@@ -1037,7 +1049,11 @@ fn select_blocks_by_centroid(
         }
         crate::core::search::BlockPruneMode::Fixed(k) => k,
     };
-    k = k.max(prune.min_keep).min(if prune.max_keep > 0 { prune.max_keep } else { usize::MAX });
+    k = k.max(prune.min_keep).min(if prune.max_keep > 0 {
+        prune.max_keep
+    } else {
+        usize::MAX
+    });
     k = k.clamp(1, scored.len());
 
     scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -1059,9 +1075,11 @@ fn compute_query_hilbert_code(query: &[f32]) -> SpatialCode {
 
     // Normalize query to [0,1] range for encoding
     let truncated: Vec<f32> = query.iter().take(target_dims).copied().collect();
-    let (min_val, max_val) = truncated.iter().fold((f32::MAX, f32::MIN), |(min, max), &v| {
-        (min.min(v), max.max(v))
-    });
+    let (min_val, max_val) = truncated
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(min, max), &v| {
+            (min.min(v), max.max(v))
+        });
     let range = (max_val - min_val).max(1e-6);
     let normalized: Vec<f32> = truncated
         .iter()
@@ -1082,7 +1100,8 @@ fn metric_distance(
     b: &[f32],
     metric: &crate::compute::distance_computation::DistanceMetric,
 ) -> f32 {
-    let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+    let distance_compute =
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
     distance_compute.distance_with_metric(a, b, metric)
 }
 
@@ -1187,10 +1206,7 @@ pub fn extract_helix_metadata(
                 proxima_metadata: base_metadata,
                 hilbert_range,
                 block_centroid: compute_centroid(
-                    &chunk
-                        .iter()
-                        .map(|r| r.vector.clone())
-                        .collect::<Vec<_>>(),
+                    &chunk.iter().map(|r| r.vector.clone()).collect::<Vec<_>>(),
                 ),
                 pca_stats: None,
                 clustering_hints: None,

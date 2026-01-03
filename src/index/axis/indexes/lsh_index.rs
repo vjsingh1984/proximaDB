@@ -699,7 +699,7 @@ mod tests {
         let index = AxisLshIndex::new(config, 4);
 
         // Add vectors
-        let vectors = vec![
+        let vectors = [
             vec![1.0, 0.0, 0.0, 0.0],
             vec![0.0, 1.0, 0.0, 0.0],
             vec![0.0, 0.0, 1.0, 0.0],
@@ -739,7 +739,7 @@ mod tests {
         let index = AxisLshIndex::new(config, 8);
 
         // Add binary vectors (represented as 0.0 or 1.0)
-        let vectors = vec![
+        let vectors = [
             vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
             vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
             vec![1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],

@@ -4,9 +4,7 @@
 //! Paths focus on index usage, bloom filters, and block pruning.
 
 use super::{OptimizationPath, PathExpectation};
-use crate::query::rl_planner::action::{
-    BlockPruneConfig, ExecutionAction, IndexStrategy, QuantizationStage, SearchModeAction,
-};
+use crate::query::rl_planner::action::{BlockPruneConfig, ExecutionAction};
 
 /// Get all SST optimization paths
 pub fn paths() -> Vec<OptimizationPath> {
@@ -29,7 +27,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "When 100% recall is required",
             "Debugging and validation",
         ]),
-
         // Path 2: HNSW(ef=50) + FP32
         OptimizationPath::new(
             "sst_hnsw_50",
@@ -48,7 +45,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Collections > 10K vectors",
             "When ~95% recall is acceptable",
         ]),
-
         // Path 3: HNSW(ef=100) + FP32
         OptimizationPath::new(
             "sst_hnsw_100",
@@ -61,7 +57,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Production workloads",
             "Balanced latency/recall tradeoff",
         ]),
-
         // Path 4: HNSW(ef=200) + FP32
         OptimizationPath::new(
             "sst_hnsw_200",
@@ -74,7 +69,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "When high recall (>98%) is needed",
             "Recommendation systems",
         ]),
-
         // Path 5: IVF(nprobe=4) + FP32
         OptimizationPath::new(
             "sst_ivf_4",
@@ -87,7 +81,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Very large collections (>1M vectors)",
             "When speed is priority over recall",
         ]),
-
         // Path 6: IVF(nprobe=16) + FP32
         OptimizationPath::new(
             "sst_ivf_16",
@@ -101,10 +94,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 2.5,
             memory_factor: 1.1,
         })
-        .with_use_cases(vec![
-            "Large collections with good recall requirements",
-        ]),
-
+        .with_use_cases(vec!["Large collections with good recall requirements"]),
         // Path 7: IVF(nprobe=32) + FP32
         OptimizationPath::new(
             "sst_ivf_32",
@@ -118,10 +108,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 1.7,
             memory_factor: 1.1,
         })
-        .with_use_cases(vec![
-            "High recall with large collections",
-        ]),
-
+        .with_use_cases(vec!["High recall with large collections"]),
         // Path 8: Bloom + BlockPrune + FP32
         OptimizationPath::new(
             "sst_bloom_prune",
@@ -141,7 +128,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "When AXIS indexes not available",
             "Metadata-heavy queries",
         ]),
-
         // Path 9: HNSW + Bloom + BlockPrune
         OptimizationPath::new(
             "sst_hnsw_bloom_prune",
@@ -161,7 +147,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Maximum throughput with good recall",
             "Production workloads with filters",
         ]),
-
         // Path 10: Progressive(Binary→INT8→FP32)
         OptimizationPath::new(
             "sst_progressive",

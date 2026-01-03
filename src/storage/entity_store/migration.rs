@@ -91,10 +91,16 @@ pub async fn migrate_to_graph_first(
             batch.push(entity.clone());
         }
 
-        match graph_store.batch_upsert_entities(collection_id, batch).await {
+        match graph_store
+            .batch_upsert_entities(collection_id, batch)
+            .await
+        {
             Ok(count) => {
                 stats.entities_migrated += count;
-                println!("Migrated batch: {} entities (total: {})", count, stats.entities_migrated);
+                println!(
+                    "Migrated batch: {} entities (total: {})",
+                    count, stats.entities_migrated
+                );
             }
             Err(e) => {
                 stats.errors += 1;
@@ -128,11 +134,17 @@ async fn validate_migration(
 
     for entity in entities {
         // Check if entity exists in graph store
-        match graph_store.get_entity(collection_id, &entity.id, true, false).await {
+        match graph_store
+            .get_entity(collection_id, &entity.id, true, false)
+            .await
+        {
             Ok(Some(migrated_entity)) => {
                 // Verify key fields match
                 if migrated_entity.id != entity.id {
-                    eprintln!("Entity ID mismatch: {} vs {}", migrated_entity.id, entity.id);
+                    eprintln!(
+                        "Entity ID mismatch: {} vs {}",
+                        migrated_entity.id, entity.id
+                    );
                     errors += 1;
                 }
                 if migrated_entity.embeddings.len() != entity.embeddings.len() {
@@ -141,11 +153,17 @@ async fn validate_migration(
                 }
             }
             Ok(None) => {
-                eprintln!("Entity {} not found in graph store after migration", entity.id);
+                eprintln!(
+                    "Entity {} not found in graph store after migration",
+                    entity.id
+                );
                 errors += 1;
             }
             Err(e) => {
-                eprintln!("Error retrieving entity {} from graph store: {}", entity.id, e);
+                eprintln!(
+                    "Error retrieving entity {} from graph store: {}",
+                    entity.id, e
+                );
                 errors += 1;
             }
         }
@@ -159,7 +177,10 @@ async fn validate_migration(
         anyhow::bail!("Validation failed with {} errors", errors);
     }
 
-    println!("✓ Validation successful: all {} entities migrated correctly", entities.len());
+    println!(
+        "✓ Validation successful: all {} entities migrated correctly",
+        entities.len()
+    );
     Ok(())
 }
 
@@ -173,7 +194,10 @@ pub async fn rollback_migration(
 ) -> Result<()> {
     // TODO: Implement graph collection deletion when API is available
     // For now, we rely on manual cleanup or re-creation
-    println!("⚠ Migration rollback: Please manually delete graph collection '{}'", collection_id);
+    println!(
+        "⚠ Migration rollback: Please manually delete graph collection '{}'",
+        collection_id
+    );
     println!("  The graph data should be cleared, but collection metadata may remain");
     Ok(())
 }

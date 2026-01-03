@@ -111,10 +111,9 @@ impl HierarchicalBloomFilters {
         let num_hashes = file_config.optimal_hash_count(num_bits, all_keys.len());
 
         // Build bloom filter
-        let mut bloom_data = vec![0u8; (num_bits + 7) / 8];
+        let mut bloom_data = vec![0u8; num_bits.div_ceil(8)];
         for key in all_keys {
-            let positions =
-                crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
+            let positions = crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
             for pos in positions {
                 let byte_index = pos / 8;
                 let bit_index = pos % 8;
@@ -143,10 +142,9 @@ impl HierarchicalBloomFilters {
         let num_hashes = config.optimal_hash_count(num_bits, superblock_keys.len());
 
         // Build bloom filter
-        let mut bloom_data = vec![0u8; (num_bits + 7) / 8];
+        let mut bloom_data = vec![0u8; num_bits.div_ceil(8)];
         for key in superblock_keys {
-            let positions =
-                crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
+            let positions = crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
             for pos in positions {
                 let byte_index = pos / 8;
                 let bit_index = pos % 8;
@@ -175,10 +173,9 @@ impl HierarchicalBloomFilters {
         let num_hashes = config.optimal_hash_count(num_bits, block_keys.len());
 
         // Build bloom filter
-        let mut bloom_data = vec![0u8; (num_bits + 7) / 8];
+        let mut bloom_data = vec![0u8; num_bits.div_ceil(8)];
         for key in block_keys {
-            let positions =
-                crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
+            let positions = crate::core::bloom::hash::double_hash(key, num_hashes as u32, num_bits);
 
             for pos in positions {
                 let byte_index = pos / 8;
@@ -234,8 +231,7 @@ impl HierarchicalBloomFilters {
 
         self.stats.compressed_memory_bytes = total_compressed;
         self.stats.uncompressed_memory_bytes = total_uncompressed;
-        self.stats.memory_savings_bytes =
-            total_uncompressed.saturating_sub(total_compressed);
+        self.stats.memory_savings_bytes = total_uncompressed.saturating_sub(total_compressed);
         self.stats.average_sparsity = if count > 0 {
             total_sparsity / count as f64
         } else {
@@ -437,7 +433,10 @@ mod tests {
 
         // Query for existing key
         let candidates = hierarchy.filter_blocks(b"alice").unwrap();
-        assert!(!candidates.is_empty(), "Expected non-empty candidates for 'alice'");
+        assert!(
+            !candidates.is_empty(),
+            "Expected non-empty candidates for 'alice'"
+        );
 
         // Query for non-existent key
         // Due to FPR, might get false positives, but should filter most blocks

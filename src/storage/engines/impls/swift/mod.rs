@@ -1,18 +1,21 @@
-//! # SWIFT Engine: Storage With Indexed Fast Traversal
+//! # SWIFT Engine - INCOMPLETE
 //!
-//! ## 🏗️ PRODUCTION-READY HIERARCHICAL STORAGE ENGINE - COMPREHENSIVE IMPLEMENTATION
+//! **WARNING**: This engine has incomplete implementations.
+//! Several critical features are not yet implemented.
+//! Use SST, VIPER, or HELIX for production workloads.
 //!
-//! SWIFT is ProximaDB's **sophisticated hierarchical storage engine** featuring a unique three-tier architecture optimized for large-scale organized data management.
+//! ## SWIFT Engine: Storage With Indexed Fast Traversal
 //!
-//! ### ✅ **ENTERPRISE HIERARCHICAL CAPABILITIES:**
-//! 1. **Three-Tier Architecture**: Revolutionary SuperBlock → DataBlock → Records hierarchy
+//! SWIFT is ProximaDB's hierarchical storage engine featuring a three-tier architecture for organized data management.
+//!
+//! ### Hierarchical Capabilities (incomplete):
+//! 1. **Three-Tier Architecture**: SuperBlock, DataBlock, Records hierarchy
 //! 2. **Hierarchical Indexing**: Multi-level navigation with O(log n) access patterns
-//! 3. **Large-Scale Support**: Optimized for datasets from millions to billions of vectors
-//! 4. **Proxima Integration**: SIMD-optimized encoding with intelligent compression
+//! 3. **Large-Scale Support**: Designed for datasets from millions to billions of vectors
+//! 4. **Proxima Integration**: SIMD-optimized encoding with compression
 //! 5. **Incremental Operations**: Non-disruptive updates and expansions
-//! 6. **Production Validation**: Battle-tested hierarchical storage with enterprise features
 //!
-//! **STATUS**: ✅ **PRODUCTION-READY** - Mature hierarchical engine for organized large-scale data
+//! **STATUS**: INCOMPLETE - Not recommended for production use
 //!
 //! ## 🎯 OPTIMAL USE CASES
 //!
@@ -170,7 +173,9 @@ pub use superblock_cache::{
 pub use unified_strategy_reader::{CachedSWIFTReader, DirectSWIFTReader, UnifiedSWIFTReader};
 
 // Re-export SOLID progressive search stages
-pub use stages::{SwiftBinaryStage, SwiftInt8Stage, SwiftFp32Stage, SwiftProgressivePipelineBuilder};
+pub use stages::{
+    SwiftBinaryStage, SwiftFp32Stage, SwiftInt8Stage, SwiftProgressivePipelineBuilder,
+};
 
 use anyhow::{Result, anyhow};
 // use std::collections::HashMap; // Unused import
@@ -270,7 +275,7 @@ impl SuperBlock {
             quantized_signature: Vec::new(),
             swift_metadata,
             record_count: 0,
-            adacurve_code: None,  // Will be populated during clustering
+            adacurve_code: None, // Will be populated during clustering
         }
     }
 
@@ -618,18 +623,22 @@ impl SwiftFile {
                 let dimension = vectors[0].len();
 
                 // Compute binary quantization (1-bit per dimension, 32x compression)
-                let binary_vectors: Vec<Vec<u8>> = vectors.iter().map(|v| {
-                    let mut binary = vec![0u8; (dimension + 7) / 8];
-                    for (i, &val) in v.iter().enumerate() {
-                        if val > 0.0 {
-                            binary[i / 8] |= 1 << (i % 8);
+                let binary_vectors: Vec<Vec<u8>> = vectors
+                    .iter()
+                    .map(|v| {
+                        let mut binary = vec![0u8; (dimension + 7) / 8];
+                        for (i, &val) in v.iter().enumerate() {
+                            if val > 0.0 {
+                                binary[i / 8] |= 1 << (i % 8);
+                            }
                         }
-                    }
-                    binary
-                }).collect();
+                        binary
+                    })
+                    .collect();
 
                 // Compute INT8 quantization (4x compression, ~95% recall)
-                let (min_val, max_val) = vectors.iter()
+                let (min_val, max_val) = vectors
+                    .iter()
                     .flat_map(|v| v.iter())
                     .fold((f32::MAX, f32::MIN), |(min, max), &val| {
                         (min.min(val), max.max(val))
@@ -641,12 +650,17 @@ impl SwiftFile {
                     1.0
                 };
 
-                let int8_vectors: Vec<Vec<i8>> = vectors.iter().map(|v| {
-                    v.iter().map(|&val| {
-                        let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
-                        (normalized as i16 - 128) as i8
-                    }).collect()
-                }).collect();
+                let int8_vectors: Vec<Vec<i8>> = vectors
+                    .iter()
+                    .map(|v| {
+                        v.iter()
+                            .map(|&val| {
+                                let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
+                                (normalized as i16 - 128) as i8
+                            })
+                            .collect()
+                    })
+                    .collect();
 
                 block.quantized_section = Some(QuantizedSection {
                     binary_vectors: Some(binary_vectors),
@@ -671,16 +685,16 @@ impl SwiftFile {
             let superblock_id = block_id / 64;
             if self.superblocks.len() <= superblock_id {
                 // ✅ Create SuperBlock using Proxima composition pattern
-            let mut superblock =
-                SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
+                let mut superblock =
+                    SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
 
-            // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
-            superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
+                // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
+                superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
 
-            // Initialize SWIFT-specific fields
-            superblock.centroid = vec![0.0; self.header.dimension];
-            superblock.block_centroids = Vec::new();
-            superblock.quantized_signature = Vec::new();
+                // Initialize SWIFT-specific fields
+                superblock.centroid = vec![0.0; self.header.dimension];
+                superblock.block_centroids = Vec::new();
+                superblock.quantized_signature = Vec::new();
 
                 // ✅ Proxima will automatically provide bloom filters when blocks are added!
 
@@ -747,7 +761,7 @@ impl SwiftFile {
             // Compute and store centroid for clustering
             let centroid = compute_block_centroid(&block);
             block_centroids.push(BlockWithCentroid {
-                centroid: centroid.clone()
+                centroid: centroid.clone(),
             });
             blocks.push(block);
         }
@@ -755,7 +769,10 @@ impl SwiftFile {
         // === Cluster blocks using unified PCA + spatial encoding infrastructure ===
         // Uses shared SpatialClusteringPipeline for consistent behavior across engines
         // AdaCurve falls back to Hilbert (0.95 locality) which is superior to Z-Order
-        info!("🔬 SWIFT: Applying unified PCA + spatial clustering to {} blocks", blocks.len());
+        info!(
+            "🔬 SWIFT: Applying unified PCA + spatial clustering to {} blocks",
+            blocks.len()
+        );
 
         use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
         use crate::storage::engines::core::formats::proximablocks::spatial_traits::CurveType;
@@ -801,7 +818,8 @@ impl SwiftFile {
             .map(|&i| spatial_code_to_u64(&clustering_result.spatial_codes[i]))
             .collect();
 
-        info!("🔬 SWIFT: Spatial clustering complete - codes range: {} to {}",
+        info!(
+            "🔬 SWIFT: Spatial clustering complete - codes range: {} to {}",
             adacurve_codes.iter().min().unwrap_or(&0),
             adacurve_codes.iter().max().unwrap_or(&0)
         );
@@ -817,7 +835,8 @@ impl SwiftFile {
         self.superblocks.clear();
 
         let mut block_id = 0u32;
-        let mut superblock_codes: std::collections::HashMap<usize, Vec<u64>> = std::collections::HashMap::new();
+        let mut superblock_codes: std::collections::HashMap<usize, Vec<u64>> =
+            std::collections::HashMap::new();
 
         for (mut block, _, adacurve_code) in blocks_with_score.into_iter() {
             // Assign deterministic block_id (preserves ID ordering inside blocks)
@@ -842,7 +861,8 @@ impl SwiftFile {
             }
 
             // Track AdaCurve codes per superblock for aggregation
-            superblock_codes.entry(superblock_id)
+            superblock_codes
+                .entry(superblock_id)
                 .or_insert_with(Vec::new)
                 .push(adacurve_code);
 
@@ -959,8 +979,6 @@ impl SwiftFile {
     /// Serialize SwiftFile to bytes for disk persistence
     /// Uses Proxima block serialization similar to SST for optimal performance
     pub fn serialize(&self) -> Result<Vec<u8>> {
-        
-        
         use bytes::BytesMut;
 
         let mut buffer = BytesMut::new();
@@ -1163,9 +1181,7 @@ impl SwiftFile {
                 cursor.read_exact(&mut buf)?;
                 let mut centroid = Vec::with_capacity(len);
                 for chunk in buf.chunks_exact(4) {
-                    centroid.push(f32::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3],
-                    ]));
+                    centroid.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
                 }
                 superblock.block_centroids.push(centroid);
             }
@@ -1267,7 +1283,6 @@ impl SwiftFile {
     /// PROXIMA: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
     fn finalize_superblock_encoding(&mut self) {
-        
         // use crate::core::hardware_capabilities::HardwareCapabilities; // Unused import
 
         let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
@@ -1346,7 +1361,9 @@ impl SwiftFile {
 
             // NEW: Compute FP16 centroid for superblock (50% storage reduction)
             if !superblock.centroid.is_empty() {
-                superblock.centroid_fp16 = Some(crate::storage::engines::impls::sst::fp32_to_fp16(&superblock.centroid));
+                superblock.centroid_fp16 = Some(crate::storage::engines::impls::sst::fp32_to_fp16(
+                    &superblock.centroid,
+                ));
             }
         }
     }

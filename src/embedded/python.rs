@@ -31,17 +31,17 @@
 //! db.insert("vectors", ids, vectors.tolist())
 //! ```
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError, PyUserWarning};
+use pyo3::exceptions::{PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
-use pyo3::{PyErr, PyTypeInfo};
 use pyo3::types::{PyDict, PyList};
+use pyo3::{PyErr, PyTypeInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 // Zero-copy numpy support
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 
-use super::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use super::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
 use crate::core::proto_metadata_helper::sqlvalue_metadata_to_json;
 
@@ -181,6 +181,108 @@ pub struct PyStorageStats {
 }
 
 // ============================================================================
+// Checkpoint and Delta Python Bindings
+// ============================================================================
+
+/// Python wrapper for checkpoint information
+#[pyclass(name = "CheckpointInfo")]
+#[derive(Clone)]
+pub struct PyCheckpointInfo {
+    /// Name of the checkpoint
+    #[pyo3(get)]
+    pub name: String,
+    /// Timestamp when checkpoint was created (ISO 8601 format)
+    #[pyo3(get)]
+    pub timestamp: String,
+    /// Total size of the checkpoint in bytes
+    #[pyo3(get)]
+    pub size_bytes: u64,
+    /// Collections included in this checkpoint
+    #[pyo3(get)]
+    pub collections: Vec<String>,
+    /// Global LSN at checkpoint time
+    #[pyo3(get)]
+    pub checkpoint_lsn: u64,
+}
+
+#[pymethods]
+impl PyCheckpointInfo {
+    fn __repr__(&self) -> String {
+        format!(
+            "CheckpointInfo(name='{}', timestamp='{}', size_bytes={}, collections={:?}, checkpoint_lsn={})",
+            self.name, self.timestamp, self.size_bytes, self.collections, self.checkpoint_lsn
+        )
+    }
+}
+
+impl From<super::CheckpointInfo> for PyCheckpointInfo {
+    fn from(info: super::CheckpointInfo) -> Self {
+        Self {
+            name: info.name,
+            timestamp: info.timestamp.to_rfc3339(),
+            size_bytes: info.size_bytes,
+            collections: info.collections,
+            checkpoint_lsn: info.checkpoint_lsn,
+        }
+    }
+}
+
+/// Python wrapper for delta save information
+#[pyclass(name = "DeltaInfo")]
+#[derive(Clone)]
+pub struct PyDeltaInfo {
+    /// Path where delta was saved
+    #[pyo3(get)]
+    pub path: String,
+    /// Timestamp when delta was created (ISO 8601 format)
+    #[pyo3(get)]
+    pub timestamp: String,
+    /// Size of the delta file in bytes
+    #[pyo3(get)]
+    pub size_bytes: u64,
+    /// Number of entries in the delta
+    #[pyo3(get)]
+    pub entry_count: u64,
+    /// Base checkpoint name (if any)
+    #[pyo3(get)]
+    pub base_checkpoint: Option<String>,
+    /// Starting LSN of the delta
+    #[pyo3(get)]
+    pub start_lsn: u64,
+    /// Ending LSN of the delta (inclusive)
+    #[pyo3(get)]
+    pub end_lsn: u64,
+    /// Collections with changes in this delta
+    #[pyo3(get)]
+    pub affected_collections: Vec<String>,
+}
+
+#[pymethods]
+impl PyDeltaInfo {
+    fn __repr__(&self) -> String {
+        format!(
+            "DeltaInfo(path='{}', size_bytes={}, entry_count={}, start_lsn={}, end_lsn={})",
+            self.path, self.size_bytes, self.entry_count, self.start_lsn, self.end_lsn
+        )
+    }
+}
+
+impl From<super::DeltaInfo> for PyDeltaInfo {
+    fn from(info: super::DeltaInfo) -> Self {
+        Self {
+            path: info.path,
+            timestamp: info.timestamp.to_rfc3339(),
+            size_bytes: info.size_bytes,
+            entry_count: info.entry_count,
+            base_checkpoint: info.base_checkpoint,
+            start_lsn: info.start_lsn,
+            end_lsn: info.end_lsn,
+            affected_collections: info.affected_collections,
+        }
+    }
+}
+
+// ============================================================================
 // Generic Graph Database Python Bindings
 // ============================================================================
 //
@@ -221,11 +323,7 @@ impl PyGraphNode {
     ///     properties: Dictionary of properties
     #[new]
     #[pyo3(signature = (id, labels=None, properties=None))]
-    fn new(
-        id: String,
-        labels: Option<Vec<String>>,
-        properties: Option<&PyDict>,
-    ) -> PyResult<Self> {
+    fn new(id: String, labels: Option<Vec<String>>, properties: Option<&PyDict>) -> PyResult<Self> {
         let properties_map = if let Some(dict) = properties {
             let mut map = HashMap::new();
             for (k, v) in dict.iter() {
@@ -280,10 +378,7 @@ impl PyGraphNode {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "GraphNode(id='{}', labels={:?})",
-            self.id, self.labels_vec
-        )
+        format!("GraphNode(id='{}', labels={:?})", self.id, self.labels_vec)
     }
 }
 
@@ -428,6 +523,231 @@ pub struct PyGraphStats {
     pub total_edges: u64,
 }
 
+// ============================================================================
+// Observability Metrics Python Bindings
+// ============================================================================
+
+/// Latency statistics for an operation type
+#[pyclass(name = "LatencyStats")]
+#[derive(Clone)]
+pub struct PyLatencyStats {
+    /// Number of operations recorded
+    #[pyo3(get)]
+    pub count: u64,
+    /// Minimum latency in milliseconds
+    #[pyo3(get)]
+    pub min_ms: f64,
+    /// Maximum latency in milliseconds
+    #[pyo3(get)]
+    pub max_ms: f64,
+    /// Mean latency in milliseconds
+    #[pyo3(get)]
+    pub mean_ms: f64,
+    /// 50th percentile latency in milliseconds
+    #[pyo3(get)]
+    pub p50_ms: f64,
+    /// 95th percentile latency in milliseconds
+    #[pyo3(get)]
+    pub p95_ms: f64,
+    /// 99th percentile latency in milliseconds
+    #[pyo3(get)]
+    pub p99_ms: f64,
+}
+
+#[pymethods]
+impl PyLatencyStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "LatencyStats(count={}, p50={:.2}ms, p95={:.2}ms, p99={:.2}ms)",
+            self.count, self.p50_ms, self.p95_ms, self.p99_ms
+        )
+    }
+}
+
+impl From<super::LatencyStats> for PyLatencyStats {
+    fn from(stats: super::LatencyStats) -> Self {
+        PyLatencyStats {
+            count: stats.count,
+            min_ms: stats.min_ms,
+            max_ms: stats.max_ms,
+            mean_ms: stats.mean_ms,
+            p50_ms: stats.p50_ms,
+            p95_ms: stats.p95_ms,
+            p99_ms: stats.p99_ms,
+        }
+    }
+}
+
+/// Comprehensive embedded metrics snapshot
+///
+/// Contains latency histograms, operation counters, cache statistics,
+/// and WAL statistics for embedded mode observability.
+///
+/// Example:
+///     ```python
+///     metrics = db.metrics()
+///     print(f"p99 search latency: {metrics.search_latency.p99_ms}ms")
+///     print(f"Cache hit rate: {metrics.cache_hit_rate * 100}%")
+///     print(f"Total searches: {metrics.total_searches}")
+///     ```
+#[pyclass(name = "EmbeddedMetrics")]
+#[derive(Clone)]
+pub struct PyEmbeddedMetrics {
+    // Latency histograms
+    search_latency_inner: super::LatencyStats,
+    insert_latency_inner: super::LatencyStats,
+    flush_latency_inner: super::LatencyStats,
+    delete_latency_inner: super::LatencyStats,
+    get_latency_inner: super::LatencyStats,
+
+    // Operation counters
+    /// Total search operations
+    #[pyo3(get)]
+    pub total_searches: u64,
+    /// Total insert operations
+    #[pyo3(get)]
+    pub total_inserts: u64,
+    /// Total delete operations
+    #[pyo3(get)]
+    pub total_deletes: u64,
+    /// Total flush operations
+    #[pyo3(get)]
+    pub total_flushes: u64,
+    /// Total get operations
+    #[pyo3(get)]
+    pub total_gets: u64,
+    /// Total upsert operations
+    #[pyo3(get)]
+    pub total_upserts: u64,
+    /// Total vectors inserted
+    #[pyo3(get)]
+    pub total_vectors_inserted: u64,
+    /// Total vectors deleted
+    #[pyo3(get)]
+    pub total_vectors_deleted: u64,
+    /// Total bytes written
+    #[pyo3(get)]
+    pub total_bytes_written: u64,
+    /// Total errors
+    #[pyo3(get)]
+    pub total_errors: u64,
+
+    // Cache statistics
+    /// Cache hit rate (0.0 to 1.0)
+    #[pyo3(get)]
+    pub cache_hit_rate: f64,
+    /// Total cache hits
+    #[pyo3(get)]
+    pub cache_hits: u64,
+    /// Total cache misses
+    #[pyo3(get)]
+    pub cache_misses: u64,
+    /// Number of entries in cache
+    #[pyo3(get)]
+    pub cache_entries: u64,
+    /// Memory used by cache in bytes
+    #[pyo3(get)]
+    pub cache_memory_bytes: u64,
+    /// Total cache evictions
+    #[pyo3(get)]
+    pub cache_evictions: u64,
+
+    // WAL statistics
+    /// Pending bytes in WAL
+    #[pyo3(get)]
+    pub wal_pending_bytes: u64,
+    /// Number of WAL segments
+    #[pyo3(get)]
+    pub wal_segments_count: u64,
+    /// Total bytes written to WAL
+    #[pyo3(get)]
+    pub wal_total_bytes_written: u64,
+
+    // Timing
+    /// Database uptime in seconds
+    #[pyo3(get)]
+    pub uptime_secs: u64,
+}
+
+#[pymethods]
+impl PyEmbeddedMetrics {
+    /// Get search operation latency statistics
+    #[getter]
+    fn search_latency(&self) -> PyLatencyStats {
+        self.search_latency_inner.clone().into()
+    }
+
+    /// Get insert operation latency statistics
+    #[getter]
+    fn insert_latency(&self) -> PyLatencyStats {
+        self.insert_latency_inner.clone().into()
+    }
+
+    /// Get flush operation latency statistics
+    #[getter]
+    fn flush_latency(&self) -> PyLatencyStats {
+        self.flush_latency_inner.clone().into()
+    }
+
+    /// Get delete operation latency statistics
+    #[getter]
+    fn delete_latency(&self) -> PyLatencyStats {
+        self.delete_latency_inner.clone().into()
+    }
+
+    /// Get get operation latency statistics
+    #[getter]
+    fn get_latency(&self) -> PyLatencyStats {
+        self.get_latency_inner.clone().into()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EmbeddedMetrics(searches={}, inserts={}, cache_hit_rate={:.1}%, uptime={}s)",
+            self.total_searches,
+            self.total_inserts,
+            self.cache_hit_rate * 100.0,
+            self.uptime_secs
+        )
+    }
+}
+
+impl From<super::EmbeddedMetrics> for PyEmbeddedMetrics {
+    fn from(m: super::EmbeddedMetrics) -> Self {
+        PyEmbeddedMetrics {
+            search_latency_inner: m.search_latency,
+            insert_latency_inner: m.insert_latency,
+            flush_latency_inner: m.flush_latency,
+            delete_latency_inner: m.delete_latency,
+            get_latency_inner: m.get_latency,
+
+            total_searches: m.total_searches,
+            total_inserts: m.total_inserts,
+            total_deletes: m.total_deletes,
+            total_flushes: m.total_flushes,
+            total_gets: m.total_gets,
+            total_upserts: m.total_upserts,
+            total_vectors_inserted: m.total_vectors_inserted,
+            total_vectors_deleted: m.total_vectors_deleted,
+            total_bytes_written: m.total_bytes_written,
+            total_errors: m.total_errors,
+
+            cache_hit_rate: m.cache_hit_rate,
+            cache_hits: m.cache_hits,
+            cache_misses: m.cache_misses,
+            cache_entries: m.cache_entries,
+            cache_memory_bytes: m.cache_memory_bytes,
+            cache_evictions: m.cache_evictions,
+
+            wal_pending_bytes: m.wal_pending_bytes,
+            wal_segments_count: m.wal_segments_count,
+            wal_total_bytes_written: m.wal_total_bytes_written,
+
+            uptime_secs: m.uptime_secs,
+        }
+    }
+}
+
 #[pymethods]
 impl PyGraphStats {
     fn __repr__(&self) -> String {
@@ -443,6 +763,145 @@ impl From<super::GraphStats> for PyGraphStats {
         PyGraphStats {
             total_nodes: stats.total_nodes,
             total_edges: stats.total_edges,
+        }
+    }
+}
+
+/// Python wrapper for streaming search results
+#[pyclass(name = "StreamingSearchResult")]
+#[derive(Clone)]
+pub struct PyStreamingSearchResult {
+    /// Vector ID
+    #[pyo3(get)]
+    pub id: String,
+    /// Similarity score
+    #[pyo3(get)]
+    pub score: f32,
+    /// Associated metadata as dictionary
+    metadata_map: HashMap<String, String>,
+}
+
+#[pymethods]
+impl PyStreamingSearchResult {
+    /// Get metadata as a Python dictionary
+    #[getter]
+    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        for (k, v) in &self.metadata_map {
+            dict.set_item(k, v)?;
+        }
+        Ok(dict.into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "StreamingSearchResult(id='{}', score={:.4})",
+            self.id, self.score
+        )
+    }
+}
+
+/// Python iterator for streaming search results
+///
+/// This iterator yields batches of search results, providing memory-efficient
+/// access to large result sets. Results are fetched in configurable batch sizes.
+///
+/// Example:
+///     ```python
+///     # Create streaming search iterator
+///     for batch in db.search_streaming("my_collection", query, top_k=10000, batch_size=100):
+///         for result in batch:
+///             print(f"Found: {result.id} (score: {result.score})")
+///     ```
+#[pyclass(name = "SearchStreamIterator")]
+pub struct PySearchStreamIterator {
+    /// The underlying Rust iterator wrapped in an Option for take semantics
+    inner: Option<super::EmbeddedSearchIterator>,
+}
+
+#[pymethods]
+impl PySearchStreamIterator {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<Vec<PyStreamingSearchResult>>> {
+        let inner = match self.inner.as_mut() {
+            Some(it) => it,
+            None => return Ok(None),
+        };
+
+        match inner.next() {
+            Some(Ok(batch)) => {
+                let py_batch: Vec<PyStreamingSearchResult> = batch
+                    .into_iter()
+                    .map(|r| PyStreamingSearchResult {
+                        id: r.id,
+                        score: r.score,
+                        metadata_map: r.metadata,
+                    })
+                    .collect();
+
+                if py_batch.is_empty() {
+                    // Empty batch signals completion
+                    self.inner = None;
+                    Ok(None)
+                } else {
+                    Ok(Some(py_batch))
+                }
+            }
+            Some(Err(e)) => {
+                self.inner = None;
+                Err(PyRuntimeError::new_err(format!(
+                    "Streaming search error: {}",
+                    e
+                )))
+            }
+            None => {
+                self.inner = None;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Get the current batch size configuration
+    #[getter]
+    fn batch_size(&self) -> usize {
+        self.inner.as_ref().map(|i| i.batch_size()).unwrap_or(0)
+    }
+
+    /// Get the number of results returned so far
+    #[getter]
+    fn results_returned(&self) -> usize {
+        self.inner
+            .as_ref()
+            .map(|i| i.results_returned())
+            .unwrap_or(0)
+    }
+
+    /// Get the total results requested (top_k)
+    #[getter]
+    fn top_k(&self) -> usize {
+        self.inner.as_ref().map(|i| i.top_k()).unwrap_or(0)
+    }
+
+    /// Check if the iterator is complete
+    #[getter]
+    fn is_complete(&self) -> bool {
+        self.inner.as_ref().map(|i| i.is_complete()).unwrap_or(true)
+    }
+
+    fn __repr__(&self) -> String {
+        if let Some(inner) = &self.inner {
+            format!(
+                "SearchStreamIterator(batch_size={}, returned={}, top_k={}, complete={})",
+                inner.batch_size(),
+                inner.results_returned(),
+                inner.top_k(),
+                inner.is_complete()
+            )
+        } else {
+            "SearchStreamIterator(exhausted)".to_string()
         }
     }
 }
@@ -522,6 +981,31 @@ fn set_approx_defaults(mode_str: &str) -> (String, f32, usize, usize) {
 #[pymethods]
 impl PyProximaDB {
     /// Create a new embedded ProximaDB instance
+    ///
+    /// Args:
+    ///     data_dirs: Path string, list of paths, or list of DiskConfig
+    ///     metadata_dir: Optional metadata directory path
+    ///     cache_size_mb: Cache size in megabytes (default: 512)
+    ///     default_engine: Default storage engine (default: "sst")
+    ///     enable_wal: Enable write-ahead log (default: true)
+    ///     prune_mode: Prune mode for approximate search
+    ///     mode: Access mode for multi-process coordination:
+    ///           - "exclusive": Single writer, exclusive access (default)
+    ///           - "leader" or "leader_follower": Leader/follower mode
+    ///           - "follower" or "shared_read": Read-only follower
+    ///     node_id: Node ID for leader election (optional, auto-generated if not set)
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Single process, exclusive access (default)
+    ///     db = ProximaDB("/data/vectors")
+    ///
+    ///     # Read-only follower mode
+    ///     db = ProximaDB("/data/vectors", mode="follower")
+    ///
+    ///     # Leader/follower mode with explicit node ID
+    ///     db = ProximaDB("/data/vectors", mode="leader", node_id="node1")
+    ///     ```
     #[new]
     #[pyo3(signature = (
         data_dirs=None,
@@ -529,7 +1013,9 @@ impl PyProximaDB {
         cache_size_mb=512,
         default_engine="sst",
         enable_wal=true,
-        prune_mode=None
+        prune_mode=None,
+        mode="exclusive",
+        node_id=None
     ))]
     fn new(
         py: Python,
@@ -539,6 +1025,8 @@ impl PyProximaDB {
         default_engine: &str,
         enable_wal: bool,
         prune_mode: Option<&PyAny>,
+        mode: &str,
+        node_id: Option<String>,
     ) -> PyResult<Self> {
         let mut final_prune_config = None;
 
@@ -586,10 +1074,7 @@ impl PyProximaDB {
                 configs.into_iter().map(|c| c.into()).collect()
             } else if let Ok(paths) = dirs.extract::<Vec<String>>() {
                 // List of path strings
-                paths
-                    .into_iter()
-                    .map(StorageLocationConfig::new)
-                    .collect()
+                paths.into_iter().map(StorageLocationConfig::new).collect()
             } else {
                 return Err(PyValueError::new_err(
                     "data_dirs must be a path string, list of paths, or list of DiskConfig",
@@ -609,6 +1094,22 @@ impl PyProximaDB {
             }
         });
 
+        // Parse access mode
+        let access_mode = match mode.to_lowercase().as_str() {
+            "exclusive" => AccessMode::Exclusive,
+            "leader" | "leader_follower" | "writer" => AccessMode::LeaderFollower,
+            "follower" | "shared_read" | "shared" | "reader" => AccessMode::SharedRead,
+            _ => {
+                PyErr::warn(
+                    py,
+                    PyUserWarning::type_object(py),
+                    &format!("Invalid 'mode' '{}'. Using 'exclusive' mode.", mode),
+                    1,
+                )?;
+                AccessMode::Exclusive
+            }
+        };
+
         let config = EmbeddedConfig {
             storage_locations,
             metadata_path,
@@ -624,6 +1125,9 @@ impl PyProximaDB {
             // RL planner is enabled by default for adaptive query optimization
             enable_rl_planner: true,
             rl_policy_path: None, // Will use default path based on data_dir
+            // Multi-process coordination
+            access_mode,
+            node_id,
         };
 
         let mut config = config;
@@ -639,8 +1143,7 @@ impl PyProximaDB {
                     config.block_prune_max_keep = max_k;
                 }
                 PruneModeConfig::Advanced(adv) => {
-                    let (mode, def_ratio, def_min_k, def_max_k) =
-                        set_approx_defaults(&adv.r#type);
+                    let (mode, def_ratio, def_min_k, def_max_k) = set_approx_defaults(&adv.r#type);
                     config.block_prune_mode = adv.r#type;
                     config.block_prune_ratio = adv.ratio.unwrap_or(def_ratio);
                     config.block_prune_min_keep = adv.min_keep.unwrap_or(def_min_k);
@@ -674,12 +1177,7 @@ impl PyProximaDB {
     /// Raises:
     ///     RuntimeError: If collection creation fails
     #[pyo3(signature = (name, dimension, engine=None))]
-    fn create_collection(
-        &self,
-        name: &str,
-        dimension: u32,
-        engine: Option<&str>,
-    ) -> PyResult<()> {
+    fn create_collection(&self, name: &str, dimension: u32, engine: Option<&str>) -> PyResult<()> {
         self.inner
             .create_collection(name, dimension, engine)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create collection: {}", e)))
@@ -906,17 +1404,15 @@ impl PyProximaDB {
         if ids.len() != n_vectors {
             return Err(PyValueError::new_err(format!(
                 "Number of IDs ({}) doesn't match number of vectors ({})",
-                ids.len(), n_vectors
+                ids.len(),
+                n_vectors
             )));
         }
 
         // Convert to Vec<Vec<f32>> - we still need this format for the internal API
         // but at least we avoided the Python .tolist() overhead
-        let rust_vectors: Vec<Vec<f32>> = array
-            .rows()
-            .into_iter()
-            .map(|row| row.to_vec())
-            .collect();
+        let rust_vectors: Vec<Vec<f32>> =
+            array.rows().into_iter().map(|row| row.to_vec()).collect();
 
         // Convert metadata (same as before)
         let rust_metadata: Option<Vec<HashMap<String, serde_json::Value>>> =
@@ -1010,7 +1506,8 @@ impl PyProximaDB {
 
         for row in array.rows() {
             let query_vec: Vec<f32> = row.to_vec();
-            let results = self.inner
+            let results = self
+                .inner
                 .search_with_mode(collection, query_vec, top_k, None, search_mode)
                 .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
 
@@ -1022,11 +1519,132 @@ impl PyProximaDB {
                         score: r.score,
                         metadata_map: r.metadata,
                     })
-                    .collect()
+                    .collect(),
             );
         }
 
         Ok(all_results)
+    }
+
+    /// Create a streaming search iterator for memory-efficient large result sets
+    ///
+    /// This method returns an iterator that yields batches of search results,
+    /// allowing for memory-efficient processing of large result sets without
+    /// loading all results into memory at once.
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     query: Query vector (list or numpy array)
+    ///     top_k: Total number of results to return (default: 1000)
+    ///     batch_size: Number of results per batch (default: 100)
+    ///     search_mode: Optional search mode for accuracy vs speed tradeoff
+    ///         - "exact": 100% recall, searches all partitions (default)
+    ///         - "approximate": Faster search using IVF-style partition pruning
+    ///         - "adaptive": Auto-select based on dataset size
+    ///
+    /// Returns:
+    ///     SearchStreamIterator that yields batches of StreamingSearchResult
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Process 10,000 results in batches of 100
+    ///     for batch in db.search_streaming("my_collection", query, top_k=10000, batch_size=100):
+    ///         for result in batch:
+    ///             print(f"Found: {result.id} (score: {result.score})")
+    ///
+    ///     # Use with search mode
+    ///     for batch in db.search_streaming("my_collection", query, top_k=10000,
+    ///                                       batch_size=100, search_mode="approximate"):
+    ///         process_batch(batch)
+    ///     ```
+    #[pyo3(signature = (collection, query, top_k=1000, batch_size=100, search_mode=None))]
+    fn search_streaming(
+        &self,
+        collection: &str,
+        query: &PyAny,
+        top_k: usize,
+        batch_size: usize,
+        search_mode: Option<&str>,
+    ) -> PyResult<PySearchStreamIterator> {
+        // Convert query vector
+        let query_vec: Vec<f32> = if query.hasattr("tolist")? {
+            query.call_method0("tolist")?.extract()?
+        } else {
+            query.extract()?
+        };
+
+        // Build streaming config
+        let mut config = super::StreamingSearchConfig::default().with_batch_size(batch_size);
+
+        if let Some(mode) = search_mode {
+            config = config.with_search_mode(mode);
+        }
+
+        // Create the streaming iterator
+        let iterator = self
+            .inner
+            .search_streaming_with_config(collection, query_vec, top_k, config)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
+            })?;
+
+        Ok(PySearchStreamIterator {
+            inner: Some(iterator),
+        })
+    }
+
+    /// Create a streaming search iterator with zero-copy numpy query
+    ///
+    /// Same as `search_streaming` but with zero-copy access to numpy arrays.
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     query: Query vector as numpy array with dtype=float32
+    ///     top_k: Total number of results to return (default: 1000)
+    ///     batch_size: Number of results per batch (default: 100)
+    ///     search_mode: Optional search mode for accuracy vs speed tradeoff
+    ///
+    /// Returns:
+    ///     SearchStreamIterator that yields batches of StreamingSearchResult
+    ///
+    /// Example:
+    ///     ```python
+    ///     import numpy as np
+    ///     query = np.array([0.1, 0.2, ...], dtype=np.float32)
+    ///     for batch in db.search_streaming_numpy("my_collection", query, top_k=10000):
+    ///         for result in batch:
+    ///             print(f"Found: {result.id}")
+    ///     ```
+    #[pyo3(signature = (collection, query, top_k=1000, batch_size=100, search_mode=None))]
+    fn search_streaming_numpy(
+        &self,
+        collection: &str,
+        query: PyReadonlyArray1<f32>,
+        top_k: usize,
+        batch_size: usize,
+        search_mode: Option<&str>,
+    ) -> PyResult<PySearchStreamIterator> {
+        // Zero-copy access to query vector
+        let query_vec: Vec<f32> = query.as_array().to_vec();
+
+        // Build streaming config
+        let mut config = super::StreamingSearchConfig::default().with_batch_size(batch_size);
+
+        if let Some(mode) = search_mode {
+            config = config.with_search_mode(mode);
+        }
+
+        // Create the streaming iterator
+        let iterator = self
+            .inner
+            .search_streaming_with_config(collection, query_vec, top_k, config)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
+            })?;
+
+        Ok(PySearchStreamIterator {
+            inner: Some(iterator),
+        })
     }
 
     // ========================================================================
@@ -1050,7 +1668,12 @@ impl PyProximaDB {
     ///         print(f"Vector: {result['vector'][:5]}...")  # First 5 dims
     ///         print(f"Metadata: {result['metadata']}")
     ///     ```
-    fn get_vector(&self, py: Python<'_>, collection: &str, vector_id: &str) -> PyResult<Option<PyObject>> {
+    fn get_vector(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        vector_id: &str,
+    ) -> PyResult<Option<PyObject>> {
         match self.inner.get_vector(collection, vector_id) {
             Ok(Some(record)) => {
                 let dict = PyDict::new(py);
@@ -1073,9 +1696,12 @@ impl PyProximaDB {
                 }
 
                 Ok(Some(dict.into()))
-            },
+            }
             Ok(None) => Ok(None),
-            Err(e) => Err(PyRuntimeError::new_err(format!("Failed to get vector: {}", e))),
+            Err(e) => Err(PyRuntimeError::new_err(format!(
+                "Failed to get vector: {}",
+                e
+            ))),
         }
     }
 
@@ -1100,7 +1726,9 @@ impl PyProximaDB {
     fn vector_exists(&self, collection: &str, vector_id: &str) -> PyResult<bool> {
         self.inner
             .vector_exists(collection, vector_id)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to check vector existence: {}", e)))
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to check vector existence: {}", e))
+            })
     }
 
     /// Delete a single vector by ID (tombstone-based)
@@ -1247,11 +1875,8 @@ impl PyProximaDB {
     ) -> PyResult<(usize, usize)> {
         // Zero-copy access to numpy buffer
         let array = vectors.as_array();
-        let rust_vectors: Vec<Vec<f32>> = array
-            .rows()
-            .into_iter()
-            .map(|row| row.to_vec())
-            .collect();
+        let rust_vectors: Vec<Vec<f32>> =
+            array.rows().into_iter().map(|row| row.to_vec()).collect();
 
         // Convert metadata (same pattern as insert_numpy)
         let rust_metadata: Option<Vec<HashMap<String, serde_json::Value>>> =
@@ -1303,6 +1928,57 @@ impl PyProximaDB {
         self.flush()
     }
 
+    // ========================================================================
+    // Multi-Process Coordination API
+    // ========================================================================
+
+    /// Check if this database instance can perform write operations
+    ///
+    /// Returns:
+    ///     True if writes are allowed based on access mode and leader status
+    ///
+    /// Example:
+    ///     ```python
+    ///     if db.can_write():
+    ///         db.insert("vectors", ids, vectors)
+    ///     else:
+    ///         print("Read-only mode")
+    ///     ```
+    fn can_write(&self) -> bool {
+        self.inner.can_write()
+    }
+
+    /// Get the current access mode
+    ///
+    /// Returns:
+    ///     Access mode string: "exclusive", "shared_read", or "leader_follower"
+    fn access_mode(&self) -> String {
+        format!("{}", self.inner.access_mode())
+    }
+
+    /// Check if this node is the leader (only relevant in leader/follower mode)
+    ///
+    /// Returns:
+    ///     True if this node is the leader or if in exclusive mode
+    ///
+    /// Example:
+    ///     ```python
+    ///     db = ProximaDB("/data", mode="leader")
+    ///     if db.is_leader():
+    ///         print("This process is the leader")
+    ///     ```
+    fn is_leader(&self) -> bool {
+        self.inner.is_leader()
+    }
+
+    /// Get the current leader ID (only relevant in leader/follower mode)
+    ///
+    /// Returns:
+    ///     Leader node ID or None if not in leader/follower mode
+    fn leader_id(&self) -> Option<String> {
+        self.inner.leader_id()
+    }
+
     /// Get storage statistics
     ///
     /// Returns:
@@ -1317,6 +1993,131 @@ impl PyProximaDB {
                 cache_hit_rate: s.cache_hit_rate,
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get stats: {}", e)))
+    }
+
+    // ========================================================================
+    // Checkpoint and Delta Persistence API
+    // ========================================================================
+
+    /// Create a named checkpoint of the current database state
+    ///
+    /// This captures the current state of all collections and allows restoration
+    /// to this point later. Checkpoints are persisted to disk and survive restarts.
+    ///
+    /// Args:
+    ///     name: Name for the checkpoint (must be unique)
+    ///
+    /// Returns:
+    ///     CheckpointInfo with details about the created checkpoint
+    ///
+    /// Example:
+    ///     ```python
+    ///     info = db.checkpoint("before_experiment")
+    ///     print(f"Checkpoint created at LSN {info.checkpoint_lsn}")
+    ///
+    ///     # Make changes...
+    ///     db.insert("vectors", ids, vectors)
+    ///
+    ///     # Restore to checkpoint
+    ///     db.restore_checkpoint("before_experiment")
+    ///     ```
+    fn checkpoint(&self, name: &str) -> PyResult<PyCheckpointInfo> {
+        self.inner
+            .checkpoint(name)
+            .map(PyCheckpointInfo::from)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create checkpoint: {}", e)))
+    }
+
+    /// Restore the database to a named checkpoint
+    ///
+    /// This restores all collections to the state they were in when the checkpoint
+    /// was created. Any changes made after the checkpoint are discarded.
+    ///
+    /// WARNING: This is a destructive operation. All data added after the checkpoint
+    /// will be lost.
+    ///
+    /// Args:
+    ///     name: Name of the checkpoint to restore
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.checkpoint("backup")
+    ///     db.insert("vectors", ids, vectors)  # Add data
+    ///     db.restore_checkpoint("backup")  # Restore - new data is discarded
+    ///     ```
+    fn restore_checkpoint(&self, name: &str) -> PyResult<()> {
+        self.inner
+            .restore_checkpoint(name)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to restore checkpoint: {}", e)))
+    }
+
+    /// Save incremental changes since the last checkpoint to a delta file
+    ///
+    /// Delta files contain only the changes made since the last checkpoint,
+    /// making them much smaller and faster to create than full checkpoints.
+    ///
+    /// Args:
+    ///     path: Path where the delta file will be saved
+    ///
+    /// Returns:
+    ///     DeltaInfo with details about the saved delta
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.checkpoint("baseline")
+    ///     db.insert("vectors", ids1, vectors1)
+    ///     db.insert("vectors", ids2, vectors2)
+    ///
+    ///     # Save only the changes since checkpoint
+    ///     delta = db.save_delta("/backup/delta_001.delta")
+    ///     print(f"Delta saved: {delta.entry_count} entries, {delta.size_bytes} bytes")
+    ///     ```
+    fn save_delta(&self, path: &str) -> PyResult<PyDeltaInfo> {
+        self.inner
+            .save_delta(path)
+            .map(PyDeltaInfo::from)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to save delta: {}", e)))
+    }
+
+    /// Load changes from a delta file
+    ///
+    /// Applies the changes from a delta file to the current database state.
+    /// This is typically used to replay changes after restoring from a checkpoint.
+    ///
+    /// Args:
+    ///     path: Path to the delta file to load
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Restore to checkpoint, then apply delta
+    ///     db.restore_checkpoint("baseline")
+    ///     db.load_delta("/backup/delta_001.delta")
+    ///     ```
+    fn load_delta(&self, path: &str) -> PyResult<()> {
+        self.inner
+            .load_delta(path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to load delta: {}", e)))
+    }
+
+    /// List all available checkpoints
+    ///
+    /// Returns a list of all checkpoints that have been created, sorted by
+    /// creation timestamp (oldest first).
+    ///
+    /// Returns:
+    ///     List of CheckpointInfo objects with details about each checkpoint
+    ///
+    /// Example:
+    ///     ```python
+    ///     checkpoints = db.list_checkpoints()
+    ///     for cp in checkpoints:
+    ///         print(f"{cp.name}: {len(cp.collections)} collections at LSN {cp.checkpoint_lsn}")
+    ///     ```
+    fn list_checkpoints(&self) -> PyResult<Vec<PyCheckpointInfo>> {
+        self.inner
+            .list_checkpoints()
+            .map(|cps| cps.into_iter().map(PyCheckpointInfo::from).collect())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list checkpoints: {}", e)))
     }
 
     /// Context manager entry
@@ -1464,7 +2265,11 @@ impl PyProximaDB {
     ///     # Get all Person nodes
     ///     people = db.query_nodes_by_labels("social_graph", ["Person"])
     ///     ```
-    fn query_nodes_by_labels(&self, graph_id: &str, labels: Vec<String>) -> PyResult<Vec<PyGraphNode>> {
+    fn query_nodes_by_labels(
+        &self,
+        graph_id: &str,
+        labels: Vec<String>,
+    ) -> PyResult<Vec<PyGraphNode>> {
         self.inner
             .query_nodes_by_labels(graph_id, labels)
             .map(|nodes| nodes.into_iter().map(|n| n.into()).collect())
@@ -1554,6 +2359,588 @@ impl PyProximaDB {
             .delete_graph(graph_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete graph: {}", e)))
     }
+
+    // ========================================================================
+    // Document Storage Operations
+    // ========================================================================
+
+    /// Create a new document collection
+    ///
+    /// Args:
+    ///     name: Collection name
+    ///     indexed_paths: Optional list of JSON paths to index (e.g., ["$.email", "$.profile.name"])
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.create_document_collection("users", indexed_paths=["$.email", "$.profile.name"])
+    ///     ```
+    #[pyo3(signature = (name, indexed_paths=None))]
+    fn create_document_collection(
+        &self,
+        name: &str,
+        indexed_paths: Option<Vec<String>>,
+    ) -> PyResult<()> {
+        self.inner
+            .create_document_collection(name, indexed_paths)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create document collection: {}", e))
+            })
+    }
+
+    /// Insert a document into a collection
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     document: Dictionary representing the JSON document
+    ///     doc_id: Optional document ID (auto-generated if not provided)
+    ///
+    /// Returns:
+    ///     Tuple of (doc_id, version)
+    ///
+    /// Example:
+    ///     ```python
+    ///     doc_id, version = db.insert_document("users", {
+    ///         "name": "John",
+    ///         "email": "john@example.com",
+    ///         "profile": {"age": 30, "city": "NYC"}
+    ///     })
+    ///     ```
+    #[pyo3(signature = (collection, document, doc_id=None))]
+    fn insert_document(
+        &self,
+        collection: &str,
+        document: &PyDict,
+        doc_id: Option<&str>,
+    ) -> PyResult<(String, u64)> {
+        // Convert Python dict to serde_json::Value
+        let json_doc = python_to_json(document.as_ref())?;
+
+        self.inner
+            .insert_document(collection, doc_id, json_doc)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert document: {}", e)))
+    }
+
+    /// Get a document by ID
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     doc_id: Document ID
+    ///
+    /// Returns:
+    ///     Document as dictionary, or None if not found
+    ///
+    /// Example:
+    ///     ```python
+    ///     doc = db.get_document("users", "user_123")
+    ///     if doc:
+    ///         print(f"Name: {doc['name']}")
+    ///     ```
+    fn get_document(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        doc_id: &str,
+    ) -> PyResult<Option<PyObject>> {
+        match self.inner.get_document(collection, doc_id) {
+            Ok(Some(doc)) => json_to_python(py, &doc).map(Some),
+            Ok(None) => Ok(None),
+            Err(e) => Err(PyRuntimeError::new_err(format!(
+                "Failed to get document: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Query documents with optional filter
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     filter: Optional filter expression (e.g., "$.profile.city = 'NYC'")
+    ///     limit: Maximum number of documents to return (default: 100)
+    ///
+    /// Returns:
+    ///     List of (doc_id, document) tuples
+    ///
+    /// Example:
+    ///     ```python
+    ///     results = db.query_documents("users", filter="$.profile.age > 25", limit=10)
+    ///     for doc_id, doc in results:
+    ///         print(f"{doc_id}: {doc['name']}")
+    ///     ```
+    #[pyo3(signature = (collection, filter=None, limit=100))]
+    fn query_documents(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        filter: Option<&str>,
+        limit: u32,
+    ) -> PyResult<Vec<(String, PyObject)>> {
+        self.inner
+            .query_documents(collection, filter, limit)
+            .map(|results| {
+                results
+                    .into_iter()
+                    .filter_map(|(id, doc)| {
+                        json_to_python(py, &doc).ok().map(|py_doc| (id, py_doc))
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query documents: {}", e)))
+    }
+
+    /// Delete a document by ID
+    ///
+    /// Args:
+    ///     collection: Collection name
+    ///     doc_id: Document ID
+    ///
+    /// Returns:
+    ///     True if deleted, False if not found
+    fn delete_document(&self, collection: &str, doc_id: &str) -> PyResult<bool> {
+        self.inner
+            .delete_document(collection, doc_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete document: {}", e)))
+    }
+
+    /// List all document collections
+    ///
+    /// Returns:
+    ///     List of collection names
+    fn list_document_collections(&self) -> PyResult<Vec<String>> {
+        self.inner.list_document_collections().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to list document collections: {}", e))
+        })
+    }
+
+    // ========================================================================
+    // Observability Operations (Logs, Metrics, Traces)
+    // ========================================================================
+
+    /// Create an observability namespace
+    ///
+    /// Args:
+    ///     name: Namespace name
+    ///     retention_days: Optional retention period in days (default: 30)
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.create_observability_namespace("production", retention_days=90)
+    ///     ```
+    #[pyo3(signature = (name, retention_days=None))]
+    fn create_observability_namespace(
+        &self,
+        name: &str,
+        retention_days: Option<u32>,
+    ) -> PyResult<()> {
+        // Convert retention_days to retention_hours for the inner API
+        let retention_hours = retention_days.map(|d| d as u64 * 24);
+        self.inner
+            .create_observability_namespace(name, retention_hours)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create observability namespace: {}", e))
+            })
+    }
+
+    /// Ingest log entries
+    ///
+    /// Args:
+    ///     namespace: Observability namespace
+    ///     logs: List of log entry dicts with keys: timestamp_ns, severity, message, source, service, fields
+    ///
+    /// Returns:
+    ///     Number of logs successfully ingested
+    ///
+    /// Example:
+    ///     ```python
+    ///     logs = [
+    ///         {"timestamp_ns": 1703000000000000000, "severity": "INFO", "message": "Server started", "source": "main", "service": "api"},
+    ///         {"timestamp_ns": 1703000001000000000, "severity": "ERROR", "message": "Connection failed", "source": "db", "service": "api"}
+    ///     ]
+    ///     count = db.ingest_logs("production", logs)
+    ///     ```
+    fn ingest_logs(&self, namespace: &str, logs: &PyList) -> PyResult<u64> {
+        use super::EmbeddedLogEntry;
+
+        let mut rust_logs = Vec::with_capacity(logs.len());
+        for item in logs.iter() {
+            let dict: &PyDict = item.downcast()?;
+
+            let timestamp_ns: i64 = dict
+                .get_item("timestamp_ns")?
+                .ok_or_else(|| PyValueError::new_err("Log entry missing 'timestamp_ns'"))?
+                .extract()?;
+            let severity: String = dict
+                .get_item("severity")?
+                .ok_or_else(|| PyValueError::new_err("Log entry missing 'severity'"))?
+                .extract()?;
+            let message: String = dict
+                .get_item("message")?
+                .ok_or_else(|| PyValueError::new_err("Log entry missing 'message'"))?
+                .extract()?;
+            let source: Option<String> = dict
+                .get_item("source")?
+                .and_then(|v| v.extract::<String>().ok())
+                .filter(|s| !s.is_empty());
+            let service: Option<String> = dict
+                .get_item("service")?
+                .and_then(|v| v.extract::<String>().ok())
+                .filter(|s| !s.is_empty());
+
+            let mut fields = std::collections::HashMap::new();
+            if let Some(fields_dict) = dict.get_item("fields")? {
+                if let Ok(d) = fields_dict.downcast::<PyDict>() {
+                    for (k, v) in d.iter() {
+                        let key: String = k.extract()?;
+                        let value = python_to_json(v)?;
+                        fields.insert(key, value);
+                    }
+                }
+            }
+
+            rust_logs.push(EmbeddedLogEntry {
+                timestamp_ns,
+                message,
+                severity,
+                service,
+                source,
+                fields,
+            });
+        }
+
+        self.inner
+            .ingest_logs(namespace, rust_logs)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest logs: {}", e)))
+    }
+
+    /// Query logs
+    ///
+    /// Args:
+    ///     namespace: Observability namespace
+    ///     start_time_ns: Start timestamp in nanoseconds
+    ///     end_time_ns: End timestamp in nanoseconds
+    ///     query: Optional search query string
+    ///     limit: Maximum number of logs to return (default: 100)
+    ///
+    /// Returns:
+    ///     List of log entry dicts
+    ///
+    /// Example:
+    ///     ```python
+    ///     import time
+    ///     now = int(time.time() * 1e9)
+    ///     hour_ago = now - 3600_000_000_000
+    ///     logs = db.query_logs("production", hour_ago, now, query="error", limit=50)
+    ///     ```
+    #[pyo3(signature = (namespace, start_time_ns, end_time_ns, query=None, limit=100))]
+    fn query_logs(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        query: Option<&str>,
+        limit: u32,
+    ) -> PyResult<Vec<PyObject>> {
+        self.inner
+            .query_logs(namespace, start_time_ns, end_time_ns, query, limit)
+            .map(|logs| {
+                logs.into_iter()
+                    .map(|log| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("timestamp_ns", log.timestamp_ns).ok();
+                        dict.set_item("severity", &log.severity).ok();
+                        dict.set_item("message", &log.message).ok();
+                        // Handle Option<String> for source and service
+                        if let Some(ref source) = log.source {
+                            dict.set_item("source", source).ok();
+                        } else {
+                            dict.set_item("source", py.None()).ok();
+                        }
+                        if let Some(ref service) = log.service {
+                            dict.set_item("service", service).ok();
+                        } else {
+                            dict.set_item("service", py.None()).ok();
+                        }
+
+                        let fields_dict = PyDict::new(py);
+                        for (k, v) in &log.fields {
+                            // Convert serde_json::Value to Python
+                            if let Ok(py_val) = json_to_python(py, v) {
+                                fields_dict.set_item(k, py_val).ok();
+                            }
+                        }
+                        dict.set_item("fields", fields_dict).ok();
+
+                        dict.into()
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
+    }
+
+    /// Ingest metric samples
+    ///
+    /// Args:
+    ///     namespace: Observability namespace
+    ///     samples: List of metric sample dicts with keys: metric_name, timestamp_ns, value, labels
+    ///
+    /// Returns:
+    ///     Number of samples successfully ingested
+    ///
+    /// Example:
+    ///     ```python
+    ///     samples = [
+    ///         {"metric_name": "http_latency", "timestamp_ns": 1703000000000000000, "value": 0.123, "labels": {"endpoint": "/api/search"}},
+    ///         {"metric_name": "cpu_usage", "timestamp_ns": 1703000001000000000, "value": 65.5, "labels": {"host": "server1"}}
+    ///     ]
+    ///     count = db.ingest_metrics("production", samples)
+    ///     ```
+    fn ingest_metrics(&self, namespace: &str, samples: &PyList) -> PyResult<u64> {
+        use super::EmbeddedMetricSample;
+
+        let mut rust_samples = Vec::with_capacity(samples.len());
+        for item in samples.iter() {
+            let dict: &PyDict = item.downcast()?;
+
+            let metric_name: String = dict
+                .get_item("metric_name")?
+                .ok_or_else(|| PyValueError::new_err("Metric sample missing 'metric_name'"))?
+                .extract()?;
+            let timestamp_ns: i64 = dict
+                .get_item("timestamp_ns")?
+                .ok_or_else(|| PyValueError::new_err("Metric sample missing 'timestamp_ns'"))?
+                .extract()?;
+            let value: f64 = dict
+                .get_item("value")?
+                .ok_or_else(|| PyValueError::new_err("Metric sample missing 'value'"))?
+                .extract()?;
+
+            let mut labels = HashMap::new();
+            if let Some(labels_dict) = dict.get_item("labels")? {
+                if let Ok(d) = labels_dict.downcast::<PyDict>() {
+                    for (k, v) in d.iter() {
+                        let key: String = k.extract()?;
+                        let val: String = v
+                            .extract()
+                            .unwrap_or_else(|_| v.str().map(|s| s.to_string()).unwrap_or_default());
+                        labels.insert(key, val);
+                    }
+                }
+            }
+
+            rust_samples.push(EmbeddedMetricSample {
+                metric_name,
+                timestamp_ns,
+                value,
+                labels,
+            });
+        }
+
+        self.inner
+            .ingest_metrics(namespace, rust_samples)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest metrics: {}", e)))
+    }
+
+    // ============================================
+    // Unified Multi-Model Query API
+    // ============================================
+
+    /// Execute a unified multi-model query
+    ///
+    /// This executes a SQL-like query that can span multiple data models
+    /// (vector, document, graph, observability).
+    ///
+    /// Args:
+    ///     query: SQL-like query string (e.g., "SELECT * FROM products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)")
+    ///     query_vector: Optional query vector for VECTOR_SIMILAR clauses
+    ///     fusion_strategy: Strategy for combining results ("intersection", "union", "rrf", "ranked")
+    ///
+    /// Returns:
+    ///     List of unified record dicts with keys: id, source_model, data, score, metadata
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Hybrid vector + document query
+    ///     results = db.execute_unified_query(
+    ///         "SELECT * FROM products WHERE $.category = 'electronics' AND VECTOR_SIMILAR(embedding, ?, 0.8)",
+    ///         query_vector=[0.1] * 384,
+    ///         fusion_strategy="intersection"
+    ///     )
+    ///     for r in results:
+    ///         print(f"{r['id']}: {r['score']}")
+    ///     ```
+    #[pyo3(signature = (query, query_vector=None, fusion_strategy=None))]
+    fn execute_unified_query(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        query_vector: Option<Vec<f32>>,
+        fusion_strategy: Option<&str>,
+    ) -> PyResult<Vec<PyObject>> {
+        self.inner
+            .execute_unified_query(query, query_vector, fusion_strategy)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .map(|r| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("id", &r.id).ok();
+                        dict.set_item("source_model", &r.source_model).ok();
+                        dict.set_item("score", r.score).ok();
+
+                        // Convert data from JSON string to Python
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&r.data) {
+                            if let Ok(data_py) = json_to_python(py, &parsed) {
+                                dict.set_item("data", data_py).ok();
+                            }
+                        } else {
+                            // Fallback: use raw string
+                            dict.set_item("data", &r.data).ok();
+                        }
+
+                        // Convert metadata
+                        let meta_dict = PyDict::new(py);
+                        for (k, v) in &r.metadata {
+                            meta_dict.set_item(k, v).ok();
+                        }
+                        dict.set_item("metadata", meta_dict).ok();
+
+                        dict.into()
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute unified query: {}", e)))
+    }
+
+    /// Explain a unified query's execution plan
+    ///
+    /// Returns the decomposition and execution plan for a multi-model query
+    /// without actually executing it.
+    ///
+    /// Args:
+    ///     query: SQL-like query string
+    ///
+    /// Returns:
+    ///     Dict with plan details: components, fusion_strategy, component_count
+    ///
+    /// Example:
+    ///     ```python
+    ///     plan = db.explain_unified_query(
+    ///         "SELECT * FROM products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)"
+    ///     )
+    ///     print(f"Components: {plan['component_count']}")
+    ///     for comp in plan['components']:
+    ///         print(f"  {comp['model']}: cost={comp['estimated_cost']}")
+    ///     ```
+    fn explain_unified_query(&self, py: Python<'_>, query: &str) -> PyResult<PyObject> {
+        self.inner
+            .explain_unified_query(query)
+            .map(|plan| {
+                let dict = PyDict::new(py);
+                dict.set_item("fusion_strategy", &plan.fusion_strategy).ok();
+                dict.set_item("component_count", plan.component_count).ok();
+
+                // Convert components
+                let components_list = PyList::empty(py);
+                for comp in plan.components {
+                    let comp_dict = PyDict::new(py);
+                    comp_dict.set_item("model", &comp.model).ok();
+                    comp_dict
+                        .set_item("parallelizable", comp.parallelizable)
+                        .ok();
+                    comp_dict
+                        .set_item("estimated_cost", comp.estimated_cost)
+                        .ok();
+                    components_list.append(comp_dict).ok();
+                }
+                dict.set_item("components", components_list).ok();
+
+                dict.into()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to explain query: {}", e)))
+    }
+
+    // ============================================
+    // Embedded Observability Metrics API
+    // ============================================
+
+    /// Get embedded database metrics snapshot
+    ///
+    /// Returns comprehensive metrics including latency histograms (p50, p95, p99),
+    /// operation counters, cache statistics, and WAL statistics.
+    ///
+    /// Args:
+    ///     window: Rolling window for latency stats - "1min", "5min", "1hr", or "all" (default: "all")
+    ///
+    /// Returns:
+    ///     EmbeddedMetrics object with all statistics
+    ///
+    /// Example:
+    ///     ```python
+    ///     metrics = db.metrics()
+    ///     print(f"p99 search latency: {metrics.search_latency.p99_ms}ms")
+    ///     print(f"Cache hit rate: {metrics.cache_hit_rate * 100}%")
+    ///     print(f"Total searches: {metrics.total_searches}")
+    ///
+    ///     # Get 1-minute rolling window
+    ///     recent = db.metrics(window="1min")
+    ///     ```
+    #[pyo3(signature = (window=None))]
+    fn metrics(&self, window: Option<&str>) -> PyResult<PyEmbeddedMetrics> {
+        let rolling_window = match window.unwrap_or("all") {
+            "1min" | "1m" | "one_minute" => super::RollingWindow::OneMinute,
+            "5min" | "5m" | "five_minutes" => super::RollingWindow::FiveMinutes,
+            "1hr" | "1h" | "one_hour" => super::RollingWindow::OneHour,
+            "all" | "alltime" | "all_time" => super::RollingWindow::AllTime,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid window '{}'. Use: '1min', '5min', '1hr', or 'all'",
+                    other
+                )));
+            }
+        };
+
+        Ok(self.inner.metrics(rolling_window).into())
+    }
+
+    /// Reset all metrics to zero
+    ///
+    /// Clears all latency histograms, operation counters, and cache hit/miss counts.
+    /// Useful for benchmarking or starting fresh measurements.
+    ///
+    /// Example:
+    ///     ```python
+    ///     db.reset_metrics()
+    ///     # Run benchmark...
+    ///     metrics = db.metrics()
+    ///     print(f"Benchmark results: {metrics}")
+    ///     ```
+    fn reset_metrics(&self) {
+        self.inner.reset_metrics();
+    }
+
+    /// Export metrics in Prometheus text format
+    ///
+    /// Returns metrics formatted for Prometheus scraping. Can be saved to a file
+    /// or served via an HTTP endpoint for monitoring.
+    ///
+    /// Returns:
+    ///     String in Prometheus exposition format
+    ///
+    /// Example:
+    ///     ```python
+    ///     prometheus_text = db.export_prometheus()
+    ///
+    ///     # Save to file for node_exporter textfile collector
+    ///     with open("/var/lib/prometheus/embedded.prom", "w") as f:
+    ///         f.write(prometheus_text)
+    ///
+    ///     # Or print to stdout
+    ///     print(prometheus_text)
+    ///     ```
+    fn export_prometheus(&self) -> String {
+        self.inner.export_prometheus()
+    }
 }
 
 /// Convert Python value to serde_json::Value
@@ -1634,16 +3021,15 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
 #[pyfunction]
 #[pyo3(signature = (level = "info"))]
 fn init_logging(level: &str) -> PyResult<()> {
-    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
     use std::sync::Once;
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     static INIT: Once = Once::new();
     let mut initialized = false;
 
     INIT.call_once(|| {
         // Build filter from environment or provided level
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(level));
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
         // Create a simple stderr layer
         let fmt_layer = fmt::layer()
@@ -1679,6 +3065,14 @@ fn proximadb(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyCollectionInfo>()?;
     m.add_class::<PyStorageStats>()?;
+
+    // Streaming search classes
+    m.add_class::<PyStreamingSearchResult>()?;
+    m.add_class::<PySearchStreamIterator>()?;
+
+    // Checkpoint and delta classes
+    m.add_class::<PyCheckpointInfo>()?;
+    m.add_class::<PyDeltaInfo>()?;
 
     // Graph classes - Victor Framework compatible
     m.add_class::<PyGraphNode>()?;

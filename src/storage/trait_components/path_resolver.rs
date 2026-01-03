@@ -43,9 +43,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 /// Storage location assignment for a collection
 #[derive(Debug, Clone)]
@@ -152,7 +151,8 @@ impl CollectionPathResolver for MetadataProviderResolver {
     }
 
     async fn resolve_base_location(&self, collection_id: &str) -> Result<String> {
-        let collection = self.provider
+        let collection = self
+            .provider
             .get_collection(collection_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
@@ -168,11 +168,15 @@ impl CollectionPathResolver for MetadataProviderResolver {
         }
 
         // Fall back to constructing path from collection ID
-        Ok(format!("file:///tmp/proximadb/collections/{}", collection_id))
+        Ok(format!(
+            "file:///tmp/proximadb/collections/{}",
+            collection_id
+        ))
     }
 
     async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment> {
-        let collection = self.provider
+        let collection = self
+            .provider
             .get_collection(collection_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
@@ -190,7 +194,8 @@ impl CollectionPathResolver for MetadataProviderResolver {
             format!("file:///tmp/proximadb/collections/{}", collection_id)
         };
 
-        let replica_urls = collection.storage_assignment
+        let replica_urls = collection
+            .storage_assignment
             .as_ref()
             .map(|a| a.backup_paths.clone())
             .unwrap_or_default();
@@ -222,9 +227,13 @@ impl ConfigFallbackResolver {
     }
 
     /// Create from WAL config
-    pub fn from_wal_config(config: &crate::storage::persistence::write_ahead_log::WALConfig) -> Self {
+    pub fn from_wal_config(
+        config: &crate::storage::persistence::write_ahead_log::WALConfig,
+    ) -> Self {
         Self {
-            base_path: config.global_manifest_url.clone()
+            base_path: config
+                .global_manifest_url
+                .clone()
                 .unwrap_or_else(|| "file:///tmp/proximadb/manifest".to_string()),
         }
     }
@@ -307,7 +316,8 @@ impl CollectionPathResolver for CachedResolver {
 
         // Resolve and cache
         let location = self.inner.resolve_base_location(collection_id).await?;
-        self.cache.insert(collection_id.to_string(), location.clone());
+        self.cache
+            .insert(collection_id.to_string(), location.clone());
         Ok(location)
     }
 
@@ -319,7 +329,8 @@ impl CollectionPathResolver for CachedResolver {
 
         // Resolve and cache
         let assignment = self.inner.resolve_storage_assignment(collection_id).await?;
-        self.assignment_cache.insert(collection_id.to_string(), assignment.clone());
+        self.assignment_cache
+            .insert(collection_id.to_string(), assignment.clone());
         Ok(assignment)
     }
 
@@ -416,10 +427,16 @@ mod tests {
     async fn test_config_fallback_resolver() {
         let resolver = ConfigFallbackResolver::new("/data/proximadb".to_string());
 
-        let location = resolver.resolve_base_location("test_collection").await.unwrap();
+        let location = resolver
+            .resolve_base_location("test_collection")
+            .await
+            .unwrap();
         assert_eq!(location, "/data/proximadb/test_collection");
 
-        let wal_location = resolver.resolve_wal_location("test_collection").await.unwrap();
+        let wal_location = resolver
+            .resolve_wal_location("test_collection")
+            .await
+            .unwrap();
         assert_eq!(wal_location, "/data/proximadb/test_collection/wal");
     }
 

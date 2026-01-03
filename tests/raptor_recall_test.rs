@@ -84,11 +84,12 @@ mod raptor_recall_tests {
         let collection_id = "raptor_recall_test";
 
         // Create RAPTOR engine (stateless)
-        let engine = RaptorEngine::new().await.expect("Failed to create RAPTOR engine");
+        let engine = RaptorEngine::new()
+            .await
+            .expect("Failed to create RAPTOR engine");
 
         // Generate vectors
-        let vectors =
-            vector_generator::random_seeded("raptor_test", NUM_VECTORS, VECTOR_DIMS, 42);
+        let vectors = vector_generator::random_seeded("raptor_test", NUM_VECTORS, VECTOR_DIMS, 42);
         info!(
             "Generated {} vectors with {} dimensions",
             vectors.len(),
@@ -161,7 +162,9 @@ mod raptor_recall_tests {
             let search_params = Arc::new(SearchParams {
                 vector: Some(query.clone()),
                 top_k: Some(K_NEIGHBORS),
-                distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Euclidean),
+                distance_metric: Some(
+                    proximadb::compute::distance_computation::DistanceMetric::Euclidean,
+                ),
                 ..Default::default()
             });
 
@@ -217,7 +220,9 @@ mod raptor_recall_tests {
             let search_params = Arc::new(SearchParams {
                 vector: Some(query.clone()),
                 top_k: Some(K_NEIGHBORS),
-                distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Euclidean),
+                distance_metric: Some(
+                    proximadb::compute::distance_computation::DistanceMetric::Euclidean,
+                ),
                 ..Default::default()
             });
 

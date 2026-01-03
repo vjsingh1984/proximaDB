@@ -81,6 +81,10 @@ impl IdIndex {
     /// Insert an ID with its location
     pub fn insert(&self, id: String, location: BlockLocation) -> Result<()> {
         // Update direct mapping
+        // SAFETY: write().unwrap() is safe here because RwLock poisoning only occurs if
+        // a thread panics while holding the lock. This is an internal data structure where
+        // we control all access paths, and the operations within the lock are simple
+        // HashMap insertions that cannot panic.
         let mut map = self.id_to_location.write().unwrap();
         let is_new = map.insert(id.clone(), location.clone()).is_none();
 
@@ -92,6 +96,7 @@ impl IdIndex {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Update B+ tree
+        // SAFETY: Same as above - RwLock poisoning cannot occur in normal operation.
         let mut root = self.root.write().unwrap();
         match root.as_mut() {
             None => {
@@ -115,22 +120,27 @@ impl IdIndex {
 
     /// Lookup an ID and return its location
     pub fn lookup(&self, id: &str) -> Option<BlockLocation> {
+        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
+        // The read lock is held briefly for a HashMap lookup and clone.
         self.id_to_location.read().unwrap().get(id).cloned()
     }
 
     /// Async lookup for compatibility with async APIs
     pub async fn lookup_async(&self, id: &str) -> Option<RecordLocation> {
+        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
         self.id_to_location.read().unwrap().get(id).cloned()
     }
 
     /// Batch lookup for multiple IDs
     pub fn lookup_batch(&self, ids: &[String]) -> Vec<Option<BlockLocation>> {
+        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
         let map = self.id_to_location.read().unwrap();
         ids.iter().map(|id| map.get(id).cloned()).collect()
     }
 
     /// Range query - get all IDs in a range
     pub fn range_query(&self, start: &str, end: &str) -> Vec<(String, BlockLocation)> {
+        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
         let map = self.id_to_location.read().unwrap();
         let mut results = Vec::new();
 

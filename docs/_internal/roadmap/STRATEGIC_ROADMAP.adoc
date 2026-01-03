@@ -1,0 +1,406 @@
+= ProximaDB Strategic Roadmap
+:toc: left
+:toclevels: 3
+:icons: font
+:last-updated: December 2025
+
+[.lead]
+**Strategic roadmap aligned with the Vision document phases. This is the authoritative source for feature status and prioritization.**
+
+== Vision Alignment
+
+This roadmap implements the three-phase approach from link:../../concepts/vision.adoc[Vision Document]:
+
+* **Phase 1**: Format and Catalog Contract (Foundation)
+* **Phase 2**: Cross-Model Query and Indexing (Differentiation)
+* **Phase 3**: Deployment and Ecosystem Integration (Scale)
+
+== Status Legend
+
+|===
+| Status | Meaning | Action Required
+
+| ✅ Complete | Production-ready | Maintenance only
+| 🔄 In Progress | Active development | Continue work
+| 📅 Phase 1 MVP | Required for v1.0 | Prioritize
+| 📅 Phase 2 | Cross-model features | Plan for Q2-Q3
+| 📅 Phase 3 | Ecosystem integration | Plan for Q4+
+| 💡 Nice to Have | Useful but not critical | Opportunistic
+| 🚫 Out of Scope | Not aligned with vision | Do not pursue
+| ⚠️ Obsolete | Superseded or deprecated | Archive/remove
+|===
+
+== Phase 1: Format and Catalog Contract (MVP)
+
+[.lead]
+_Foundation: Storage formats and metadata define the contract, not the compute engine._
+
+=== Storage Engines [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| SST Engine | ✅ Complete | LSM-tree, write-optimized
+| HELIX Engine | ✅ Complete | Hilbert curves, spatial locality
+| VIPER Engine | ✅ Complete | Parquet columnar, analytics
+| SWIFT Engine | ✅ Complete | Ultra-low latency, small datasets
+| NOVA Engine | ✅ Complete | Progressive columnar, mixed workloads
+| RAPTOR Engine | ✅ Complete | Adaptive row-groups, dynamic
+|===
+
+=== Core Infrastructure [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| UnifiedStorageEngine Architecture | ✅ Complete | Trait-based engine abstraction
+| Proto-first Pipeline | ✅ Complete | VectorRecord throughout
+| UnifiedCachingFilesystem | ✅ Complete | S3/Azure/GCS + local
+| WAL & Recovery System | ✅ Complete | ACID compliance, crash recovery
+| REST API | ✅ Complete | Port 5678
+| gRPC API | ✅ Complete | Port 5679
+| Arrow Flight | ✅ Complete | High-throughput data transfer
+| PostgreSQL Wire Protocol | ✅ Complete | Port 5433, pgvector compatible
+|===
+
+=== Catalog System [🔄 In Progress]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Native Catalog | ✅ Complete | P1 | Internal schema/collection management
+| Information Schema | ✅ Complete | P1 | SQL queryable metadata
+| Schema Evolution | ✅ Complete | P1 | ADD/DROP/RENAME columns
+| External Catalog - Glue | 🔄 In Progress | P3 | AWS Glue integration
+| External Catalog - Iceberg | 🔄 In Progress | P3 | Apache Iceberg tables
+| External Catalog - Delta Lake | 🔄 In Progress | P3 | Delta Lake tables
+| External Catalog - Unity | 📅 Phase 3 | P3 | Databricks Unity Catalog
+| External Catalog - Polaris | 📅 Phase 3 | P3 | Snowflake Polaris
+|===
+
+=== Index & Search [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| HNSW Index | ✅ Complete | Approximate nearest neighbor
+| IVF Index | ✅ Complete | Inverted file index
+| LSH Index | ✅ Complete | Locality-sensitive hashing
+| Annoy Index | ✅ Complete | Tree-based ANN
+| AXIS Framework | ✅ Complete | Adaptive index selection
+| Bloom Filters | ✅ Complete | Fast ID lookups
+| CentroidTree | ✅ Complete | O(log n) vector pruning
+|===
+
+=== Quantization & Performance [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| Binary Quantization | ✅ Complete | 1-bit per dimension
+| INT8 Scalar Quantization | ✅ Complete | 8-bit with scale/offset
+| Product Quantization (PQ4/8/16) | ✅ Complete | Sub-vector codebooks
+| SIMD Distance Compute | ✅ Complete | AVX2/AVX512/NEON
+| Progressive Cascade Search | ✅ Complete | Multi-stage filtering
+| Codebook Caching | ✅ Complete | Global cache for PQ
+|===
+
+=== DataFusion Integration [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| ProximaTableProvider | ✅ Complete | DataFusion TableProvider trait
+| ProximaScanExec | ✅ Complete | Split-based parallel execution
+| FileSplit Abstraction | ✅ Complete | Hadoop-style splits
+| VectorRecordBridge | ✅ Complete | Arrow RecordBatch conversion
+| Engine Adapters (SST, HELIX, VIPER) | ✅ Complete | Engine-specific readers
+| Smart I/O Layer | ✅ Complete | ParallelReader, IoMetrics
+|===
+
+== Phase 2: Cross-Model Query and Indexing
+
+[.lead]
+_Differentiation: Unified query planner for graph + vector + document + relational operators._
+
+=== Graph Database [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| ORION Graph Engine | ✅ Complete | In-memory CSR, WAL persistence
+| Graph Traversal | ✅ Complete | BFS, DFS, shortest path
+| Graph Algorithms | ✅ Complete | PageRank, community detection
+| PULSAR Engine | 🔄 In Progress | Distributed graph (wiring pending)
+| QUASAR Engine | 🔄 In Progress | Hybrid vector+graph (wiring pending)
+|===
+
+=== Document Store [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| Document Service | ✅ Complete | WAL-backed JSON storage
+| JSON Path Queries | ✅ Complete | Structured filtering
+| Full-Text Search | ✅ Complete | Inverted index integration
+|===
+
+=== Observability Store [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| Log Ingestion | ✅ Complete | WAL-backed, partitioned
+| Metrics Aggregation | ✅ Complete | Time-series storage
+| SIEM Adapters | ✅ Complete | 6 adapters (Splunk, Elastic, etc.)
+|===
+
+=== Unified Query Engine [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| FederatedQueryContext | ✅ Complete | SQL parser with extensions
+| UnifiedQueryEngine | ✅ Complete | Query decomposition, fusion
+| VECTOR_SEARCH function | ✅ Complete | SQL-embedded vector search
+| GRAPH_QUERY function | ✅ Complete | SQL-embedded Cypher
+| DOCUMENT_QUERY function | ✅ Complete | SQL-embedded JSON query
+| LOGS/METRICS functions | ✅ Complete | Observability queries
+| Cross-Model Joins | ✅ Complete | LATERAL joins across models
+| pgvector <-> operator | ✅ Complete | Distance operator
+|===
+
+=== Multi-Modal Search [✅ Complete]
+
+|===
+| Feature | Status | Notes
+
+| UQL Parser | ✅ Complete | Unified Query Language
+| Cross-Modal Reranking | ✅ Complete | MMR, context-aware
+| Learned Fusion | ✅ Complete | Weight optimization
+| Result Fusion Strategies | ✅ Complete | RRF, intersection, union
+|===
+
+== Phase 3: Deployment and Ecosystem Integration
+
+[.lead]
+_Scale: External catalog integration, compute adapters, and deployment flexibility._
+
+=== Distributed Operations [🔄 In Progress]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Cluster Routing | ✅ Complete | P3 | Shard-aware routing
+| Raft Consensus | 🔄 In Progress | P3 | Metadata replication
+| Sharding | 🔄 In Progress | P3 | Collection partitioning
+| Multi-Region | 📅 Phase 3 | P3 | Geo-distributed deployment
+|===
+
+=== Compute Engine Adapters [📅 Phase 3]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Trino Connector | 📅 Phase 3 | P3 | SQL federation
+| Spark Connector | 📅 Phase 3 | P3 | Batch analytics
+| DataFusion Native | ✅ Complete | P2 | Already integrated
+| DuckDB Integration | 📅 Phase 3 | P3 | Embedded analytics
+|===
+
+=== Streaming & CDC [📅 Phase 3]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Real-time Streaming | 📅 Phase 3 | P3 | Ring buffers, backpressure
+| Kafka Integration | 📅 Phase 3 | P3 | Producer/consumer
+| PostgreSQL CDC | 🔄 In Progress | P3 | Outbound CDC (Debezium recommended)
+| MySQL CDC | 📅 Phase 3 | P3 | Outbound CDC
+| WebSocket Streaming | 📅 Phase 3 | P3 | Real-time subscriptions
+|===
+
+=== Enterprise Security [🔄 In Progress]
+
+|===
+| Feature | Status | Phase | Notes
+
+| JWT Authentication | ✅ Complete | P1 | Token-based auth
+| API Key Authentication | ✅ Complete | P1 | Key-based auth
+| RBAC | ✅ Complete | P1 | Role-based access control
+| Rate Limiting | ✅ Complete | P1 | Request throttling
+| CORS Middleware | ✅ Complete | P1 | Cross-origin support
+| mTLS | 📅 Phase 2 | P2 | Mutual TLS
+| Row-Level Security | 📅 Phase 2 | P2 | Fine-grained access
+| Field-Level Encryption | 📅 Phase 3 | P3 | Column encryption
+| Enterprise SSO | 📅 Phase 3 | P3 | SAML/OIDC
+| Audit Logging | 🔄 In Progress | P2 | Compliance logging
+|===
+
+=== Multi-Language SDKs [📅 Phase 3]
+
+|===
+| SDK | Status | Phase | Notes
+
+| Python SDK | ✅ Complete | P1 | Full featured
+| Go SDK | 🔄 In Progress | P2 | Basic implementation
+| Java SDK | 📅 Phase 3 | P3 | JVM ecosystem
+| Node.js SDK | 📅 Phase 3 | P3 | JavaScript ecosystem
+| Rust SDK | 💡 Nice to Have | - | Native Rust
+| C++ SDK | 💡 Nice to Have | - | C++ ecosystem
+| .NET SDK | 💡 Nice to Have | - | .NET ecosystem
+| Ruby SDK | 💡 Nice to Have | - | Ruby ecosystem
+| Swift SDK | 💡 Nice to Have | - | Apple ecosystem
+|===
+
+== Features Marked for Future Consideration
+
+=== AI & Intelligence [💡 Nice to Have]
+
+These features are not aligned with the core vision of "format-first, multi-model database" and should be considered as optional add-ons or external integrations:
+
+|===
+| Feature | Status | Recommendation
+
+| AIIntelligenceFoundation | 🚫 Out of Scope | Use external AI services
+| EnterpriseNLPEngine | 🚫 Out of Scope | Use external NLP services
+| AutomatedInsightEngine | 🚫 Out of Scope | Use external BI tools
+| PredictiveAnalyticsEngine | 🚫 Out of Scope | Use external ML platforms
+| ConversationalAnalyticsEngine | 🚫 Out of Scope | Use external chat services
+| ExecutiveDashboard | 💡 Nice to Have | Web UI partially addresses
+| NLQueryTranslator | 💡 Nice to Have | Could be LLM-based add-on
+| TrendAnalyzer | 🚫 Out of Scope | Use external analytics
+| AutoML Framework | 💡 Nice to Have | Foundation exists (~35%)
+|===
+
+=== Natural Language Admin [💡 Nice to Have]
+
+|===
+| Feature | Status | Recommendation
+
+| Intent Classification | 💡 Nice to Have | LLM-based admin assistant
+| Query Generation | 💡 Nice to Have | SQL from natural language
+| Slack/Discord Bots | 💡 Nice to Have | ChatOps integration
+|===
+
+== Documentation Status
+
+=== Public Documentation [✅ Complete]
+
+|===
+| Document | Status | Notes
+
+| README.adoc | ✅ Complete | Main project readme
+| INDEX.adoc | ✅ Complete | Documentation index
+| concepts/architecture.adoc | ✅ Complete | Architecture overview
+| concepts/vision.adoc | ✅ Complete | Vision and strategy
+| concepts/storage-engines.adoc | ✅ Complete | Engine selection guide
+| concepts/graph-engines.adoc | ✅ Complete | Graph engine guide
+| api/rest.adoc | ✅ Complete | REST API reference
+| api/graph.adoc | ✅ Complete | Graph API reference
+| api/configuration.adoc | ✅ Complete | Configuration guide
+| operations/deployment.adoc | ✅ Complete | Deployment guide
+| operations/monitoring.adoc | ✅ Complete | Monitoring guide
+| operations/security.adoc | ✅ Complete | Security guide
+|===
+
+=== Internal Documentation [✅ Complete]
+
+|===
+| Document | Status | Notes
+
+| MASTER_FEATURE_DASHBOARD.adoc | ✅ Complete | Feature tracking
+| roadmap/completed/* | ✅ Complete | 35+ completed guides
+| roadmap/specifications/* | ✅ Complete | Future feature specs
+| roadmap/implementation/* | ✅ Complete | Implementation roadmaps
+|===
+
+=== Obsolete Documentation [⚠️ Archive]
+
+|===
+| Document | Status | Action
+
+| docs/_internal/archive/* | ⚠️ Obsolete | Keep for historical reference
+| Q1_2025_IMPLEMENTATION.adoc | ⚠️ Obsolete | Moved to archive/
+| Q2_2025_IMPLEMENTATION.adoc | ⚠️ Obsolete | Moved to archive/
+|===
+
+== MVP Definition (v1.0)
+
+For v1.0 release, the following must be complete:
+
+=== Required for MVP
+
+* [x] All 6 storage engines
+* [x] Core infrastructure (WAL, REST, gRPC)
+* [x] Index algorithms (HNSW, IVF, AXIS)
+* [x] Quantization (Binary, INT8, PQ)
+* [x] Graph database (ORION)
+* [x] Document store
+* [x] Observability store
+* [x] Unified query engine
+* [x] Cross-model joins
+* [x] Python SDK
+* [x] Docker deployment
+* [x] Basic security (JWT, RBAC)
+
+=== Deferred Post-MVP
+
+* [ ] External catalog integration
+* [ ] Distributed operations (Raft, multi-region)
+* [ ] Streaming/CDC
+* [ ] Enterprise SSO
+* [ ] Additional SDKs
+
+== Quarterly Focus
+
+=== Q1 2025 [✅ Complete]
+
+* Storage engine consolidation
+* Unified quantization framework
+* DataFusion integration foundation
+
+=== Q2 2025 [🔄 In Progress]
+
+* Cross-model query optimization
+* Go SDK development
+* PULSAR/QUASAR engine wiring
+
+=== Q3 2025 [📅 Planned]
+
+* External catalog integration (Iceberg, Delta)
+* Streaming foundation
+* Enterprise security hardening
+
+=== Q4 2025 [📅 Planned]
+
+* Distributed operations GA
+* Compute engine adapters (Trino, Spark)
+* Multi-region support
+
+== Metrics and Success Criteria
+
+=== Phase 1 Success Criteria
+
+* [x] All storage engines pass correctness tests
+* [x] WAL recovery handles all failure modes
+* [x] API latency < 10ms for simple queries
+* [x] Documentation coverage > 90%
+
+=== Phase 2 Success Criteria
+
+* [x] Cross-model queries execute correctly
+* [x] Query latency < 100ms for joins across 2 models
+* [ ] Unified query supports 10+ concurrent users
+
+=== Phase 3 Success Criteria
+
+* [ ] External catalog integration works with Iceberg
+* [ ] Distributed operations support 3-node cluster
+* [ ] Streaming handles 10K events/sec
+
+---
+
+_Last Updated_: December 30, 2025
+_Version_: 0.2.0
+_Next Review_: Q1 2025 End

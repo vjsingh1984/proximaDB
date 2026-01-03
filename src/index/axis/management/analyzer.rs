@@ -313,7 +313,7 @@ impl QueryPatternTracker {
         let history = self
             .query_history
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         history.push(event.clone());
 
         // Maintain history size
@@ -325,7 +325,7 @@ impl QueryPatternTracker {
         let stats = self
             .query_stats
             .entry(collection_id.to_string())
-            .or_insert_with(QueryStatistics::default);
+            .or_default();
 
         stats.total_queries += 1;
 

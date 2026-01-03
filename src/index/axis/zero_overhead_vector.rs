@@ -198,8 +198,8 @@ impl CollectionConfig {
             match self.quantization_method {
                 Some(QuantizationMethod::INT8) => self.dimension,
                 Some(QuantizationMethod::PQ8) => self.dimension,
-                Some(QuantizationMethod::PQ4) => (self.dimension * 4 + 7) / 8,
-                Some(QuantizationMethod::Binary) => (self.dimension + 7) / 8,
+                Some(QuantizationMethod::PQ4) => (self.dimension * 4).div_ceil(8),
+                Some(QuantizationMethod::Binary) => self.dimension.div_ceil(8),
                 None => self.dimension, // Default to 1 byte per dim
             }
         } else {

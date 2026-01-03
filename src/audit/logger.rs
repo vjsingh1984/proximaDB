@@ -177,14 +177,13 @@ impl AuditLogger {
             .map_err(|e| anyhow!("Failed to store audit event: {}", e))?;
 
         // Step 5: Send to external audit systems if configured
-        if let Some(ref external_endpoint) = self.config.external_audit_endpoint {
-            if let Err(e) = self
+        if let Some(ref external_endpoint) = self.config.external_audit_endpoint
+            && let Err(e) = self
                 .send_to_external_audit(&processed_event, external_endpoint)
                 .await
-            {
-                warn!("Failed to send audit event to external system: {}", e);
-                // Don't fail the operation if external audit fails
-            }
+        {
+            warn!("Failed to send audit event to external system: {}", e);
+            // Don't fail the operation if external audit fails
         }
 
         // Step 6: Evaluate for security alerts
@@ -334,12 +333,12 @@ impl AuditLogger {
         );
 
         // Add geolocation for IP address if available
-        if let Some(ref ip) = event.ip_address {
-            if let Ok(location) = self.get_ip_geolocation(ip).await {
-                event
-                    .details
-                    .insert("geolocation".to_string(), serde_json::to_value(location)?);
-            }
+        if let Some(ref ip) = event.ip_address
+            && let Ok(location) = self.get_ip_geolocation(ip).await
+        {
+            event
+                .details
+                .insert("geolocation".to_string(), serde_json::to_value(location)?);
         }
 
         Ok(event)
@@ -365,13 +364,13 @@ impl AuditLogger {
 
         // Encrypt sensitive details
         for (key, value) in &mut event.details {
-            if self.is_sensitive_field(key) {
-                if let serde_json::Value::String(string_value) = value {
-                    let encrypted_value = self.encryption_key.encrypt(string_value.as_bytes())?;
-                    *value = serde_json::Value::String(crate::utils::encoding::base64_encode(
-                        &encrypted_value,
-                    ));
-                }
+            if self.is_sensitive_field(key)
+                && let serde_json::Value::String(string_value) = value
+            {
+                let encrypted_value = self.encryption_key.encrypt(string_value.as_bytes())?;
+                *value = serde_json::Value::String(crate::utils::encoding::base64_encode(
+                    &encrypted_value,
+                ));
             }
         }
 
@@ -402,50 +401,50 @@ impl AuditLogger {
         let mut alerts = Vec::new();
 
         // Check for failed authentication attempts
-        if event.event_type == AuditEventType::Authentication {
-            if let AuditResult::Failure { .. } = &event.result {
-                let recent_failures = self
-                    .count_recent_auth_failures(
-                        event.user_id.as_deref().unwrap_or("unknown"),
-                        Duration::minutes(15),
-                    )
-                    .await?;
+        if event.event_type == AuditEventType::Authentication
+            && let AuditResult::Failure { .. } = &event.result
+        {
+            let recent_failures = self
+                .count_recent_auth_failures(
+                    event.user_id.as_deref().unwrap_or("unknown"),
+                    Duration::minutes(15),
+                )
+                .await?;
 
-                if recent_failures > 5 {
-                    alerts.push(SecurityAlert {
-                        alert_id: Uuid::new_v4().to_string(),
-                        timestamp: Utc::now(),
-                        alert_type: SecurityAlertType::SuspiciousAuthActivity,
-                        severity: SecurityAlertSeverity::High,
-                        description: format!(
-                            "Multiple authentication failures: {} in 15 minutes",
-                            recent_failures
-                        ),
-                        user_id: event.user_id.clone(),
-                        ip_address: event.ip_address.clone(),
-                        related_event_id: event.event_id.clone(),
-                    });
-                }
-            }
-        }
-
-        // Check for cross-tenant access attempts
-        if let (Some(user_tenant), Some(resource_tenant)) = (&event.tenant_id, &event.tenant_id) {
-            if user_tenant != resource_tenant {
+            if recent_failures > 5 {
                 alerts.push(SecurityAlert {
                     alert_id: Uuid::new_v4().to_string(),
                     timestamp: Utc::now(),
-                    alert_type: SecurityAlertType::CrossTenantAccess,
-                    severity: SecurityAlertSeverity::Critical,
+                    alert_type: SecurityAlertType::SuspiciousAuthActivity,
+                    severity: SecurityAlertSeverity::High,
                     description: format!(
-                        "Cross-tenant access attempt: user tenant {} accessing resource tenant {}",
-                        user_tenant, resource_tenant
+                        "Multiple authentication failures: {} in 15 minutes",
+                        recent_failures
                     ),
                     user_id: event.user_id.clone(),
                     ip_address: event.ip_address.clone(),
                     related_event_id: event.event_id.clone(),
                 });
             }
+        }
+
+        // Check for cross-tenant access attempts
+        if let (Some(user_tenant), Some(resource_tenant)) = (&event.tenant_id, &event.tenant_id)
+            && user_tenant != resource_tenant
+        {
+            alerts.push(SecurityAlert {
+                alert_id: Uuid::new_v4().to_string(),
+                timestamp: Utc::now(),
+                alert_type: SecurityAlertType::CrossTenantAccess,
+                severity: SecurityAlertSeverity::Critical,
+                description: format!(
+                    "Cross-tenant access attempt: user tenant {} accessing resource tenant {}",
+                    user_tenant, resource_tenant
+                ),
+                user_id: event.user_id.clone(),
+                ip_address: event.ip_address.clone(),
+                related_event_id: event.event_id.clone(),
+            });
         }
 
         // Send alerts if any were generated
@@ -542,10 +541,10 @@ impl AuditLogger {
         let mut risk_score: f64 = 0.0;
 
         // Check for unusual IP address
-        if let Some(ip) = &ip_address {
-            if self.is_suspicious_ip(ip).await {
-                risk_score += 0.3;
-            }
+        if let Some(ip) = &ip_address
+            && self.is_suspicious_ip(ip).await
+        {
+            risk_score += 0.3;
         }
 
         // Check recent failure rate

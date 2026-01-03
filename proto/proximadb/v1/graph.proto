@@ -221,6 +221,29 @@ message BatchEdgeRequest {
   repeated Edge edges = 2;
 }
 
+// Error codes for batch item failures (aligned with REST API ErrorCode)
+enum BatchErrorCode {
+  BATCH_ERROR_CODE_UNSPECIFIED = 0;
+  BATCH_ERROR_CODE_NOT_FOUND = 1;
+  BATCH_ERROR_CODE_ALREADY_EXISTS = 2;
+  BATCH_ERROR_CODE_INVALID_ARGUMENT = 3;
+  BATCH_ERROR_CODE_CONSTRAINT_VIOLATION = 4;
+  BATCH_ERROR_CODE_INTERNAL_ERROR = 5;
+  BATCH_ERROR_CODE_TIMEOUT = 6;
+  BATCH_ERROR_CODE_PERMISSION_DENIED = 7;
+}
+
+// Structured error for a single item in a batch operation
+// Aligned with REST API's BatchError type for consistent client experience
+message BatchItemError {
+  // ID of the failed entity
+  string id = 1;
+  // Human-readable error message
+  string message = 2;
+  // Structured error code for programmatic handling
+  BatchErrorCode code = 3;
+}
+
 message BatchResponse {
   bool success = 1;
   repeated Node nodes = 2;
@@ -232,8 +255,13 @@ message BatchResponse {
   optional uint32 created_count = 5;
   optional uint32 updated_count = 6;
   optional uint32 failed_count = 7;
+  // DEPRECATED: Use errors field instead for structured error information
   repeated string failed_ids = 8;
+  // DEPRECATED: Use errors field instead for structured error information
   repeated string error_messages = 9;
+  // Structured error information for failed items (aligned with REST API)
+  // Each BatchItemError contains id, message, and error code
+  repeated BatchItemError errors = 11;
 }
 
 // Graph statistics and metadata

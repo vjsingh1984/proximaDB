@@ -378,36 +378,26 @@ impl ExtractionFactory {
         filesystem: Arc<UnifiedCachingFilesystem>,
     ) -> Arc<dyn VectorExtractor> {
         match engine_type {
-            StorageEngineType::SST => {
-                Arc::new(crate::storage::engines::impls::sst::extraction::SstExtractor::new(
+            StorageEngineType::SST => Arc::new(
+                crate::storage::engines::impls::sst::extraction::SstExtractor::new(filesystem),
+            ),
+            StorageEngineType::SWIFT => Arc::new(
+                crate::storage::engines::impls::swift::extraction::SwiftExtractor::new(filesystem),
+            ),
+            StorageEngineType::HELIX => Arc::new(
+                crate::storage::engines::impls::helix::extraction::HelixExtractor::new(filesystem),
+            ),
+            StorageEngineType::VIPER => Arc::new(
+                crate::storage::engines::impls::viper::extraction::ViperExtractor::new(filesystem),
+            ),
+            StorageEngineType::NOVA => Arc::new(
+                crate::storage::engines::impls::nova::extraction::NovaExtractor::new(filesystem),
+            ),
+            StorageEngineType::RAPTOR => Arc::new(
+                crate::storage::engines::impls::raptor::extraction::RaptorExtractor::new(
                     filesystem,
-                ))
-            }
-            StorageEngineType::SWIFT => {
-                Arc::new(crate::storage::engines::impls::swift::extraction::SwiftExtractor::new(
-                    filesystem,
-                ))
-            }
-            StorageEngineType::HELIX => {
-                Arc::new(crate::storage::engines::impls::helix::extraction::HelixExtractor::new(
-                    filesystem,
-                ))
-            }
-            StorageEngineType::VIPER => {
-                Arc::new(crate::storage::engines::impls::viper::extraction::ViperExtractor::new(
-                    filesystem,
-                ))
-            }
-            StorageEngineType::NOVA => {
-                Arc::new(crate::storage::engines::impls::nova::extraction::NovaExtractor::new(
-                    filesystem,
-                ))
-            }
-            StorageEngineType::RAPTOR => {
-                Arc::new(crate::storage::engines::impls::raptor::extraction::RaptorExtractor::new(
-                    filesystem,
-                ))
-            }
+                ),
+            ),
         }
     }
 }

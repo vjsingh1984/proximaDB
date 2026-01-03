@@ -401,7 +401,10 @@ impl UnifiedOperationCoordinator {
         &self,
         collection_id: &str,
     ) -> Result<RequantizationResult> {
-        info!("Scheduling re-quantization for collection: {}", collection_id);
+        info!(
+            "Scheduling re-quantization for collection: {}",
+            collection_id
+        );
 
         // 1. Analyze if re-quantization is actually needed
         let engine_type = self.get_collection_engine_type(collection_id);
@@ -432,9 +435,7 @@ impl UnifiedOperationCoordinator {
                 "Re-quantization delayed due to conflicting operations on collection: {}",
                 collection_id
             );
-            return Err(anyhow::anyhow!(
-                "Re-quantization queued due to conflicts"
-            ));
+            return Err(anyhow::anyhow!("Re-quantization queued due to conflicts"));
         }
 
         // 3. Acquire global re-quantization lock (exclusive)
@@ -593,9 +594,15 @@ mod tests {
         let coordinator = UnifiedOperationCoordinator::new().unwrap();
 
         // Test conflict matrix
-        assert!(coordinator.operations_conflict(OperationType::Flush, OperationType::MajorCompaction));
-        assert!(coordinator.operations_conflict(OperationType::Requantization, OperationType::Flush));
-        assert!(!coordinator.operations_conflict(OperationType::Flush, OperationType::MinorCompaction));
+        assert!(
+            coordinator.operations_conflict(OperationType::Flush, OperationType::MajorCompaction)
+        );
+        assert!(
+            coordinator.operations_conflict(OperationType::Requantization, OperationType::Flush)
+        );
+        assert!(
+            !coordinator.operations_conflict(OperationType::Flush, OperationType::MinorCompaction)
+        );
     }
 
     #[test]

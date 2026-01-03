@@ -69,9 +69,9 @@ impl DistanceMetricExt for DistanceMetric {
         }
     }
 }
-use crate::core::hardware_capabilities::get_hardware_capabilities;
 #[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::create_gpu_accelerator;
+use crate::core::hardware_capabilities::get_hardware_capabilities;
 #[cfg(feature = "gpu")]
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Handle as TokioHandle};
 
@@ -1342,8 +1342,7 @@ impl UnifiedDistanceCompute {
         let caps = get_hardware_capabilities();
 
         // Avoid GPU setup cost on small workloads
-        if !caps.should_use_gpu_distance(query.len()) || !caps.should_use_gpu_batch(vectors.len())
-        {
+        if !caps.should_use_gpu_distance(query.len()) || !caps.should_use_gpu_batch(vectors.len()) {
             return None;
         }
 

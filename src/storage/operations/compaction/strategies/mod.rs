@@ -249,7 +249,8 @@ impl CompactionStrategyRegistry {
     /// Find a strategy by either name or engine compatibility
     /// (tries strategy name first, then engine name)
     pub fn find(&self, name: &str) -> Option<&dyn CompactionStrategy> {
-        self.find_by_name(name).or_else(|| self.find_for_engine(name))
+        self.find_by_name(name)
+            .or_else(|| self.find_for_engine(name))
     }
 
     /// Get all strategies

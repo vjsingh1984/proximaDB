@@ -16,6 +16,8 @@
 
 // SIMD optimization features (using stable AVX2 instead of unstable AVX-512)
 
+// Increase recursion limit for complex types with serde
+#![recursion_limit = "1024"]
 // Enforce error handling best practices
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
@@ -146,12 +148,24 @@ pub mod index;
 /// AutoML Framework for automated optimization and tuning
 pub mod automl;
 
+/// LLM Integration for embeddings, RAG, and semantic caching
+/// Leverages Victor (codingagent) framework for embedding generation
+pub mod llm;
+
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
 pub mod metrics;
 pub mod monitoring;
 pub mod network;
 pub mod proto;
 pub mod query;
+
+/// DataFusion integration for compute engine compatibility.
+/// Provides TableProvider implementations for SQL queries over ProximaDB collections.
+/// NOTE: Feature-gated due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x,
+/// ProximaDB uses Arrow 57.x). Enable with `--features datafusion-integration`.
+#[cfg(feature = "datafusion-integration")]
+pub mod datafusion;
+
 pub mod schema;
 // NOTE: schema_constants module removed - using hardcoded schema_types.rs instead
 // schema_types removed - use core::avro_unified instead
@@ -160,6 +174,23 @@ pub mod server;
 pub mod services;
 pub mod storage;
 pub mod utils;
+
+/// DataSource Connector interface (Spark DataSource V2-style)
+/// Provides pluggable connectors for external storage systems and pushdown negotiation
+pub mod connectors;
+
+/// Observability module for Cloud SIEM / Datadog-like capabilities
+/// Provides high-throughput ingestion and querying for logs, metrics, and traces
+pub mod observability;
+
+/// Real-time streaming module for continuous vector ingestion
+/// Provides lock-free ring buffers, backpressure handling, and live queries
+pub mod streaming;
+
+/// Change Data Capture (CDC) module for database synchronization
+/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks
+pub mod cdc;
+
 pub mod version;
 
 /// Embedded mode for in-process database usage without network layer
@@ -170,6 +201,10 @@ pub mod embedded;
 /// Provides consensus, metadata management, shard routing, and node registry
 pub mod cluster;
 
+/// Unified Catalog System with pluggable backends
+/// Supports: Native, AWS Glue, Databricks Unity, Apache Polaris, Hive, Iceberg
+pub mod catalog;
+
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
 //     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));
@@ -177,7 +212,98 @@ pub mod cluster;
 
 // Re-export commonly used types from core
 pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
+
+// Re-export catalog types for unified schema management
+pub use catalog::{
+    CatalogCache,
+    // Catalog management
+    CatalogManager,
+    TableIdentifier,
+    // Catalog federation for unified view across internal and external catalogs
+    federation::{
+        ConstraintSupport, ExternalCatalog, ExternalCatalogConfig, ExternalCatalogType,
+        FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo,
+    },
+    // Internal schema registry
+    internal::{
+        // Object model
+        CatalogObject,
+        // Enforcement
+        ConstraintEnforcer,
+        ConstraintType,
+        ConstraintViolation,
+        DocumentProperties,
+        EnforcementResult,
+        ForeignKeyReference,
+        GraphProperties,
+        // Information schema
+        InformationSchema,
+        InformationSchemaView,
+        InternalSchemaRegistry,
+        // Model properties
+        ModelProperties,
+        ObjectSchema,
+        ObjectType,
+        ObservabilityProperties,
+        RdbmsProperties,
+        ReferentialAction,
+        SchemaEnforcementMode,
+        // Constraints
+        TableConstraint,
+        VectorProperties,
+    },
+};
+
+// ============================================================================
+// Storage-Compute Separation Re-exports (Hadoop-style architecture)
+// ============================================================================
+
+// Re-export key compute types for the pluggable compute layer
+pub use compute::{
+    ComputeCapabilities,
+    // Compute plan types
+    ComputePlan,
+    // Compute provider interface
+    ComputeProvider,
+    // Compute scheduler
+    ComputeScheduler,
+    CostEstimate,
+    Expr as ComputeExpr,
+    LocalComputeProvider,
+    PlanNode,
+    SchedulingPolicy,
+};
+
+// Re-export key connector types for external system integration
+pub use connectors::{
+    DataReader,
+    // Core connector traits
+    DataSourceConnector,
+    DataWriter,
+    // Pushdown types
+    PushdownRequest,
+    PushdownResponse,
+    // Context types
+    ReadContext,
+    TableInfo,
+    TableStatistics,
+    WriteContext,
+    // Result types
+    WriteResult,
+};
+
+// Re-export key storage format types for format abstraction
 use std::sync::Arc;
+pub use storage::formats::{
+    // Format registry
+    FormatRegistry,
+    FormatType,
+    // Context types
+    ReadContext as FormatReadContext,
+    // Core format traits
+    StorageFormat,
+    WriteContext as FormatWriteContext,
+};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -275,10 +401,13 @@ impl ProximaDB {
 
         // Step 4: Set global metadata provider BEFORE creating StorageEngine
         // This ensures WAL pool instances can resolve collection paths correctly
-        tracing::debug!("🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution...");
+        tracing::debug!(
+            "🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution..."
+        );
         storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone()
-        ).await;
+            collection_service.metadata_backend().clone(),
+        )
+        .await;
         tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
 
         // Step 5: Create StorageEngine using the CollectionService from SharedServices
@@ -321,7 +450,8 @@ impl ProximaDB {
         let mut builder = network::MultiServerBuilder::custom()
             .http(|h| h.bind_address(rest_addr))
             .grpc(|g| g.bind_address(grpc_addr))
-            .with_api_config(config.api.clone());
+            .with_api_config(config.api.clone())
+            .with_data_dir(config.server.data_dir.clone());
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
@@ -340,21 +470,22 @@ impl ProximaDB {
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
-        let security: Option<Arc<security::SecurityCoordinator>> =
-            if let Some(sec_cfg) = config.security.clone() {
-                match security::initialize_security(sec_cfg).await {
-                    Ok(coordinator) => Some(Arc::new(coordinator)),
-                    Err(err) => {
-                        tracing::warn!(
-                            "Security initialization failed, continuing with security disabled: {:?}",
-                            err
-                        );
-                        None
-                    }
+        let security: Option<Arc<security::SecurityCoordinator>> = if let Some(sec_cfg) =
+            config.security.clone()
+        {
+            match security::initialize_security(sec_cfg).await {
+                Ok(coordinator) => Some(Arc::new(coordinator)),
+                Err(err) => {
+                    tracing::warn!(
+                        "Security initialization failed, continuing with security disabled: {:?}",
+                        err
+                    );
+                    None
                 }
-            } else {
-                None
-            };
+            }
+        } else {
+            None
+        };
 
         // SharedServices and metrics collector already created above
 
@@ -365,13 +496,15 @@ impl ProximaDB {
             .as_ref()
             .map(|s| s.authentication.enabled)
             .unwrap_or(false);
-        let multi_server = network::MultiServer::new(
+        let mut multi_server = network::MultiServer::new(
             multi_config,
             shared_services,
             security.clone(),
             rest_auth_enabled,
         );
-        tracing::debug!("✅ ProximaDB::new - MultiServer created successfully");
+        // Wire storage engine for PostgreSQL wire protocol support
+        multi_server.set_storage(storage.clone());
+        tracing::debug!("✅ ProximaDB::new - MultiServer created with storage engine wired");
 
         Ok(Self {
             storage,
@@ -505,22 +638,30 @@ impl ProximaDB {
         // Flush graph WAL for all graphs before shutdown
         tracing::info!("Flushing graph WAL for all graphs...");
         if let Some(ref multi_server) = self.multi_server {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(5),
-                async {
-                    let graphs = multi_server.shared_services.graph_service.list_graphs().await?;
-                    let mut flushed = 0;
-                    for graph_id in graphs {
-                        if let Err(e) = multi_server.shared_services.graph_service.flush_wal(&graph_id).await {
-                            tracing::warn!("Failed to flush WAL for graph {}: {}", graph_id, e);
-                        } else {
-                            flushed += 1;
-                        }
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+                let graphs = multi_server
+                    .shared_services
+                    .graph_service
+                    .list_graphs()
+                    .await?;
+                let mut flushed = 0;
+                for graph_id in graphs {
+                    if let Err(e) = multi_server
+                        .shared_services
+                        .graph_service
+                        .flush_wal(&graph_id)
+                        .await
+                    {
+                        tracing::warn!("Failed to flush WAL for graph {}: {}", graph_id, e);
+                    } else {
+                        flushed += 1;
                     }
-                    tracing::debug!("Flushed WAL for {} graphs", flushed);
-                    Ok::<_, crate::core::error::ProximaDBError>(())
                 }
-            ).await {
+                tracing::debug!("Flushed WAL for {} graphs", flushed);
+                Ok::<_, crate::core::error::ProximaDBError>(())
+            })
+            .await
+            {
                 Ok(Ok(())) => tracing::debug!("Graph WAL flush complete"),
                 Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
                 Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
@@ -531,8 +672,10 @@ impl ProximaDB {
         tracing::info!("Shutting down global WAL manifest...");
         match tokio::time::timeout(
             tokio::time::Duration::from_secs(5),
-            storage::persistence::write_ahead_log::manifest::shutdown()
-        ).await {
+            storage::persistence::write_ahead_log::manifest::shutdown(),
+        )
+        .await
+        {
             Ok(Ok(())) => tracing::debug!("Global WAL manifest shut down"),
             Ok(Err(e)) => tracing::warn!("WAL manifest shutdown error: {}", e),
             Err(_) => tracing::warn!("WAL manifest shutdown timeout - forcing continuation"),
@@ -540,10 +683,9 @@ impl ProximaDB {
 
         // Stop multi-server with timeout
         if let Some(ref mut multi_server) = self.multi_server {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(3),
-                multi_server.stop()
-            ).await {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(3), multi_server.stop())
+                .await
+            {
                 Ok(Ok(())) => tracing::debug!("Multi-server stopped"),
                 Ok(Err(e)) => tracing::warn!("Multi-server stop error: {}", e),
                 Err(_) => tracing::warn!("Multi-server stop timeout"),
@@ -551,13 +693,12 @@ impl ProximaDB {
         }
 
         // Stop storage engine with timeout
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(3),
-            async {
-                let mut storage = self.storage.write().await;
-                storage.stop().await
-            }
-        ).await {
+        match tokio::time::timeout(tokio::time::Duration::from_secs(3), async {
+            let mut storage = self.storage.write().await;
+            storage.stop().await
+        })
+        .await
+        {
             Ok(Ok(())) => tracing::debug!("Storage engine stopped"),
             Ok(Err(e)) => tracing::warn!("Storage engine stop error: {}", e),
             Err(_) => tracing::warn!("Storage engine stop timeout"),
@@ -576,7 +717,8 @@ impl ProximaDB {
     /// 4. Starts a background checkpoint task for periodic policy persistence
     async fn init_rl_planner(&mut self) -> Result<()> {
         // Get RL config from main config (or use defaults)
-        let rl_config = self._config
+        let rl_config = self
+            ._config
             .query
             .as_ref()
             .map(|q| q.rl_planner.to_rl_planner_config())
@@ -609,7 +751,10 @@ impl ProximaDB {
                     }
                 }
             } else {
-                tracing::debug!("No existing RL policy found at {}, starting fresh", policy_path);
+                tracing::debug!(
+                    "No existing RL policy found at {}, starting fresh",
+                    policy_path
+                );
             }
 
             // Start periodic checkpoint task
@@ -624,7 +769,10 @@ impl ProximaDB {
                     if let Some(planner) = query::rl_planner::get_rl_planner() {
                         match planner.save_policy(&checkpoint_path).await {
                             Ok(()) => {
-                                tracing::debug!("RL policy checkpoint saved to {}", checkpoint_path);
+                                tracing::debug!(
+                                    "RL policy checkpoint saved to {}",
+                                    checkpoint_path
+                                );
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to save RL policy checkpoint: {}", e);
@@ -659,8 +807,10 @@ impl ProximaDB {
             if let Some(planner) = query::rl_planner::get_rl_planner() {
                 match tokio::time::timeout(
                     tokio::time::Duration::from_secs(5),
-                    planner.save_policy(policy_path)
-                ).await {
+                    planner.save_policy(policy_path),
+                )
+                .await
+                {
                     Ok(Ok(())) => {
                         tracing::info!("✅ RL policy persisted to {}", policy_path);
                     }
@@ -677,7 +827,12 @@ impl ProximaDB {
                 if !stats.is_empty() {
                     tracing::info!("RL Planner final stats: {} actions tracked", stats.len());
                     for (action, (avg_reward, count)) in stats.iter().take(5) {
-                        tracing::debug!("  {}: avg_reward={:.3}, count={}", action, avg_reward, count);
+                        tracing::debug!(
+                            "  {}: avg_reward={:.3}, count={}",
+                            action,
+                            avg_reward,
+                            count
+                        );
                     }
                 }
             }
@@ -959,10 +1114,7 @@ impl ProximaDB {
     ///
     /// # Returns
     /// * `Ok(GraphStats)` - Statistics about the graph
-    pub async fn get_graph_stats(
-        &self,
-        graph_id: &str,
-    ) -> Result<proto::proximadb_v1::GraphStats> {
+    pub async fn get_graph_stats(&self, graph_id: &str) -> Result<proto::proximadb_v1::GraphStats> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services

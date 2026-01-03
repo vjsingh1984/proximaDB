@@ -149,7 +149,11 @@ pub trait StorageWriter: StorageIdentity + Send + Sync {
             .await
             .with_context(|| format!("Failed to write to staging file: {}", staging_file_path))?;
 
-        tracing::debug!("Wrote {} bytes to staging: {}", data.len(), staging_file_path);
+        tracing::debug!(
+            "Wrote {} bytes to staging: {}",
+            data.len(),
+            staging_file_path
+        );
         Ok(staging_file_path)
     }
 
@@ -215,7 +219,10 @@ pub trait StorageWriter: StorageIdentity + Send + Sync {
     }
 
     /// Construct data directory path from collection config
-    fn get_data_dir_from_collection_config(&self, collection_config: &Collection) -> Result<String> {
+    fn get_data_dir_from_collection_config(
+        &self,
+        collection_config: &Collection,
+    ) -> Result<String> {
         let collection_id = &collection_config.id;
 
         if let Some(ref storage_assignment) = collection_config.storage_assignment {

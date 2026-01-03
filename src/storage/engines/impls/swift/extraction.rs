@@ -9,11 +9,11 @@ use std::time::Instant;
 use tracing::debug;
 
 use crate::index::axis::eventlog::StorageEngineType;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
-    ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode, ExtractionRequest,
-    ExtractionResult, ExtractionStats, ExtractedVector, VectorExtractor,
+    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
+    ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
 
 use super::unified_reader::{SwiftReadStrategy, SwiftReaderConfig, UnifiedSwiftReader};

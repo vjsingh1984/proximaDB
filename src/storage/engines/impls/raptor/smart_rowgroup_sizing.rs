@@ -413,10 +413,10 @@ impl BalancedMatrixTrinitySizing {
         let max_size = 4096.min(total_vectors); // Can't exceed total
 
         let optimal_p = (sqrt_n as usize).clamp(min_size, max_size);
-        let optimal_k = (total_vectors + optimal_p - 1) / optimal_p; // Ceiling division
+        let optimal_k = total_vectors.div_ceil(optimal_p); // Ceiling division
 
         // Recalculate actual p to ensure k * p >= N
-        let actual_p = (total_vectors + optimal_k - 1) / optimal_k;
+        let actual_p = total_vectors.div_ceil(optimal_k);
 
         // Calculate Matrix Trinity costs
         let n = total_vectors;
@@ -441,9 +441,18 @@ impl BalancedMatrixTrinitySizing {
             "Balanced for N={}: p=k≈√N={} (actual p={}, k={}). \
              Query cost: P²={} + P×K={} = {} ops vs N={} naive ({}x speedup). \
              K² pre-computed: {} entries. Dim={}, nprobe={}.",
-            n, sqrt_n as usize, p, k,
-            p2_cost, pxk_cost, total_query_ops, n, speedup as usize,
-            k2_cost, dimension, nprobe
+            n,
+            sqrt_n as usize,
+            p,
+            k,
+            p2_cost,
+            pxk_cost,
+            total_query_ops,
+            n,
+            speedup as usize,
+            k2_cost,
+            dimension,
+            nprobe
         );
 
         Self {
@@ -460,7 +469,11 @@ impl BalancedMatrixTrinitySizing {
     }
 
     /// Calculate sizing with custom nprobe (number of rowgroups to search)
-    pub fn calculate_with_nprobe(total_vectors: usize, dimension: usize, target_nprobe: usize) -> Self {
+    pub fn calculate_with_nprobe(
+        total_vectors: usize,
+        dimension: usize,
+        target_nprobe: usize,
+    ) -> Self {
         let mut sizing = Self::calculate(total_vectors, dimension);
 
         // Recalculate P² cost with specified nprobe
@@ -591,7 +604,10 @@ mod tests {
         );
 
         println!("Matrix Trinity balanced sizing for N=1,000,000:");
-        println!("  p = {}, k = {}", sizing.vectors_per_rowgroup, sizing.num_rowgroups);
+        println!(
+            "  p = {}, k = {}",
+            sizing.vectors_per_rowgroup, sizing.num_rowgroups
+        );
         println!("  Speedup = {:.1}x", sizing.speedup_vs_naive);
     }
 
@@ -599,15 +615,21 @@ mod tests {
     fn test_matrix_trinity_scaling() {
         // Verify √N scaling across different dataset sizes
         println!("Matrix Trinity scaling analysis:");
-        println!("{:>12} {:>8} {:>8} {:>12} {:>12}", "N", "p", "k", "Query ops", "Speedup");
+        println!(
+            "{:>12} {:>8} {:>8} {:>12} {:>12}",
+            "N", "p", "k", "Query ops", "Speedup"
+        );
         println!("{}", "-".repeat(60));
 
         for n in [1000, 10000, 30000, 100000, 1000000] {
             let sizing = BalancedMatrixTrinitySizing::calculate(n, 128);
             println!(
                 "{:>12} {:>8} {:>8} {:>12} {:>12.1}x",
-                n, sizing.vectors_per_rowgroup, sizing.num_rowgroups,
-                sizing.total_query_ops, sizing.speedup_vs_naive
+                n,
+                sizing.vectors_per_rowgroup,
+                sizing.num_rowgroups,
+                sizing.total_query_ops,
+                sizing.speedup_vs_naive
             );
 
             // Verify speedup is significant - with nprobe=√k, speedup ≈ N/(√k*p + k)
@@ -618,7 +640,9 @@ mod tests {
             assert!(
                 sizing.speedup_vs_naive > expected_min_speedup,
                 "Speedup {} should be > {} for N={}",
-                sizing.speedup_vs_naive, expected_min_speedup, n
+                sizing.speedup_vs_naive,
+                expected_min_speedup,
+                n
             );
         }
     }
@@ -639,7 +663,9 @@ mod tests {
             assert!(
                 sizing.speedup_vs_naive > 15.0,
                 "Expected 15x+ speedup for N={}, dim={}, got {}x",
-                n, dim, sizing.speedup_vs_naive
+                n,
+                dim,
+                sizing.speedup_vs_naive
             );
         }
     }

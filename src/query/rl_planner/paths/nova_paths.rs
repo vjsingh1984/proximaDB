@@ -4,9 +4,7 @@
 //! Paths focus on adaptive streaming and progressive refinement.
 
 use super::{OptimizationPath, PathExpectation};
-use crate::query::rl_planner::action::{
-    ExecutionAction, IndexStrategy, QuantizationStage, SearchModeAction,
-};
+use crate::query::rl_planner::action::{ExecutionAction, QuantizationStage, SearchModeAction};
 
 /// Get all NOVA optimization paths
 pub fn paths() -> Vec<OptimizationPath> {
@@ -24,11 +22,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 1.0,
             memory_factor: 1.0,
         })
-        .with_use_cases(vec![
-            "Small datasets",
-            "Exact search required",
-        ]),
-
+        .with_use_cases(vec!["Small datasets", "Exact search required"]),
         // Path 2: ZoneMap + FP32
         OptimizationPath::new(
             "nova_zonemap",
@@ -42,11 +36,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 1.7,
             memory_factor: 0.9,
         })
-        .with_use_cases(vec![
-            "Well-organized columnar data",
-            "Range-based queries",
-        ]),
-
+        .with_use_cases(vec!["Well-organized columnar data", "Range-based queries"]),
         // Path 3: Progressive + ZoneMap
         OptimizationPath::new(
             "nova_progressive_zonemap",
@@ -60,11 +50,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 2.5,
             memory_factor: 0.7,
         })
-        .with_use_cases(vec![
-            "Large columnar datasets",
-            "Balanced performance",
-        ]),
-
+        .with_use_cases(vec!["Large columnar datasets", "Balanced performance"]),
         // Path 4: IVF + Columnar
         OptimizationPath::new(
             "nova_ivf_columnar",
@@ -78,11 +64,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 3.0,
             memory_factor: 1.1,
         })
-        .with_use_cases(vec![
-            "Large collections",
-            "When IVF index is available",
-        ]),
-
+        .with_use_cases(vec!["Large collections", "When IVF index is available"]),
         // Path 5: Streaming + Progressive
         OptimizationPath::new(
             "nova_streaming_progressive",
@@ -104,10 +86,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 3.5,
             memory_factor: 0.6,
         })
-        .with_use_cases(vec![
-            "Real-time streaming",
-            "Progressive result delivery",
-        ]),
+        .with_use_cases(vec!["Real-time streaming", "Progressive result delivery"]),
     ]
 }
 

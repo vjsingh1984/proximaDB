@@ -122,12 +122,26 @@ mod helix_prune_debug {
             force_exact: true,
             ..Default::default()
         };
-        let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Exact, exact_prune);
+        let ctx = create_search_context(
+            query.clone(),
+            collection_arc.clone(),
+            SearchMode::Exact,
+            exact_prune,
+        );
         let exact_results = engine.search_vectors_unified(&ctx).await.unwrap();
         let exact_found = exact_results.iter().any(|r| r.id == *expected_id);
-        eprintln!("Exact mode: {} results, found_query={}", exact_results.len(), exact_found);
+        eprintln!(
+            "Exact mode: {} results, found_query={}",
+            exact_results.len(),
+            exact_found
+        );
         for (i, r) in exact_results.iter().take(3).enumerate() {
-            eprintln!("  {}: id={}, similarity={:.4}", i, r.id, r.similarity.unwrap_or(0.0));
+            eprintln!(
+                "  {}: id={}, similarity={:.4}",
+                i,
+                r.id,
+                r.similarity.unwrap_or(0.0)
+            );
         }
 
         // Test 2: Approximate mode with Sqrt pruning (default)
@@ -140,12 +154,26 @@ mod helix_prune_debug {
             ratio: 0.5,
             min_blocks_override: Some(0), // Enable pruning for tests
         };
-        let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Approximate { nprobe: Some(5) }, approx_prune);
+        let ctx = create_search_context(
+            query.clone(),
+            collection_arc.clone(),
+            SearchMode::Approximate { nprobe: Some(5) },
+            approx_prune,
+        );
         let approx_results = engine.search_vectors_unified(&ctx).await.unwrap();
         let approx_found = approx_results.iter().any(|r| r.id == *expected_id);
-        eprintln!("Approximate mode: {} results, found_query={}", approx_results.len(), approx_found);
+        eprintln!(
+            "Approximate mode: {} results, found_query={}",
+            approx_results.len(),
+            approx_found
+        );
         for (i, r) in approx_results.iter().take(3).enumerate() {
-            eprintln!("  {}: id={}, similarity={:.4}", i, r.id, r.similarity.unwrap_or(0.0));
+            eprintln!(
+                "  {}: id={}, similarity={:.4}",
+                i,
+                r.id,
+                r.similarity.unwrap_or(0.0)
+            );
         }
 
         // Test 3: Approximate mode with higher ratio
@@ -155,13 +183,22 @@ mod helix_prune_debug {
             mode: BlockPruneMode::Ratio,
             min_keep: 1,
             max_keep: 0,
-            ratio: 0.8, // Keep 80% of blocks
+            ratio: 0.8,                   // Keep 80% of blocks
             min_blocks_override: Some(0), // Enable pruning for tests
         };
-        let ctx = create_search_context(query.clone(), collection_arc.clone(), SearchMode::Approximate { nprobe: Some(5) }, high_ratio_prune);
+        let ctx = create_search_context(
+            query.clone(),
+            collection_arc.clone(),
+            SearchMode::Approximate { nprobe: Some(5) },
+            high_ratio_prune,
+        );
         let high_ratio_results = engine.search_vectors_unified(&ctx).await.unwrap();
         let high_ratio_found = high_ratio_results.iter().any(|r| r.id == *expected_id);
-        eprintln!("High ratio mode: {} results, found_query={}", high_ratio_results.len(), high_ratio_found);
+        eprintln!(
+            "High ratio mode: {} results, found_query={}",
+            high_ratio_results.len(),
+            high_ratio_found
+        );
 
         // Calculate recall for multiple queries
         eprintln!("\n--- Test 4: Multi-Query Recall Comparison ---");
@@ -178,7 +215,10 @@ mod helix_prune_debug {
                 q.clone(),
                 collection_arc.clone(),
                 SearchMode::Exact,
-                BlockPruneConfig { force_exact: true, ..Default::default() },
+                BlockPruneConfig {
+                    force_exact: true,
+                    ..Default::default()
+                },
             );
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
             if results.iter().any(|r| r.id == *expected) {
@@ -199,13 +239,26 @@ mod helix_prune_debug {
         }
 
         eprintln!("\n========== RECALL SUMMARY ==========");
-        eprintln!("Exact mode recall:       {}/{} = {:.0}%", exact_recall, num_queries, exact_recall as f64 / num_queries as f64 * 100.0);
-        eprintln!("Approximate mode recall: {}/{} = {:.0}%", approx_recall, num_queries, approx_recall as f64 / num_queries as f64 * 100.0);
+        eprintln!(
+            "Exact mode recall:       {}/{} = {:.0}%",
+            exact_recall,
+            num_queries,
+            exact_recall as f64 / num_queries as f64 * 100.0
+        );
+        eprintln!(
+            "Approximate mode recall: {}/{} = {:.0}%",
+            approx_recall,
+            num_queries,
+            approx_recall as f64 / num_queries as f64 * 100.0
+        );
         eprintln!("======================================\n");
 
         // Assertions
         assert!(exact_found, "Exact mode should find the query vector");
-        assert_eq!(exact_recall, num_queries, "Exact mode should have 100% recall");
+        assert_eq!(
+            exact_recall, num_queries,
+            "Exact mode should have 100% recall"
+        );
 
         // For approximate mode, we expect some recall loss but not complete failure
         // If it's 0%, there's a bug in the pruning logic
@@ -227,14 +280,9 @@ mod helix_prune_debug {
 
         // Generate test vectors - use 5000 to create multiple blocks
         let vectors = vector_generator::random_seeded_with_prefix("vec", 5000, DIMENSION, 42);
-        let query_vectors: Vec<Vec<f32>> = vectors[0..10]
-            .iter()
-            .map(|v| v.vector.clone())
-            .collect();
-        let expected_ids: Vec<String> = vectors[0..10]
-            .iter()
-            .map(|v| v.id.clone())
-            .collect();
+        let query_vectors: Vec<Vec<f32>> =
+            vectors[0..10].iter().map(|v| v.vector.clone()).collect();
+        let expected_ids: Vec<String> = vectors[0..10].iter().map(|v| v.id.clone()).collect();
 
         let collection = create_collection(collection_id, &temp_dir);
 
@@ -269,7 +317,10 @@ mod helix_prune_debug {
                     query.clone(),
                     collection_arc.clone(),
                     SearchMode::Exact,
-                    BlockPruneConfig { force_exact: true, ..Default::default() },
+                    BlockPruneConfig {
+                        force_exact: true,
+                        ..Default::default()
+                    },
                 );
                 let results = engine.search_vectors_unified(&ctx).await.unwrap();
                 if results.iter().any(|r| r.id == expected_ids[i]) {
@@ -289,7 +340,10 @@ mod helix_prune_debug {
                 }
             }
 
-            eprintln!("WARM - Exact: {}/10, Approximate: {}/10", warm_exact_recall, warm_approx_recall);
+            eprintln!(
+                "WARM - Exact: {}/10, Approximate: {}/10",
+                warm_exact_recall, warm_approx_recall
+            );
         }
 
         // Phase 2: Cold search (new engine instance)
@@ -306,7 +360,10 @@ mod helix_prune_debug {
                     query.clone(),
                     collection_arc.clone(),
                     SearchMode::Exact,
-                    BlockPruneConfig { force_exact: true, ..Default::default() },
+                    BlockPruneConfig {
+                        force_exact: true,
+                        ..Default::default()
+                    },
                 );
                 let results = engine2.search_vectors_unified(&ctx).await.unwrap();
                 if results.iter().any(|r| r.id == expected_ids[i]) {
@@ -326,15 +383,29 @@ mod helix_prune_debug {
                 }
             }
 
-            eprintln!("COLD - Exact: {}/10, Approximate: {}/10", cold_exact_recall, cold_approx_recall);
+            eprintln!(
+                "COLD - Exact: {}/10, Approximate: {}/10",
+                cold_exact_recall, cold_approx_recall
+            );
 
             eprintln!("\n========== COLD RECALL SUMMARY ==========");
-            eprintln!("Cold Exact recall:       {}/10 = {}%", cold_exact_recall, cold_exact_recall * 10);
-            eprintln!("Cold Approximate recall: {}/10 = {}%", cold_approx_recall, cold_approx_recall * 10);
+            eprintln!(
+                "Cold Exact recall:       {}/10 = {}%",
+                cold_exact_recall,
+                cold_exact_recall * 10
+            );
+            eprintln!(
+                "Cold Approximate recall: {}/10 = {}%",
+                cold_approx_recall,
+                cold_approx_recall * 10
+            );
             eprintln!("==========================================\n");
 
             // Assertions
-            assert_eq!(cold_exact_recall, 10, "Cold exact mode should have 100% recall");
+            assert_eq!(
+                cold_exact_recall, 10,
+                "Cold exact mode should have 100% recall"
+            );
         }
     }
 
@@ -385,17 +456,70 @@ mod helix_prune_debug {
         };
 
         engine.do_flush(&flush_params).await.unwrap();
-        eprintln!("\nFlushed {} vectors (expecting ~8 blocks with 128 vectors/block)", vectors.len());
+        eprintln!(
+            "\nFlushed {} vectors (expecting ~8 blocks with 128 vectors/block)",
+            vectors.len()
+        );
 
         let collection_arc = Arc::new(collection.clone());
 
         // Test with increasingly aggressive pruning
         let configs = vec![
-            ("Sqrt (default)", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Sqrt, min_keep: 1, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
-            ("Sqrt min_keep=4", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Sqrt, min_keep: 4, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
-            ("Ratio 50%", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Ratio, min_keep: 1, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
-            ("Ratio 80%", BlockPruneConfig { force_exact: false, mode: BlockPruneMode::Ratio, min_keep: 1, max_keep: 0, ratio: 0.8, min_blocks_override: Some(0) }),
-            ("Force Exact", BlockPruneConfig { force_exact: true, mode: BlockPruneMode::Sqrt, min_keep: 1, max_keep: 0, ratio: 0.5, min_blocks_override: Some(0) }),
+            (
+                "Sqrt (default)",
+                BlockPruneConfig {
+                    force_exact: false,
+                    mode: BlockPruneMode::Sqrt,
+                    min_keep: 1,
+                    max_keep: 0,
+                    ratio: 0.5,
+                    min_blocks_override: Some(0),
+                },
+            ),
+            (
+                "Sqrt min_keep=4",
+                BlockPruneConfig {
+                    force_exact: false,
+                    mode: BlockPruneMode::Sqrt,
+                    min_keep: 4,
+                    max_keep: 0,
+                    ratio: 0.5,
+                    min_blocks_override: Some(0),
+                },
+            ),
+            (
+                "Ratio 50%",
+                BlockPruneConfig {
+                    force_exact: false,
+                    mode: BlockPruneMode::Ratio,
+                    min_keep: 1,
+                    max_keep: 0,
+                    ratio: 0.5,
+                    min_blocks_override: Some(0),
+                },
+            ),
+            (
+                "Ratio 80%",
+                BlockPruneConfig {
+                    force_exact: false,
+                    mode: BlockPruneMode::Ratio,
+                    min_keep: 1,
+                    max_keep: 0,
+                    ratio: 0.8,
+                    min_blocks_override: Some(0),
+                },
+            ),
+            (
+                "Force Exact",
+                BlockPruneConfig {
+                    force_exact: true,
+                    mode: BlockPruneMode::Sqrt,
+                    min_keep: 1,
+                    max_keep: 0,
+                    ratio: 0.5,
+                    min_blocks_override: Some(0),
+                },
+            ),
         ];
 
         eprintln!("\nRecall comparison with different pruning configs:");
@@ -416,7 +540,12 @@ mod helix_prune_debug {
                     found_count += 1;
                 }
             }
-            eprintln!("  {}: {}/10 = {}% recall", name, found_count, found_count * 10);
+            eprintln!(
+                "  {}: {}/10 = {}% recall",
+                name,
+                found_count,
+                found_count * 10
+            );
         }
 
         eprintln!("\n✅ Recommendation: HELIX should match SST's behavior:");
@@ -447,7 +576,10 @@ mod helix_prune_debug {
         // Each cluster is tightly grouped, so nearest neighbors are in same cluster
         let vectors = vector_generator::clustered("test", 5000, DIMENSION, 10);
 
-        eprintln!("\nGenerated {} vectors in 10 clusters (500 vectors/cluster)", vectors.len());
+        eprintln!(
+            "\nGenerated {} vectors in 10 clusters (500 vectors/cluster)",
+            vectors.len()
+        );
         eprintln!("With 128 vectors/block, each cluster spans ~4 blocks");
         eprintln!("Total ~39 blocks, Hilbert sorting should group clusters together");
 
@@ -505,7 +637,10 @@ mod helix_prune_debug {
                 query.clone(),
                 collection_arc.clone(),
                 SearchMode::Exact,
-                BlockPruneConfig { force_exact: true, ..Default::default() },
+                BlockPruneConfig {
+                    force_exact: true,
+                    ..Default::default()
+                },
             );
 
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -515,8 +650,16 @@ mod helix_prune_debug {
         }
 
         eprintln!("\n========== CLUSTERED DATA RECALL ==========");
-        eprintln!("Exact mode recall:       {}/10 = {}%", exact_recall, exact_recall * 10);
-        eprintln!("Approximate mode recall: {}/10 = {}%", approx_recall, approx_recall * 10);
+        eprintln!(
+            "Exact mode recall:       {}/10 = {}%",
+            exact_recall,
+            exact_recall * 10
+        );
+        eprintln!(
+            "Approximate mode recall: {}/10 = {}%",
+            approx_recall,
+            approx_recall * 10
+        );
         eprintln!("============================================");
 
         // For clustered data, we expect MUCH better recall because

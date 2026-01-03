@@ -26,7 +26,7 @@ mod small_batch_tests {
 
     use super::vector_generator;
 
-    const SMALL_BATCH_SIZE: usize = 50;    // Below 100 threshold, triggers brute force
+    const SMALL_BATCH_SIZE: usize = 50; // Below 100 threshold, triggers brute force
     const REGULAR_BATCH_SIZE: usize = 1000; // Above 100 threshold, uses PCA + spatial clustering
     const BENCHMARK_BATCH_SIZE: usize = 5000; // Match Python benchmark size
     const DIMENSION: usize = 128;
@@ -140,7 +140,8 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "helix_50_warm";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", SMALL_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", SMALL_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -167,11 +168,18 @@ mod small_batch_tests {
         );
 
         let expected_count = TOP_K.min(SMALL_BATCH_SIZE);
-        let recall_count = run_search_test(&engine, &vectors, collection_arc, "HELIX 50 warm").await;
+        let recall_count =
+            run_search_test(&engine, &vectors, collection_arc, "HELIX 50 warm").await;
         let recall = recall_count as f32 / expected_count as f32 * 100.0;
 
-        eprintln!("HELIX 50-vector warm search recall@{}: {:.1}%", TOP_K, recall);
-        assert_eq!(recall_count, expected_count, "Expected 100% recall for HELIX 50 warm");
+        eprintln!(
+            "HELIX 50-vector warm search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
+        assert_eq!(
+            recall_count, expected_count,
+            "Expected 100% recall for HELIX 50 warm"
+        );
     }
 
     #[tokio::test]
@@ -180,7 +188,8 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "helix_50_cold";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", SMALL_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", SMALL_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -205,11 +214,18 @@ mod small_batch_tests {
         // Cold search with new engine
         let engine2 = HelixEngine::new().await.unwrap();
         let expected_count = TOP_K.min(SMALL_BATCH_SIZE);
-        let recall_count = run_search_test(&engine2, &vectors, collection_arc, "HELIX 50 cold").await;
+        let recall_count =
+            run_search_test(&engine2, &vectors, collection_arc, "HELIX 50 cold").await;
         let recall = recall_count as f32 / expected_count as f32 * 100.0;
 
-        eprintln!("HELIX 50-vector cold search recall@{}: {:.1}%", TOP_K, recall);
-        assert_eq!(recall_count, expected_count, "Expected 100% recall for HELIX 50 cold");
+        eprintln!(
+            "HELIX 50-vector cold search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
+        assert_eq!(
+            recall_count, expected_count,
+            "Expected 100% recall for HELIX 50 cold"
+        );
     }
 
     // ========================================================================
@@ -222,7 +238,8 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "helix_1000_warm";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", REGULAR_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", REGULAR_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -248,11 +265,18 @@ mod small_batch_tests {
             flush_result.bytes_written.unwrap_or(0)
         );
 
-        let recall_count = run_search_test(&engine, &vectors, collection_arc, "HELIX 1000 warm").await;
+        let recall_count =
+            run_search_test(&engine, &vectors, collection_arc, "HELIX 1000 warm").await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
-        eprintln!("HELIX 1000-vector warm search recall@{}: {:.1}%", TOP_K, recall);
-        assert_eq!(recall_count, TOP_K, "Expected 100% recall for HELIX 1000 warm");
+        eprintln!(
+            "HELIX 1000-vector warm search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
+        assert_eq!(
+            recall_count, TOP_K,
+            "Expected 100% recall for HELIX 1000 warm"
+        );
     }
 
     #[tokio::test]
@@ -261,7 +285,8 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "helix_1000_cold";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", REGULAR_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", REGULAR_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -285,11 +310,18 @@ mod small_batch_tests {
 
         // Cold search with new engine
         let engine2 = HelixEngine::new().await.unwrap();
-        let recall_count = run_search_test(&engine2, &vectors, collection_arc, "HELIX 1000 cold").await;
+        let recall_count =
+            run_search_test(&engine2, &vectors, collection_arc, "HELIX 1000 cold").await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
-        eprintln!("HELIX 1000-vector cold search recall@{}: {:.1}%", TOP_K, recall);
-        assert_eq!(recall_count, TOP_K, "Expected 100% recall for HELIX 1000 cold");
+        eprintln!(
+            "HELIX 1000-vector cold search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
+        assert_eq!(
+            recall_count, TOP_K,
+            "Expected 100% recall for HELIX 1000 cold"
+        );
     }
 
     // ========================================================================
@@ -306,8 +338,10 @@ mod small_batch_tests {
 
         // Test 50 vectors (brute force path)
         let temp_dir_50 = TempDir::new().unwrap();
-        let vectors_50 = vector_generator::random_seeded_with_prefix("vec", SMALL_BATCH_SIZE, DIMENSION, 42);
-        let collection_50 = create_collection("helix_compare_50", &temp_dir_50, StorageEngine::Helix);
+        let vectors_50 =
+            vector_generator::random_seeded_with_prefix("vec", SMALL_BATCH_SIZE, DIMENSION, 42);
+        let collection_50 =
+            create_collection("helix_compare_50", &temp_dir_50, StorageEngine::Helix);
         let engine_50 = HelixEngine::new().await.unwrap();
         engine_50
             .do_flush(&FlushParameters {
@@ -327,8 +361,10 @@ mod small_batch_tests {
 
         // Test 1000 vectors (PCA path)
         let temp_dir_1000 = TempDir::new().unwrap();
-        let vectors_1000 = vector_generator::random_seeded_with_prefix("vec", REGULAR_BATCH_SIZE, DIMENSION, 42);
-        let collection_1000 = create_collection("helix_compare_1000", &temp_dir_1000, StorageEngine::Helix);
+        let vectors_1000 =
+            vector_generator::random_seeded_with_prefix("vec", REGULAR_BATCH_SIZE, DIMENSION, 42);
+        let collection_1000 =
+            create_collection("helix_compare_1000", &temp_dir_1000, StorageEngine::Helix);
         let engine_1000 = HelixEngine::new().await.unwrap();
         engine_1000
             .do_flush(&FlushParameters {
@@ -347,18 +383,46 @@ mod small_batch_tests {
             .unwrap();
 
         // Run searches
-        let recall_50 = run_search_test(&engine_50, &vectors_50, Arc::new(collection_50), "50 vectors").await;
-        let recall_1000 = run_search_test(&engine_1000, &vectors_1000, Arc::new(collection_1000), "1000 vectors").await;
+        let recall_50 = run_search_test(
+            &engine_50,
+            &vectors_50,
+            Arc::new(collection_50),
+            "50 vectors",
+        )
+        .await;
+        let recall_1000 = run_search_test(
+            &engine_1000,
+            &vectors_1000,
+            Arc::new(collection_1000),
+            "1000 vectors",
+        )
+        .await;
 
         let expected_50 = TOP_K.min(SMALL_BATCH_SIZE);
 
         eprintln!("\n========== SUMMARY (Recall@{}) ==========", TOP_K);
-        eprintln!("HELIX  50 vectors (brute force): {}/{} = {}%", recall_50, expected_50, recall_50 * 100 / expected_50);
-        eprintln!("HELIX 1000 vectors (PCA path):   {}/{} = {}%", recall_1000, TOP_K, recall_1000 * 100 / TOP_K);
+        eprintln!(
+            "HELIX  50 vectors (brute force): {}/{} = {}%",
+            recall_50,
+            expected_50,
+            recall_50 * 100 / expected_50
+        );
+        eprintln!(
+            "HELIX 1000 vectors (PCA path):   {}/{} = {}%",
+            recall_1000,
+            TOP_K,
+            recall_1000 * 100 / TOP_K
+        );
         eprintln!("==========================================\n");
 
-        assert_eq!(recall_50, expected_50, "HELIX 50 vectors should have 100% recall");
-        assert_eq!(recall_1000, TOP_K, "HELIX 1000 vectors should have 100% recall");
+        assert_eq!(
+            recall_50, expected_50,
+            "HELIX 50 vectors should have 100% recall"
+        );
+        assert_eq!(
+            recall_1000, TOP_K,
+            "HELIX 1000 vectors should have 100% recall"
+        );
     }
 
     // ========================================================================
@@ -376,7 +440,8 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "helix_5000_cold";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -405,14 +470,21 @@ mod small_batch_tests {
 
         // Cold search with new engine (simulates database reopen)
         let engine2 = HelixEngine::new().await.unwrap();
-        let recall_count = run_search_test(&engine2, &vectors, collection_arc, "HELIX 5000 cold").await;
+        let recall_count =
+            run_search_test(&engine2, &vectors, collection_arc, "HELIX 5000 cold").await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
         eprintln!("\n========================================");
-        eprintln!("HELIX 5000-vector cold search recall@{}: {:.1}%", TOP_K, recall);
+        eprintln!(
+            "HELIX 5000-vector cold search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
         eprintln!("========================================\n");
 
-        assert_eq!(recall_count, TOP_K, "Expected 100% recall for HELIX 5000 cold");
+        assert_eq!(
+            recall_count, TOP_K,
+            "Expected 100% recall for HELIX 5000 cold"
+        );
     }
 
     // ========================================================================
@@ -430,7 +502,7 @@ mod small_batch_tests {
             distance_metric: Some(DistanceMetric::Cosine),
             search_mode: SearchMode::Approximate { nprobe: None }, // Auto sqrt(n)
             block_prune: BlockPruneConfig {
-                force_exact: false, // ENABLE pruning
+                force_exact: false,                                  // ENABLE pruning
                 mode: proximadb::core::search::BlockPruneMode::Sqrt, // sqrt(n) blocks
                 ..Default::default()
             },
@@ -494,7 +566,8 @@ mod small_batch_tests {
 
         // Use clustered vectors for more realistic recall testing
         // Clustered data will have neighbors in nearby blocks (better for pruning)
-        let vectors = vector_generator::clustered("helix_5000_approx", BENCHMARK_BATCH_SIZE, DIMENSION, 50);
+        let vectors =
+            vector_generator::clustered("helix_5000_approx", BENCHMARK_BATCH_SIZE, DIMENSION, 50);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -536,11 +609,20 @@ mod small_batch_tests {
         let engine2 = HelixEngine::new().await.unwrap();
 
         // Run APPROXIMATE search
-        let recall_count = run_approx_search_test(&engine2, &vectors, collection_arc.clone(), "HELIX 5000 approx").await;
+        let recall_count = run_approx_search_test(
+            &engine2,
+            &vectors,
+            collection_arc.clone(),
+            "HELIX 5000 approx",
+        )
+        .await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
         eprintln!("\n========== APPROXIMATE MODE RESULTS ==========");
-        eprintln!("HELIX 5000-vector APPROX search recall@{}: {:.1}%", TOP_K, recall);
+        eprintln!(
+            "HELIX 5000-vector APPROX search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
         eprintln!("Pruning: ~82.5% blocks pruned (7/40 searched)");
         eprintln!("===============================================\n");
 
@@ -677,13 +759,16 @@ mod small_batch_tests {
         let collection_id = "sst_5000_approx";
 
         // Use same clustered vectors as HELIX test
-        let vectors = vector_generator::clustered("sst_5000_approx", BENCHMARK_BATCH_SIZE, DIMENSION, 50);
+        let vectors =
+            vector_generator::clustered("sst_5000_approx", BENCHMARK_BATCH_SIZE, DIMENSION, 50);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Sst);
         let collection_arc = Arc::new(collection.clone());
 
         // Flush with SST engine
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
+            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+                .await
+                .unwrap();
             let flush_params = FlushParameters {
                 collection_id: Some(collection_id.to_string()),
                 vector_records: vectors.clone(),
@@ -705,12 +790,23 @@ mod small_batch_tests {
         }
 
         // Cold search with new engine
-        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
-        let recall_count = run_sst_approx_search_test(&engine2, &vectors, collection_arc.clone(), "SST 5000 approx").await;
+        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new()
+            .await
+            .unwrap();
+        let recall_count = run_sst_approx_search_test(
+            &engine2,
+            &vectors,
+            collection_arc.clone(),
+            "SST 5000 approx",
+        )
+        .await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
         eprintln!("\n========== SST APPROXIMATE MODE RESULTS ==========");
-        eprintln!("SST 5000-vector APPROX search recall@{}: {:.1}%", TOP_K, recall);
+        eprintln!(
+            "SST 5000-vector APPROX search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
         eprintln!("(Z-order curve - expected lower than HELIX Hilbert)");
         eprintln!("==================================================\n");
 
@@ -722,7 +818,10 @@ mod small_batch_tests {
         } else if recall >= 50.0 {
             eprintln!("⚠️ Acceptable recall: {:.1}%", recall);
         } else {
-            eprintln!("⚠️ Low recall: {:.1}% (expected for Z-order vs Hilbert)", recall);
+            eprintln!(
+                "⚠️ Low recall: {:.1}% (expected for Z-order vs Hilbert)",
+                recall
+            );
         }
     }
 
@@ -736,12 +835,15 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "sst_random_baseline";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Sst);
         let collection_arc = Arc::new(collection.clone());
 
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
+            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+                .await
+                .unwrap();
             let flush_params = FlushParameters {
                 collection_id: Some(collection_id.to_string()),
                 vector_records: vectors.clone(),
@@ -757,8 +859,16 @@ mod small_batch_tests {
             engine.do_flush(&flush_params).await.unwrap();
         }
 
-        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
-        let recall_count = run_sst_approx_search_test(&engine2, &vectors, collection_arc.clone(), "SST random baseline").await;
+        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new()
+            .await
+            .unwrap();
+        let recall_count = run_sst_approx_search_test(
+            &engine2,
+            &vectors,
+            collection_arc.clone(),
+            "SST random baseline",
+        )
+        .await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
         eprintln!("\n========== SST RANDOM VECTORS BASELINE ==========");
@@ -776,12 +886,15 @@ mod small_batch_tests {
         let temp_dir = TempDir::new().unwrap();
         let collection_id = "sst_5000_exact";
 
-        let vectors = vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Sst);
         let collection_arc = Arc::new(collection.clone());
 
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
+            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+                .await
+                .unwrap();
             let flush_params = FlushParameters {
                 collection_id: Some(collection_id.to_string()),
                 vector_records: vectors.clone(),
@@ -797,15 +910,25 @@ mod small_batch_tests {
             engine.do_flush(&flush_params).await.unwrap();
         }
 
-        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
-        let recall_count = run_sst_exact_search_test(&engine2, &vectors, collection_arc.clone(), "SST 5000 exact").await;
+        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new()
+            .await
+            .unwrap();
+        let recall_count =
+            run_sst_exact_search_test(&engine2, &vectors, collection_arc.clone(), "SST 5000 exact")
+                .await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
         eprintln!("\n========================================");
-        eprintln!("SST 5000-vector EXACT cold search recall@{}: {:.1}%", TOP_K, recall);
+        eprintln!(
+            "SST 5000-vector EXACT cold search recall@{}: {:.1}%",
+            TOP_K, recall
+        );
         eprintln!("========================================\n");
 
-        assert_eq!(recall_count, TOP_K, "Expected 100% recall for SST exact mode");
+        assert_eq!(
+            recall_count, TOP_K,
+            "Expected 100% recall for SST exact mode"
+        );
     }
 
     // ========================================================================
@@ -821,49 +944,65 @@ mod small_batch_tests {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Use same clustered vectors for fair comparison
-        let vectors = vector_generator::clustered("locality_test", BENCHMARK_BATCH_SIZE, DIMENSION, 50);
+        let vectors =
+            vector_generator::clustered("locality_test", BENCHMARK_BATCH_SIZE, DIMENSION, 50);
 
         // Test HELIX (Hilbert)
         let temp_dir_helix = TempDir::new().unwrap();
-        let collection_helix = create_collection("helix_locality", &temp_dir_helix, StorageEngine::Helix);
+        let collection_helix =
+            create_collection("helix_locality", &temp_dir_helix, StorageEngine::Helix);
         {
             let engine = HelixEngine::new().await.unwrap();
-            engine.do_flush(&FlushParameters {
-                collection_id: Some("helix_locality".to_string()),
-                vector_records: vectors.clone(),
-                force: true,
-                synchronous: true,
-                hints: HashMap::new(),
-                timeout_ms: None,
-                trigger_compaction: false,
-                batch_ids: vec![],
-                collection_config: Some(collection_helix.clone()),
-                estimated_size: 0,
-            }).await.unwrap();
+            engine
+                .do_flush(&FlushParameters {
+                    collection_id: Some("helix_locality".to_string()),
+                    vector_records: vectors.clone(),
+                    force: true,
+                    synchronous: true,
+                    hints: HashMap::new(),
+                    timeout_ms: None,
+                    trigger_compaction: false,
+                    batch_ids: vec![],
+                    collection_config: Some(collection_helix.clone()),
+                    estimated_size: 0,
+                })
+                .await
+                .unwrap();
         }
         let engine_helix = HelixEngine::new().await.unwrap();
-        let helix_recall = run_approx_search_test(&engine_helix, &vectors, Arc::new(collection_helix), "HELIX").await;
+        let helix_recall =
+            run_approx_search_test(&engine_helix, &vectors, Arc::new(collection_helix), "HELIX")
+                .await;
 
         // Test SST (Z-order)
         let temp_dir_sst = TempDir::new().unwrap();
         let collection_sst = create_collection("sst_locality", &temp_dir_sst, StorageEngine::Sst);
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
-            engine.do_flush(&FlushParameters {
-                collection_id: Some("sst_locality".to_string()),
-                vector_records: vectors.clone(),
-                force: true,
-                synchronous: true,
-                hints: HashMap::new(),
-                timeout_ms: None,
-                trigger_compaction: false,
-                batch_ids: vec![],
-                collection_config: Some(collection_sst.clone()),
-                estimated_size: 0,
-            }).await.unwrap();
+            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+                .await
+                .unwrap();
+            engine
+                .do_flush(&FlushParameters {
+                    collection_id: Some("sst_locality".to_string()),
+                    vector_records: vectors.clone(),
+                    force: true,
+                    synchronous: true,
+                    hints: HashMap::new(),
+                    timeout_ms: None,
+                    trigger_compaction: false,
+                    batch_ids: vec![],
+                    collection_config: Some(collection_sst.clone()),
+                    estimated_size: 0,
+                })
+                .await
+                .unwrap();
         }
-        let engine_sst = proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap();
-        let sst_recall = run_sst_approx_search_test(&engine_sst, &vectors, Arc::new(collection_sst), "SST").await;
+        let engine_sst = proximadb::storage::engines::impls::sst::SstEngine::new()
+            .await
+            .unwrap();
+        let sst_recall =
+            run_sst_approx_search_test(&engine_sst, &vectors, Arc::new(collection_sst), "SST")
+                .await;
 
         let helix_pct = helix_recall as f32 / TOP_K as f32 * 100.0;
         let sst_pct = sst_recall as f32 / TOP_K as f32 * 100.0;
@@ -873,14 +1012,23 @@ mod small_batch_tests {
         eprintln!("================================================================");
         eprintln!("| Engine | Curve    | Recall@{} | Blocks Pruned |", TOP_K);
         eprintln!("|--------|----------|-----------|---------------|");
-        eprintln!("| HELIX  | Hilbert  | {:>8.1}% | ~82.5%        |", helix_pct);
+        eprintln!(
+            "| HELIX  | Hilbert  | {:>8.1}% | ~82.5%        |",
+            helix_pct
+        );
         eprintln!("| SST    | Z-order  | {:>8.1}% | ~82.5%        |", sst_pct);
         eprintln!("================================================================");
 
         if helix_pct > sst_pct {
-            eprintln!("✅ HELIX (Hilbert) has better locality: +{:.1}% recall", helix_pct - sst_pct);
+            eprintln!(
+                "✅ HELIX (Hilbert) has better locality: +{:.1}% recall",
+                helix_pct - sst_pct
+            );
         } else if sst_pct > helix_pct {
-            eprintln!("⚠️ SST (Z-order) has better locality: +{:.1}% recall", sst_pct - helix_pct);
+            eprintln!(
+                "⚠️ SST (Z-order) has better locality: +{:.1}% recall",
+                sst_pct - helix_pct
+            );
         } else {
             eprintln!("➡️ Equal locality");
         }
@@ -900,7 +1048,8 @@ mod small_batch_tests {
         let collection_id = "helix_random_baseline";
 
         // Random vectors - will have low recall with pruning
-        let vectors = vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
+        let vectors =
+            vector_generator::random_seeded_with_prefix("vec", BENCHMARK_BATCH_SIZE, DIMENSION, 42);
         let collection = create_collection(collection_id, &temp_dir, StorageEngine::Helix);
         let collection_arc = Arc::new(collection.clone());
 
@@ -923,7 +1072,13 @@ mod small_batch_tests {
         }
 
         let engine2 = HelixEngine::new().await.unwrap();
-        let recall_count = run_approx_search_test(&engine2, &vectors, collection_arc.clone(), "HELIX random baseline").await;
+        let recall_count = run_approx_search_test(
+            &engine2,
+            &vectors,
+            collection_arc.clone(),
+            "HELIX random baseline",
+        )
+        .await;
         let recall = recall_count as f32 / TOP_K as f32 * 100.0;
 
         eprintln!("\n========== RANDOM VECTORS BASELINE ==========");

@@ -537,7 +537,6 @@ fn default_prune_type() -> String {
     "sqrt".to_string()
 }
 
-
 /// Storage location configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageLocation {
@@ -1073,6 +1072,41 @@ pub struct SstConfig {
     /// See: docs/performance/encoding_strategies.adoc for detailed guide
     #[serde(default = "default_vector_encoding_strategy")]
     pub vector_encoding_strategy: String,
+
+    /// Block storage format: Controls how blocks are serialized to disk
+    ///
+    /// # Available Formats:
+    ///
+    /// * `"ProximaBlocks"` (DEFAULT) - ProximaDB's native block format
+    ///   - Optimized for vector workloads with cache-line alignment
+    ///   - B+ tree index for O(log n) ID lookups
+    ///   - Supports quantization and compression
+    ///   - Best for: Production vector databases
+    ///
+    /// * `"ArrowBlock"` - Arrow IPC based storage format
+    ///   - Standard Arrow IPC files (compatible with PyArrow, DuckDB, Polars)
+    ///   - Zero-copy reads via memory mapping
+    ///   - Sidecar B+ tree index file (.idx)
+    ///   - Best for: Interoperability with Arrow ecosystem
+    ///
+    /// # Configuration Example:
+    ///
+    /// ```toml
+    /// [storage.sst_config]
+    /// # Use Arrow IPC format for interoperability
+    /// block_format = "ArrowBlock"
+    ///
+    /// # Use ProximaBlocks for production (default)
+    /// block_format = "ProximaBlocks"
+    /// ```
+    ///
+    /// Default: ProximaBlocks
+    #[serde(default = "default_block_format")]
+    pub block_format: String,
+}
+
+fn default_block_format() -> String {
+    "ProximaBlocks".to_string()
 }
 
 /// VIPER (columnar storage) engine configuration
@@ -1102,7 +1136,7 @@ pub struct ViperConfig {
 impl Default for ViperConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 65536,            // ~32MB row groups for 128D vectors
+            row_group_size: 65536,           // ~32MB row groups for 128D vectors
             compression: "zstd".to_string(), // ZSTD for better compression
             compression_level: 3,            // Balanced speed/compression
             enable_statistics: true,
@@ -1148,6 +1182,7 @@ impl Default for SstConfig {
                 crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
+            block_format: default_block_format(),
         }
     }
 }
@@ -1290,6 +1325,71 @@ pub struct ApiConfig {
 
     /// Compression level 1-9 for gzip, 1-11 for brotli (default: 6)
     pub compression_level: i32,
+
+    // ============================================================
+    // Unified Port Architecture (Phase 14)
+    // ============================================================
+    /// Enable unified port mode (REST + gRPC + Arrow Flight on single port)
+    /// When enabled, `unified_port` is used; individual ports are ignored.
+    /// Default: false (legacy multi-port mode for backward compatibility)
+    #[serde(default)]
+    pub unified_mode: bool,
+
+    /// Unified port for all HTTP-based protocols (REST, gRPC, Arrow Flight)
+    /// Only used when `unified_mode = true`
+    /// Default: 5678
+    #[serde(default = "default_unified_port")]
+    pub unified_port: u16,
+
+    /// Arrow Flight port (used when unified_mode = false)
+    /// Default: 5680
+    #[serde(default = "default_arrow_flight_port")]
+    pub arrow_flight_port: u16,
+
+    /// Enable REST protocol in unified mode
+    /// Default: true
+    #[serde(default = "default_true_api")]
+    pub enable_rest: bool,
+
+    /// Enable gRPC protocol in unified mode
+    /// Default: true
+    #[serde(default = "default_true_api")]
+    pub enable_grpc: bool,
+
+    /// Enable Arrow Flight protocol in unified mode
+    /// Default: true
+    #[serde(default = "default_true_api")]
+    pub enable_arrow_flight: bool,
+
+    /// HTTP/2 max concurrent streams (for gRPC and Arrow Flight)
+    /// Default: 1000
+    #[serde(default = "default_http2_max_concurrent_streams")]
+    pub http2_max_concurrent_streams: u32,
+
+    /// Maximum connections for unified server
+    /// Default: 10000
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+}
+
+fn default_unified_port() -> u16 {
+    5678
+}
+
+fn default_arrow_flight_port() -> u16 {
+    5680
+}
+
+fn default_true_api() -> bool {
+    true
+}
+
+fn default_http2_max_concurrent_streams() -> u32 {
+    1000
+}
+
+fn default_max_connections() -> usize {
+    10000
 }
 
 fn default_false() -> bool {
@@ -1317,6 +1417,15 @@ impl Default for ApiConfig {
             compression_algorithm: "gzip".to_string(),
             compression_level: 6,
             ttl_sweep_interval_seconds: 900,
+            // Unified port settings (Phase 14)
+            unified_mode: false, // Legacy multi-port mode by default
+            unified_port: 5678,
+            arrow_flight_port: 5680,
+            enable_rest: true,
+            enable_grpc: true,
+            enable_arrow_flight: true,
+            http2_max_concurrent_streams: 1000,
+            max_connections: 10000,
         }
     }
 }

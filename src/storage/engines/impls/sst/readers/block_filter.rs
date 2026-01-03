@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn test_block_filter_point_query() {
         let filter = IntelligentBlockFilter::for_query_type(&QueryType::PointQuery);
-        let mut index_entry = IndexEntry {
+        let index_entry = IndexEntry {
             key: "aaa".to_string(),
             offset: 0,
             size: 100,

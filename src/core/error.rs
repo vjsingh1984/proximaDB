@@ -34,6 +34,34 @@ pub enum VectorDBError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    // Transaction errors
+    #[error("Transaction not found: {id}")]
+    TransactionNotFound { id: String },
+
+    #[error("Transaction not active: {id}")]
+    TransactionNotActive { id: String },
+
+    #[error("Transaction timed out: {id}")]
+    TransactionTimedOut { id: String },
+
+    #[error("Transaction conflict: {transaction} conflicts with {conflicting_with}")]
+    TransactionConflict {
+        transaction: String,
+        conflicting_with: String,
+    },
+
+    #[error("Too many transactions: maximum {max} concurrent transactions allowed")]
+    TooManyTransactions { max: usize },
+
+    #[error("Lock timeout for resource: {resource}")]
+    LockTimeout { resource: String },
+
+    #[error("Deadlock detected for transaction: {transaction}")]
+    DeadlockDetected { transaction: String },
+
+    #[error("Savepoint not found: {name}")]
+    SavepointNotFound { name: String },
 }
 
 // Type alias for backward compatibility
@@ -157,55 +185,35 @@ pub enum SchemaError {
 pub enum ProtocolError {
     /// Invalid argument provided by the client
     #[error("Invalid argument: {msg}")]
-    InvalidArgument {
-        msg: String,
-        field: Option<String>,
-    },
+    InvalidArgument { msg: String, field: Option<String> },
 
     /// Requested resource was not found
     #[error("{resource} not found: {id}")]
-    NotFound {
-        resource: String,
-        id: String,
-    },
+    NotFound { resource: String, id: String },
 
     /// Resource already exists (conflict)
     #[error("{resource} already exists: {id}")]
-    AlreadyExists {
-        resource: String,
-        id: String,
-    },
+    AlreadyExists { resource: String, id: String },
 
     /// Internal server error
     #[error("Internal error: {details}")]
-    Internal {
-        details: String,
-    },
+    Internal { details: String },
 
     /// Permission denied for the requested action
     #[error("Permission denied: {action}")]
-    PermissionDenied {
-        action: String,
-    },
+    PermissionDenied { action: String },
 
     /// Operation timed out
     #[error("Operation '{operation}' timed out after {duration_ms}ms")]
-    Timeout {
-        operation: String,
-        duration_ms: u64,
-    },
+    Timeout { operation: String, duration_ms: u64 },
 
     /// Resource exhausted (rate limiting, quota exceeded)
     #[error("Resource exhausted: {details}")]
-    ResourceExhausted {
-        details: String,
-    },
+    ResourceExhausted { details: String },
 
     /// Precondition failed (e.g., version mismatch)
     #[error("Precondition failed: {details}")]
-    PreconditionFailed {
-        details: String,
-    },
+    PreconditionFailed { details: String },
 }
 
 impl ProtocolError {
@@ -296,18 +304,17 @@ impl From<ProtocolError> for tonic::Status {
             ProtocolError::AlreadyExists { resource, id } => {
                 tonic::Status::already_exists(format!("{} already exists: {}", resource, id))
             }
-            ProtocolError::Internal { details } => {
-                tonic::Status::internal(details)
-            }
+            ProtocolError::Internal { details } => tonic::Status::internal(details),
             ProtocolError::PermissionDenied { action } => {
                 tonic::Status::permission_denied(format!("Permission denied: {}", action))
             }
-            ProtocolError::Timeout { operation, duration_ms } => {
-                tonic::Status::deadline_exceeded(format!(
-                    "Operation '{}' timed out after {}ms",
-                    operation, duration_ms
-                ))
-            }
+            ProtocolError::Timeout {
+                operation,
+                duration_ms,
+            } => tonic::Status::deadline_exceeded(format!(
+                "Operation '{}' timed out after {}ms",
+                operation, duration_ms
+            )),
             ProtocolError::ResourceExhausted { details } => {
                 tonic::Status::resource_exhausted(details)
             }
@@ -348,9 +355,7 @@ impl From<QueryError> for ProtocolError {
         match err {
             QueryError::CollectionNotFound(id) => ProtocolError::not_found("Collection", id),
             QueryError::InvalidQuery(msg) => ProtocolError::invalid_argument(msg),
-            QueryError::InvalidFilter(msg) => {
-                ProtocolError::invalid_argument_field(msg, "filter")
-            }
+            QueryError::InvalidFilter(msg) => ProtocolError::invalid_argument_field(msg, "filter"),
             _ => ProtocolError::internal(err.to_string()),
         }
     }

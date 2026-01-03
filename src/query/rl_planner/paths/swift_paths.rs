@@ -4,9 +4,7 @@
 //! Paths focus on minimal overhead and parallel execution.
 
 use super::{OptimizationPath, PathExpectation};
-use crate::query::rl_planner::action::{
-    ExecutionAction, QuantizationStage, ParallelismConfig,
-};
+use crate::query::rl_planner::action::{ExecutionAction, ParallelismConfig, QuantizationStage};
 
 /// Get all SWIFT optimization paths
 pub fn paths() -> Vec<OptimizationPath> {
@@ -29,7 +27,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "When latency is critical",
             "Real-time applications",
         ]),
-
         // Path 2: InMemory + INT8
         OptimizationPath::new(
             "swift_int8",
@@ -50,7 +47,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Memory-constrained edge devices",
             "High-throughput scenarios",
         ]),
-
         // Path 3: Progressive(Binary→INT8→FP32)
         OptimizationPath::new(
             "swift_progressive",
@@ -68,7 +64,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Larger in-memory collections",
             "When some recall tradeoff is acceptable",
         ]),
-
         // Path 4: HNSW + InMemory
         OptimizationPath::new(
             "swift_hnsw",
@@ -86,7 +81,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Collections > 5K vectors",
             "Sub-millisecond requirements",
         ]),
-
         // Path 5: Parallel + Progressive
         OptimizationPath::new(
             "swift_parallel_progressive",

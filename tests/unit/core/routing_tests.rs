@@ -203,28 +203,25 @@ impl<'a> RouteBuilder<'a, String, String> {
         self.route_count += 1;
         // Add a placeholder route for counting purposes
         let handler = MockHandler::new("get_handler");
-        self.router.routes.insert(
-            format!("get:{}", _path),
-            Box::new(handler),
-        );
+        self.router
+            .routes
+            .insert(format!("get:{}", _path), Box::new(handler));
         self
     }
 
     pub fn post(mut self, _path: &str, handler: MockHandler) -> Self {
         self.route_count += 1;
-        self.router.routes.insert(
-            format!("post:{}", _path),
-            Box::new(handler),
-        );
+        self.router
+            .routes
+            .insert(format!("post:{}", _path), Box::new(handler));
         self
     }
 
     pub fn delete(mut self, _path: &str, handler: MockHandler) -> Self {
         self.route_count += 1;
-        self.router.routes.insert(
-            format!("delete:{}", _path),
-            Box::new(handler),
-        );
+        self.router
+            .routes
+            .insert(format!("delete:{}", _path), Box::new(handler));
         self
     }
 }

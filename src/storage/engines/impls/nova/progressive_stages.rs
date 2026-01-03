@@ -28,7 +28,10 @@ pub struct NovaBinaryStage {
 }
 
 impl NovaBinaryStage {
-    pub fn new(hamming_threshold: f32, quantization_engine: Arc<UnifiedQuantizationEngine>) -> Self {
+    pub fn new(
+        hamming_threshold: f32,
+        quantization_engine: Arc<UnifiedQuantizationEngine>,
+    ) -> Self {
         Self {
             hamming_threshold,
             quantization_engine,
@@ -76,7 +79,11 @@ impl ProgressiveSearchStage for NovaBinaryStage {
         top_k: usize,
     ) -> Vec<ScoredCandidate> {
         candidates.retain(|c| c.score <= self.hamming_threshold);
-        candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let keep_count = ((top_k as f32) * expansion_factor).ceil() as usize;
         let keep_count = keep_count.max(top_k).min(candidates.len());
         candidates.truncate(keep_count);
@@ -128,18 +135,14 @@ impl ProgressiveSearchStage for NovaInt8Stage {
                     .map(|&x| x as f32 / self.scale_factor)
                     .collect();
 
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    &int8_as_f32,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, &int8_as_f32, &distance_metric);
                 candidate.score = result.rank_value;
             } else if let Some(ref vector) = candidate.vector {
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    vector,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, vector, &distance_metric);
                 candidate.score = result.rank_value;
             } else {
                 candidate.score = f32::MAX;
@@ -150,7 +153,9 @@ impl ProgressiveSearchStage for NovaInt8Stage {
     }
 
     fn can_skip(&self, candidates: &[ScoredCandidate]) -> bool {
-        candidates.iter().all(|c| c.int8_data.is_none() && c.vector.is_none())
+        candidates
+            .iter()
+            .all(|c| c.int8_data.is_none() && c.vector.is_none())
     }
 }
 
@@ -183,11 +188,9 @@ impl ProgressiveSearchStage for NovaFp32Stage {
     ) -> Result<Vec<ScoredCandidate>> {
         for candidate in &mut candidates {
             if let Some(ref vector) = candidate.vector {
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    vector,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, vector, &distance_metric);
                 candidate.score = result.rank_value;
             } else {
                 tracing::warn!("NOVA-FP32Stage: No vector for candidate {}", candidate.id);
@@ -214,7 +217,10 @@ pub fn create_nova_pipeline(
     use crate::storage::engines::core::progressive::ProgressiveSearchCoordinator;
 
     ProgressiveSearchCoordinator::new()
-        .add_stage(Box::new(NovaBinaryStage::new(hamming_threshold, quantization_engine)))
+        .add_stage(Box::new(NovaBinaryStage::new(
+            hamming_threshold,
+            quantization_engine,
+        )))
         .add_stage(Box::new(NovaInt8Stage::new(distance_compute.clone())))
         .add_stage(Box::new(NovaFp32Stage::new(distance_compute)))
 }
@@ -229,7 +235,10 @@ mod tests {
         let dist_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let codebook_store: Arc<dyn crate::compute::quantization::unified::CodebookStore> =
             Arc::new(InMemoryCodebookStore::new());
-        let quant_engine = Arc::new(UnifiedQuantizationEngine::new(dist_compute.clone(), codebook_store));
+        let quant_engine = Arc::new(UnifiedQuantizationEngine::new(
+            dist_compute.clone(),
+            codebook_store,
+        ));
         (quant_engine, dist_compute)
     }
 

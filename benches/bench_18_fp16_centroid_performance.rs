@@ -13,9 +13,9 @@
 //! - Cache hit rate: TBD (depends on workload)
 //! - Overall latency: Neutral to slight improvement
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::engines::impls::sst::{fp16_to_fp32, fp32_to_fp16};
 use rand::Rng;
 
@@ -24,7 +24,9 @@ fn bench_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("fp16_conversion");
 
     for dimension in [128, 256, 512, 1024, 1536] {
-        let vector: Vec<f32> = (0..dimension).map(|i| (i as f32) / dimension as f32).collect();
+        let vector: Vec<f32> = (0..dimension)
+            .map(|i| (i as f32) / dimension as f32)
+            .collect();
 
         group.throughput(Throughput::Elements(dimension as u64));
 
@@ -75,7 +77,9 @@ fn bench_distance_computation(c: &mut Criterion) {
     let metric = DistanceMetric::Cosine;
 
     for dimension in [128, 256, 512, 1024, 1536] {
-        let query: Vec<f32> = (0..dimension).map(|i| (i as f32) / dimension as f32).collect();
+        let query: Vec<f32> = (0..dimension)
+            .map(|i| (i as f32) / dimension as f32)
+            .collect();
         let centroid_fp32: Vec<f32> = (0..dimension)
             .map(|i| ((i + 10) as f32) / dimension as f32)
             .collect();
@@ -89,7 +93,8 @@ fn bench_distance_computation(c: &mut Criterion) {
             &(&query, &centroid_fp32),
             |b, (q, c)| {
                 b.iter(|| {
-                    let dist = distance_compute.distance_with_metric(black_box(q), black_box(c), &metric);
+                    let dist =
+                        distance_compute.distance_with_metric(black_box(q), black_box(c), &metric);
                     black_box(dist);
                 });
             },
@@ -102,7 +107,11 @@ fn bench_distance_computation(c: &mut Criterion) {
             |b, (q, c)| {
                 b.iter(|| {
                     let centroid_fp32 = fp16_to_fp32(black_box(c));
-                    let dist = distance_compute.distance_with_metric(black_box(q), &centroid_fp32, &metric);
+                    let dist = distance_compute.distance_with_metric(
+                        black_box(q),
+                        &centroid_fp32,
+                        &metric,
+                    );
                     black_box(dist);
                 });
             },
@@ -131,10 +140,8 @@ fn bench_block_selection(c: &mut Criterion) {
             .map(|_| (0..dimension).map(|_| rng.gen_range(0.0..1.0)).collect())
             .collect();
 
-        let centroids_fp16: Vec<Vec<u16>> = centroids_fp32
-            .iter()
-            .map(|c| fp32_to_fp16(c))
-            .collect();
+        let centroids_fp16: Vec<Vec<u16>> =
+            centroids_fp32.iter().map(|c| fp32_to_fp16(c)).collect();
 
         group.throughput(Throughput::Elements(num_blocks as u64));
 
@@ -153,7 +160,8 @@ fn bench_block_selection(c: &mut Criterion) {
                         })
                         .collect();
                     distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                    let top_k_indices: Vec<usize> = distances.iter().take(top_k).map(|(idx, _)| *idx).collect();
+                    let top_k_indices: Vec<usize> =
+                        distances.iter().take(top_k).map(|(idx, _)| *idx).collect();
                     black_box(top_k_indices);
                 });
             },
@@ -175,7 +183,8 @@ fn bench_block_selection(c: &mut Criterion) {
                         })
                         .collect();
                     distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                    let top_k_indices: Vec<usize> = distances.iter().take(top_k).map(|(idx, _)| *idx).collect();
+                    let top_k_indices: Vec<usize> =
+                        distances.iter().take(top_k).map(|(idx, _)| *idx).collect();
                     black_box(top_k_indices);
                 });
             },
@@ -188,10 +197,8 @@ fn bench_block_selection(c: &mut Criterion) {
             |b, (q, centroids)| {
                 b.iter(|| {
                     // Pre-convert all centroids (simulates cache/memoization)
-                    let centroids_fp32_converted: Vec<Vec<f32>> = centroids
-                        .iter()
-                        .map(|c| fp16_to_fp32(c))
-                        .collect();
+                    let centroids_fp32_converted: Vec<Vec<f32>> =
+                        centroids.iter().map(|c| fp16_to_fp32(c)).collect();
 
                     let mut distances: Vec<(usize, f32)> = centroids_fp32_converted
                         .iter()
@@ -202,7 +209,8 @@ fn bench_block_selection(c: &mut Criterion) {
                         })
                         .collect();
                     distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                    let top_k_indices: Vec<usize> = distances.iter().take(top_k).map(|(idx, _)| *idx).collect();
+                    let top_k_indices: Vec<usize> =
+                        distances.iter().take(top_k).map(|(idx, _)| *idx).collect();
                     black_box(top_k_indices);
                 });
             },
@@ -223,10 +231,8 @@ fn bench_memory_footprint(c: &mut Criterion) {
             .map(|i| (0..dimension).map(|j| (i + j) as f32).collect())
             .collect();
 
-        let centroids_fp16: Vec<Vec<u16>> = centroids_fp32
-            .iter()
-            .map(|c| fp32_to_fp16(c))
-            .collect();
+        let centroids_fp16: Vec<Vec<u16>> =
+            centroids_fp32.iter().map(|c| fp32_to_fp16(c)).collect();
 
         // Calculate memory usage
         let fp32_bytes = num_centroids * dimension * std::mem::size_of::<f32>();
@@ -234,10 +240,17 @@ fn bench_memory_footprint(c: &mut Criterion) {
         let savings = fp32_bytes - fp16_bytes;
         let savings_pct = (savings as f64 / fp32_bytes as f64) * 100.0;
 
-        println!("\n=== Memory Footprint for {} centroids ({} dimensions) ===", num_centroids, dimension);
+        println!(
+            "\n=== Memory Footprint for {} centroids ({} dimensions) ===",
+            num_centroids, dimension
+        );
         println!("FP32: {} MB", fp32_bytes as f64 / 1_048_576.0);
         println!("FP16: {} MB", fp16_bytes as f64 / 1_048_576.0);
-        println!("Savings: {} MB ({:.1}%)", savings as f64 / 1_048_576.0, savings_pct);
+        println!(
+            "Savings: {} MB ({:.1}%)",
+            savings as f64 / 1_048_576.0,
+            savings_pct
+        );
 
         group.throughput(Throughput::Bytes(fp32_bytes as u64));
 

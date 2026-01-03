@@ -14,47 +14,137 @@
  * limitations under the License.
  */
 
-//! # Vector-Graph Integration for Hybrid Queries
+//! # Hybrid Vector-Graph Query Engine - ProximaDB's KEY DIFFERENTIATOR
 //!
-//! This module implements the integration layer between ProximaDB's vector and graph engines,
-//! enabling powerful hybrid queries that combine semantic similarity with graph relationships.
+//! The Hybrid Query Engine is ProximaDB's unique capability that combines vector similarity
+//! search with graph traversal, enabling semantic graph queries that are impossible with
+//! traditional databases.
 //!
-//! ## Key Features
+//! ## Why This Matters
 //!
-//! - **Hybrid Query Processing**: Combine vector similarity and graph traversal in single queries
-//! - **Semantic Graph Traversal**: Follow edges based on embedding similarity rather than just relationships
-//! - **Vector-Guided Path Finding**: Use embeddings to guide path selection in graph traversals
-//! - **Similarity-Filtered Neighborhoods**: Find similar nodes within N hops of a starting node
-//! - **Cross-Modal Optimization**: Optimize queries across both vector and graph dimensions
+//! Traditional approaches force a choice:
+//! - **Vector databases**: Find similar items by embedding, but miss relationships
+//! - **Graph databases**: Traverse relationships, but miss semantic similarity
+//!
+//! ProximaDB's Hybrid Query Engine fuses both paradigms:
+//! - Find semantically similar documents that are ALSO connected via relationships
+//! - Traverse knowledge graphs guided by embedding similarity
+//! - Rank results by BOTH vector similarity AND graph relevance
+//!
+//! ## Key Capabilities
+//!
+//! - **Semantic Traversal**: BFS/DFS guided by embedding similarity (SemanticBFS, SemanticDFS)
+//! - **Vector-Graph Fusion**: Results ranked by both vector similarity and graph relevance
+//! - **Multiple Fusion Strategies**: VectorFirst, GraphFirst, Balanced, Weighted
+//! - **SIMD-Accelerated**: Uses UnifiedDistanceCompute for hardware-accelerated similarity
+//! - **Graph Algorithms**: PageRank, centrality, community detection integrated with vectors
+//!
+//! ## Use Cases
+//!
+//! 1. **Semantic Knowledge Graph Search (SKS)**
+//!    Find documents similar to a query that are connected via specific relationship paths
+//!
+//! 2. **Recommendation with Constraints**
+//!    Recommend items similar to user preferences that are also connected via purchase/view graphs
+//!
+//! 3. **Entity Resolution**
+//!    Find potential duplicate entities by combining embedding similarity with relationship overlap
+//!
+//! 4. **Contextual Search**
+//!    Search within N hops of a context node, ranking by semantic similarity
+//!
+//! ## Example Usage
+//!
+//! ```rust,ignore
+//! use proximadb::graph::hybrid::{HybridQueryEngine, HybridQuery, FusionStrategy};
+//!
+//! let engine = HybridQueryEngine::new(graph_memory, vector_service);
+//!
+//! // Find documents similar to query_vector that are connected to "Alice" via KNOWS edges
+//! let query = HybridQuery {
+//!     vector_component: Some(VectorQueryComponent {
+//!         query_vector: query_vector.clone(),
+//!         threshold: Some(0.7),
+//!         collection: Some("documents".to_string()),
+//!         ..Default::default()
+//!     }),
+//!     graph_component: Some(GraphQueryComponent {
+//!         start_nodes: vec!["Alice".to_string()],
+//!         edge_types: vec!["KNOWS".to_string()],
+//!         max_depth: Some(2),
+//!         algorithm: TraversalAlgorithm::SemanticBFS,
+//!         ..Default::default()
+//!     }),
+//!     fusion: FusionConfig {
+//!         strategy: FusionStrategy::Balanced,
+//!         ..Default::default()
+//!     },
+//!     ..Default::default()
+//! };
+//!
+//! let results = engine.execute_hybrid_query(&query, &context).await?;
+//! // Results are ranked by combined vector similarity + graph relevance
+//! ```
+//!
+//! ## Fusion Strategies
+//!
+//! | Strategy | Description | Best For |
+//! |----------|-------------|----------|
+//! | VectorFirst | Vector results filtered by graph | When semantic match is primary |
+//! | GraphFirst | Graph results ranked by similarity | When relationships are primary |
+//! | Balanced | Equal weighting of both signals | General-purpose queries |
+//! | Weighted | Custom weights (e.g., 0.7 vector, 0.3 graph) | Fine-tuned applications |
+//!
+//! ## Semantic Traversal Algorithms
+//!
+//! - **SemanticBFS**: Breadth-first search prioritizing nodes by embedding similarity
+//! - **SemanticDFS**: Depth-first search exploring most similar paths first
+//! - **Standard BFS/DFS**: Traditional graph traversal with optional vector ranking
+//! - **Dijkstra**: Shortest path with optional semantic weighting
 //!
 //! ## Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────┐
-//! │           Hybrid Query Engine           │
-//! ├─────────────────────────────────────────┤
-//! │                                         │
-//! │  ┌──────────────┐  ┌─────────────────┐  │
-//! │  │ Vector Query │  │ Graph Traversal │  │
-//! │  │   Engine     │  │     Engine      │  │
-//! │  └──────┬───────┘  └─────────┬───────┘  │
-//! │         │                    │          │
-//! │         │  ┌─────────────────┴─────┐    │
-//! │         └─▶│ Fusion & Ranking      │    │
-//! │            │      Engine           │    │
-//! │            └───────────────────────┘    │
-//! ├─────────────────────────────────────────┤
-//! │           Arc Memory Pool               │
-//! │  ┌────────────┬──────────┬──────────┐   │
-//! │  │   Nodes    │  Edges   │ Vectors  │   │
-//! │  │ Properties │ Metadata │Embeddings│   │
-//! │  └────────────┴──────────┴──────────┘   │
-//! └─────────────────────────────────────────┘
+//! +------------------------------------------+
+//! |        Hybrid Query Engine               |
+//! +------------------------------------------+
+//! |                                          |
+//! |  +---------------+  +------------------+ |
+//! |  | Vector Query  |  | Graph Traversal  | |
+//! |  |    Engine     |  |     Engine       | |
+//! |  +-------+-------+  +--------+---------+ |
+//! |          |                   |           |
+//! |          v                   v           |
+//! |  +-------------------------------+       |
+//! |  |    Fusion & Ranking Engine    |       |
+//! |  | - VectorFirst / GraphFirst    |       |
+//! |  | - Balanced / Weighted         |       |
+//! |  | - Custom ranking functions    |       |
+//! |  +-------------------------------+       |
+//! +------------------------------------------+
+//! |        Arc Memory Pool                   |
+//! |  +------------+----------+------------+  |
+//! |  |   Nodes    |  Edges   |  Vectors   |  |
+//! |  | Properties | Metadata | Embeddings |  |
+//! |  +------------+----------+------------+  |
+//! +------------------------------------------+
 //! ```
+//!
+//! ## Performance
+//!
+//! - **SIMD Acceleration**: AVX2/NEON for vector similarity computation
+//! - **Parallel Execution**: Vector and graph components run concurrently
+//! - **Early Termination**: Progressive refinement for interactive queries
+//! - **Caching**: Intermediate results cached for repeated patterns
+//!
+//! ## Related Modules
+//!
+//! - [`semantic_traversal`]: SIMD-accelerated semantic BFS implementation
+//! - [`ranking`]: Hybrid ranking strategies (vector + graph centrality)
 
 // Submodules
-pub mod semantic_traversal;
 pub mod ranking;
+pub mod semantic_traversal;
 
 use crate::core::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{

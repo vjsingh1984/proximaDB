@@ -8,11 +8,11 @@
 //! 5. Policy persistence and loading
 //! 6. Learning over multiple queries
 
-use proximadb::query::rl_planner::{
-    init_rl_planner, get_rl_planner, RLPlannerConfig, PlannerState, ExecutionAction,
-    IndexStrategy, SearchModeAction, OptimizationGoal, FilterComplexity,
-};
 use proximadb::query::rl_planner::state::StorageEngineType;
+use proximadb::query::rl_planner::{
+    ExecutionAction, FilterComplexity, IndexStrategy, OptimizationGoal, PlannerState,
+    RLPlannerConfig, SearchModeAction, get_rl_planner, init_rl_planner,
+};
 use tempfile::TempDir;
 
 /// Test that RL planner can be initialized with custom config
@@ -33,7 +33,10 @@ fn test_rl_planner_initialization() {
 
     let planner = get_rl_planner();
     assert!(planner.is_some(), "RL planner should be initialized");
-    assert!(planner.unwrap().is_enabled(), "RL planner should be enabled");
+    assert!(
+        planner.unwrap().is_enabled(),
+        "RL planner should be enabled"
+    );
 }
 
 /// Test complete feedback loop: select action -> execute -> report reward
@@ -64,14 +67,22 @@ async fn test_rl_feedback_loop() {
 
     // Select an action
     let action = planner.select_action(&state).await;
-    assert!(!action.describe().is_empty(), "Action should have description");
+    assert!(
+        !action.describe().is_empty(),
+        "Action should have description"
+    );
 
     // Simulate good execution and report reward
-    planner.report_execution(&state, &action, 5.0, 0.98, 200.0).await;
+    planner
+        .report_execution(&state, &action, 5.0, 0.98, 200.0)
+        .await;
 
     // Get stats to verify update
     let stats = planner.get_action_stats().await;
-    assert!(!stats.is_empty(), "Stats should have entries after feedback");
+    assert!(
+        !stats.is_empty(),
+        "Stats should have entries after feedback"
+    );
 }
 
 /// Test that planner learns from repeated queries
@@ -80,7 +91,7 @@ async fn test_rl_learning_over_queries() {
     let config = RLPlannerConfig {
         enabled: true,
         thompson_sampling: false, // Use epsilon-greedy for predictable learning
-        exploration_rate: 0.0, // Pure exploitation for testing
+        exploration_rate: 0.0,    // Pure exploitation for testing
         experience_buffer_size: 100,
         batch_update_interval: 5,
         log_all_executions: false,
@@ -112,7 +123,9 @@ async fn test_rl_learning_over_queries() {
         let recall = 0.95;
         let throughput = 1000.0 / latency as f32;
 
-        planner.report_execution(&state, &action, latency, recall, throughput).await;
+        planner
+            .report_execution(&state, &action, latency, recall, throughput)
+            .await;
     }
 
     // Verify learning happened
@@ -152,17 +165,25 @@ async fn test_policy_persistence() {
 
     for _ in 0..5 {
         let action = planner.select_action(&state).await;
-        planner.report_execution(&state, &action, 10.0, 0.95, 100.0).await;
+        planner
+            .report_execution(&state, &action, 10.0, 0.95, 100.0)
+            .await;
     }
 
     // Save policy
-    planner.save_policy(&policy_path_str).await.expect("Should save policy");
+    planner
+        .save_policy(&policy_path_str)
+        .await
+        .expect("Should save policy");
     assert!(policy_path.exists(), "Policy file should exist");
 
     // Verify file has content
     let content = std::fs::read_to_string(&policy_path).expect("Should read policy file");
     assert!(content.len() > 10, "Policy file should have content");
-    assert!(content.contains("alpha") || content.contains("action"), "Policy should contain learned data");
+    assert!(
+        content.contains("alpha") || content.contains("action"),
+        "Policy should contain learned data"
+    );
 }
 
 /// Test action space coverage for different engines
@@ -198,7 +219,11 @@ async fn test_action_space_coverage() {
         }
 
         // Should see at least some variety (with exploration)
-        assert!(actions_seen.len() >= 1, "Should select valid actions for engine {:?}", engine);
+        assert!(
+            actions_seen.len() >= 1,
+            "Should select valid actions for engine {:?}",
+            engine
+        );
     }
 }
 
@@ -230,7 +255,9 @@ async fn test_experience_batching() {
     for i in 0..5 {
         let action = planner.select_action(&state).await;
         let latency = 10.0 + i as f64;
-        planner.report_execution(&state, &action, latency, 0.95, 100.0).await;
+        planner
+            .report_execution(&state, &action, latency, 0.95, 100.0)
+            .await;
     }
 
     // Buffer should have processed the batch
@@ -291,13 +318,18 @@ fn test_action_descriptions() {
 
     let actions = vec![
         ExecutionAction {
-            index_strategy: Some(IndexStrategy::HNSW { m: 16, ef_search: 100 }),
+            index_strategy: Some(IndexStrategy::HNSW {
+                m: 16,
+                ef_search: 100,
+            }),
             bloom_filter_enabled: true,
             ..base.clone()
         },
         ExecutionAction {
             index_strategy: Some(IndexStrategy::IVF { n_probe: 16 }),
-            search_mode: SearchModeAction::Approximate { expansion_factor: 1.5 },
+            search_mode: SearchModeAction::Approximate {
+                expansion_factor: 1.5,
+            },
             zone_map_enabled: true,
             ..base.clone()
         },

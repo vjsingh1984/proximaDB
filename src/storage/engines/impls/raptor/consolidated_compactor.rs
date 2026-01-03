@@ -10,8 +10,8 @@ use tracing::{debug, info};
 // DIRECT use of unified components - no wrappers
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
 use super::config::RaptorConfig;
-use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
 use super::consolidated_reader::RaptorReader;
+use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
     AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
@@ -98,7 +98,8 @@ impl RaptorCompactor {
 
         // Step 4: Calculate optimal row group size using Matrix Trinity balanced sizing
         // This uses p = k = √N for optimal query complexity
-        let sizing = BalancedMatrixTrinitySizing::calculate(deduplicated.len(), self.config.dimension);
+        let sizing =
+            BalancedMatrixTrinitySizing::calculate(deduplicated.len(), self.config.dimension);
         let group_size = self
             .config
             .target_rowgroup_size
@@ -182,7 +183,7 @@ impl RaptorCompactor {
             let cluster_id_u16 = cluster_id as u16;
             vectors_by_cluster
                 .entry(cluster_id_u16)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(vector);
         }
 
@@ -192,6 +193,8 @@ impl RaptorCompactor {
 
         let mut row_groups = Vec::new();
         for (rg_idx, cluster_id) in sorted_cluster_ids.iter().enumerate() {
+            // SAFETY: cluster_id is obtained from vectors_by_cluster.keys(), so it must
+            // exist. We iterate in sorted order and remove() each key exactly once.
             let vectors = vectors_by_cluster.remove(cluster_id).unwrap();
 
             // Create rowgroup - rowgroup_id matches position in sorted order

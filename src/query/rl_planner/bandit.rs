@@ -29,7 +29,8 @@ impl BetaDistribution {
 
     /// Sample from the posterior distribution
     pub fn sample(&self) -> f64 {
-        let beta = Beta::new(self.alpha, self.beta).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
+        let beta =
+            Beta::new(self.alpha, self.beta).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
         let mut rng = rand::thread_rng();
         beta.sample(&mut rng)
     }
@@ -263,7 +264,7 @@ impl ContextualBanditPlanner {
         // Update Beta distribution
         self.action_stats
             .entry(action_id)
-            .or_insert_with(BetaDistribution::default)
+            .or_default()
             .update(reward);
 
         // Update context weights
@@ -276,7 +277,7 @@ impl ContextualBanditPlanner {
 
         self.context_weights
             .entry(action_id)
-            .or_insert_with(ContextWeights::default)
+            .or_default()
             .update(&features, error);
 
         self.total_updates += 1;

@@ -61,6 +61,7 @@ mod tests {
             decompression_cache_config: None,
             compaction_config: Default::default(),
             vector_encoding_strategy: "FullVector".to_string(),
+            block_format: "ProximaBlocks".to_string(),
         });
 
         // Configure write buffer separately

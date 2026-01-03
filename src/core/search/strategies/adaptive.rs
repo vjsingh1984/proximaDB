@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::{
     ApproximateSearchStrategy, CandidateProvider, ExactSearchStrategy, ScoredCandidate,
-    SearchCostEstimate, SearchContext, SearchStrategy,
+    SearchContext, SearchCostEstimate, SearchStrategy,
 };
 use crate::core::search::SearchMode;
 
@@ -200,8 +200,8 @@ impl SearchStrategy for AdaptiveSearchStrategy {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::context::SearchContextImpl;
+    use super::*;
     use crate::compute::distance_computation::DistanceMetric;
 
     struct MockProvider {
@@ -237,11 +237,8 @@ mod tests {
     async fn test_adaptive_selects_exact_for_small_dataset() {
         let strategy = AdaptiveSearchStrategy::with_threshold(1000);
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::Adaptive { threshold: 1000 });
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Adaptive { threshold: 1000 });
 
         let provider = MockProvider::new(100);
 
@@ -255,11 +252,8 @@ mod tests {
     async fn test_adaptive_selects_approximate_for_large_dataset() {
         let strategy = AdaptiveSearchStrategy::with_threshold(1000);
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::Adaptive { threshold: 1000 });
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Adaptive { threshold: 1000 });
 
         let provider = MockProvider::new(10000);
 
@@ -273,13 +267,9 @@ mod tests {
     async fn test_adaptive_respects_high_accuracy() {
         let strategy = AdaptiveSearchStrategy::with_threshold(100);
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        )
-        .with_search_mode(SearchMode::Adaptive { threshold: 100 })
-        .with_accuracy_threshold(0.995); // High accuracy
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Adaptive { threshold: 100 })
+            .with_accuracy_threshold(0.995); // High accuracy
 
         let provider = MockProvider::new(10000);
 
@@ -293,19 +283,12 @@ mod tests {
     fn test_applies_to() {
         let strategy = AdaptiveSearchStrategy::new();
 
-        let adaptive_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::adaptive());
+        let adaptive_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::adaptive());
 
         assert!(strategy.applies_to(&adaptive_ctx));
 
-        let exact_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let exact_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine);
 
         assert!(!strategy.applies_to(&exact_ctx));
     }
