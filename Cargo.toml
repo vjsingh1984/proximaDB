@@ -509,6 +509,11 @@ name = "bench_19_comprehensive_optimization"
 harness = false
 path = "benches/bench_19_comprehensive_optimization.rs"
 
+[[bench]]
+name = "bench_20_facade_routing"
+harness = false
+path = "benches/bench_20_facade_routing.rs"
+
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY
 # ============================================================================

@@ -17,6 +17,7 @@ use anyhow::{anyhow, Context, Result};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
+use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
     DocumentCollectionConfig, DocumentFilter,
     DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
@@ -50,6 +51,8 @@ pub struct DocumentService {
     wal_writer: Arc<Mutex<Option<UnifiedWALWriter>>>,
     /// Base path for WAL files
     wal_path: String,
+    /// Optional metrics collector for observability
+    metrics_collector: Option<Arc<DocumentMetricsCollector>>,
 }
 
 impl DocumentService {
@@ -63,6 +66,24 @@ impl DocumentService {
             documents: Arc::new(RwLock::new(HashMap::new())),
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
+            metrics_collector: None,
+        }
+    }
+
+    /// Create a new document service with metrics collection
+    pub fn new_with_metrics(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        metrics_collector: Arc<DocumentMetricsCollector>,
+    ) -> Self {
+        Self {
+            storage_engine,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            wal_writer: Arc::new(Mutex::new(None)),
+            wal_path: String::new(),
+            metrics_collector: Some(metrics_collector),
         }
     }
 
@@ -70,6 +91,15 @@ impl DocumentService {
     pub async fn new_with_wal(
         storage_engine: Arc<dyn UnifiedStorageEngine>,
         wal_base_path: &str,
+    ) -> Result<Self> {
+        Self::new_with_wal_and_metrics(storage_engine, wal_base_path, None).await
+    }
+
+    /// Create a new document service with WAL support and optional metrics
+    pub async fn new_with_wal_and_metrics(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        wal_base_path: &str,
+        metrics_collector: Option<Arc<DocumentMetricsCollector>>,
     ) -> Result<Self> {
         let wal_path = format!("{}/document_wal", wal_base_path);
         let wal_writer = UnifiedWALWriter::new(wal_path.clone())
@@ -84,12 +114,45 @@ impl DocumentService {
             documents: Arc::new(RwLock::new(HashMap::new())),
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
             wal_path,
+            metrics_collector,
         };
 
         // Recover from WAL on startup
         service.recover_from_wal().await?;
 
         Ok(service)
+    }
+
+    /// Record insert metrics if collector is configured
+    async fn record_insert_metrics(&self, start: std::time::Instant, is_error: bool) {
+        if let Some(ref collector) = self.metrics_collector {
+            let latency_us = start.elapsed().as_micros() as f64;
+            collector.record_insert(latency_us, is_error).await;
+        }
+    }
+
+    /// Record update metrics if collector is configured
+    async fn record_update_metrics(&self, start: std::time::Instant, is_error: bool) {
+        if let Some(ref collector) = self.metrics_collector {
+            let latency_us = start.elapsed().as_micros() as f64;
+            collector.record_update(latency_us, is_error).await;
+        }
+    }
+
+    /// Record delete metrics if collector is configured
+    async fn record_delete_metrics(&self, start: std::time::Instant, is_error: bool) {
+        if let Some(ref collector) = self.metrics_collector {
+            let latency_us = start.elapsed().as_micros() as f64;
+            collector.record_delete(latency_us, is_error).await;
+        }
+    }
+
+    /// Record query metrics if collector is configured
+    async fn record_query_metrics(&self, start: std::time::Instant, is_error: bool) {
+        if let Some(ref collector) = self.metrics_collector {
+            let latency_us = start.elapsed().as_micros() as f64;
+            collector.record_query(latency_us, is_error).await;
+        }
     }
 
     /// Recover state from WAL on startup
@@ -568,13 +631,21 @@ impl DocumentService {
         id: Option<&str>,
         document: SqlObject,
     ) -> Result<DocumentRecord> {
+        let start = std::time::Instant::now();
         debug!("Inserting document into collection: {}", collection);
 
         // Verify collection exists
-        let _collection_meta = self
+        let _collection_meta = match self
             .get_collection(collection)
             .await?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))
+        {
+            Ok(meta) => meta,
+            Err(e) => {
+                self.record_insert_metrics(start, true).await;
+                return Err(e);
+            }
+        };
 
         // Generate ID if not provided
         let doc_id = id
@@ -585,16 +656,24 @@ impl DocumentService {
         let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
-        self.write_to_wal(DocumentOperation::InsertDocument {
+        if let Err(e) = self.write_to_wal(DocumentOperation::InsertDocument {
             collection_id: collection.to_string(),
             document: record.clone(),
         })
-        .await?;
+        .await
+        {
+            self.record_insert_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Update indexes
-        self.index_manager
+        if let Err(e) = self.index_manager
             .index_document(collection, &record)
-            .await?;
+            .await
+        {
+            self.record_insert_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Store document in memory (backed by WAL for durability)
         {
@@ -615,6 +694,7 @@ impl DocumentService {
         }
 
         debug!("Inserted document {} into {}", doc_id, collection);
+        self.record_insert_metrics(start, false).await;
         Ok(record)
     }
 
@@ -707,17 +787,26 @@ impl DocumentService {
         updates: Vec<DocumentUpdate>,
         expected_version: Option<u64>,
     ) -> Result<DocumentRecord> {
+        let start = std::time::Instant::now();
         debug!("Updating document {} in {}", id, collection);
 
         // Get existing document
-        let mut record = self
+        let mut record = match self
             .get_document(collection, id, None)
             .await?
-            .ok_or_else(|| anyhow!("Document '{}' not found", id))?;
+            .ok_or_else(|| anyhow!("Document '{}' not found", id))
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.record_update_metrics(start, true).await;
+                return Err(e);
+            }
+        };
 
         // Check version for optimistic locking
         if let Some(expected) = expected_version {
             if record.version != expected {
+                self.record_update_metrics(start, true).await;
                 return Err(anyhow!(
                     "Version mismatch: expected {}, got {}",
                     expected,
@@ -728,7 +817,10 @@ impl DocumentService {
 
         // Apply updates
         for update in &updates {
-            self.apply_update(&mut record.document, update)?;
+            if let Err(e) = self.apply_update(&mut record.document, update) {
+                self.record_update_metrics(start, true).await;
+                return Err(e);
+            }
         }
 
         // Increment version
@@ -738,16 +830,24 @@ impl DocumentService {
 
         // Write to WAL first (durability before in-memory update)
         // Store full updated document for proper recovery replay
-        self.write_to_wal(DocumentOperation::InsertDocument {
+        if let Err(e) = self.write_to_wal(DocumentOperation::InsertDocument {
             collection_id: collection.to_string(),
             document: record.clone(),
         })
-        .await?;
+        .await
+        {
+            self.record_update_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Update indexes
-        self.index_manager
+        if let Err(e) = self.index_manager
             .reindex_document(collection, &record)
-            .await?;
+            .await
+        {
+            self.record_update_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Persist updated document to in-memory store
         {
@@ -758,6 +858,7 @@ impl DocumentService {
         }
 
         debug!("Updated document {} in {}", id, collection);
+        self.record_update_metrics(start, false).await;
         Ok(record)
     }
 
@@ -1108,12 +1209,17 @@ impl DocumentService {
 
     /// Delete a document by ID
     pub async fn delete_document(&self, collection: &str, id: &str) -> Result<bool> {
+        let start = std::time::Instant::now();
         debug!("Deleting document {} from {}", id, collection);
 
         // Verify collection exists
-        self.get_collection(collection)
+        if let Err(e) = self.get_collection(collection)
             .await?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))
+        {
+            self.record_delete_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Check if document exists before WAL write
         let exists = {
@@ -1125,20 +1231,29 @@ impl DocumentService {
         };
 
         if !exists {
+            self.record_delete_metrics(start, false).await;
             return Ok(false);
         }
 
         // Write to WAL first (durability before in-memory update)
-        self.write_to_wal(DocumentOperation::DeleteDocument {
+        if let Err(e) = self.write_to_wal(DocumentOperation::DeleteDocument {
             collection_id: collection.to_string(),
             document_id: id.to_string(),
         })
-        .await?;
+        .await
+        {
+            self.record_delete_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Remove from indexes
-        self.index_manager
+        if let Err(e) = self.index_manager
             .remove_document(collection, id)
-            .await?;
+            .await
+        {
+            self.record_delete_metrics(start, true).await;
+            return Err(e);
+        }
 
         // Remove from in-memory store
         {
@@ -1160,6 +1275,7 @@ impl DocumentService {
         }
 
         debug!("Deleted document {} from {}", id, collection);
+        self.record_delete_metrics(start, false).await;
         Ok(true)
     }
 
@@ -1173,18 +1289,33 @@ impl DocumentService {
         debug!("Querying documents in {}", collection);
 
         // Verify collection exists
-        let collection_meta = self
+        let _collection_meta = match self
             .get_collection(collection)
             .await?
-            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))
+        {
+            Ok(meta) => meta,
+            Err(e) => {
+                self.record_query_metrics(start, true).await;
+                return Err(e);
+            }
+        };
 
         // Execute query
-        let (documents, total_count) = self
+        let (documents, total_count) = match self
             .query_executor
             .execute(collection, &params, &self.index_manager)
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.record_query_metrics(start, true).await;
+                return Err(e);
+            }
+        };
 
         let query_time_ms = start.elapsed().as_millis() as u64;
+        self.record_query_metrics(start, false).await;
 
         Ok(DocumentQueryResult {
             documents,
