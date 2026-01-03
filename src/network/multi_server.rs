@@ -57,7 +57,10 @@ use tracing::{debug, info, warn};
 use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
-use crate::query::facade::{UnifiedQueryFacade, VectorSearchStrategy, GraphStrategy, SqlStrategy, ColumnarStrategy, FacadeConfig, QueryStrategy, QueryFacadeAdapter};
+use crate::query::facade::{UnifiedQueryFacade, VectorSearchStrategy, GraphStrategy, SqlStrategy, ColumnarStrategy, DocumentStrategy, ObservabilityStrategy, FacadeConfig, QueryStrategy, QueryFacadeAdapter};
+use crate::storage::document::DocumentService;
+use crate::observability::query::ObservabilityQueryEngine;
+use crate::observability::storage::ObservabilityStorage;
 use crate::query::federated::FederatedQueryContext;
 use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::services::VectorOperationsService;
@@ -750,6 +753,9 @@ impl SharedServices {
         let sst_engine = Arc::new(crate::storage::engines::impls::sst::SstEngine::new().await?);
         debug!("✅ SharedServices::new - SST engine created successfully");
 
+        // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
+        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> = sst_engine.clone();
+
         // Create WAL manager for two-stage search
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
         let wal_manager = {
@@ -1140,15 +1146,44 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - ColumnarStrategy created for analytical queries");
 
+        // Create DocumentStrategy wrapping DocumentService for JSON document queries
+        // DocumentService provides MongoDB-like document operations (CRUD, indexing, queries)
+        debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
+        let document_service = Arc::new(DocumentService::new(sst_engine_for_documents));
+        let document_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            DocumentStrategy::new(document_service)
+        );
+        debug!("✅ SharedServices::new - DocumentStrategy created for document queries");
+
+        // Create ObservabilityStrategy wrapping ObservabilityQueryEngine for logs/metrics/traces
+        // This enables unified query interface for observability data
+        debug!("🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries...");
+        let observability_base_path = storage_config
+            .metadata_url
+            .replace("file://", "");
+        let observability_storage = Arc::new(ObservabilityStorage::new(&observability_base_path));
+        let observability_query_engine = Arc::new(ObservabilityQueryEngine::new(observability_storage));
+        let observability_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
+            ObservabilityStrategy::new(observability_query_engine)
+        );
+        debug!("✅ SharedServices::new - ObservabilityStrategy created for logs/metrics/traces queries");
+
         // Build the unified facade with all strategies
-        // Priority order: vector (100) > graph (75) > columnar (50) > sql (25)
-        let strategies = vec![vector_strategy, graph_strategy, columnar_strategy, sql_strategy];
+        // Priority order: vector (100) > graph (75) > document (70) > observability (60) > columnar (50) > sql (25)
+        let strategies = vec![
+            vector_strategy,
+            graph_strategy,
+            document_strategy,
+            observability_strategy,
+            columnar_strategy,
+            sql_strategy,
+        ];
         let query_facade = Arc::new(
             UnifiedQueryFacade::new(strategies, FacadeConfig::default())
         );
 
         info!(
-            "✅ SharedServices: UnifiedQueryFacade created with 4 strategies (vector, graph, columnar, sql)"
+            "✅ SharedServices: UnifiedQueryFacade created with 6 strategies (vector, graph, document, observability, columnar, sql)"
         );
 
         info!(
