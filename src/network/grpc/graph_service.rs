@@ -63,6 +63,8 @@ use crate::graph::canonical::{
 };
 use crate::proto::proximadb_v1::{
     BatchEdgeRequest,
+    BatchErrorCode,
+    BatchItemError,
     BatchNodeRequest,
     BatchResponse,
     Component,
@@ -128,6 +130,33 @@ fn map_error_to_canonical_code(error_message: &str) -> CanonicalErrorCode {
     }
 }
 
+/// Convert a canonical ErrorCode to a proto BatchErrorCode.
+/// This ensures alignment between REST and gRPC error representations.
+fn canonical_code_to_batch_error_code(code: CanonicalErrorCode) -> BatchErrorCode {
+    match code {
+        CanonicalErrorCode::NotFound => BatchErrorCode::NotFound,
+        CanonicalErrorCode::AlreadyExists => BatchErrorCode::AlreadyExists,
+        CanonicalErrorCode::InvalidArgument => BatchErrorCode::InvalidArgument,
+        CanonicalErrorCode::ConstraintViolation => BatchErrorCode::ConstraintViolation,
+        CanonicalErrorCode::InternalError => BatchErrorCode::InternalError,
+        CanonicalErrorCode::Timeout => BatchErrorCode::Timeout,
+        CanonicalErrorCode::PermissionDenied => BatchErrorCode::PermissionDenied,
+    }
+}
+
+/// Create a BatchItemError from an entity ID and error message.
+/// Automatically maps the error message to an appropriate error code.
+#[allow(dead_code)]
+fn create_batch_item_error(id: impl Into<String>, message: impl Into<String>) -> BatchItemError {
+    let message_str = message.into();
+    let canonical_code = map_error_to_canonical_code(&message_str);
+    BatchItemError {
+        id: id.into(),
+        message: message_str,
+        code: canonical_code_to_batch_error_code(canonical_code).into(),
+    }
+}
+
 /// Convert a canonical ErrorCode to a gRPC Status code.
 fn canonical_code_to_grpc_status(code: CanonicalErrorCode, message: impl Into<String>) -> Status {
     let msg = message.into();
@@ -161,6 +190,8 @@ fn convert_traversal_stats_to_canonical(stats: &crate::proto::proximadb_v1::Trav
 
 /// Create a populated BatchResponse with all canonical fields properly initialized.
 /// This ensures consistent structure for batch operations.
+///
+/// For responses with per-item errors, use `create_batch_response_for_nodes_with_errors` instead.
 fn create_batch_response_for_nodes(
     nodes: Vec<crate::proto::proximadb_v1::Node>,
     success: bool,
@@ -180,10 +211,46 @@ fn create_batch_response_for_nodes(
         failed_count,
         failed_ids: vec![],
         error_messages: vec![],
+        errors: vec![],
+    }
+}
+
+/// Create a populated BatchResponse for nodes with structured per-item error details.
+/// This aligns with REST API's BatchResults<T> format which includes a Vec<BatchError>.
+///
+/// Both legacy fields (failed_ids, error_messages) and the new structured errors field
+/// are populated for backward compatibility with older clients.
+#[allow(dead_code)]
+fn create_batch_response_for_nodes_with_errors(
+    nodes: Vec<crate::proto::proximadb_v1::Node>,
+    errors: Vec<BatchItemError>,
+) -> BatchResponse {
+    let created_count = nodes.len() as u32;
+    let failed_count = errors.len() as u32;
+    let success = errors.is_empty();
+
+    // Populate legacy fields for backward compatibility
+    let failed_ids: Vec<String> = errors.iter().map(|e| e.id.clone()).collect();
+    let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+
+    BatchResponse {
+        success,
+        nodes,
+        edges: vec![],
+        error_message: None,
+        next_token: None,
+        created_count: Some(created_count),
+        updated_count: Some(0),
+        failed_count: Some(failed_count),
+        failed_ids,         // Legacy (deprecated but maintained for compatibility)
+        error_messages,     // Legacy (deprecated but maintained for compatibility)
+        errors,             // New structured error field (aligned with REST API)
     }
 }
 
 /// Create a populated BatchResponse for edges with all canonical fields properly initialized.
+///
+/// For responses with per-item errors, use `create_batch_response_for_edges_with_errors` instead.
 fn create_batch_response_for_edges(
     edges: Vec<crate::proto::proximadb_v1::Edge>,
     success: bool,
@@ -203,6 +270,40 @@ fn create_batch_response_for_edges(
         failed_count,
         failed_ids: vec![],
         error_messages: vec![],
+        errors: vec![],
+    }
+}
+
+/// Create a populated BatchResponse for edges with structured per-item error details.
+/// This aligns with REST API's BatchResults<T> format which includes a Vec<BatchError>.
+///
+/// Both legacy fields (failed_ids, error_messages) and the new structured errors field
+/// are populated for backward compatibility with older clients.
+#[allow(dead_code)]
+fn create_batch_response_for_edges_with_errors(
+    edges: Vec<crate::proto::proximadb_v1::Edge>,
+    errors: Vec<BatchItemError>,
+) -> BatchResponse {
+    let created_count = edges.len() as u32;
+    let failed_count = errors.len() as u32;
+    let success = errors.is_empty();
+
+    // Populate legacy fields for backward compatibility
+    let failed_ids: Vec<String> = errors.iter().map(|e| e.id.clone()).collect();
+    let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+
+    BatchResponse {
+        success,
+        nodes: vec![],
+        edges,
+        error_message: None,
+        next_token: None,
+        created_count: Some(created_count),
+        updated_count: Some(0),
+        failed_count: Some(failed_count),
+        failed_ids,         // Legacy (deprecated but maintained for compatibility)
+        error_messages,     // Legacy (deprecated but maintained for compatibility)
+        errors,             // New structured error field (aligned with REST API)
     }
 }
 
@@ -231,6 +332,7 @@ fn create_query_response_for_nodes(
         failed_count: None,
         failed_ids: vec![],
         error_messages: vec![],
+        errors: vec![],
     }
 }
 
@@ -259,6 +361,7 @@ fn create_query_response_for_edges(
         failed_count: None,
         failed_ids: vec![],
         error_messages: vec![],
+        errors: vec![],
     }
 }
 

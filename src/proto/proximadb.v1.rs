@@ -3949,6 +3949,20 @@ pub struct BatchEdgeRequest {
     #[prost(message, repeated, tag = "2")]
     pub edges: ::prost::alloc::vec::Vec<Edge>,
 }
+/// Structured error for a single item in a batch operation
+/// Aligned with REST API's BatchError type for consistent client experience
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BatchItemError {
+    /// ID of the failed entity
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Human-readable error message
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+    /// Structured error code for programmatic handling
+    #[prost(enumeration = "BatchErrorCode", tag = "3")]
+    pub code: i32,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchResponse {
     #[prost(bool, tag = "1")]
@@ -3969,10 +3983,16 @@ pub struct BatchResponse {
     pub updated_count: ::core::option::Option<u32>,
     #[prost(uint32, optional, tag = "7")]
     pub failed_count: ::core::option::Option<u32>,
+    /// DEPRECATED: Use errors field instead for structured error information
     #[prost(string, repeated, tag = "8")]
     pub failed_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// DEPRECATED: Use errors field instead for structured error information
     #[prost(string, repeated, tag = "9")]
     pub error_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Structured error information for failed items (aligned with REST API)
+    /// Each BatchItemError contains id, message, and error code
+    #[prost(message, repeated, tag = "11")]
+    pub errors: ::prost::alloc::vec::Vec<BatchItemError>,
 }
 /// Hybrid query request combining vector and graph components
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -4484,6 +4504,51 @@ impl TraversalAlgorithm {
             "TRAVERSAL_ALGORITHM_BFS" => Some(Self::Bfs),
             "TRAVERSAL_ALGORITHM_DFS" => Some(Self::Dfs),
             "TRAVERSAL_ALGORITHM_PARALLEL_BFS" => Some(Self::ParallelBfs),
+            _ => None,
+        }
+    }
+}
+/// Error codes for batch item failures (aligned with REST API ErrorCode)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BatchErrorCode {
+    Unspecified = 0,
+    NotFound = 1,
+    AlreadyExists = 2,
+    InvalidArgument = 3,
+    ConstraintViolation = 4,
+    InternalError = 5,
+    Timeout = 6,
+    PermissionDenied = 7,
+}
+impl BatchErrorCode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BATCH_ERROR_CODE_UNSPECIFIED",
+            Self::NotFound => "BATCH_ERROR_CODE_NOT_FOUND",
+            Self::AlreadyExists => "BATCH_ERROR_CODE_ALREADY_EXISTS",
+            Self::InvalidArgument => "BATCH_ERROR_CODE_INVALID_ARGUMENT",
+            Self::ConstraintViolation => "BATCH_ERROR_CODE_CONSTRAINT_VIOLATION",
+            Self::InternalError => "BATCH_ERROR_CODE_INTERNAL_ERROR",
+            Self::Timeout => "BATCH_ERROR_CODE_TIMEOUT",
+            Self::PermissionDenied => "BATCH_ERROR_CODE_PERMISSION_DENIED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BATCH_ERROR_CODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "BATCH_ERROR_CODE_NOT_FOUND" => Some(Self::NotFound),
+            "BATCH_ERROR_CODE_ALREADY_EXISTS" => Some(Self::AlreadyExists),
+            "BATCH_ERROR_CODE_INVALID_ARGUMENT" => Some(Self::InvalidArgument),
+            "BATCH_ERROR_CODE_CONSTRAINT_VIOLATION" => Some(Self::ConstraintViolation),
+            "BATCH_ERROR_CODE_INTERNAL_ERROR" => Some(Self::InternalError),
+            "BATCH_ERROR_CODE_TIMEOUT" => Some(Self::Timeout),
+            "BATCH_ERROR_CODE_PERMISSION_DENIED" => Some(Self::PermissionDenied),
             _ => None,
         }
     }
