@@ -19,7 +19,7 @@ pub mod observability;
 pub mod sql;
 pub mod vector;
 
-pub use columnar::ColumnarStrategy;
+pub use columnar::{ColumnarStrategy, ColumnarStrategyConfig};
 pub use document::DocumentStrategy;
 pub use graph::GraphStrategy;
 pub use observability::ObservabilityStrategy;

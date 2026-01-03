@@ -31,8 +31,8 @@ pub mod strategies;
 
 pub use adapter::{QueryFacadeAdapter, ExplainResult, ExplainComponent};
 pub use strategies::{
-    ColumnarStrategy, DocumentStrategy, GraphStrategy, ObservabilityStrategy,
-    SqlStrategy, VectorSearchStrategy,
+    ColumnarStrategy, ColumnarStrategyConfig, DocumentStrategy, GraphStrategy,
+    ObservabilityStrategy, SqlStrategy, VectorSearchStrategy,
 };
 
 use std::sync::Arc;
