@@ -1186,6 +1186,12 @@ impl SharedServices {
             "✅ SharedServices: UnifiedQueryFacade created with 6 strategies (vector, graph, document, observability, columnar, sql)"
         );
 
+        // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing
+        // This enables SQL queries to flow through the facade when unified-facade-routing feature is enabled
+        let query_adapter = Arc::new(QueryFacadeAdapter::new(query_facade.clone()));
+        unified_handlers.set_query_adapter(query_adapter);
+        debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
+
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
         );
