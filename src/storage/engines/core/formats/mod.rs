@@ -41,6 +41,6 @@ pub use codebook_metadata::{
 pub use vector_serialization::VectorSerializer;
 
 pub use arrow_block::{
-    ArrowBlockConfig, ArrowBlockMetadata, ArrowBlockReader, ArrowBlockWriter,
-    ArrowBlockIndex, ArrowIndexEntry, ArrowBlockError, ArrowBlockResult,
+    ArrowBlockConfig, ArrowBlockError, ArrowBlockIndex, ArrowBlockMetadata, ArrowBlockReader,
+    ArrowBlockResult, ArrowBlockWriter, ArrowIndexEntry,
 };

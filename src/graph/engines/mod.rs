@@ -90,7 +90,7 @@ pub mod pulsar {
             _max_depth: u32,
         ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
-                "PULSAR cross_shard_traversal requires 'distributed-graph' feature".to_string()
+                "PULSAR cross_shard_traversal requires 'distributed-graph' feature".to_string(),
             ))
         }
     }
@@ -98,49 +98,91 @@ pub mod pulsar {
     #[async_trait::async_trait]
     impl super::GraphEngine for PulsarGraphEngine {
         async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
-        fn get_outgoing_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
-        fn get_incoming_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        fn get_incoming_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
-        fn get_neighbors(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+        fn get_neighbors(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         fn node_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         fn edge_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
         fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("PULSAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
         }
     }
 }
@@ -185,49 +227,91 @@ pub mod quasar {
     #[async_trait::async_trait]
     impl super::GraphEngine for QuasarGraphEngine {
         async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
-        fn get_outgoing_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
-        fn get_incoming_edges(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        fn get_incoming_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
-        fn get_neighbors(&self, _node_id: &NodeId, _edge_type: Option<&str>) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+        fn get_neighbors(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         fn node_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         fn edge_count(&self) -> Result<usize, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
         fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
-            Err(ProximaDBError::NotImplemented("QUASAR disabled".to_string()))
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
         }
     }
 }

@@ -43,7 +43,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_schema::{DataType as ArrowDataType, Field, Schema as ArrowSchema};
 use async_trait::async_trait;
@@ -52,9 +52,9 @@ use futures::stream;
 use tracing::{debug, warn};
 
 use super::traits::{
-    CompactionContext, CompactionResult, FileEntry, FormatStatistics,
-    FormatType, InternalFormat, ReadContext, RecordBatchStream, StorageFormat, VectorBatch,
-    VectorBatchStream, VectorReadContext, VectorWriteContext, WriteContext, WriteResult,
+    CompactionContext, CompactionResult, FileEntry, FormatStatistics, FormatType, InternalFormat,
+    ReadContext, RecordBatchStream, StorageFormat, VectorBatch, VectorBatchStream,
+    VectorReadContext, VectorWriteContext, WriteContext, WriteResult,
 };
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
@@ -140,14 +140,14 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
     fn supported_data_types(&self) -> Vec<ArrowDataType> {
         // All internal formats support these core Arrow types
         vec![
-            ArrowDataType::Utf8,                                       // Vector IDs
+            ArrowDataType::Utf8, // Vector IDs
             ArrowDataType::LargeList(Arc::new(Field::new("item", ArrowDataType::Float32, false))), // Vectors
-            ArrowDataType::Float32,                                    // Individual floats
-            ArrowDataType::Float64,                                    // Double precision
-            ArrowDataType::Int64,                                      // Timestamps
-            ArrowDataType::Int32,                                      // Integers
-            ArrowDataType::Boolean,                                    // Boolean flags
-            ArrowDataType::Utf8,                                       // Metadata values (JSON encoded)
+            ArrowDataType::Float32, // Individual floats
+            ArrowDataType::Float64, // Double precision
+            ArrowDataType::Int64,   // Timestamps
+            ArrowDataType::Int32,   // Integers
+            ArrowDataType::Boolean, // Boolean flags
+            ArrowDataType::Utf8,    // Metadata values (JSON encoded)
         ]
     }
 
@@ -160,7 +160,11 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
             Field::new("id", ArrowDataType::Utf8, false),
             Field::new(
                 "vector",
-                ArrowDataType::LargeList(Arc::new(Field::new("item", ArrowDataType::Float32, false))),
+                ArrowDataType::LargeList(Arc::new(Field::new(
+                    "item",
+                    ArrowDataType::Float32,
+                    false,
+                ))),
                 false,
             ),
             Field::new("metadata", ArrowDataType::Utf8, true), // JSON-encoded metadata
@@ -318,7 +322,11 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
         })
     }
 
-    async fn write_vectors(&self, vectors: &VectorBatch, ctx: &VectorWriteContext) -> Result<WriteResult> {
+    async fn write_vectors(
+        &self,
+        vectors: &VectorBatch,
+        ctx: &VectorWriteContext,
+    ) -> Result<WriteResult> {
         debug!(
             "Writing {} vectors to path: {}",
             vectors.ids.len(),
@@ -400,7 +408,8 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
             StorageEngineStrategy::Viper | StorageEngineStrategy::Nova => {
                 // Columnar: Compact when many small files
                 let small_file_threshold: u64 = 64 * 1024 * 1024;
-                stats.file_count > 5 && (stats.size_bytes / stats.file_count as u64) < small_file_threshold
+                stats.file_count > 5
+                    && (stats.size_bytes / stats.file_count as u64) < small_file_threshold
             }
             StorageEngineStrategy::Helix => {
                 // Helix: Compact based on locality
@@ -443,7 +452,11 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
             Field::new("id", ArrowDataType::Utf8, false),
             Field::new(
                 "vector",
-                ArrowDataType::LargeList(Arc::new(Field::new("item", ArrowDataType::Float32, false))),
+                ArrowDataType::LargeList(Arc::new(Field::new(
+                    "item",
+                    ArrowDataType::Float32,
+                    false,
+                ))),
                 false,
             ),
         ]);
@@ -458,7 +471,10 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
     }
 
     async fn get_bloom_filter(&self, path: &str, column: &str) -> Result<Option<Vec<u8>>> {
-        debug!("Getting bloom filter for column {} at path: {}", column, path);
+        debug!(
+            "Getting bloom filter for column {} at path: {}",
+            column, path
+        );
 
         // Bloom filters are engine-specific
         // SST and SWIFT engines have bloom filter support
@@ -495,10 +511,7 @@ fn extract_collection_id_from_path(path: &str) -> Result<String> {
     let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
 
     if parts.len() < 2 {
-        return Err(anyhow!(
-            "Path too short to extract collection ID: {}",
-            path
-        ));
+        return Err(anyhow!("Path too short to extract collection ID: {}", path));
     }
 
     // Check if last segment is "data"
@@ -523,15 +536,13 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<ser
         Value::BoolValue(b) => serde_json::Value::Bool(*b),
         Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
         Value::NullValue(_) => serde_json::Value::Null,
-        Value::BytesValue(b) => {
-            serde_json::Value::String(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b))
-        }
+        Value::BytesValue(b) => serde_json::Value::String(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b,
+        )),
         Value::ArrayValue(arr) => {
-            let items: Vec<serde_json::Value> = arr
-                .values
-                .iter()
-                .filter_map(sql_value_to_json)
-                .collect();
+            let items: Vec<serde_json::Value> =
+                arr.values.iter().filter_map(sql_value_to_json).collect();
             serde_json::Value::Array(items)
         }
         Value::ObjectValue(obj) => {
@@ -553,51 +564,68 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<ser
 pub type SstFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::sst::SstEngine>;
 
 /// Type alias for HELIX format adapter
-pub type HelixFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::helix::HelixEngine>;
+pub type HelixFormatAdapter =
+    InternalFormatAdapter<crate::storage::engines::impls::helix::HelixEngine>;
 
 /// Type alias for VIPER format adapter
-pub type ViperFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::viper::ViperEngine>;
+pub type ViperFormatAdapter =
+    InternalFormatAdapter<crate::storage::engines::impls::viper::ViperEngine>;
 
 /// Type alias for NOVA format adapter
-pub type NovaFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::nova::NovaEngine>;
+pub type NovaFormatAdapter =
+    InternalFormatAdapter<crate::storage::engines::impls::nova::NovaEngine>;
 
 /// Type alias for SWIFT format adapter
-pub type SwiftFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::swift::SwiftEngine>;
+pub type SwiftFormatAdapter =
+    InternalFormatAdapter<crate::storage::engines::impls::swift::SwiftEngine>;
 
 /// Type alias for RAPTOR format adapter
-pub type RaptorFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::raptor::RaptorEngine>;
+pub type RaptorFormatAdapter =
+    InternalFormatAdapter<crate::storage::engines::impls::raptor::RaptorEngine>;
 
 // ============================================================================
 // Factory Functions
 // ============================================================================
 
 /// Create an SST format adapter from an existing engine
-pub fn create_sst_adapter(engine: Arc<crate::storage::engines::impls::sst::SstEngine>) -> SstFormatAdapter {
+pub fn create_sst_adapter(
+    engine: Arc<crate::storage::engines::impls::sst::SstEngine>,
+) -> SstFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a HELIX format adapter from an existing engine
-pub fn create_helix_adapter(engine: Arc<crate::storage::engines::impls::helix::HelixEngine>) -> HelixFormatAdapter {
+pub fn create_helix_adapter(
+    engine: Arc<crate::storage::engines::impls::helix::HelixEngine>,
+) -> HelixFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a VIPER format adapter from an existing engine
-pub fn create_viper_adapter(engine: Arc<crate::storage::engines::impls::viper::ViperEngine>) -> ViperFormatAdapter {
+pub fn create_viper_adapter(
+    engine: Arc<crate::storage::engines::impls::viper::ViperEngine>,
+) -> ViperFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a NOVA format adapter from an existing engine
-pub fn create_nova_adapter(engine: Arc<crate::storage::engines::impls::nova::NovaEngine>) -> NovaFormatAdapter {
+pub fn create_nova_adapter(
+    engine: Arc<crate::storage::engines::impls::nova::NovaEngine>,
+) -> NovaFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a SWIFT format adapter from an existing engine
-pub fn create_swift_adapter(engine: Arc<crate::storage::engines::impls::swift::SwiftEngine>) -> SwiftFormatAdapter {
+pub fn create_swift_adapter(
+    engine: Arc<crate::storage::engines::impls::swift::SwiftEngine>,
+) -> SwiftFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a RAPTOR format adapter from an existing engine
-pub fn create_raptor_adapter(engine: Arc<crate::storage::engines::impls::raptor::RaptorEngine>) -> RaptorFormatAdapter {
+pub fn create_raptor_adapter(
+    engine: Arc<crate::storage::engines::impls::raptor::RaptorEngine>,
+) -> RaptorFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
@@ -635,7 +663,7 @@ mod tests {
 
     #[test]
     fn test_sql_value_to_json_string() {
-        use crate::proto::proximadb_v1::{sql_value::Value, SqlValue};
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         let value = SqlValue {
             value: Some(Value::StringValue("test".to_string())),
@@ -647,7 +675,7 @@ mod tests {
 
     #[test]
     fn test_sql_value_to_json_number() {
-        use crate::proto::proximadb_v1::{sql_value::Value, SqlValue};
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         let value = SqlValue {
             value: Some(Value::NumberValue(42.5)),
@@ -660,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_sql_value_to_json_bool() {
-        use crate::proto::proximadb_v1::{sql_value::Value, SqlValue};
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         let value = SqlValue {
             value: Some(Value::BoolValue(true)),
@@ -672,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_sql_value_to_json_null() {
-        use crate::proto::proximadb_v1::{sql_value::Value, SqlValue};
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         let value = SqlValue {
             value: Some(Value::NullValue(0)),

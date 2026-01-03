@@ -16,8 +16,8 @@
 
 //! Message deserialization for Kafka consumers
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::config::DeserializationFormat;
 
@@ -49,7 +49,11 @@ impl std::fmt::Display for DeserializationError {
             Self::InvalidFormat(msg) => write!(f, "Invalid message format: {}", msg),
             Self::MissingField(field) => write!(f, "Missing required field: {}", field),
             Self::InvalidDimension { expected, actual } => {
-                write!(f, "Invalid vector dimension: expected {}, got {}", expected, actual)
+                write!(
+                    f,
+                    "Invalid vector dimension: expected {}, got {}",
+                    expected, actual
+                )
             }
             Self::SchemaRegistryError(msg) => write!(f, "Schema registry error: {}", msg),
         }
@@ -345,7 +349,10 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(DeserializationError::InvalidDimension { expected: 4, actual: 3 })
+            Err(DeserializationError::InvalidDimension {
+                expected: 4,
+                actual: 3
+            })
         ));
     }
 
@@ -371,7 +378,10 @@ mod tests {
         let deserializer = MessageDeserializer::new(DeserializationFormat::Raw);
         let result = deserializer.deserialize(&bytes);
 
-        assert!(matches!(result, Err(DeserializationError::InvalidFormat(_))));
+        assert!(matches!(
+            result,
+            Err(DeserializationError::InvalidFormat(_))
+        ));
     }
 
     #[test]

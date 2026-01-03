@@ -19,9 +19,9 @@
 //! Tracks I/O operations, bytes transferred, and calculates
 //! efficiency metrics for the smart I/O layer.
 
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tracing::debug;
 
 /// I/O metrics collector
@@ -93,14 +93,22 @@ impl IoMetrics {
     /// Record bytes requested (before coalescing)
     pub fn record_request(&self, bytes: u64, num_ranges: u64) {
         self.bytes_requested.fetch_add(bytes, Ordering::Relaxed);
-        self.reads_requested.fetch_add(num_ranges, Ordering::Relaxed);
+        self.reads_requested
+            .fetch_add(num_ranges, Ordering::Relaxed);
     }
 
     /// Record coalescing results
-    pub fn record_coalescing(&self, original_ranges: usize, coalesced_ranges: usize, bytes_in_gaps: u64) {
+    pub fn record_coalescing(
+        &self,
+        original_ranges: usize,
+        coalesced_ranges: usize,
+        bytes_in_gaps: u64,
+    ) {
         let coalesced = original_ranges.saturating_sub(coalesced_ranges) as u64;
-        self.ranges_coalesced.fetch_add(coalesced, Ordering::Relaxed);
-        self.bytes_saved_by_coalescing.fetch_add(bytes_in_gaps, Ordering::Relaxed);
+        self.ranges_coalesced
+            .fetch_add(coalesced, Ordering::Relaxed);
+        self.bytes_saved_by_coalescing
+            .fetch_add(bytes_in_gaps, Ordering::Relaxed);
     }
 
     /// Record parallel read execution

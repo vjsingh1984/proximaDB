@@ -19,9 +19,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentContent,
-    DocumentFilter, DocumentResult, IndexDefinition, SortField,
-    SqlObject,
+    DocumentCollectionConfig, DocumentContent, DocumentFilter, DocumentResult, IndexDefinition,
+    SortField, SqlObject,
 };
 
 pub use self::service::DocumentService;
@@ -60,11 +59,7 @@ impl DocumentRecord {
     }
 
     /// Create from proto DocumentContent
-    pub fn from_proto(
-        id: String,
-        content: DocumentContent,
-        collection_id: String,
-    ) -> Result<Self> {
+    pub fn from_proto(id: String, content: DocumentContent, collection_id: String) -> Result<Self> {
         Ok(Self {
             id,
             document: content.document.unwrap_or_default(),

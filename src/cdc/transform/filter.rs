@@ -163,31 +163,20 @@ pub struct FilterRule {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilterRuleType {
     /// Filter by collection names
-    Collection {
-        patterns: Vec<String>,
-    },
+    Collection { patterns: Vec<String> },
     /// Filter by operation types
-    Operation {
-        operations: Vec<Operation>,
-    },
+    Operation { operations: Vec<Operation> },
     /// Filter by connector type
-    Connector {
-        connectors: Vec<ConnectorType>,
-    },
+    Connector { connectors: Vec<ConnectorType> },
     /// Filter by key pattern
-    Key {
-        patterns: Vec<String>,
-    },
+    Key { patterns: Vec<String> },
     /// Filter by metadata field value
     Metadata {
         field: String,
         condition: MetadataCondition,
     },
     /// Filter by LSN range
-    LsnRange {
-        min: Option<u64>,
-        max: Option<u64>,
-    },
+    LsnRange { min: Option<u64>, max: Option<u64> },
     /// Composite rule (nested rules)
     Composite {
         rules: Vec<FilterRule>,
@@ -330,18 +319,14 @@ impl FilterRule {
     /// Check if this rule matches an event
     pub fn matches(&self, event: &ChangeEvent) -> bool {
         let result = self.matches_inner(event);
-        if self.negate {
-            !result
-        } else {
-            result
-        }
+        if self.negate { !result } else { result }
     }
 
     fn matches_inner(&self, event: &ChangeEvent) -> bool {
         match &self.rule_type {
-            FilterRuleType::Collection { patterns } => {
-                patterns.iter().any(|p| self.pattern_matches(p, &event.collection))
-            }
+            FilterRuleType::Collection { patterns } => patterns
+                .iter()
+                .any(|p| self.pattern_matches(p, &event.collection)),
 
             FilterRuleType::Operation { operations } => operations.contains(&event.operation),
 
@@ -433,44 +418,50 @@ impl FilterRule {
 
             MetadataCondition::NotEquals { value: expected } => value != Some(expected),
 
-            MetadataCondition::Contains { value: search } => {
-                value.map(|v| match v {
+            MetadataCondition::Contains { value: search } => value
+                .map(|v| match v {
                     serde_json::Value::String(s) => s.contains(search),
-                    serde_json::Value::Array(arr) => arr.iter().any(|item| {
-                        item.as_str().map(|s| s == search).unwrap_or(false)
-                    }),
+                    serde_json::Value::Array(arr) => arr
+                        .iter()
+                        .any(|item| item.as_str().map(|s| s == search).unwrap_or(false)),
                     _ => false,
-                }).unwrap_or(false)
-            }
+                })
+                .unwrap_or(false),
 
-            MetadataCondition::StartsWith { value: prefix } => {
-                value.and_then(|v| v.as_str()).map(|s| s.starts_with(prefix)).unwrap_or(false)
-            }
+            MetadataCondition::StartsWith { value: prefix } => value
+                .and_then(|v| v.as_str())
+                .map(|s| s.starts_with(prefix))
+                .unwrap_or(false),
 
-            MetadataCondition::EndsWith { value: suffix } => {
-                value.and_then(|v| v.as_str()).map(|s| s.ends_with(suffix)).unwrap_or(false)
-            }
+            MetadataCondition::EndsWith { value: suffix } => value
+                .and_then(|v| v.as_str())
+                .map(|s| s.ends_with(suffix))
+                .unwrap_or(false),
 
             MetadataCondition::Matches { pattern } => {
                 // Simple substring match (would use regex crate in production)
-                value.and_then(|v| v.as_str()).map(|s| s.contains(pattern)).unwrap_or(false)
+                value
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.contains(pattern))
+                    .unwrap_or(false)
             }
 
-            MetadataCondition::GreaterThan { value: threshold } => {
-                value.and_then(|v| v.as_f64()).map(|n| n > *threshold).unwrap_or(false)
-            }
+            MetadataCondition::GreaterThan { value: threshold } => value
+                .and_then(|v| v.as_f64())
+                .map(|n| n > *threshold)
+                .unwrap_or(false),
 
-            MetadataCondition::LessThan { value: threshold } => {
-                value.and_then(|v| v.as_f64()).map(|n| n < *threshold).unwrap_or(false)
-            }
+            MetadataCondition::LessThan { value: threshold } => value
+                .and_then(|v| v.as_f64())
+                .map(|n| n < *threshold)
+                .unwrap_or(false),
 
-            MetadataCondition::InRange { min, max } => {
-                value.and_then(|v| v.as_f64()).map(|n| n >= *min && n <= *max).unwrap_or(false)
-            }
+            MetadataCondition::InRange { min, max } => value
+                .and_then(|v| v.as_f64())
+                .map(|n| n >= *min && n <= *max)
+                .unwrap_or(false),
 
-            MetadataCondition::In { values } => {
-                value.map(|v| values.contains(v)).unwrap_or(false)
-            }
+            MetadataCondition::In { values } => value.map(|v| values.contains(v)).unwrap_or(false),
 
             MetadataCondition::IsNull => value.map(|v| v.is_null()).unwrap_or(true),
 
@@ -598,7 +589,13 @@ mod tests {
 
     #[test]
     fn test_metadata_in_range() {
-        let rule = FilterRule::metadata("age", MetadataCondition::InRange { min: 20.0, max: 40.0 });
+        let rule = FilterRule::metadata(
+            "age",
+            MetadataCondition::InRange {
+                min: 20.0,
+                max: 40.0,
+            },
+        );
         let event = create_test_event();
         assert!(rule.matches(&event));
     }

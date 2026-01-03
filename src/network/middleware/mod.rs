@@ -55,13 +55,15 @@ pub use auth::{AuthConfig, AuthLayer, UserInfo};
 pub use backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 pub use cors::{CorsConfig, CorsConfigError, create_cors_layer};
 pub use rate_limit::{RateLimitConfig, RateLimitLayer};
-pub use request_id::{request_id_middleware, RequestId, RequestIdExt, RequestIdLayer, X_REQUEST_ID};
+pub use request_id::{
+    RequestId, RequestIdExt, RequestIdLayer, X_REQUEST_ID, request_id_middleware,
+};
 pub use tenant::{
-    TenantContext, TenantContextExt, TenantExtractor, TenantExtractorConfig,
-    TenantIdSource, X_TENANT_ID, tenant_middleware, create_tenant_extractor,
+    TenantContext, TenantContextExt, TenantExtractor, TenantExtractorConfig, TenantIdSource,
+    X_TENANT_ID, create_tenant_extractor, tenant_middleware,
 };
 pub use timeout::{TimeoutConfig, create_timeout_layer};
 pub use tls::{
-    TlsAuthenticatedUser, TlsAuthenticatedUserExt, TlsClientCertConfig, TlsClientCertLayer,
-    TlsClientCertState, TlsCertErrorResponse, matches_cn_pattern, tls_client_cert_middleware,
+    TlsAuthenticatedUser, TlsAuthenticatedUserExt, TlsCertErrorResponse, TlsClientCertConfig,
+    TlsClientCertLayer, TlsClientCertState, matches_cn_pattern, tls_client_cert_middleware,
 };

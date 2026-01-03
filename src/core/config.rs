@@ -537,7 +537,6 @@ fn default_prune_type() -> String {
     "sqrt".to_string()
 }
 
-
 /// Storage location configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageLocation {
@@ -1137,7 +1136,7 @@ pub struct ViperConfig {
 impl Default for ViperConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 65536,            // ~32MB row groups for 128D vectors
+            row_group_size: 65536,           // ~32MB row groups for 128D vectors
             compression: "zstd".to_string(), // ZSTD for better compression
             compression_level: 3,            // Balanced speed/compression
             enable_statistics: true,
@@ -1330,7 +1329,6 @@ pub struct ApiConfig {
     // ============================================================
     // Unified Port Architecture (Phase 14)
     // ============================================================
-
     /// Enable unified port mode (REST + gRPC + Arrow Flight on single port)
     /// When enabled, `unified_port` is used; individual ports are ignored.
     /// Default: false (legacy multi-port mode for backward compatibility)

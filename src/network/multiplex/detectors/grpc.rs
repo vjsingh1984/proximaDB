@@ -8,7 +8,7 @@
 //! Detects gRPC requests based on Content-Type and HTTP/2 indicators.
 
 use crate::network::multiplex::traits::{DetectedProtocol, DetectionResult, ProtocolDetector};
-use hyper::http::{header, Request, Version};
+use hyper::http::{Request, Version, header};
 
 /// Default priority for gRPC detector (after Arrow Flight, before REST)
 pub const GRPC_DETECTOR_PRIORITY: u32 = 100;
@@ -197,7 +197,9 @@ mod tests {
 
     #[test]
     fn test_is_grpc_path() {
-        assert!(GrpcDetector::is_grpc_path("/proximadb.v1.VectorService/Search"));
+        assert!(GrpcDetector::is_grpc_path(
+            "/proximadb.v1.VectorService/Search"
+        ));
         assert!(GrpcDetector::is_grpc_path("/Service/Method"));
         assert!(GrpcDetector::is_grpc_path("/package.Service/Method"));
 

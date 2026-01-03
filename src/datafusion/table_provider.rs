@@ -32,16 +32,16 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use tracing::{debug, info, trace};
 
-use crate::storage::formats::InternalFormat;
 use crate::storage::formats::FileSplit;
+use crate::storage::formats::InternalFormat;
 use crate::storage::schema::ProximaSchema;
 
-use super::predicate_pushdown::{convert_expr_to_filter, PushdownCapability};
-use super::scan_executor::ProximaDBScanExec;
+use super::predicate_pushdown::{PushdownCapability, convert_expr_to_filter};
 use super::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use super::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
+use super::scan_executor::ProximaDBScanExec;
 
 /// Configuration for ProximaDBTableProvider.
 #[derive(Debug, Clone)]
@@ -199,17 +199,20 @@ impl TableProvider for ProximaDBTableProvider {
         filters: &[&Expr],
     ) -> DFResult<Vec<TableProviderFilterPushDown>> {
         if !self.config.enable_filter_pushdown {
-            return Ok(vec![TableProviderFilterPushDown::Unsupported; filters.len()]);
+            return Ok(vec![
+                TableProviderFilterPushDown::Unsupported;
+                filters.len()
+            ]);
         }
 
         let results = filters
             .iter()
-            .map(|expr| {
-                match convert_expr_to_filter(expr, &self.proxima_schema) {
+            .map(
+                |expr| match convert_expr_to_filter(expr, &self.proxima_schema) {
                     Ok(_) => TableProviderFilterPushDown::Exact,
                     Err(_) => TableProviderFilterPushDown::Unsupported,
-                }
-            })
+                },
+            )
             .collect();
 
         Ok(results)
@@ -234,9 +237,7 @@ impl TableProvider for ProximaDBTableProvider {
         let storage_filters = if self.config.enable_filter_pushdown {
             filters
                 .iter()
-                .filter_map(|expr| {
-                    convert_expr_to_filter(expr, &self.proxima_schema).ok()
-                })
+                .filter_map(|expr| convert_expr_to_filter(expr, &self.proxima_schema).ok())
                 .collect::<Vec<_>>()
         } else {
             vec![]
@@ -249,7 +250,9 @@ impl TableProvider for ProximaDBTableProvider {
             Some(storage_filters.into_iter().next().unwrap())
         } else {
             // Combine multiple filters with AND
-            Some(crate::storage::formats::FilterExpression::And(storage_filters))
+            Some(crate::storage::formats::FilterExpression::And(
+                storage_filters,
+            ))
         };
 
         // Create scan executor
@@ -489,7 +492,10 @@ impl TableProvider for ProximaDataFusionTable {
         filters: &[&Expr],
     ) -> DFResult<Vec<TableProviderFilterPushDown>> {
         if !self.config.enable_filter_pushdown {
-            return Ok(vec![TableProviderFilterPushDown::Unsupported; filters.len()]);
+            return Ok(vec![
+                TableProviderFilterPushDown::Unsupported;
+                filters.len()
+            ]);
         }
 
         // For now, mark all filters as Inexact (we'll apply them but can't guarantee pruning)
@@ -661,8 +667,7 @@ mod tests {
             .with_vector_count(50000);
         let reader = Arc::new(NullSplitReader::new(schema.clone(), EngineType::Nova));
 
-        let table =
-            ProximaDataFusionTable::new("my_vectors".to_string(), info, schema, reader);
+        let table = ProximaDataFusionTable::new("my_vectors".to_string(), info, schema, reader);
 
         let debug_str = format!("{:?}", table);
         assert!(debug_str.contains("my_vectors"));
@@ -677,8 +682,13 @@ mod tests {
         let info = CollectionInfo::new("test".to_string(), 128, EngineType::Swift);
         let reader = Arc::new(NullSplitReader::new(schema.clone(), EngineType::Swift));
 
-        let splits =
-            vec![FileSplit::new_block("/data/file.sst".to_string(), 0, 0, 1024, 100)];
+        let splits = vec![FileSplit::new_block(
+            "/data/file.sst".to_string(),
+            0,
+            0,
+            1024,
+            100,
+        )];
 
         let table = ProximaDataFusionTable::new("test".to_string(), info, schema, reader)
             .with_splits(splits);

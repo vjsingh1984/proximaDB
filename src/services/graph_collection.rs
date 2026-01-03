@@ -55,18 +55,22 @@ impl GraphCollectionMetadata {
             description: collection.description.clone(),
             created_at: collection.created_at,
             updated_at: collection.updated_at,
-            schema_json: collection.schema.as_ref().map(|s| {
-                serde_json::to_string(s).unwrap_or_default()
-            }),
-            storage_config_json: collection.storage_config.as_ref().map(|s| {
-                serde_json::to_string(s).unwrap_or_default()
-            }),
-            engine_config_json: collection.engine_config.as_ref().map(|s| {
-                serde_json::to_string(s).unwrap_or_default()
-            }),
-            access_control_json: collection.access_control.as_ref().map(|s| {
-                serde_json::to_string(s).unwrap_or_default()
-            }),
+            schema_json: collection
+                .schema
+                .as_ref()
+                .map(|s| serde_json::to_string(s).unwrap_or_default()),
+            storage_config_json: collection
+                .storage_config
+                .as_ref()
+                .map(|s| serde_json::to_string(s).unwrap_or_default()),
+            engine_config_json: collection
+                .engine_config
+                .as_ref()
+                .map(|s| serde_json::to_string(s).unwrap_or_default()),
+            access_control_json: collection
+                .access_control
+                .as_ref()
+                .map(|s| serde_json::to_string(s).unwrap_or_default()),
         }
     }
 
@@ -77,18 +81,22 @@ impl GraphCollectionMetadata {
             description: self.description.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
-            schema: self.schema_json.as_ref().and_then(|s| {
-                serde_json::from_str(s).ok()
-            }),
-            storage_config: self.storage_config_json.as_ref().and_then(|s| {
-                serde_json::from_str(s).ok()
-            }),
-            engine_config: self.engine_config_json.as_ref().and_then(|s| {
-                serde_json::from_str(s).ok()
-            }),
-            access_control: self.access_control_json.as_ref().and_then(|s| {
-                serde_json::from_str(s).ok()
-            }),
+            schema: self
+                .schema_json
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
+            storage_config: self
+                .storage_config_json
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
+            engine_config: self
+                .engine_config_json
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
+            access_control: self
+                .access_control_json
+                .as_ref()
+                .and_then(|s| serde_json::from_str(s).ok()),
             stats: None, // Stats are runtime-computed
         }
     }
@@ -163,13 +171,19 @@ impl GraphCollectionService {
         match service.load_from_disk().await {
             Ok(count) => {
                 if count > 0 {
-                    info!("Graph collection service recovered {} collections from disk", count);
+                    info!(
+                        "Graph collection service recovered {} collections from disk",
+                        count
+                    );
                 } else {
                     debug!("Graph collection service started with no persisted collections");
                 }
             }
             Err(e) => {
-                warn!("Failed to load graph collections from disk: {}. Starting with empty state.", e);
+                warn!(
+                    "Failed to load graph collections from disk: {}. Starting with empty state.",
+                    e
+                );
                 // Continue with empty state - don't fail initialization
             }
         }
@@ -192,10 +206,7 @@ impl GraphCollectionService {
         let contents = fs::read_to_string(&self.persistence_path)
             .await
             .map_err(|e| {
-                ProximaDBError::Internal(format!(
-                    "Failed to read graph metadata file: {}",
-                    e
-                ))
+                ProximaDBError::Internal(format!("Failed to read graph metadata file: {}", e))
             })?;
 
         let store: GraphMetadataStore = serde_json::from_str(&contents).map_err(|e| {
@@ -208,10 +219,7 @@ impl GraphCollectionService {
             self.collections.insert(graph_id, collection);
         }
 
-        info!(
-            "Loaded {} graph collections from persistent storage",
-            count
-        );
+        info!("Loaded {} graph collections from persistent storage", count);
         Ok(count)
     }
 
@@ -254,10 +262,7 @@ impl GraphCollectionService {
         fs::rename(&temp_path, &self.persistence_path)
             .await
             .map_err(|e| {
-                ProximaDBError::Internal(format!(
-                    "Failed to finalize graph metadata file: {}",
-                    e
-                ))
+                ProximaDBError::Internal(format!("Failed to finalize graph metadata file: {}", e))
             })?;
 
         debug!(
@@ -366,7 +371,10 @@ impl GraphCollectionService {
             // Persist to disk
             drop(collection_ref); // Release the lock before async call
             if let Err(e) = self.save_to_disk().await {
-                warn!("Failed to persist graph metadata after schema update: {}", e);
+                warn!(
+                    "Failed to persist graph metadata after schema update: {}",
+                    e
+                );
             }
 
             info!("Updated schema for graph: {}", graph_id);

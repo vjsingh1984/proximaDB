@@ -37,7 +37,7 @@ pub use certificate_manager::{
 };
 
 use anyhow::Result;
-use rustls::{server::AllowAnyAuthenticatedClient, RootCertStore, ServerConfig};
+use rustls::{RootCertStore, ServerConfig, server::AllowAnyAuthenticatedClient};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
@@ -329,8 +329,7 @@ fn asn1_time_to_system_time(
     let timestamp = datetime.unix_timestamp();
 
     if timestamp >= 0 {
-        Ok(std::time::SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(timestamp as u64))
+        Ok(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64))
     } else {
         Err(TlsError::CertificateParse(
             "Invalid certificate time".to_string(),
@@ -373,10 +372,7 @@ mod tests {
         let (cert, key) = config.get_certificate_paths().unwrap();
         assert_eq!(cert, PathBuf::from("/path/to/cert.pem"));
         assert_eq!(key, PathBuf::from("/path/to/key.pem"));
-        assert_eq!(
-            config.get_ca_path(),
-            Some(PathBuf::from("/path/to/ca.pem"))
-        );
+        assert_eq!(config.get_ca_path(), Some(PathBuf::from("/path/to/ca.pem")));
     }
 
     #[tokio::test]

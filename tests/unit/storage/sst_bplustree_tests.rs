@@ -19,7 +19,9 @@ fn create_test_entries(count: usize) -> Vec<IndexEntry> {
             metadata_null_counts: std::collections::HashMap::new(),
             block_key_bloom: None,
             block_metadata_bloom: None,
-            vector_format: proximadb::storage::engines::impls::sst::VectorFormat::Fixed { dimension: 8 },
+            vector_format: proximadb::storage::engines::impls::sst::VectorFormat::Fixed {
+                dimension: 8,
+            },
             zorder_code: None,
         })
         .collect()

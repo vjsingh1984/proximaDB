@@ -2,7 +2,6 @@
 //
 // Maps PostgreSQL types to ProximaDB types
 
-
 /// PostgreSQL type
 #[derive(Debug, Clone, PartialEq)]
 pub enum PgType {
@@ -249,18 +248,22 @@ impl PgValue {
             PgType::Int2 => text.parse().map(DataValue::Int2).map_err(|e| e.to_string()),
             PgType::Int4 => text.parse().map(DataValue::Int4).map_err(|e| e.to_string()),
             PgType::Int8 => text.parse().map(DataValue::Int8).map_err(|e| e.to_string()),
-            PgType::Float4 => text.parse().map(DataValue::Float4).map_err(|e| e.to_string()),
-            PgType::Float8 => text.parse().map(DataValue::Float8).map_err(|e| e.to_string()),
+            PgType::Float4 => text
+                .parse()
+                .map(DataValue::Float4)
+                .map_err(|e| e.to_string()),
+            PgType::Float8 => text
+                .parse()
+                .map(DataValue::Float8)
+                .map_err(|e| e.to_string()),
             PgType::Text | PgType::Varchar => Ok(DataValue::Text(text.to_string())),
             PgType::Json | PgType::Jsonb => Ok(DataValue::Json(text.to_string())),
             PgType::Uuid => Ok(DataValue::Uuid(text.to_string())),
             PgType::Vector => {
                 // Parse [1.0, 2.0, 3.0] format
                 let trimmed = text.trim_start_matches('[').trim_end_matches(']');
-                let values: Result<Vec<f32>, _> = trimmed
-                    .split(',')
-                    .map(|s| s.trim().parse())
-                    .collect();
+                let values: Result<Vec<f32>, _> =
+                    trimmed.split(',').map(|s| s.trim().parse()).collect();
                 values.map(DataValue::Vector).map_err(|e| e.to_string())
             }
             _ => Ok(DataValue::Text(text.to_string())),
@@ -334,7 +337,10 @@ mod tests {
     fn test_encode_text() {
         assert_eq!(PgValue::encode_text(&DataValue::Bool(true)), "t");
         assert_eq!(PgValue::encode_text(&DataValue::Int4(42)), "42");
-        assert_eq!(PgValue::encode_text(&DataValue::Text("hello".to_string())), "hello");
+        assert_eq!(
+            PgValue::encode_text(&DataValue::Text("hello".to_string())),
+            "hello"
+        );
     }
 
     #[test]

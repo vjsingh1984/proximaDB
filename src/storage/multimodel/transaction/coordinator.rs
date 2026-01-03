@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -144,7 +144,9 @@ impl TransactionCoordinator {
     pub fn new(config: TransactionConfig) -> Self {
         Self {
             isolation_manager: Arc::new(IsolationManager::new(config.default_isolation)),
-            two_phase_commit: Arc::new(TwoPhaseCommitProtocol::new(config.two_phase_commit.clone())),
+            two_phase_commit: Arc::new(TwoPhaseCommitProtocol::new(
+                config.two_phase_commit.clone(),
+            )),
             config,
             transactions: RwLock::new(HashMap::new()),
             stats: RwLock::new(TransactionStats::default()),
@@ -153,7 +155,9 @@ impl TransactionCoordinator {
 
     /// Register a 2PC participant
     pub async fn register_participant(&self, participant: Arc<dyn TwoPhaseParticipant>) {
-        self.two_phase_commit.register_participant(participant).await;
+        self.two_phase_commit
+            .register_participant(participant)
+            .await;
     }
 
     /// Begin a new transaction
@@ -172,7 +176,8 @@ impl TransactionCoordinator {
         let txn_id = transaction.id.clone();
 
         // Initialize MVCC snapshot
-        let snapshot = self.isolation_manager
+        let snapshot = self
+            .isolation_manager
             .begin_transaction(&txn_id, Some(level))
             .await;
         transaction.snapshot = snapshot;
@@ -196,7 +201,10 @@ impl TransactionCoordinator {
     }
 
     /// Begin a transaction with auto-commit mode
-    pub async fn begin_auto_commit(&self, isolation_level: Option<IsolationLevel>) -> Result<String> {
+    pub async fn begin_auto_commit(
+        &self,
+        isolation_level: Option<IsolationLevel>,
+    ) -> Result<String> {
         let txn_id = self.begin(isolation_level).await?;
 
         {
@@ -239,7 +247,12 @@ impl TransactionCoordinator {
     }
 
     /// Record a write operation
-    pub async fn record_write(&self, txn_id: &str, store_type: &str, record_id: &str) -> Result<()> {
+    pub async fn record_write(
+        &self,
+        txn_id: &str,
+        store_type: &str,
+        record_id: &str,
+    ) -> Result<()> {
         {
             let transactions = self.transactions.read().await;
             if !transactions.contains_key(txn_id) {
@@ -247,12 +260,19 @@ impl TransactionCoordinator {
             }
         }
 
-        self.isolation_manager.record_write(txn_id, store_type, record_id).await;
+        self.isolation_manager
+            .record_write(txn_id, store_type, record_id)
+            .await;
         Ok(())
     }
 
     /// Record a delete operation
-    pub async fn record_delete(&self, txn_id: &str, store_type: &str, record_id: &str) -> Result<()> {
+    pub async fn record_delete(
+        &self,
+        txn_id: &str,
+        store_type: &str,
+        record_id: &str,
+    ) -> Result<()> {
         {
             let transactions = self.transactions.read().await;
             if !transactions.contains_key(txn_id) {
@@ -260,7 +280,9 @@ impl TransactionCoordinator {
             }
         }
 
-        self.isolation_manager.record_delete(txn_id, store_type, record_id).await;
+        self.isolation_manager
+            .record_delete(txn_id, store_type, record_id)
+            .await;
         Ok(())
     }
 
@@ -287,12 +309,18 @@ impl TransactionCoordinator {
                 self.two_phase_commit.commit(txn_id).await?;
             } else {
                 self.two_phase_commit.abort(txn_id).await?;
-                return Err(anyhow!("Transaction {} aborted during prepare phase", txn_id));
+                return Err(anyhow!(
+                    "Transaction {} aborted during prepare phase",
+                    txn_id
+                ));
             }
         }
 
         // Commit in isolation manager
-        self.isolation_manager.commit_transaction(txn_id).await.map_err(|e| anyhow!(e))?;
+        self.isolation_manager
+            .commit_transaction(txn_id)
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         // Update transaction state
         {
@@ -315,7 +343,10 @@ impl TransactionCoordinator {
             stats.avg_duration_ms = new_avg;
         }
 
-        info!("Transaction {} committed (duration: {:?})", txn_id, duration);
+        info!(
+            "Transaction {} committed (duration: {:?})",
+            txn_id, duration
+        );
         Ok(())
     }
 
@@ -393,9 +424,7 @@ impl TransactionCoordinator {
     /// Cleanup completed transactions
     pub async fn cleanup_completed(&self, max_age: Duration) {
         let mut transactions = self.transactions.write().await;
-        transactions.retain(|_, txn| {
-            txn.is_active() || txn.duration() < max_age
-        });
+        transactions.retain(|_, txn| txn.is_active() || txn.duration() < max_age);
 
         // Also cleanup in 2PC
         self.two_phase_commit.cleanup_completed(max_age).await;
@@ -489,8 +518,14 @@ mod tests {
         let txn_id = coordinator.begin(None).await.unwrap();
 
         // Single store - no 2PC needed
-        coordinator.involve_store(&txn_id, ParticipantType::Vector).await.unwrap();
-        coordinator.record_write(&txn_id, "vector", "vec1").await.unwrap();
+        coordinator
+            .involve_store(&txn_id, ParticipantType::Vector)
+            .await
+            .unwrap();
+        coordinator
+            .record_write(&txn_id, "vector", "vec1")
+            .await
+            .unwrap();
 
         coordinator.commit(&txn_id).await.unwrap();
 
@@ -506,7 +541,10 @@ mod tests {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
         let txn_id = coordinator.begin(None).await.unwrap();
-        coordinator.involve_store(&txn_id, ParticipantType::Vector).await.unwrap();
+        coordinator
+            .involve_store(&txn_id, ParticipantType::Vector)
+            .await
+            .unwrap();
 
         coordinator.rollback(&txn_id).await.unwrap();
 
@@ -527,10 +565,16 @@ mod tests {
 
         let txn_id = coordinator.begin(None).await.unwrap();
 
-        coordinator.involve_store(&txn_id, ParticipantType::Vector).await.unwrap();
+        coordinator
+            .involve_store(&txn_id, ParticipantType::Vector)
+            .await
+            .unwrap();
         assert!(!coordinator.is_distributed(&txn_id).await);
 
-        coordinator.involve_store(&txn_id, ParticipantType::Document).await.unwrap();
+        coordinator
+            .involve_store(&txn_id, ParticipantType::Document)
+            .await
+            .unwrap();
         assert!(coordinator.is_distributed(&txn_id).await);
     }
 
@@ -555,12 +599,24 @@ mod tests {
     async fn test_coordinator_isolation_levels() {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
-        let txn1 = coordinator.begin(Some(IsolationLevel::ReadCommitted)).await.unwrap();
-        let txn2 = coordinator.begin(Some(IsolationLevel::Serializable)).await.unwrap();
+        let txn1 = coordinator
+            .begin(Some(IsolationLevel::ReadCommitted))
+            .await
+            .unwrap();
+        let txn2 = coordinator
+            .begin(Some(IsolationLevel::Serializable))
+            .await
+            .unwrap();
 
         let stats = coordinator.stats().await;
-        assert_eq!(stats.by_isolation.get(&IsolationLevel::ReadCommitted), Some(&1));
-        assert_eq!(stats.by_isolation.get(&IsolationLevel::Serializable), Some(&1));
+        assert_eq!(
+            stats.by_isolation.get(&IsolationLevel::ReadCommitted),
+            Some(&1)
+        );
+        assert_eq!(
+            stats.by_isolation.get(&IsolationLevel::Serializable),
+            Some(&1)
+        );
     }
 
     #[tokio::test]

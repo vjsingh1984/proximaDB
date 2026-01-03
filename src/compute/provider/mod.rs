@@ -91,11 +91,7 @@ pub mod local;
 
 // Re-exports for convenience
 pub use traits::{
-    ComputeProvider,
-    ComputeCapabilities,
-    CostEstimate,
-    ExecutionContext,
-    ProviderMetrics,
+    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, ProviderMetrics,
 };
 
 pub use local::LocalComputeProvider;

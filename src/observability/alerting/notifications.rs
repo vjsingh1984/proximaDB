@@ -153,7 +153,8 @@ impl NotificationManager {
             }]
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(&config.webhook_url)
             .json(&payload)
             .send()
@@ -196,7 +197,8 @@ impl NotificationManager {
             }
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://events.pagerduty.com/v2/enqueue")
             .json(&payload)
             .send()

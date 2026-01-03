@@ -92,7 +92,9 @@ pub use session::{AckMessage, SessionState, SessionStats, StreamId, StreamSessio
 
 /// Stream coordinator for managing multiple streams
 mod coordinator;
-pub use coordinator::{CoordinatorStats, FlushRetryConfig, FlushStats, PushResult, StreamCoordinator};
+pub use coordinator::{
+    CoordinatorStats, FlushRetryConfig, FlushStats, PushResult, StreamCoordinator,
+};
 
 /// Prometheus metrics for streaming
 mod metrics;
@@ -105,24 +107,24 @@ pub use rate_limiter::RateLimiter;
 /// Integrated streaming service (coordinator + subscriptions)
 mod integrated_service;
 pub use integrated_service::{
-    FlushAndNotifyResult, IntegratedServiceConfig, IntegratedServiceStats, IntegratedStreamingService,
-    PushAndNotifyResult,
+    FlushAndNotifyResult, IntegratedServiceConfig, IntegratedServiceStats,
+    IntegratedStreamingService, PushAndNotifyResult,
 };
 
 /// Live query subscription system
 pub mod subscriptions;
 pub use subscriptions::{
-    EvaluationResult, QueryEvaluator, QueryFingerprint, QueryUpdate, ResultChange,
-    ScoreChange, ScoredResult, Subscription, SubscriptionConfig, SubscriptionHandle,
-    SubscriptionId, SubscriptionManager, SubscriptionState, UpdateType,
+    EvaluationResult, QueryEvaluator, QueryFingerprint, QueryUpdate, ResultChange, ScoreChange,
+    ScoredResult, Subscription, SubscriptionConfig, SubscriptionHandle, SubscriptionId,
+    SubscriptionManager, SubscriptionState, UpdateType,
 };
 
 /// Kafka consumer integration
 pub mod kafka;
 pub use kafka::{
-    CommitStrategy, ConsumerGroupConfig, ConsumerHandle, ConsumerStatus,
-    DeserializationError, DeserializationFormat, DlqConfig, KafkaConsumerConfig,
-    KafkaVectorConsumer, MessageDeserializer, VectorMessage,
+    CommitStrategy, ConsumerGroupConfig, ConsumerHandle, ConsumerStatus, DeserializationError,
+    DeserializationFormat, DlqConfig, KafkaConsumerConfig, KafkaVectorConsumer,
+    MessageDeserializer, VectorMessage,
 };
 
 #[cfg(test)]

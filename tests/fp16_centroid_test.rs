@@ -16,10 +16,10 @@ use proximadb::storage::engines::impls::sst::{fp16_to_fp32, fp32_to_fp16};
 fn test_fp16_conversion_accuracy() {
     // Test conversion accuracy for typical centroid values
     let test_vectors = vec![
-        vec![0.0, 1.0, -1.0, 0.5, -0.5],           // Simple values
-        vec![0.001, 0.999, -0.001, -0.999],         // Near boundaries
-        vec![1.5, -1.5, 2.0, -2.0, 3.0],            // Larger magnitudes
-        vec![1e-3, 1e-2, 1e-1, 1e0, 1e1],           // Different scales
+        vec![0.0, 1.0, -1.0, 0.5, -0.5],    // Simple values
+        vec![0.001, 0.999, -0.001, -0.999], // Near boundaries
+        vec![1.5, -1.5, 2.0, -2.0, 3.0],    // Larger magnitudes
+        vec![1e-3, 1e-2, 1e-1, 1e0, 1e1],   // Different scales
     ];
 
     for original in test_vectors {
@@ -41,7 +41,10 @@ fn test_fp16_conversion_accuracy() {
             assert!(
                 rel_error < 0.001 || abs_error < 0.001,
                 "Dimension {}: FP16 conversion error too large. Original: {}, Reconstructed: {}, Rel Error: {:.4}%",
-                i, orig, recon, rel_error * 100.0
+                i,
+                orig,
+                recon,
+                rel_error * 100.0
             );
         }
     }
@@ -61,7 +64,11 @@ fn test_fp16_storage_reduction() {
 
     assert_eq!(fp32_bytes, dimension * 4);
     assert_eq!(fp16_bytes, dimension * 2);
-    assert_eq!(fp16_bytes, fp32_bytes / 2, "FP16 should be 50% of FP32 storage");
+    assert_eq!(
+        fp16_bytes,
+        fp32_bytes / 2,
+        "FP16 should be 50% of FP32 storage"
+    );
 }
 
 #[test]
@@ -122,17 +129,16 @@ fn test_fp16_recall_preservation() {
         .map(|(idx, centroid)| (idx, euclidean_distance(&query, centroid)))
         .collect();
     distances_fp32.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    let top_k_fp32: Vec<usize> = distances_fp32.iter().take(top_k).map(|(idx, _)| *idx).collect();
+    let top_k_fp32: Vec<usize> = distances_fp32
+        .iter()
+        .take(top_k)
+        .map(|(idx, _)| *idx)
+        .collect();
 
     // Convert centroids to FP16 and back, compute distances, find top K
-    let centroids_fp16: Vec<Vec<u16>> = centroids_fp32
-        .iter()
-        .map(|c| fp32_to_fp16(c))
-        .collect();
-    let centroids_fp32_reconstructed: Vec<Vec<f32>> = centroids_fp16
-        .iter()
-        .map(|c| fp16_to_fp32(c))
-        .collect();
+    let centroids_fp16: Vec<Vec<u16>> = centroids_fp32.iter().map(|c| fp32_to_fp16(c)).collect();
+    let centroids_fp32_reconstructed: Vec<Vec<f32>> =
+        centroids_fp16.iter().map(|c| fp16_to_fp32(c)).collect();
 
     let mut distances_fp16: Vec<(usize, f32)> = centroids_fp32_reconstructed
         .iter()
@@ -140,13 +146,24 @@ fn test_fp16_recall_preservation() {
         .map(|(idx, centroid)| (idx, euclidean_distance(&query, centroid)))
         .collect();
     distances_fp16.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    let top_k_fp16: Vec<usize> = distances_fp16.iter().take(top_k).map(|(idx, _)| *idx).collect();
+    let top_k_fp16: Vec<usize> = distances_fp16
+        .iter()
+        .take(top_k)
+        .map(|(idx, _)| *idx)
+        .collect();
 
     // Calculate recall
-    let intersection = top_k_fp32.iter().filter(|&idx| top_k_fp16.contains(idx)).count();
+    let intersection = top_k_fp32
+        .iter()
+        .filter(|&idx| top_k_fp16.contains(idx))
+        .count();
     let recall = intersection as f32 / top_k as f32;
 
-    println!("Top-{} recall with FP16 centroids: {:.2}%", top_k, recall * 100.0);
+    println!(
+        "Top-{} recall with FP16 centroids: {:.2}%",
+        top_k,
+        recall * 100.0
+    );
     println!("FP32 top-{}: {:?}", top_k, top_k_fp32);
     println!("FP16 top-{}: {:?}", top_k, top_k_fp16);
 
@@ -162,11 +179,11 @@ fn test_fp16_recall_preservation() {
 fn test_fp16_edge_cases() {
     // Test edge cases: zero, very small, very large values
     let edge_cases = vec![
-        vec![0.0, 0.0, 0.0, 0.0],           // All zeros
-        vec![1e-6, 1e-5, 1e-4, 1e-3],       // Very small positive
-        vec![-1e-6, -1e-5, -1e-4, -1e-3],   // Very small negative
-        vec![10.0, 20.0, 30.0, 40.0],       // Large values
-        vec![-10.0, -20.0, -30.0, -40.0],   // Large negative values
+        vec![0.0, 0.0, 0.0, 0.0],         // All zeros
+        vec![1e-6, 1e-5, 1e-4, 1e-3],     // Very small positive
+        vec![-1e-6, -1e-5, -1e-4, -1e-3], // Very small negative
+        vec![10.0, 20.0, 30.0, 40.0],     // Large values
+        vec![-10.0, -20.0, -30.0, -40.0], // Large negative values
     ];
 
     for original in edge_cases {
@@ -175,7 +192,11 @@ fn test_fp16_edge_cases() {
 
         // For edge cases, allow slightly larger errors but ensure no NaN/Inf
         for &val in &reconstructed {
-            assert!(val.is_finite(), "FP16 conversion produced non-finite value: {}", val);
+            assert!(
+                val.is_finite(),
+                "FP16 conversion produced non-finite value: {}",
+                val
+            );
         }
     }
 }

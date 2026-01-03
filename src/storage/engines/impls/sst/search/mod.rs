@@ -37,10 +37,12 @@ use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
+use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::index::axis::management::manager::{
+    FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+};
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
@@ -92,7 +94,8 @@ impl SstEngine {
         // 2. Quantization is enabled, OR
         // 3. AXIS manager is available (for collections built after AXIS became available)
         let has_axis_manager = self.axis_manager().is_some();
-        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
+        let use_orchestration =
+            ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
 
         if has_axis_manager {
             debug!("🔍 SST: AXIS manager is available for HNSW/IVF search");
@@ -192,9 +195,7 @@ impl SstEngine {
 
                     // If we need vectors or got fewer results, optionally refine with SST lookup
                     if results.is_empty() {
-                        info!(
-                            "⚠️ SST: AXIS returned no results, falling back to direct search"
-                        );
+                        info!("⚠️ SST: AXIS returned no results, falling back to direct search");
                         return self
                             .fallback_to_direct_search(
                                 ctx,
@@ -359,7 +360,11 @@ impl SstEngine {
                 prune_config, // [AGENT_FIX] Pass prune config down
             )
             .await?;
-        tracing::debug!("[SST] Discovered {} SSTable files (search_mode={:?})", sstable_files.len(), search_mode);
+        tracing::debug!(
+            "[SST] Discovered {} SSTable files (search_mode={:?})",
+            sstable_files.len(),
+            search_mode
+        );
         for (i, file) in sstable_files.iter().enumerate() {
             tracing::trace!(index = i, file = %file, "Discovered SSTable file");
         }
@@ -418,11 +423,7 @@ impl SstEngine {
                     all_candidates.extend(results);
                 }
                 Err(e) => {
-                    warn!(
-                        "SST: Failed to search file {}: {}",
-                        sstable_path,
-                        e
-                    );
+                    warn!("SST: Failed to search file {}: {}", sstable_path, e);
                     // Continue with other files
                 }
             }
@@ -493,7 +494,10 @@ impl SstEngine {
         // For exact mode or small datasets (<= min_keep), search all files
         if matches!(search_mode, SearchMode::Exact) || all_files.len() <= min_keep {
             if !matches!(search_mode, SearchMode::Exact) {
-                 tracing::warn!("Fewer than or equal to `min_keep` ({}) SST files, forcing exact search.", min_keep);
+                tracing::warn!(
+                    "Fewer than or equal to `min_keep` ({}) SST files, forcing exact search.",
+                    min_keep
+                );
             }
             return Ok(all_files);
         }
@@ -508,7 +512,7 @@ impl SstEngine {
             );
             return Ok(all_files);
         }
-        
+
         // For adaptive mode with small datasets, search all files
         if let SearchMode::Adaptive { threshold } = search_mode {
             if all_files.len() <= 3 {
@@ -579,10 +583,7 @@ impl SstEngine {
     }
 
     /// Load centroid from SST header for partition-aware search
-    async fn load_sst_header_centroid(
-        &self,
-        file_path: &str,
-    ) -> Result<Option<(Vec<f32>, f32)>> {
+    async fn load_sst_header_centroid(&self, file_path: &str) -> Result<Option<(Vec<f32>, f32)>> {
         use crate::storage::engines::impls::sst::SstableHeader;
 
         let fs = self.filesystem().get_filesystem(file_path)?;
@@ -797,22 +798,23 @@ impl SstEngine {
         limit: usize,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        use crate::compute::distance_computation::engine::{SimilarityResult, UnifiedDistanceCompute};
+        use crate::compute::distance_computation::engine::{
+            SimilarityResult, UnifiedDistanceCompute,
+        };
         use std::sync::Arc;
 
         debug!("🏹 Searching Arrow file: {}", arrow_path);
 
         // Convert file:// URL to local path
-        let local_path = arrow_path
-            .strip_prefix("file://")
-            .unwrap_or(arrow_path);
+        let local_path = arrow_path.strip_prefix("file://").unwrap_or(arrow_path);
 
         // Open the Arrow file reader
         let reader = ArrowBlockReader::open(local_path)
             .map_err(|e| anyhow::anyhow!("Failed to open Arrow file {}: {}", arrow_path, e))?;
 
         // Read all records from the Arrow file
-        let records = reader.read_all()
+        let records = reader
+            .read_all()
             .map_err(|e| anyhow::anyhow!("Failed to read Arrow file {}: {}", arrow_path, e))?;
 
         trace!("🏹 Arrow file contains {} records", records.len());
@@ -823,14 +825,12 @@ impl SstEngine {
         // Score all records
         // Note: Metadata filtering for Arrow files is simplified - for full filter support,
         // use ProximaBlocks format which has optimized filter evaluation
-        let mut candidates: Vec<OptimizedSearchRecord> = Vec::with_capacity(records.len().min(limit));
+        let mut candidates: Vec<OptimizedSearchRecord> =
+            Vec::with_capacity(records.len().min(limit));
 
         for record in records.iter() {
             // Compute raw distance
-            let raw_distance = distance_computer.distance(
-                query_vector,
-                &record.vector,
-            );
+            let raw_distance = distance_computer.distance(query_vector, &record.vector);
 
             // Use SimilarityResult to get normalized_score (higher = more similar)
             // This ensures consistency with the rest of the codebase and BoundedPriorityQueue
@@ -852,7 +852,11 @@ impl SstEngine {
         }
 
         // Sort by score descending (higher normalized_score = more similar = better)
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(limit);
 
         debug!("🏹 Arrow search found {} candidates", candidates.len());

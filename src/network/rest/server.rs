@@ -28,13 +28,17 @@ use tower_http::trace::TraceLayer;
 use super::v1::handlers::{AppState, create_router};
 use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
-use crate::network::tls::TlsConfig as NetworkTlsConfig;
-use crate::security::SecurityCoordinator;
-use crate::network::middleware::backpressure::{BackpressureConfig, create_concurrency_limit_layer};
+use crate::network::middleware::backpressure::{
+    BackpressureConfig, create_concurrency_limit_layer,
+};
 use crate::network::middleware::cors::{CorsConfig, create_cors_layer};
 use crate::network::middleware::request_id::request_id_middleware;
-use crate::network::middleware::tenant::{TenantExtractorConfig, TenantExtractor, tenant_middleware};
+use crate::network::middleware::tenant::{
+    TenantExtractor, TenantExtractorConfig, tenant_middleware,
+};
 use crate::network::middleware::timeout::{TimeoutConfig, create_timeout_layer};
+use crate::network::tls::TlsConfig as NetworkTlsConfig;
+use crate::security::SecurityCoordinator;
 
 /// REST server for ProximaDB
 pub struct RestServer {
@@ -371,7 +375,9 @@ impl RestServer {
                     crate::network::auth::middleware::auth_middleware_unified,
                 ))
             } else {
-                tracing::warn!("Security enabled but no coordinator available; auth layer disabled");
+                tracing::warn!(
+                    "Security enabled but no coordinator available; auth layer disabled"
+                );
                 None
             }
         } else {
@@ -380,16 +386,11 @@ impl RestServer {
 
         // Tenant extraction layer for multi-tenant isolation
         let tenant_extractor = TenantExtractor::with_config(security_config.tenant.clone());
-        let tenant_layer = middleware::from_fn_with_state(
-            tenant_extractor,
-            tenant_middleware,
-        );
+        let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
 
         // Log security configuration
         if security_config.development_mode {
-            tracing::warn!(
-                "⚠️  REST server security: DEVELOPMENT MODE - CORS allows any origin"
-            );
+            tracing::warn!("⚠️  REST server security: DEVELOPMENT MODE - CORS allows any origin");
         } else {
             tracing::info!(
                 "🔒 REST server security: Production mode - CORS whitelist: {:?}",
@@ -492,7 +493,11 @@ impl RestServer {
             tracing::info!("TLS configured for REST server");
         }
 
-        Self { router, bind_addr, tls_config }
+        Self {
+            router,
+            bind_addr,
+            tls_config,
+        }
     }
 
     /// Build a REST router for unified mode without starting a server.
@@ -558,10 +563,13 @@ impl RestServer {
 
     /// Start the REST server with TLS
     async fn start_with_tls(self) -> anyhow::Result<()> {
-        let tls_config = self.tls_config.as_ref()
+        let tls_config = self
+            .tls_config
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("TLS config required for TLS server"))?;
 
-        let (cert_path, key_path) = tls_config.get_certificate_paths()
+        let (cert_path, key_path) = tls_config
+            .get_certificate_paths()
             .ok_or_else(|| anyhow::anyhow!("Certificate paths not configured"))?;
 
         let require_client_certs = tls_config.require_client_certs;
@@ -570,7 +578,14 @@ impl RestServer {
         tracing::info!("Starting REST server with TLS on {}", self.bind_addr);
         tracing::info!("  Certificate: {:?}", cert_path);
         tracing::info!("  Private key: {:?}", key_path);
-        tracing::info!("  mTLS mode: {}", if require_client_certs { "ENABLED" } else { "DISABLED" });
+        tracing::info!(
+            "  mTLS mode: {}",
+            if require_client_certs {
+                "ENABLED"
+            } else {
+                "DISABLED"
+            }
+        );
         if let Some(ref ca) = ca_path {
             tracing::info!("  CA Certificate: {:?}", ca);
         }
@@ -579,15 +594,14 @@ impl RestServer {
 
         // Build rustls config - either mTLS or standard TLS
         if require_client_certs && ca_path.is_some() {
-            self.start_with_mtls(cert_path, key_path, ca_path.unwrap()).await
+            self.start_with_mtls(cert_path, key_path, ca_path.unwrap())
+                .await
         } else {
             // Standard TLS (no client certificates)
-            let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-                &cert_path,
-                &key_path,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to load TLS certificates: {}", e))?;
+            let rustls_config =
+                axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to load TLS certificates: {}", e))?;
 
             axum_server::bind_rustls(self.bind_addr, rustls_config)
                 .serve(self.router.into_make_service())
@@ -605,16 +619,20 @@ impl RestServer {
         key_path: PathBuf,
         ca_path: PathBuf,
     ) -> anyhow::Result<()> {
-        use crate::network::tls::certificate_manager::utils::{load_certs_from_pem, load_private_key_from_pem};
-        use rustls::{server::AllowAnyAuthenticatedClient, RootCertStore, ServerConfig};
+        use crate::network::tls::certificate_manager::utils::{
+            load_certs_from_pem, load_private_key_from_pem,
+        };
+        use rustls::{RootCertStore, ServerConfig, server::AllowAnyAuthenticatedClient};
         use std::sync::Arc;
 
         tracing::info!("Configuring mTLS with client certificate verification");
 
         // Load server certificate and key
-        let cert_pem = tokio::fs::read(&cert_path).await
+        let cert_pem = tokio::fs::read(&cert_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read server certificate: {}", e))?;
-        let key_pem = tokio::fs::read(&key_path).await
+        let key_pem = tokio::fs::read(&key_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read server private key: {}", e))?;
 
         let certs = load_certs_from_pem(&cert_pem)
@@ -623,7 +641,8 @@ impl RestServer {
             .map_err(|e| anyhow::anyhow!("Failed to parse server private key: {}", e))?;
 
         // Load CA certificate for client verification
-        let ca_pem = tokio::fs::read(&ca_path).await
+        let ca_pem = tokio::fs::read(&ca_path)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to read CA certificate: {}", e))?;
         let ca_certs = load_certs_from_pem(&ca_pem)
             .map_err(|e| anyhow::anyhow!("Failed to parse CA certificate: {}", e))?;
@@ -631,8 +650,9 @@ impl RestServer {
         // Build root cert store for client verification
         let mut root_store = RootCertStore::empty();
         for ca_cert in ca_certs {
-            root_store.add(&ca_cert)
-                .map_err(|e| anyhow::anyhow!("Failed to add CA certificate to root store: {}", e))?;
+            root_store.add(&ca_cert).map_err(|e| {
+                anyhow::anyhow!("Failed to add CA certificate to root store: {}", e)
+            })?;
         }
 
         // Create client certificate verifier - allows any cert signed by our CA
@@ -645,7 +665,8 @@ impl RestServer {
             .with_single_cert(certs, key)
             .map_err(|e| anyhow::anyhow!("Failed to build mTLS server config: {}", e))?;
 
-        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(server_config));
+        let rustls_config =
+            axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(server_config));
 
         tracing::info!("mTLS server configured - client certificates will be verified against CA");
         tracing::info!("Note: Client certificate info will be available in request extensions");
@@ -695,7 +716,9 @@ impl RestServer {
         tracing::info!("   DELETE /api/v1/collections/:id           - Delete collection");
         tracing::info!("   POST   /api/v1/search/with_metadata      - Vector search with metadata");
         tracing::info!("   WS     /ws/insert                        - WebSocket vector streaming");
-        tracing::info!("   WS     /ws/subscribe                     - WebSocket live query subscription");
+        tracing::info!(
+            "   WS     /ws/subscribe                     - WebSocket live query subscription"
+        );
         tracing::info!("   WS     /ws/status                        - WebSocket session status");
     }
 }

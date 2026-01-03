@@ -161,9 +161,17 @@ mod tests {
     #[test]
     fn test_isolation_level_strictness() {
         assert!(IsolationLevel::Serializable.strictness() > IsolationLevel::Snapshot.strictness());
-        assert!(IsolationLevel::Snapshot.strictness() > IsolationLevel::RepeatableRead.strictness());
-        assert!(IsolationLevel::RepeatableRead.strictness() > IsolationLevel::ReadCommitted.strictness());
-        assert!(IsolationLevel::ReadCommitted.strictness() > IsolationLevel::ReadUncommitted.strictness());
+        assert!(
+            IsolationLevel::Snapshot.strictness() > IsolationLevel::RepeatableRead.strictness()
+        );
+        assert!(
+            IsolationLevel::RepeatableRead.strictness()
+                > IsolationLevel::ReadCommitted.strictness()
+        );
+        assert!(
+            IsolationLevel::ReadCommitted.strictness()
+                > IsolationLevel::ReadUncommitted.strictness()
+        );
     }
 
     #[test]

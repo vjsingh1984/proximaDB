@@ -3,8 +3,8 @@
 //! Detects and limits high-cardinality labels to prevent
 //! index explosion and memory issues.
 
-use std::collections::{HashMap, HashSet};
 use anyhow::Result;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -131,11 +131,9 @@ impl CardinalityLimiter {
     }
 
     /// Check and potentially modify labels to enforce cardinality limits
-    pub async fn check_labels(
-        &self,
-        labels: &mut HashMap<String, String>,
-    ) -> Result<CheckResult> {
-        self.total_samples.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    pub async fn check_labels(&self, labels: &mut HashMap<String, String>) -> Result<CheckResult> {
+        self.total_samples
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let mut modified_labels = Vec::new();
         let mut warnings = Vec::new();
@@ -171,10 +169,7 @@ impl CardinalityLimiter {
                             )));
                         }
                         LimitAction::Warn => {
-                            warnings.push(format!(
-                                "High-cardinality label: {}",
-                                label_name
-                            ));
+                            warnings.push(format!("High-cardinality label: {}", label_name));
                         }
                     }
                     continue;
@@ -222,9 +217,9 @@ impl CardinalityLimiter {
             // Update stats
             {
                 let mut stats = self.label_stats.write().await;
-                let label_stat = stats.entry(label_name.clone()).or_insert_with(|| {
-                    LabelStats::new(label_name.clone())
-                });
+                let label_stat = stats
+                    .entry(label_name.clone())
+                    .or_insert_with(|| LabelStats::new(label_name.clone()));
                 label_stat.total_samples += 1;
                 if is_new {
                     label_stat.unique_values += 1;
@@ -296,12 +291,14 @@ impl CardinalityLimiter {
 
     /// Get total samples processed
     pub fn total_samples(&self) -> u64 {
-        self.total_samples.load(std::sync::atomic::Ordering::Relaxed)
+        self.total_samples
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get dropped samples count
     pub fn dropped_samples(&self) -> u64 {
-        self.dropped_samples.load(std::sync::atomic::Ordering::Relaxed)
+        self.dropped_samples
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get configuration
@@ -315,8 +312,10 @@ impl CardinalityLimiter {
         self.label_values.write().await.clear();
         self.label_stats.write().await.clear();
         self.high_cardinality_labels.write().await.clear();
-        self.total_samples.store(0, std::sync::atomic::Ordering::Relaxed);
-        self.dropped_samples.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.total_samples
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.dropped_samples
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -383,9 +382,7 @@ mod tests {
 
         // Add values up to limit
         for i in 0..10 {
-            let mut labels = HashMap::from([
-                ("user_id".to_string(), format!("user_{}", i)),
-            ]);
+            let mut labels = HashMap::from([("user_id".to_string(), format!("user_{}", i))]);
             limiter.check_labels(&mut labels).await.unwrap();
         }
 
@@ -405,9 +402,7 @@ mod tests {
 
         // "namespace" is exempt, should not trigger limit
         for i in 0..10 {
-            let mut labels = HashMap::from([
-                ("namespace".to_string(), format!("ns_{}", i)),
-            ]);
+            let mut labels = HashMap::from([("namespace".to_string(), format!("ns_{}", i))]);
             limiter.check_labels(&mut labels).await.unwrap();
         }
 
@@ -421,16 +416,12 @@ mod tests {
 
         // Add some samples
         for _ in 0..5 {
-            let mut labels = HashMap::from([
-                ("host".to_string(), "server1".to_string()),
-            ]);
+            let mut labels = HashMap::from([("host".to_string(), "server1".to_string())]);
             limiter.check_labels(&mut labels).await.unwrap();
         }
 
         for _ in 0..3 {
-            let mut labels = HashMap::from([
-                ("host".to_string(), "server2".to_string()),
-            ]);
+            let mut labels = HashMap::from([("host".to_string(), "server2".to_string())]);
             limiter.check_labels(&mut labels).await.unwrap();
         }
 

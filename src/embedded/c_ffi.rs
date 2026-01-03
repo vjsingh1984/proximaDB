@@ -3,7 +3,7 @@
 //! This module provides C-compatible FFI bindings for using ProximaDB
 //! from C, C++, Go (CGO), and other languages with C interop capabilities.
 
-use std::ffi::{c_char, c_float, c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_float, c_int};
 use std::ptr;
 use std::sync::Arc;
 

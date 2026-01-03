@@ -26,20 +26,23 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use arrow_array::{
-    Array, ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, StructArray,
-    BooleanArray, Float64Array, FixedSizeListArray,
-    builder::{Float32Builder, StringBuilder, Int64Builder, BooleanBuilder, Float64Builder, FixedSizeListBuilder},
+    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array,
+    RecordBatch, StringArray, StructArray,
+    builder::{
+        BooleanBuilder, FixedSizeListBuilder, Float32Builder, Float64Builder, Int64Builder,
+        StringBuilder,
+    },
 };
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
+use super::proxima_schema::{ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType};
 use crate::proto::proximadb_v1::sql_value::Value as ProtoSqlValueInner;
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
 use crate::storage::formats::arrow_conversion::{json_to_sql_value, sql_value_to_json};
-use super::proxima_schema::{ProximaSchema, ProximaColumn, ProximaDataType, VectorElementType};
 
 // ============================================================================
 // VectorRecordBridge Trait
@@ -444,7 +447,11 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Extract metadata from batch at given row.
-    fn extract_metadata(&self, batch: &RecordBatch, row: usize) -> Result<HashMap<String, SqlValue>> {
+    fn extract_metadata(
+        &self,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<HashMap<String, SqlValue>> {
         let metadata_col = match batch.column_by_name("metadata") {
             Some(col) => col,
             None => return Ok(HashMap::new()),
@@ -456,8 +463,8 @@ impl DefaultVectorRecordBridge {
                 return Ok(HashMap::new());
             }
             let json_str = string_array.value(row);
-            let json_map: HashMap<String, JsonValue> = serde_json::from_str(json_str)
-                .unwrap_or_default();
+            let json_map: HashMap<String, JsonValue> =
+                serde_json::from_str(json_str).unwrap_or_default();
             return Ok(json_map
                 .into_iter()
                 .map(|(k, v)| (k, json_to_sql_value(&v)))
@@ -579,9 +586,7 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         let version_array = self.build_version_array(records);
 
         // Build schema and columns
-        let mut fields = vec![
-            Field::new("id", DataType::Utf8, false),
-        ];
+        let mut fields = vec![Field::new("id", DataType::Utf8, false)];
         let mut columns: Vec<ArrayRef> = vec![id_array];
 
         // Add vector column if present in schema and requested
@@ -666,11 +671,7 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         }
 
         // Determine vector dimension
-        let dimension = records
-            .iter()
-            .map(|r| r.vector.len())
-            .max()
-            .unwrap_or(0) as u32;
+        let dimension = records.iter().map(|r| r.vector.len()).max().unwrap_or(0) as u32;
 
         if dimension == 0 {
             return Err(anyhow!("No vectors found in records"));
@@ -738,11 +739,7 @@ pub fn infer_schema_from_vector_records(
         return Err(anyhow!("Cannot infer schema from empty records"));
     }
 
-    let dimension = records
-        .iter()
-        .map(|r| r.vector.len())
-        .max()
-        .unwrap_or(0) as u32;
+    let dimension = records.iter().map(|r| r.vector.len()).max().unwrap_or(0) as u32;
 
     if dimension == 0 {
         return Err(anyhow!("No vectors found in records"));
@@ -910,8 +907,8 @@ impl ProximaSchema {
 
     /// Deserialize from JSON string.
     pub fn from_avro_json(json: &str) -> Result<Self> {
-        let avro: AvroStyleSchema = serde_json::from_str(json)
-            .context("Failed to parse Avro-style JSON")?;
+        let avro: AvroStyleSchema =
+            serde_json::from_str(json).context("Failed to parse Avro-style JSON")?;
         Self::from_avro_style(&avro)
     }
 }
@@ -947,9 +944,10 @@ impl AvroStyleField {
             name: self.name.clone(),
             data_type,
             nullable,
-            default_value: self.default.as_ref().map(|v| {
-                super::proxima_schema::DefaultValue::Literal(v.to_string())
-            }),
+            default_value: self
+                .default
+                .as_ref()
+                .map(|v| super::proxima_schema::DefaultValue::Literal(v.to_string())),
             comment: self.doc.clone(),
             metadata: HashMap::new(),
             is_deleted: false,
@@ -1211,29 +1209,39 @@ mod tests {
     #[test]
     fn test_metadata_json_mode() {
         let schema = ProximaSchema::vector_record_schema(64);
-        let bridge = DefaultVectorRecordBridge::new(schema)
-            .with_metadata_mode(MetadataMode::JsonString);
+        let bridge =
+            DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
         let records = vec![create_test_record("test", 64)];
         let batch = bridge.records_to_batch(&records).unwrap();
 
         // Check metadata column is string type
         let metadata_col = batch.column_by_name("metadata").unwrap();
-        assert!(metadata_col.as_any().downcast_ref::<StringArray>().is_some());
+        assert!(
+            metadata_col
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .is_some()
+        );
     }
 
     #[test]
     fn test_metadata_struct_mode() {
         let schema = ProximaSchema::vector_record_schema(64);
-        let bridge = DefaultVectorRecordBridge::new(schema)
-            .with_metadata_mode(MetadataMode::ArrowStruct);
+        let bridge =
+            DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::ArrowStruct);
 
         let records = vec![create_test_record("test", 64)];
         let batch = bridge.records_to_batch(&records).unwrap();
 
         // Check metadata column is struct type
         let metadata_col = batch.column_by_name("metadata").unwrap();
-        assert!(metadata_col.as_any().downcast_ref::<StructArray>().is_some());
+        assert!(
+            metadata_col
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .is_some()
+        );
     }
 
     #[test]
@@ -1241,10 +1249,7 @@ mod tests {
         let schema = ProximaSchema::vector_record_schema(256);
         let bridge = DefaultVectorRecordBridge::new(schema);
 
-        let records = vec![
-            create_test_record("a", 256),
-            create_test_record("b", 256),
-        ];
+        let records = vec![create_test_record("a", 256), create_test_record("b", 256)];
 
         let inferred = bridge.infer_schema_from_records(&records).unwrap();
         assert_eq!(inferred.vector_dimension(), Some(256));
@@ -1310,10 +1315,7 @@ mod tests {
 
     #[test]
     fn test_infer_schema_from_vector_records() {
-        let records = vec![
-            create_test_record("a", 384),
-            create_test_record("b", 384),
-        ];
+        let records = vec![create_test_record("a", 384), create_test_record("b", 384)];
 
         let schema = infer_schema_from_vector_records(&records, "test_schema".to_string()).unwrap();
         assert_eq!(schema.vector_dimension(), Some(384));
@@ -1343,8 +1345,8 @@ mod tests {
     #[test]
     fn test_nested_metadata() {
         let schema = ProximaSchema::vector_record_schema(32);
-        let bridge = DefaultVectorRecordBridge::new(schema)
-            .with_metadata_mode(MetadataMode::JsonString);
+        let bridge =
+            DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
         let mut metadata = HashMap::new();
         metadata.insert(

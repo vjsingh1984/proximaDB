@@ -46,14 +46,14 @@
 //! ctx.register_table("vectors", Arc::new(sst_provider))?;
 //! ```
 
-pub mod sst_adapter;
 pub mod helix_adapter;
+pub mod sst_adapter;
 pub mod viper_adapter;
 
 // Re-export main types for convenience
-pub use sst_adapter::{SstTableProvider, SstSplitReader};
-pub use helix_adapter::{HelixTableProvider, HelixSplitReader};
-pub use viper_adapter::{ViperTableProvider, ViperSplitReader};
+pub use helix_adapter::{HelixSplitReader, HelixTableProvider};
+pub use sst_adapter::{SstSplitReader, SstTableProvider};
+pub use viper_adapter::{ViperSplitReader, ViperTableProvider};
 
 // Common utilities shared across adapters
 pub mod common {
@@ -117,7 +117,11 @@ pub mod common {
         let vector_bytes = dimension * 4;
         Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new("vector", DataType::FixedSizeBinary(vector_bytes as i32), false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeBinary(vector_bytes as i32),
+                false,
+            ),
             Field::new("metadata", DataType::Utf8, true),
         ]))
     }

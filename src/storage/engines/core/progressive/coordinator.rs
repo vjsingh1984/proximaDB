@@ -125,7 +125,8 @@ impl ProgressiveSearchCoordinator {
         top_k: usize,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<ScoredCandidate>> {
-        self.search_with_expansion(query, candidates, top_k, distance_metric, None).await
+        self.search_with_expansion(query, candidates, top_k, distance_metric, None)
+            .await
     }
 
     /// Execute progressive search with custom expansion factor
@@ -144,7 +145,9 @@ impl ProgressiveSearchCoordinator {
         self.last_stats.clear();
 
         if self.stages.is_empty() {
-            debug!("ProgressiveSearchCoordinator: No stages configured, returning candidates as-is");
+            debug!(
+                "ProgressiveSearchCoordinator: No stages configured, returning candidates as-is"
+            );
             return Ok(candidates);
         }
 
@@ -247,7 +250,9 @@ impl ProgressiveSearchCoordinator {
 
         // Final sort and truncate to top_k
         candidates.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates.truncate(top_k);
 
@@ -307,37 +312,25 @@ impl ProgressivePipelineBuilder {
     }
 
     /// Add a binary stage
-    pub fn with_binary(
-        mut self,
-        stage: super::stage::BinaryStage,
-    ) -> Self {
+    pub fn with_binary(mut self, stage: super::stage::BinaryStage) -> Self {
         self.stages.push(Box::new(stage));
         self
     }
 
     /// Add an INT8 stage
-    pub fn with_int8(
-        mut self,
-        stage: super::stage::Int8Stage,
-    ) -> Self {
+    pub fn with_int8(mut self, stage: super::stage::Int8Stage) -> Self {
         self.stages.push(Box::new(stage));
         self
     }
 
     /// Add a PQ stage
-    pub fn with_pq(
-        mut self,
-        stage: super::stage::PqStage,
-    ) -> Self {
+    pub fn with_pq(mut self, stage: super::stage::PqStage) -> Self {
         self.stages.push(Box::new(stage));
         self
     }
 
     /// Add an FP32 stage (final reranking)
-    pub fn with_fp32(
-        mut self,
-        stage: super::stage::Fp32Stage,
-    ) -> Self {
+    pub fn with_fp32(mut self, stage: super::stage::Fp32Stage) -> Self {
         self.stages.push(Box::new(stage));
         self
     }

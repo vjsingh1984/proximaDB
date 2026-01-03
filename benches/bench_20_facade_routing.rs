@@ -6,10 +6,10 @@ use common::benchmark_utils::print_system_info;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use proximadb::query::facade::{
-    FacadeConfig, QueryContext, QueryRequest, QueryResult, QueryResultData, QueryType,
-    QueryStrategy, UnifiedQueryFacade,
+    FacadeConfig, QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
+    QueryType, UnifiedQueryFacade,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -143,30 +143,28 @@ fn bench_request_construction(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     group.bench_function("vector_request_construction", |b| {
-        b.iter(|| {
-            black_box(QueryRequest::vector_search(vec![0.1, 0.2, 0.3], 10))
-        })
+        b.iter(|| black_box(QueryRequest::vector_search(vec![0.1, 0.2, 0.3], 10)))
     });
 
     group.bench_function("sql_request_construction", |b| {
         b.iter(|| {
-            black_box(QueryRequest::sql("SELECT * FROM products ORDER BY embedding <-> '[0.1,0.2]'::vector LIMIT 10"))
+            black_box(QueryRequest::sql(
+                "SELECT * FROM products ORDER BY embedding <-> '[0.1,0.2]'::vector LIMIT 10",
+            ))
         })
     });
 
     group.bench_function("graph_request_construction", |b| {
         b.iter(|| {
-            black_box(QueryRequest::graph("MATCH (n:Person)-[:KNOWS]->(m) RETURN m"))
+            black_box(QueryRequest::graph(
+                "MATCH (n:Person)-[:KNOWS]->(m) RETURN m",
+            ))
         })
     });
 
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_facade_routing,
-    bench_request_construction,
-);
+criterion_group!(benches, bench_facade_routing, bench_request_construction,);
 
 criterion_main!(benches);

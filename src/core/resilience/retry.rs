@@ -6,10 +6,10 @@
 //! - Configurable delay and max delay
 //! - Retry condition functions
 
+use rand::Rng;
 use std::future::Future;
 use std::time::Duration;
 use thiserror::Error;
-use rand::Rng;
 
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]
@@ -273,8 +273,8 @@ impl RetryableError for std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn test_retry_config_defaults() {

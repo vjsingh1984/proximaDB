@@ -21,13 +21,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{RwLock, mpsc, watch};
 
 use super::config::PostgresConfig;
 use super::decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, TupleData};
 use crate::cdc::config::SourceConfig;
 use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, ConnectorType, Operation, RecordState, SourceInfo, TransactionInfo};
+use crate::cdc::event::{
+    ChangeEvent, ConnectorType, Operation, RecordState, SourceInfo, TransactionInfo,
+};
 use crate::cdc::offset::{Offset, OffsetStore};
 use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
@@ -56,10 +58,8 @@ impl PostgresConnector {
         pg_config.validate().map_err(CdcError::Configuration)?;
 
         // Create source config from pg_config
-        let source_config = SourceConfig::postgres(
-            &pg_config.slot_name,
-            &pg_config.connection_string,
-        );
+        let source_config =
+            SourceConfig::postgres(&pg_config.slot_name, &pg_config.connection_string);
 
         Ok(Self {
             base: BaseSource::new(source_config),
@@ -136,20 +136,10 @@ impl PostgresConnector {
 
                 let source = self.create_source_info(&relation);
                 let mut event = if let Some(before) = before {
-                    ChangeEvent::new_update(
-                        source,
-                        relation.full_name(),
-                        key,
-                        before,
-                        after,
-                    )
+                    ChangeEvent::new_update(source, relation.full_name(), key, before, after)
                 } else {
-                    let mut e = ChangeEvent::new(
-                        source,
-                        Operation::Update,
-                        relation.full_name(),
-                        key,
-                    );
+                    let mut e =
+                        ChangeEvent::new(source, Operation::Update, relation.full_name(), key);
                     if let Ok(ev) = self.add_after_state(e, after) {
                         e = ev;
                     } else {
@@ -208,7 +198,13 @@ impl PostgresConnector {
             let Some(name) = name else { continue };
 
             // Check if this is the vector column
-            if Some(name.as_str()) == self.pg_config.tables.first().and_then(|t| t.vector_column.as_deref()) {
+            if Some(name.as_str())
+                == self
+                    .pg_config
+                    .tables
+                    .first()
+                    .and_then(|t| t.vector_column.as_deref())
+            {
                 if let Some(v) = self.parse_vector(value) {
                     vector = Some(v);
                 }
@@ -222,9 +218,10 @@ impl PostgresConnector {
                     // Try to parse as JSON, fall back to string
                     serde_json::from_str(s).unwrap_or_else(|_| serde_json::Value::String(s.clone()))
                 }
-                ColumnValue::Binary(b) => {
-                    serde_json::Value::String(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b))
-                }
+                ColumnValue::Binary(b) => serde_json::Value::String(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    b,
+                )),
                 ColumnValue::Unchanged => continue,
             };
 
@@ -249,10 +246,8 @@ impl PostgresConnector {
                 // Try PostgreSQL array format: {1.0,2.0,3.0}
                 if s.starts_with('{') && s.ends_with('}') {
                     let inner = &s[1..s.len() - 1];
-                    let parsed: Result<Vec<f32>, _> = inner
-                        .split(',')
-                        .map(|n| n.trim().parse::<f32>())
-                        .collect();
+                    let parsed: Result<Vec<f32>, _> =
+                        inner.split(',').map(|n| n.trim().parse::<f32>()).collect();
                     return parsed.ok();
                 }
                 None
@@ -309,7 +304,11 @@ impl PostgresConnector {
     }
 
     /// Helper to add after state to an event
-    fn add_after_state(&self, mut event: ChangeEvent, after: RecordState) -> CdcResult<ChangeEvent> {
+    fn add_after_state(
+        &self,
+        mut event: ChangeEvent,
+        after: RecordState,
+    ) -> CdcResult<ChangeEvent> {
         event.after = Some(after);
         Ok(event)
     }
@@ -339,9 +338,10 @@ impl PostgresConnector {
         let mut count = 0;
         for pg_event in events {
             if let Some(change_event) = self.to_change_event(pg_event, lsn).await {
-                event_tx.send(change_event).await.map_err(|e| {
-                    CdcError::Coordinator(format!("Failed to send event: {}", e))
-                })?;
+                event_tx
+                    .send(change_event)
+                    .await
+                    .map_err(|e| CdcError::Coordinator(format!("Failed to send event: {}", e)))?;
                 count += 1;
             }
         }
@@ -379,9 +379,10 @@ impl CdcSource for PostgresConnector {
         // actual tokio-postgres replication integration
         self.base.set_status(SourceStatus::Streaming);
 
-        Ok(self.base.create_handle().ok_or_else(|| {
-            CdcError::Coordinator("Failed to create source handle".to_string())
-        })?)
+        Ok(self
+            .base
+            .create_handle()
+            .ok_or_else(|| CdcError::Coordinator("Failed to create source handle".to_string()))?)
     }
 
     async fn stop(&mut self) -> CdcResult<()> {
@@ -432,7 +433,9 @@ mod tests {
             .with_publication("test_pub");
 
         let offset_store = Arc::new(MemoryOffsetStore::new());
-        PostgresConnector::new(pg_config, offset_store).await.unwrap()
+        PostgresConnector::new(pg_config, offset_store)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]

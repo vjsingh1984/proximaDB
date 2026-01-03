@@ -21,9 +21,9 @@
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
+use crate::graph::engines::pulsar::sharding::ConsistentHashRing;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{Edge, EdgeId, Node, NodeId};
-use crate::graph::engines::pulsar::sharding::ConsistentHashRing;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;

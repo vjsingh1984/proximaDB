@@ -192,20 +192,34 @@ mod tests {
     fn test_array_index_contains() {
         let index = ArrayIndex::new("$.tags", false);
 
-        index.insert("doc1", vec![
-            IndexValue::String("rust".to_string()),
-            IndexValue::String("database".to_string()),
-        ]).unwrap();
+        index
+            .insert(
+                "doc1",
+                vec![
+                    IndexValue::String("rust".to_string()),
+                    IndexValue::String("database".to_string()),
+                ],
+            )
+            .unwrap();
 
-        index.insert("doc2", vec![
-            IndexValue::String("rust".to_string()),
-            IndexValue::String("web".to_string()),
-        ]).unwrap();
+        index
+            .insert(
+                "doc2",
+                vec![
+                    IndexValue::String("rust".to_string()),
+                    IndexValue::String("web".to_string()),
+                ],
+            )
+            .unwrap();
 
-        let results = index.query_contains(&IndexValue::String("rust".to_string())).unwrap();
+        let results = index
+            .query_contains(&IndexValue::String("rust".to_string()))
+            .unwrap();
         assert_eq!(results.len(), 2);
 
-        let results = index.query_contains(&IndexValue::String("database".to_string())).unwrap();
+        let results = index
+            .query_contains(&IndexValue::String("database".to_string()))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results.contains(&"doc1".to_string()));
     }
@@ -214,27 +228,41 @@ mod tests {
     fn test_array_index_contains_all() {
         let index = ArrayIndex::new("$.tags", false);
 
-        index.insert("doc1", vec![
-            IndexValue::String("a".to_string()),
-            IndexValue::String("b".to_string()),
-            IndexValue::String("c".to_string()),
-        ]).unwrap();
+        index
+            .insert(
+                "doc1",
+                vec![
+                    IndexValue::String("a".to_string()),
+                    IndexValue::String("b".to_string()),
+                    IndexValue::String("c".to_string()),
+                ],
+            )
+            .unwrap();
 
-        index.insert("doc2", vec![
-            IndexValue::String("a".to_string()),
-            IndexValue::String("b".to_string()),
-        ]).unwrap();
+        index
+            .insert(
+                "doc2",
+                vec![
+                    IndexValue::String("a".to_string()),
+                    IndexValue::String("b".to_string()),
+                ],
+            )
+            .unwrap();
 
-        let results = index.query_contains_all(&[
-            IndexValue::String("a".to_string()),
-            IndexValue::String("b".to_string()),
-        ]).unwrap();
+        let results = index
+            .query_contains_all(&[
+                IndexValue::String("a".to_string()),
+                IndexValue::String("b".to_string()),
+            ])
+            .unwrap();
         assert_eq!(results.len(), 2);
 
-        let results = index.query_contains_all(&[
-            IndexValue::String("a".to_string()),
-            IndexValue::String("c".to_string()),
-        ]).unwrap();
+        let results = index
+            .query_contains_all(&[
+                IndexValue::String("a".to_string()),
+                IndexValue::String("c".to_string()),
+            ])
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results.contains(&"doc1".to_string()));
     }

@@ -183,7 +183,9 @@ impl ProximaInputFormat {
             file_path: String::new(),
             offset: 0,
             length: self.config.split_size_hint,
-            split_type: SplitType::ByteRange { estimated_records: 0 },
+            split_type: SplitType::ByteRange {
+                estimated_records: 0,
+            },
             statistics: SplitStatistics::default(),
             locality: crate::storage::formats::SplitLocality::default(),
         };
@@ -332,7 +334,11 @@ impl ProximaRecordWriter {
     }
 
     /// Write a key-value pair
-    pub fn write(&mut self, _key: &HadoopWritable, value: &HadoopWritable) -> Result<(), HadoopError> {
+    pub fn write(
+        &mut self,
+        _key: &HadoopWritable,
+        value: &HadoopWritable,
+    ) -> Result<(), HadoopError> {
         // Convert Writable to record and buffer
         if let HadoopWritable::MapWritable(map) = value {
             self.batch_buffer.push(map.clone());
@@ -473,7 +479,11 @@ impl HadoopWritable {
                 serde_json::json!(arr.iter().map(|w| w.to_json()).collect::<Vec<_>>())
             }
             Self::MapWritable(map) => {
-                serde_json::json!(map.iter().map(|(k, v)| (k.clone(), v.to_json())).collect::<HashMap<_, _>>())
+                serde_json::json!(
+                    map.iter()
+                        .map(|(k, v)| (k.clone(), v.to_json()))
+                        .collect::<HashMap<_, _>>()
+                )
             }
         }
     }
@@ -500,9 +510,11 @@ impl HadoopWritable {
             serde_json::Value::Array(arr) => {
                 Self::ArrayWritable(arr.iter().map(Self::from_json).collect())
             }
-            serde_json::Value::Object(obj) => {
-                Self::MapWritable(obj.iter().map(|(k, v)| (k.clone(), Self::from_json(v))).collect())
-            }
+            serde_json::Value::Object(obj) => Self::MapWritable(
+                obj.iter()
+                    .map(|(k, v)| (k.clone(), Self::from_json(v)))
+                    .collect(),
+            ),
         }
     }
 }
@@ -726,7 +738,10 @@ mod tests {
             file_path: "/data/file.sst".to_string(),
             offset: 0,
             length: 1024,
-            split_type: SplitType::Block { block_id: 0, record_count: 100 },
+            split_type: SplitType::Block {
+                block_id: 0,
+                record_count: 100,
+            },
             statistics: SplitStatistics::default(),
             locality: crate::storage::formats::SplitLocality {
                 preferred_hosts: vec!["host1".to_string()],

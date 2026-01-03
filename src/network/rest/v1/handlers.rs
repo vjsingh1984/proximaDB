@@ -11,9 +11,9 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse},
 };
 use std::sync::Arc;
-use tracing::{debug, error, info};
 #[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
 use tracing::warn;
+use tracing::{debug, error, info};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
@@ -22,9 +22,9 @@ use crate::network::rest::health;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
+use crate::query::QueryFacadeAdapter;
 use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
-use crate::query::QueryFacadeAdapter;
 use crate::utils::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
@@ -69,16 +69,16 @@ fn parse_search_request(value: serde_json::Value) -> Result<VectorSearchRequest,
                 })
                 .unwrap_or_default();
 
-            let top_k = obj
-                .get("top_k")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(10) as u32;
+            let top_k = obj.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
 
             // Parse optional filters from simple format
             let filters = obj
                 .get("filters")
                 .and_then(|v| {
-                    serde_json::from_value::<std::collections::HashMap<String, proximadb_v1::SqlValue>>(v.clone()).ok()
+                    serde_json::from_value::<
+                        std::collections::HashMap<String, proximadb_v1::SqlValue>,
+                    >(v.clone())
+                    .ok()
                 })
                 .unwrap_or_default();
 
@@ -162,15 +162,14 @@ pub async fn vector_search(
         request.collection_id, tenant.tenant_id, tenant.source
     );
 
-    // Route through unified facade when feature is enabled and adapter is available
-    #[cfg(feature = "unified-facade-routing")]
+    // Route through unified facade when adapter is available
     if let Some(ref adapter) = state.query_adapter {
         debug!("Using unified facade routing for vector search");
         return match adapter.vector_search(request.clone()).await {
             Ok(response) => Ok(JsonResponse(response)),
             Err(e) => {
                 error!(
-                    "❌ Vector search (facade) failed for collection '{}': {:?}",
+                    "Vector search (facade) failed for collection '{}': {:?}",
                     request.collection_id, e
                 );
                 Err(ApiError::Internal(format!("Search failed: {}", e)))
@@ -260,11 +259,7 @@ pub async fn get_vector(
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    debug!(
-        "Get vector: collection={}, id={}",
-        collection_id,
-        vector_id
-    );
+    debug!("Get vector: collection={}, id={}", collection_id, vector_id);
 
     // Validate parameters
     if collection_id.is_empty() || vector_id.is_empty() {
@@ -426,7 +421,10 @@ pub async fn get_collection(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
 ) -> impl IntoResponse {
-    debug!("Get collection '{}' for tenant '{}'", collection_id, tenant.tenant_id);
+    debug!(
+        "Get collection '{}' for tenant '{}'",
+        collection_id, tenant.tenant_id
+    );
 
     if collection_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
@@ -515,7 +513,10 @@ pub async fn delete_collection(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
 ) -> impl IntoResponse {
-    info!("Delete collection '{}' for tenant '{}'", collection_id, tenant.tenant_id);
+    info!(
+        "Delete collection '{}' for tenant '{}'",
+        collection_id, tenant.tenant_id
+    );
 
     if collection_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
@@ -648,8 +649,7 @@ pub async fn execute_sql(
         ));
     }
 
-    // Route through unified facade when feature is enabled and adapter is available
-    #[cfg(feature = "unified-facade-routing")]
+    // Route through unified facade when adapter is available
     if let Some(ref adapter) = state.query_adapter {
         debug!("Using unified facade routing for SQL query");
         return match adapter.sql_query(&request.query).await {
@@ -1009,13 +1009,11 @@ pub fn create_router(state: AppState) -> axum::Router {
         info!("✅ Observability API endpoints enabled at /api/v1/observability");
     }
 
-    // Unified Multi-Model Query API endpoints (with WAL for durability)
-    // Wire ALL services: vector_ops, graph, observability, document
-    // Also wire FederatedQueryContext for SQL with multi-model extensions
+    // Unified Multi-Model Query API endpoints
+    // Routes all queries through QueryFacadeAdapter for consistent execution
     let unified_query_router = {
         use crate::network::rest::v1::unified_query::{self, UnifiedQueryApiState};
         use crate::storage::document::DocumentService;
-        use crate::storage::multimodel::{MultiModelStorageFacade, VectorStore, GraphStore};
 
         let engine = state
             .unified_handlers
@@ -1039,46 +1037,18 @@ pub fn create_router(state: AppState) -> axum::Router {
             })
         });
 
-        // Wire all services for full cross-model query support
-        let vector_ops = Some(state.unified_handlers.vector_operations_service.clone());
-        let graph_service = Some(state.unified_handlers.graph_operations_service.clone());
-
-        // Build MultiModelStorageFacade with available stores for federated queries
-        // This enables SQL extensions like VECTOR_SEARCH, GRAPH_QUERY, etc.
-        let multimodel_storage = {
-            use crate::storage::multimodel::stores::graph_store::GraphStoreConfig;
-
-            let mut facade = MultiModelStorageFacade::new();
-
-            // Wire vector store using the existing engine
-            let vector_store = VectorStore::with_engine(engine.clone());
-            facade = facade.with_vector_store(Arc::new(vector_store));
-
-            // Wire graph store if graph service is available
-            if let Some(ref graph_svc) = graph_service {
-                if let Some(graph_engine) = graph_svc.get_default_engine() {
-                    let graph_store = GraphStore::new(GraphStoreConfig::default())
-                        .with_engine(graph_engine);
-                    facade = facade.with_graph_store(Arc::new(graph_store));
-                }
-            }
-
-            Arc::new(facade)
-        };
-
-        // Use new_with_federated to wire FederatedQueryContext for SQL extensions
-        let unified_state = UnifiedQueryApiState::new_with_federated(
-            document_service,
-            engine,
-            vector_ops,
-            graph_service,
-            observability_service.clone(),
-            multimodel_storage,
+        // Get the query adapter from state (required for unified query execution)
+        let query_adapter = state.query_adapter.clone().expect(
+            "QueryFacadeAdapter must be configured in AppState for unified query endpoints",
         );
+
+        // Use new_with_adapter to route all queries through QueryFacadeAdapter
+        let unified_state =
+            UnifiedQueryApiState::new_with_adapter(query_adapter, document_service, engine);
         unified_query::create_router().with_state(unified_state)
     };
     router = router.nest("/api/v1/unified", unified_query_router);
-    info!("✅ Unified Query API endpoints enabled at /api/v1/unified (full cross-model + federated SQL support)");
+    info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
 
     // Convert to Router<()> by providing state
     let router = router.with_state(state);

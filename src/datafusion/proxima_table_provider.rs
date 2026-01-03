@@ -46,8 +46,8 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use serde::{Deserialize, Serialize};
 
-use crate::storage::formats::FileSplit;
 use crate::compute::quantization::QuantizationLevel;
+use crate::storage::formats::FileSplit;
 use crate::storage::traits::StorageEngineStrategy;
 
 // ============================================================================
@@ -375,11 +375,15 @@ pub trait ProximaTableProvider: TableProvider + Send + Sync + Debug {
         caps.insert("vector_search".to_string(), self.supports_vector_search());
         caps.insert(
             "predicate_pushdown".to_string(),
-            self.pruning_stats().map(|s| s.splits_with_stats > 0).unwrap_or(false),
+            self.pruning_stats()
+                .map(|s| s.splits_with_stats > 0)
+                .unwrap_or(false),
         );
         caps.insert(
             "bloom_filter".to_string(),
-            self.pruning_stats().map(|s| s.splits_with_bloom > 0).unwrap_or(false),
+            self.pruning_stats()
+                .map(|s| s.splits_with_bloom > 0)
+                .unwrap_or(false),
         );
         caps
     }
@@ -434,7 +438,10 @@ impl TableProvider for NullProximaTableProvider {
         &self,
         filters: &[&Expr],
     ) -> DFResult<Vec<TableProviderFilterPushDown>> {
-        Ok(vec![TableProviderFilterPushDown::Unsupported; filters.len()])
+        Ok(vec![
+            TableProviderFilterPushDown::Unsupported;
+            filters.len()
+        ])
     }
 }
 
@@ -522,8 +529,8 @@ mod tests {
 
     #[test]
     fn test_collection_info_estimated_size() {
-        let info = CollectionInfo::new("test".to_string(), 128, EngineType::Nova)
-            .with_vector_count(1000);
+        let info =
+            CollectionInfo::new("test".to_string(), 128, EngineType::Nova).with_vector_count(1000);
         assert_eq!(info.estimated_vector_data_size(), 1000 * 128 * 4);
     }
 

@@ -31,10 +31,10 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
@@ -488,11 +488,13 @@ impl AutoScheduler {
         collection_id: &str,
         priority: OperationPriority,
     ) -> Result<String> {
-        let operation = self.create_operation(
-            OperationType::Compaction,
-            priority,
-            Some(collection_id.to_string()),
-        ).await?;
+        let operation = self
+            .create_operation(
+                OperationType::Compaction,
+                priority,
+                Some(collection_id.to_string()),
+            )
+            .await?;
 
         self.schedule(operation).await
     }
@@ -503,11 +505,13 @@ impl AutoScheduler {
         collection_id: &str,
         priority: OperationPriority,
     ) -> Result<String> {
-        let operation = self.create_operation(
-            OperationType::Flush,
-            priority,
-            Some(collection_id.to_string()),
-        ).await?;
+        let operation = self
+            .create_operation(
+                OperationType::Flush,
+                priority,
+                Some(collection_id.to_string()),
+            )
+            .await?;
 
         self.schedule(operation).await
     }
@@ -574,9 +578,9 @@ impl AutoScheduler {
 
     async fn run_scheduler_loop(&self) {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-        let mut check_interval = interval(
-            tokio::time::Duration::from_secs(self.config.check_interval_secs)
-        );
+        let mut check_interval = interval(tokio::time::Duration::from_secs(
+            self.config.check_interval_secs,
+        ));
 
         loop {
             tokio::select! {
@@ -608,7 +612,8 @@ impl AutoScheduler {
                 let mut queue = self.pending_queue.lock().await;
 
                 // Find the highest priority operation that's ready to run
-                let ready_op = queue.iter()
+                let ready_op = queue
+                    .iter()
                     .position(|op| op.run_after <= now)
                     .map(|_| {
                         // Remove and return the operation
@@ -636,7 +641,10 @@ impl AutoScheduler {
                 op.status = OperationStatus::Running;
 
                 // Add to running operations
-                self.running_operations.write().await.insert(op.id.clone(), op.clone());
+                self.running_operations
+                    .write()
+                    .await
+                    .insert(op.id.clone(), op.clone());
 
                 // Execute the operation asynchronously
                 let completion_tx = self.completion_tx.clone();
@@ -682,7 +690,12 @@ impl AutoScheduler {
 
         while let Ok(result) = rx.try_recv() {
             // Remove from running
-            if let Some(op) = self.running_operations.write().await.remove(&result.operation_id) {
+            if let Some(op) = self
+                .running_operations
+                .write()
+                .await
+                .remove(&result.operation_id)
+            {
                 let mut completed_op = op;
                 completed_op.status = if result.success {
                     OperationStatus::Completed
@@ -709,7 +722,8 @@ impl AutoScheduler {
                 // Update average duration
                 let total_ops = stats.completed + stats.failed;
                 stats.avg_duration_ms = (stats.avg_duration_ms * (total_ops - 1) as f64
-                    + result.duration_ms as f64) / total_ops as f64;
+                    + result.duration_ms as f64)
+                    / total_ops as f64;
             }
         }
     }
@@ -720,7 +734,10 @@ impl AutoScheduler {
 
         // Check flush triggers
         if self.should_trigger_flush(&metrics).await {
-            if let Err(e) = self.schedule_flush("__global__", OperationPriority::Normal).await {
+            if let Err(e) = self
+                .schedule_flush("__global__", OperationPriority::Normal)
+                .await
+            {
                 warn!("⏰ Failed to schedule flush: {}", e);
             }
         }
@@ -728,7 +745,10 @@ impl AutoScheduler {
         // Check compaction triggers (prefer idle/low-activity periods)
         if analysis.is_idle || analysis.is_low_activity_window {
             if self.should_trigger_compaction(&metrics).await {
-                if let Err(e) = self.schedule_compaction("__global__", OperationPriority::Low).await {
+                if let Err(e) = self
+                    .schedule_compaction("__global__", OperationPriority::Low)
+                    .await
+                {
                     warn!("⏰ Failed to schedule compaction: {}", e);
                 }
             }
@@ -751,36 +771,49 @@ impl AutoScheduler {
     async fn schedule_periodic_operations(&self) {
         // Schedule periodic health checks (every 5 minutes)
         let now = Utc::now();
-        let last_health_check = self.get_last_operation_time(OperationType::HealthCheck).await;
+        let last_health_check = self
+            .get_last_operation_time(OperationType::HealthCheck)
+            .await;
 
         if now - last_health_check > Duration::minutes(5) {
-            let _ = self.schedule(
-                self.create_operation(
-                    OperationType::HealthCheck,
-                    OperationPriority::Background,
-                    None,
-                ).await.unwrap()
-            ).await;
+            let _ = self
+                .schedule(
+                    self.create_operation(
+                        OperationType::HealthCheck,
+                        OperationPriority::Background,
+                        None,
+                    )
+                    .await
+                    .unwrap(),
+                )
+                .await;
         }
 
         // Schedule periodic stats collection (every minute)
-        let last_stats = self.get_last_operation_time(OperationType::StatsCollection).await;
+        let last_stats = self
+            .get_last_operation_time(OperationType::StatsCollection)
+            .await;
 
         if now - last_stats > Duration::minutes(1) {
-            let _ = self.schedule(
-                self.create_operation(
-                    OperationType::StatsCollection,
-                    OperationPriority::Background,
-                    None,
-                ).await.unwrap()
-            ).await;
+            let _ = self
+                .schedule(
+                    self.create_operation(
+                        OperationType::StatsCollection,
+                        OperationPriority::Background,
+                        None,
+                    )
+                    .await
+                    .unwrap(),
+                )
+                .await;
         }
     }
 
     async fn get_last_operation_time(&self, op_type: OperationType) -> DateTime<Utc> {
         let history = self.completed_history.read().await;
 
-        history.iter()
+        history
+            .iter()
             .rev()
             .find(|op| op.operation_type == op_type)
             .map(|op| op.scheduled_at)
@@ -794,15 +827,25 @@ impl AutoScheduler {
             return;
         }
 
-        let avg_ops: f64 = history.iter().map(|m| m.ops_per_second).sum::<f64>() / history.len() as f64;
-        let peak_ops = history.iter().map(|m| m.ops_per_second).fold(0.0f64, |a, b| a.max(b));
+        let avg_ops: f64 =
+            history.iter().map(|m| m.ops_per_second).sum::<f64>() / history.len() as f64;
+        let peak_ops = history
+            .iter()
+            .map(|m| m.ops_per_second)
+            .fold(0.0f64, |a, b| a.max(b));
 
         let is_idle = avg_ops < self.config.idle_threshold_ops_per_sec;
 
         let current_hour = Utc::now().hour() as u8;
         let is_low_activity = self.config.low_activity_hours.contains(&current_hour);
 
-        let priority_adjustment: i8 = if is_idle { 1 } else if is_low_activity { 0 } else { -1 };
+        let priority_adjustment: i8 = if is_idle {
+            1
+        } else if is_low_activity {
+            0
+        } else {
+            -1
+        };
 
         *self.workload_analysis.write().await = WorkloadAnalysis {
             avg_ops_per_sec: avg_ops,
@@ -977,11 +1020,14 @@ mod tests {
         let config = AutoSchedulerConfig::default();
         let scheduler = AutoScheduler::new(config);
 
-        let op = scheduler.create_operation(
-            OperationType::Compaction,
-            OperationPriority::Normal,
-            Some("test_collection".to_string()),
-        ).await.unwrap();
+        let op = scheduler
+            .create_operation(
+                OperationType::Compaction,
+                OperationPriority::Normal,
+                Some("test_collection".to_string()),
+            )
+            .await
+            .unwrap();
 
         let result = scheduler.schedule(op).await;
         assert!(result.is_ok());
@@ -996,11 +1042,10 @@ mod tests {
         let config = AutoSchedulerConfig::default();
         let scheduler = AutoScheduler::new(config);
 
-        let op = scheduler.create_operation(
-            OperationType::Compaction,
-            OperationPriority::Normal,
-            None,
-        ).await.unwrap();
+        let op = scheduler
+            .create_operation(OperationType::Compaction, OperationPriority::Normal, None)
+            .await
+            .unwrap();
 
         let op_id = op.id.clone();
         scheduler.schedule(op).await.unwrap();

@@ -9,9 +9,8 @@
 // - Automatic resolution selection based on time range
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use tokio::sync::RwLock;
@@ -85,12 +84,7 @@ impl Default for MetricTieringPolicy {
 
 impl MetricTieringPolicy {
     /// Create a new tiering policy with custom retention
-    pub fn new(
-        raw_hours: u64,
-        minute_days: u64,
-        five_minute_days: u64,
-        hour_days: u64,
-    ) -> Self {
+    pub fn new(raw_hours: u64, minute_days: u64, five_minute_days: u64, hour_days: u64) -> Self {
         Self {
             raw_retention_ns: raw_hours as i64 * NANOS_PER_HOUR,
             minute_retention_ns: minute_days as i64 * NANOS_PER_DAY,
@@ -243,7 +237,8 @@ impl MetricStorage {
                 points.insert(sample.timestamp_ns, sample.value);
 
                 // Update downsampled data
-                self.update_downsampled(s, sample.timestamp_ns, sample.value).await;
+                self.update_downsampled(s, sample.timestamp_ns, sample.value)
+                    .await;
                 return Ok(());
             }
         }
@@ -298,12 +293,7 @@ impl MetricStorage {
     }
 
     /// Query metrics by name and time range
-    pub async fn query(
-        &self,
-        name: &str,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<MetricSample>> {
+    pub async fn query(&self, name: &str, start_ns: i64, end_ns: i64) -> Result<Vec<MetricSample>> {
         let series = self.series.read().await;
 
         let mut results = Vec::new();
@@ -345,9 +335,9 @@ impl MetricStorage {
             }
 
             // Check label filters
-            let matches = label_filters.iter().all(|(k, v)| {
-                s.labels.get(k).map(|sv| sv == v).unwrap_or(false)
-            });
+            let matches = label_filters
+                .iter()
+                .all(|(k, v)| s.labels.get(k).map(|sv| sv == v).unwrap_or(false));
 
             if !matches {
                 continue;
@@ -474,7 +464,9 @@ impl MetricStorage {
                 })
             }
             _ => {
-                let aggregated = self.query_downsampled(name, start_ns, end_ns, resolution).await?;
+                let aggregated = self
+                    .query_downsampled(name, start_ns, end_ns, resolution)
+                    .await?;
                 Ok(QueryAutoResult {
                     resolution,
                     raw_samples: None,
@@ -497,7 +489,9 @@ impl MetricStorage {
 
         match resolution {
             DownsampleResolution::Raw => {
-                let samples = self.query_with_labels(name, start_ns, end_ns, label_filters).await?;
+                let samples = self
+                    .query_with_labels(name, start_ns, end_ns, label_filters)
+                    .await?;
                 Ok(QueryAutoResult {
                     resolution,
                     raw_samples: Some(samples),
@@ -505,9 +499,15 @@ impl MetricStorage {
                 })
             }
             _ => {
-                let aggregated = self.query_downsampled_with_labels(
-                    name, start_ns, end_ns, resolution, label_filters
-                ).await?;
+                let aggregated = self
+                    .query_downsampled_with_labels(
+                        name,
+                        start_ns,
+                        end_ns,
+                        resolution,
+                        label_filters,
+                    )
+                    .await?;
                 Ok(QueryAutoResult {
                     resolution,
                     raw_samples: None,
@@ -535,9 +535,9 @@ impl MetricStorage {
             }
 
             // Check label filters
-            let matches = label_filters.iter().all(|(k, v)| {
-                s.labels.get(k).map(|sv| sv == v).unwrap_or(false)
-            });
+            let matches = label_filters
+                .iter()
+                .all(|(k, v)| s.labels.get(k).map(|sv| sv == v).unwrap_or(false));
 
             if !matches {
                 continue;
@@ -604,7 +604,8 @@ impl MetricStorage {
                 let mut downsampled = s.downsampled.write().await;
 
                 // Minute tier
-                let to_remove: Vec<_> = downsampled.minute
+                let to_remove: Vec<_> = downsampled
+                    .minute
                     .keys()
                     .filter(|ts| **ts < minute_cutoff)
                     .cloned()
@@ -615,7 +616,8 @@ impl MetricStorage {
                 }
 
                 // 5-minute tier
-                let to_remove: Vec<_> = downsampled.five_minute
+                let to_remove: Vec<_> = downsampled
+                    .five_minute
                     .keys()
                     .filter(|ts| **ts < five_minute_cutoff)
                     .cloned()
@@ -626,7 +628,8 @@ impl MetricStorage {
                 }
 
                 // Hour tier
-                let to_remove: Vec<_> = downsampled.hour
+                let to_remove: Vec<_> = downsampled
+                    .hour
                     .keys()
                     .filter(|ts| **ts < hour_cutoff)
                     .cloned()
@@ -640,8 +643,10 @@ impl MetricStorage {
 
         info!(
             "Tiering policy applied: raw={}, 1m={}, 5m={}, 1h={}",
-            result.raw_removed, result.minute_removed,
-            result.five_minute_removed, result.hour_removed
+            result.raw_removed,
+            result.minute_removed,
+            result.five_minute_removed,
+            result.hour_removed
         );
 
         Ok(result)
@@ -682,60 +687,94 @@ impl MetricStorage {
             let downsampled = s.downsampled.read().await;
 
             // Convert AggregatedPoint to RollupPoint for minute tier
-            let minute_rollups: BTreeMap<i64, RollupPoint> = downsampled.minute
+            let minute_rollups: BTreeMap<i64, RollupPoint> = downsampled
+                .minute
                 .iter()
-                .map(|(ts, p)| (*ts, RollupPoint {
-                    min: p.min,
-                    max: p.max,
-                    sum: p.sum,
-                    count: p.count,
-                    name: s.name.clone(),
-                    labels: s.labels.clone(),
-                }))
+                .map(|(ts, p)| {
+                    (
+                        *ts,
+                        RollupPoint {
+                            min: p.min,
+                            max: p.max,
+                            sum: p.sum,
+                            count: p.count,
+                            name: s.name.clone(),
+                            labels: s.labels.clone(),
+                        },
+                    )
+                })
                 .collect();
 
             if !minute_rollups.is_empty() {
-                match persistence.flush_rollups(series_key, DownsampleResolution::Minute, &minute_rollups).await {
+                match persistence
+                    .flush_rollups(series_key, DownsampleResolution::Minute, &minute_rollups)
+                    .await
+                {
                     Ok(count) => result.minute_flushed += count,
                     Err(e) => warn!("Failed to flush minute rollups for {}: {}", series_key, e),
                 }
             }
 
             // Convert for five_minute tier
-            let five_minute_rollups: BTreeMap<i64, RollupPoint> = downsampled.five_minute
+            let five_minute_rollups: BTreeMap<i64, RollupPoint> = downsampled
+                .five_minute
                 .iter()
-                .map(|(ts, p)| (*ts, RollupPoint {
-                    min: p.min,
-                    max: p.max,
-                    sum: p.sum,
-                    count: p.count,
-                    name: s.name.clone(),
-                    labels: s.labels.clone(),
-                }))
+                .map(|(ts, p)| {
+                    (
+                        *ts,
+                        RollupPoint {
+                            min: p.min,
+                            max: p.max,
+                            sum: p.sum,
+                            count: p.count,
+                            name: s.name.clone(),
+                            labels: s.labels.clone(),
+                        },
+                    )
+                })
                 .collect();
 
             if !five_minute_rollups.is_empty() {
-                match persistence.flush_rollups(series_key, DownsampleResolution::FiveMinute, &five_minute_rollups).await {
+                match persistence
+                    .flush_rollups(
+                        series_key,
+                        DownsampleResolution::FiveMinute,
+                        &five_minute_rollups,
+                    )
+                    .await
+                {
                     Ok(count) => result.five_minute_flushed += count,
-                    Err(e) => warn!("Failed to flush five_minute rollups for {}: {}", series_key, e),
+                    Err(e) => warn!(
+                        "Failed to flush five_minute rollups for {}: {}",
+                        series_key, e
+                    ),
                 }
             }
 
             // Convert for hour tier
-            let hour_rollups: BTreeMap<i64, RollupPoint> = downsampled.hour
+            let hour_rollups: BTreeMap<i64, RollupPoint> = downsampled
+                .hour
                 .iter()
-                .map(|(ts, p)| (*ts, RollupPoint {
-                    min: p.min,
-                    max: p.max,
-                    sum: p.sum,
-                    count: p.count,
-                    name: s.name.clone(),
-                    labels: s.labels.clone(),
-                }))
+                .map(|(ts, p)| {
+                    (
+                        *ts,
+                        RollupPoint {
+                            min: p.min,
+                            max: p.max,
+                            sum: p.sum,
+                            count: p.count,
+                            name: s.name.clone(),
+                            labels: s.labels.clone(),
+                        },
+                    )
+                })
                 .collect();
 
             if !hour_rollups.is_empty() {
-                match persistence.flush_rollups(series_key, DownsampleResolution::Hour, &hour_rollups).await {
+                match persistence
+                    .flush_rollups(series_key, DownsampleResolution::Hour, &hour_rollups)
+                    .await
+                {
                     Ok(count) => result.hour_flushed += count,
                     Err(e) => warn!("Failed to flush hour rollups for {}: {}", series_key, e),
                 }
@@ -763,7 +802,9 @@ impl MetricStorage {
         resolution: DownsampleResolution,
     ) -> Result<Vec<AggregatedMetric>> {
         // First, get in-memory results
-        let mut results = self.query_downsampled(name, start_ns, end_ns, resolution).await?;
+        let mut results = self
+            .query_downsampled(name, start_ns, end_ns, resolution)
+            .await?;
 
         // Check if we have persistence and the query spans potentially persisted data
         if let Some(ref persistence) = self.rollup_persistence {
@@ -775,7 +816,10 @@ impl MetricStorage {
                 }
 
                 // Query persisted data
-                match persistence.load_rollups(series_key, resolution, start_ns, end_ns).await {
+                match persistence
+                    .load_rollups(series_key, resolution, start_ns, end_ns)
+                    .await
+                {
                     Ok(persisted) => {
                         // Merge persisted data (avoid duplicates by timestamp)
                         let existing_timestamps: std::collections::HashSet<i64> =
@@ -804,7 +848,10 @@ impl MetricStorage {
     ///
     /// This method applies the tiering policy to evict old data from memory
     /// while ensuring it's first persisted to disk.
-    pub async fn apply_tiering_policy_with_persistence(&self, now_ns: i64) -> Result<TieringResult> {
+    pub async fn apply_tiering_policy_with_persistence(
+        &self,
+        now_ns: i64,
+    ) -> Result<TieringResult> {
         // First, flush rollups to persistence (if configured)
         if self.rollup_persistence.is_some() {
             self.flush_rollups().await?;
@@ -827,17 +874,26 @@ impl MetricStorage {
         let five_minute_cutoff = now_ns - self.tiering_policy.five_minute_retention_ns;
         let hour_cutoff = now_ns - self.tiering_policy.hour_retention_ns;
 
-        match persistence.delete_before(DownsampleResolution::Minute, minute_cutoff).await {
+        match persistence
+            .delete_before(DownsampleResolution::Minute, minute_cutoff)
+            .await
+        {
             Ok(count) => result.minute_deleted = count,
             Err(e) => warn!("Failed to delete old minute rollups: {}", e),
         }
 
-        match persistence.delete_before(DownsampleResolution::FiveMinute, five_minute_cutoff).await {
+        match persistence
+            .delete_before(DownsampleResolution::FiveMinute, five_minute_cutoff)
+            .await
+        {
             Ok(count) => result.five_minute_deleted = count,
             Err(e) => warn!("Failed to delete old five_minute rollups: {}", e),
         }
 
-        match persistence.delete_before(DownsampleResolution::Hour, hour_cutoff).await {
+        match persistence
+            .delete_before(DownsampleResolution::Hour, hour_cutoff)
+            .await
+        {
             Ok(count) => result.hour_deleted = count,
             Err(e) => warn!("Failed to delete old hour rollups: {}", e),
         }
@@ -1041,8 +1097,14 @@ mod tests {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
-        storage.write(&make_sample("cpu", now + 1000, 0.6)).await.unwrap();
-        storage.write(&make_sample("memory", now, 0.7)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now + 1000, 0.6))
+            .await
+            .unwrap();
+        storage
+            .write(&make_sample("memory", now, 0.7))
+            .await
+            .unwrap();
 
         let results = storage.query("cpu", now - 1000, now + 2000).await.unwrap();
         assert_eq!(results.len(), 2);
@@ -1055,7 +1117,10 @@ mod tests {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
-        storage.write(&make_sample("memory", now, 0.7)).await.unwrap();
+        storage
+            .write(&make_sample("memory", now, 0.7))
+            .await
+            .unwrap();
         storage.write(&make_sample("disk", now, 0.3)).await.unwrap();
 
         assert_eq!(storage.series_count().await, 3);
@@ -1080,16 +1145,28 @@ mod tests {
         let policy = MetricTieringPolicy::default();
 
         // Under 1 hour -> Raw
-        assert_eq!(policy.optimal_resolution(30 * NANOS_PER_MIN), DownsampleResolution::Raw);
+        assert_eq!(
+            policy.optimal_resolution(30 * NANOS_PER_MIN),
+            DownsampleResolution::Raw
+        );
 
         // 1-6 hours -> Minute
-        assert_eq!(policy.optimal_resolution(2 * NANOS_PER_HOUR), DownsampleResolution::Minute);
+        assert_eq!(
+            policy.optimal_resolution(2 * NANOS_PER_HOUR),
+            DownsampleResolution::Minute
+        );
 
         // 6-24 hours -> FiveMinute
-        assert_eq!(policy.optimal_resolution(12 * NANOS_PER_HOUR), DownsampleResolution::FiveMinute);
+        assert_eq!(
+            policy.optimal_resolution(12 * NANOS_PER_HOUR),
+            DownsampleResolution::FiveMinute
+        );
 
         // Over 24 hours -> Hour
-        assert_eq!(policy.optimal_resolution(2 * NANOS_PER_DAY), DownsampleResolution::Hour);
+        assert_eq!(
+            policy.optimal_resolution(2 * NANOS_PER_DAY),
+            DownsampleResolution::Hour
+        );
     }
 
     #[test]
@@ -1111,7 +1188,10 @@ mod tests {
     fn test_downsample_resolution_bucket_size() {
         assert_eq!(DownsampleResolution::Raw.bucket_size_ns(), 0);
         assert_eq!(DownsampleResolution::Minute.bucket_size_ns(), NANOS_PER_MIN);
-        assert_eq!(DownsampleResolution::FiveMinute.bucket_size_ns(), 5 * NANOS_PER_MIN);
+        assert_eq!(
+            DownsampleResolution::FiveMinute.bucket_size_ns(),
+            5 * NANOS_PER_MIN
+        );
         assert_eq!(DownsampleResolution::Hour.bucket_size_ns(), NANOS_PER_HOUR);
     }
 
@@ -1122,7 +1202,10 @@ mod tests {
 
         // Insert some data
         storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
-        storage.write(&make_sample("cpu", now + 1000, 0.6)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now + 1000, 0.6))
+            .await
+            .unwrap();
 
         // Query for 30 minutes (should use raw)
         let result = storage
@@ -1143,7 +1226,10 @@ mod tests {
 
         // Insert some data
         storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
-        storage.write(&make_sample("cpu", now + NANOS_PER_MIN, 0.6)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now + NANOS_PER_MIN, 0.6))
+            .await
+            .unwrap();
 
         // Query for 3 hours (should use minute aggregates)
         let result = storage
@@ -1180,10 +1266,10 @@ mod tests {
     async fn test_apply_tiering_policy() {
         // Create storage with very short retention for testing
         let policy = MetricTieringPolicy {
-            raw_retention_ns: NANOS_PER_MIN, // 1 minute
-            minute_retention_ns: NANOS_PER_HOUR, // 1 hour
+            raw_retention_ns: NANOS_PER_MIN,         // 1 minute
+            minute_retention_ns: NANOS_PER_HOUR,     // 1 hour
             five_minute_retention_ns: NANOS_PER_DAY, // 1 day
-            hour_retention_ns: 7 * NANOS_PER_DAY, // 1 week
+            hour_retention_ns: 7 * NANOS_PER_DAY,    // 1 week
             ..Default::default()
         };
         let storage = MetricStorage::with_policy("/tmp/test", policy).unwrap();
@@ -1192,7 +1278,10 @@ mod tests {
         let old_time = now - 2 * NANOS_PER_MIN; // 2 minutes ago (older than retention)
 
         // Insert old data
-        storage.write(&make_sample("cpu", old_time, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", old_time, 0.5))
+            .await
+            .unwrap();
         // Insert recent data
         storage.write(&make_sample("cpu", now, 0.6)).await.unwrap();
 

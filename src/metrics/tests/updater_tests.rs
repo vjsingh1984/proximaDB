@@ -27,7 +27,10 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        format!("/tmp/proximadb_metrics_updater_test_{}_{}", counter, timestamp)
+        format!(
+            "/tmp/proximadb_metrics_updater_test_{}_{}",
+            counter, timestamp
+        )
     }
 
     async fn create_test_updater() -> Result<Arc<MetricsUpdateService>> {

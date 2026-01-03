@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
@@ -89,7 +89,10 @@ impl RemoteExecutor {
             return Ok(Vec::new());
         }
 
-        info!("Executing {} remote subqueries in parallel", subqueries.len());
+        info!(
+            "Executing {} remote subqueries in parallel",
+            subqueries.len()
+        );
 
         let mut handles = Vec::with_capacity(subqueries.len());
 
@@ -242,11 +245,14 @@ impl RemoteExecutor {
 
         if !pool.contains_key(node_id) {
             // Create new connection
-            pool.insert(node_id.to_string(), RemoteConnection {
-                address: address.to_string(),
-                last_used: Instant::now(),
-                healthy: true,
-            });
+            pool.insert(
+                node_id.to_string(),
+                RemoteConnection {
+                    address: address.to_string(),
+                    last_used: Instant::now(),
+                    healthy: true,
+                },
+            );
         }
 
         Ok(())

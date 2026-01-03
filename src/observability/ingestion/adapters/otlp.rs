@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 
 use super::{AdapterConfig, InputAdapter};
 use crate::proto::proximadb_v1::{LogEntry, Severity, SqlValue};
@@ -71,17 +70,20 @@ impl OtlpAdapter {
         attributes: HashMap<String, String>,
         resource_attributes: &HashMap<String, String>,
     ) -> LogEntry {
-        let source = resource_attributes
-            .get("host.name")
-            .cloned();
-        let service = resource_attributes
-            .get("service.name")
-            .cloned();
+        let source = resource_attributes.get("host.name").cloned();
+        let service = resource_attributes.get("service.name").cloned();
 
         // Convert attributes to SqlValue map
         let fields: HashMap<String, SqlValue> = attributes
             .into_iter()
-            .map(|(k, v)| (k, SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)) }))
+            .map(|(k, v)| {
+                (
+                    k,
+                    SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                    },
+                )
+            })
             .collect();
 
         LogEntry {
@@ -154,10 +156,10 @@ mod tests {
 
     #[test]
     fn test_convert_severity() {
-        assert_eq!(OtlpAdapter::convert_severity(1), Severity::Debug);  // TRACE1
-        assert_eq!(OtlpAdapter::convert_severity(5), Severity::Debug);  // DEBUG1
-        assert_eq!(OtlpAdapter::convert_severity(9), Severity::Info);   // INFO1
-        assert_eq!(OtlpAdapter::convert_severity(13), Severity::Warn);  // WARN1
+        assert_eq!(OtlpAdapter::convert_severity(1), Severity::Debug); // TRACE1
+        assert_eq!(OtlpAdapter::convert_severity(5), Severity::Debug); // DEBUG1
+        assert_eq!(OtlpAdapter::convert_severity(9), Severity::Info); // INFO1
+        assert_eq!(OtlpAdapter::convert_severity(13), Severity::Warn); // WARN1
         assert_eq!(OtlpAdapter::convert_severity(17), Severity::Error); // ERROR1
         assert_eq!(OtlpAdapter::convert_severity(21), Severity::Fatal); // FATAL1
     }

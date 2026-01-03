@@ -74,7 +74,12 @@ impl PruningResult {
     }
 
     /// Create a result with specific included indices.
-    pub fn with_indices(indices: Vec<usize>, total: usize, method: &str, computation_ns: u64) -> Self {
+    pub fn with_indices(
+        indices: Vec<usize>,
+        total: usize,
+        method: &str,
+        computation_ns: u64,
+    ) -> Self {
         let pruning_ratio = if total > 0 {
             1.0 - (indices.len() as f64 / total as f64)
         } else {
@@ -112,7 +117,8 @@ impl PruningResult {
 
     /// Get pruned count (rowgroups eliminated).
     pub fn pruned_count(&self) -> usize {
-        self.total_rowgroups.saturating_sub(self.included_indices.len())
+        self.total_rowgroups
+            .saturating_sub(self.included_indices.len())
     }
 
     /// Intersect with another pruning result (AND semantics).
@@ -122,10 +128,7 @@ impl PruningResult {
         let self_set: HashSet<usize> = self.included_indices.iter().copied().collect();
         let other_set: HashSet<usize> = other.included_indices.iter().copied().collect();
 
-        let intersection: Vec<usize> = self_set
-            .intersection(&other_set)
-            .copied()
-            .collect();
+        let intersection: Vec<usize> = self_set.intersection(&other_set).copied().collect();
 
         let total = self.total_rowgroups.max(other.total_rowgroups);
         let pruning_ratio = if total > 0 {

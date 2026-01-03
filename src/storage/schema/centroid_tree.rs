@@ -206,14 +206,20 @@ impl CentroidTree {
     /// # Returns
     /// Built CentroidTree or error if centroids are invalid.
     pub fn build(centroids: &[Vec<f32>], max_depth: usize) -> anyhow::Result<Self> {
-        Self::build_with_config(centroids, CentroidTreeConfig {
-            max_depth,
-            ..Default::default()
-        })
+        Self::build_with_config(
+            centroids,
+            CentroidTreeConfig {
+                max_depth,
+                ..Default::default()
+            },
+        )
     }
 
     /// Build with custom configuration.
-    pub fn build_with_config(centroids: &[Vec<f32>], config: CentroidTreeConfig) -> anyhow::Result<Self> {
+    pub fn build_with_config(
+        centroids: &[Vec<f32>],
+        config: CentroidTreeConfig,
+    ) -> anyhow::Result<Self> {
         if centroids.is_empty() {
             return Ok(Self {
                 root: None,
@@ -234,7 +240,9 @@ impl CentroidTree {
             if c.len() != dimension {
                 return Err(anyhow::anyhow!(
                     "Centroid {} has dimension {} but expected {}",
-                    i, c.len(), dimension
+                    i,
+                    c.len(),
+                    dimension
                 ));
             }
         }
@@ -504,7 +512,12 @@ impl CentroidTree {
 
         let elapsed_ns = start.elapsed().as_nanos() as u64;
 
-        PruningResult::with_indices(matching, self.num_rowgroups, "centroid_tree_quantized", elapsed_ns)
+        PruningResult::with_indices(
+            matching,
+            self.num_rowgroups,
+            "centroid_tree_quantized",
+            elapsed_ns,
+        )
     }
 
     /// Quantize a vector to INT8.
@@ -559,10 +572,24 @@ impl CentroidTree {
             matching.extend(&node.rowgroup_indices);
         } else {
             if let Some(ref left) = node.left {
-                self.prune_quantized_recursive(left, query_quantized, scale, offset, max_distance, matching);
+                self.prune_quantized_recursive(
+                    left,
+                    query_quantized,
+                    scale,
+                    offset,
+                    max_distance,
+                    matching,
+                );
             }
             if let Some(ref right) = node.right {
-                self.prune_quantized_recursive(right, query_quantized, scale, offset, max_distance, matching);
+                self.prune_quantized_recursive(
+                    right,
+                    query_quantized,
+                    scale,
+                    offset,
+                    max_distance,
+                    matching,
+                );
             }
         }
     }
@@ -715,10 +742,10 @@ mod tests {
 
     fn create_test_centroids() -> Vec<Vec<f32>> {
         vec![
-            vec![0.0, 0.0, 0.0],   // Rowgroup 0: near origin
-            vec![1.0, 0.0, 0.0],   // Rowgroup 1
-            vec![0.0, 1.0, 0.0],   // Rowgroup 2
-            vec![0.0, 0.0, 1.0],   // Rowgroup 3
+            vec![0.0, 0.0, 0.0],    // Rowgroup 0: near origin
+            vec![1.0, 0.0, 0.0],    // Rowgroup 1
+            vec![0.0, 1.0, 0.0],    // Rowgroup 2
+            vec![0.0, 0.0, 1.0],    // Rowgroup 3
             vec![10.0, 10.0, 10.0], // Rowgroup 4: far from origin
             vec![10.0, 11.0, 10.0], // Rowgroup 5: near rowgroup 4
             vec![11.0, 10.0, 10.0], // Rowgroup 6: near rowgroup 4
@@ -833,7 +860,8 @@ mod tests {
             assert!(
                 quantized_count <= exact_count * 2 + 1,
                 "Quantized count {} should not drastically exceed exact count {}",
-                quantized_count, exact_count
+                quantized_count,
+                exact_count
             );
         }
     }
@@ -867,7 +895,10 @@ mod tests {
         let original_result = tree.prune(&query, 2.0);
         let restored_result = restored.prune(&query, 2.0);
 
-        assert_eq!(original_result.included_indices, restored_result.included_indices);
+        assert_eq!(
+            original_result.included_indices,
+            restored_result.included_indices
+        );
     }
 
     #[test]

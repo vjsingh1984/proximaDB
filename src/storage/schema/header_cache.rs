@@ -94,7 +94,11 @@ impl CachedHeader {
 
     /// Apply scalar predicate to prune rowgroups.
     /// Returns indices of rowgroups that may contain matching data.
-    pub fn prune_by_scalar_predicate(&self, column: &str, predicate: &ScalarPredicate) -> Vec<usize> {
+    pub fn prune_by_scalar_predicate(
+        &self,
+        column: &str,
+        predicate: &ScalarPredicate,
+    ) -> Vec<usize> {
         self.rowgroups
             .iter()
             .enumerate()
@@ -335,8 +339,14 @@ impl ScalarPredicate {
         match self {
             Eq(v) => {
                 // min <= v <= max
-                bounds.min.compare(v).map_or(true, |o| o != std::cmp::Ordering::Greater)
-                    && bounds.max.compare(v).map_or(true, |o| o != std::cmp::Ordering::Less)
+                bounds
+                    .min
+                    .compare(v)
+                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    && bounds
+                        .max
+                        .compare(v)
+                        .map_or(true, |o| o != std::cmp::Ordering::Less)
             }
             Ne(_) => {
                 // Can only skip if min == max == v
@@ -344,31 +354,55 @@ impl ScalarPredicate {
             }
             Lt(v) => {
                 // min < v
-                bounds.min.compare(v).map_or(true, |o| o == std::cmp::Ordering::Less)
+                bounds
+                    .min
+                    .compare(v)
+                    .map_or(true, |o| o == std::cmp::Ordering::Less)
             }
             Le(v) => {
                 // min <= v
-                bounds.min.compare(v).map_or(true, |o| o != std::cmp::Ordering::Greater)
+                bounds
+                    .min
+                    .compare(v)
+                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
             }
             Gt(v) => {
                 // max > v
-                bounds.max.compare(v).map_or(true, |o| o == std::cmp::Ordering::Greater)
+                bounds
+                    .max
+                    .compare(v)
+                    .map_or(true, |o| o == std::cmp::Ordering::Greater)
             }
             Ge(v) => {
                 // max >= v
-                bounds.max.compare(v).map_or(true, |o| o != std::cmp::Ordering::Less)
+                bounds
+                    .max
+                    .compare(v)
+                    .map_or(true, |o| o != std::cmp::Ordering::Less)
             }
             In(values) => {
                 // Any value in range
                 values.iter().any(|v| {
-                    bounds.min.compare(v).map_or(true, |o| o != std::cmp::Ordering::Greater)
-                        && bounds.max.compare(v).map_or(true, |o| o != std::cmp::Ordering::Less)
+                    bounds
+                        .min
+                        .compare(v)
+                        .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                        && bounds
+                            .max
+                            .compare(v)
+                            .map_or(true, |o| o != std::cmp::Ordering::Less)
                 })
             }
             Between(min_v, max_v) => {
                 // ranges overlap
-                bounds.min.compare(max_v).map_or(true, |o| o != std::cmp::Ordering::Greater)
-                    && bounds.max.compare(min_v).map_or(true, |o| o != std::cmp::Ordering::Less)
+                bounds
+                    .min
+                    .compare(max_v)
+                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    && bounds
+                        .max
+                        .compare(min_v)
+                        .map_or(true, |o| o != std::cmp::Ordering::Less)
             }
             IsNull => bounds.null_count > 0,
             IsNotNull => bounds.null_count < 1, // Conservative
@@ -393,23 +427,15 @@ pub enum SpatialRange {
         model_version: u32, // Version of the adaptive model
     },
     /// RAPTOR: Z-order curve range (Morton codes)
-    ZOrder {
-        min: u64,
-        max: u64,
-    },
+    ZOrder { min: u64, max: u64 },
     /// NOVA: Zone map bounds (per-dimension min/max)
     ZoneMap {
         bounds: HashMap<u32, (f32, f32)>, // dimension -> (min, max)
     },
     /// SST: Block ID range (sequential blocks)
-    BlockRange {
-        start_block: u32,
-        end_block: u32,
-    },
+    BlockRange { start_block: u32, end_block: u32 },
     /// VIPER: Parquet rowgroup (native Parquet stats)
-    ParquetRowGroup {
-        row_group_index: usize,
-    },
+    ParquetRowGroup { row_group_index: usize },
 }
 
 impl SpatialRange {
@@ -417,23 +443,47 @@ impl SpatialRange {
     pub fn may_overlap(&self, other: &SpatialRange) -> bool {
         match (self, other) {
             // Hilbert: 1D range intersection
-            (SpatialRange::Hilbert { min: a_min, max: a_max, .. },
-             SpatialRange::Hilbert { min: b_min, max: b_max, .. }) => {
-                a_min <= b_max && b_min <= a_max
-            }
+            (
+                SpatialRange::Hilbert {
+                    min: a_min,
+                    max: a_max,
+                    ..
+                },
+                SpatialRange::Hilbert {
+                    min: b_min,
+                    max: b_max,
+                    ..
+                },
+            ) => a_min <= b_max && b_min <= a_max,
             // AdaCurve: 1D range intersection
-            (SpatialRange::AdaCurve { min: a_min, max: a_max, .. },
-             SpatialRange::AdaCurve { min: b_min, max: b_max, .. }) => {
-                a_min <= b_max && b_min <= a_max
-            }
+            (
+                SpatialRange::AdaCurve {
+                    min: a_min,
+                    max: a_max,
+                    ..
+                },
+                SpatialRange::AdaCurve {
+                    min: b_min,
+                    max: b_max,
+                    ..
+                },
+            ) => a_min <= b_max && b_min <= a_max,
             // Z-order: 1D range intersection
-            (SpatialRange::ZOrder { min: a_min, max: a_max },
-             SpatialRange::ZOrder { min: b_min, max: b_max }) => {
-                a_min <= b_max && b_min <= a_max
-            }
+            (
+                SpatialRange::ZOrder {
+                    min: a_min,
+                    max: a_max,
+                },
+                SpatialRange::ZOrder {
+                    min: b_min,
+                    max: b_max,
+                },
+            ) => a_min <= b_max && b_min <= a_max,
             // ZoneMap: per-dimension overlap check
-            (SpatialRange::ZoneMap { bounds: a_bounds },
-             SpatialRange::ZoneMap { bounds: b_bounds }) => {
+            (
+                SpatialRange::ZoneMap { bounds: a_bounds },
+                SpatialRange::ZoneMap { bounds: b_bounds },
+            ) => {
                 // Must overlap in all shared dimensions
                 for (dim, (a_min, a_max)) in a_bounds {
                     if let Some((b_min, b_max)) = b_bounds.get(dim) {
@@ -445,10 +495,16 @@ impl SpatialRange {
                 true
             }
             // BlockRange: simple range intersection
-            (SpatialRange::BlockRange { start_block: a_start, end_block: a_end },
-             SpatialRange::BlockRange { start_block: b_start, end_block: b_end }) => {
-                a_start <= b_end && b_start <= a_end
-            }
+            (
+                SpatialRange::BlockRange {
+                    start_block: a_start,
+                    end_block: a_end,
+                },
+                SpatialRange::BlockRange {
+                    start_block: b_start,
+                    end_block: b_end,
+                },
+            ) => a_start <= b_end && b_start <= a_end,
             // Different types: can't prune, assume overlap
             _ => true,
         }
@@ -661,7 +717,10 @@ impl ProximaHeaderCache {
         }
 
         *self.current_size_bytes.write() -= size_freed;
-        info!("Invalidated {} bytes of headers with prefix {}", size_freed, prefix);
+        info!(
+            "Invalidated {} bytes of headers with prefix {}",
+            size_freed, prefix
+        );
     }
 
     /// Ensure capacity for new entry by evicting LRU entries.
@@ -674,7 +733,10 @@ impl ProximaHeaderCache {
         }
 
         // Sort by last access time (oldest first)
-        let mut entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.last_access)).collect();
+        let mut entries: Vec<_> = cache
+            .iter()
+            .map(|(k, v)| (k.clone(), v.last_access))
+            .collect();
         entries.sort_by_key(|(_, t)| *t);
 
         let mut freed = 0;
@@ -766,7 +828,8 @@ impl std::fmt::Display for CacheStats {
 // ============================================================================
 
 /// Global header cache singleton.
-static GLOBAL_HEADER_CACHE: std::sync::OnceLock<Arc<ProximaHeaderCache>> = std::sync::OnceLock::new();
+static GLOBAL_HEADER_CACHE: std::sync::OnceLock<Arc<ProximaHeaderCache>> =
+    std::sync::OnceLock::new();
 
 /// Get the global header cache.
 pub fn global_header_cache() -> Arc<ProximaHeaderCache> {
@@ -818,7 +881,11 @@ impl CachingHeaderLoader {
     }
 
     /// Load header with caching.
-    pub async fn load(&self, path: &str, format_hint: Option<&str>) -> anyhow::Result<CachedHeader> {
+    pub async fn load(
+        &self,
+        path: &str,
+        format_hint: Option<&str>,
+    ) -> anyhow::Result<CachedHeader> {
         // Check cache first
         if let Some(header) = self.cache.get(path) {
             return Ok(header);
@@ -853,8 +920,7 @@ impl CachingHeaderLoader {
 
 use super::centroid_tree::CentroidTree;
 use super::pruning_strategies::{
-    BloomCheckResult, BloomChecker, PruningResult, ScalarPruner, SpatialPruner,
-    SpatialRangeType, VectorPruner,
+    PruningResult, ScalarPruner, SpatialPruner, SpatialRangeType, VectorPruner,
 };
 
 /// Enhanced header cache entry with CentroidTree for vector pruning.
@@ -1138,19 +1204,20 @@ mod tests {
         let mut header = CachedHeader::new("/data/test.sst".to_string(), 12345);
 
         // Add rowgroup with column stats
-        let rg = RowGroupMeta::new(0, 0, 1000, 100)
-            .with_column_stats("age", ColumnBounds::new(
-                ColumnValue::Int64(18),
-                ColumnValue::Int64(65),
-            ));
+        let rg = RowGroupMeta::new(0, 0, 1000, 100).with_column_stats(
+            "age",
+            ColumnBounds::new(ColumnValue::Int64(18), ColumnValue::Int64(65)),
+        );
         header.rowgroups.push(rg);
 
         // Query: age > 70 (should prune this rowgroup)
-        let matching = header.prune_by_scalar_predicate("age", &ScalarPredicate::Gt(ColumnValue::Int64(70)));
+        let matching =
+            header.prune_by_scalar_predicate("age", &ScalarPredicate::Gt(ColumnValue::Int64(70)));
         assert!(matching.is_empty());
 
         // Query: age > 30 (should NOT prune)
-        let matching = header.prune_by_scalar_predicate("age", &ScalarPredicate::Gt(ColumnValue::Int64(30)));
+        let matching =
+            header.prune_by_scalar_predicate("age", &ScalarPredicate::Gt(ColumnValue::Int64(30)));
         assert_eq!(matching.len(), 1);
     }
 

@@ -39,7 +39,7 @@
 //! - UPDATE
 //! - DELETE FROM
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -96,7 +96,12 @@ pub trait IndexOperations: Send + Sync {
 #[async_trait]
 pub trait DmlOperations: Send + Sync {
     /// Insert rows into a table
-    async fn insert(&self, table: &str, columns: &[String], rows: Vec<Vec<SqlValue>>) -> Result<u64>;
+    async fn insert(
+        &self,
+        table: &str,
+        columns: &[String],
+        rows: Vec<Vec<SqlValue>>,
+    ) -> Result<u64>;
 
     /// Update rows in a table
     async fn update(
@@ -133,8 +138,14 @@ pub enum SqlValue {
 pub enum TableAlteration {
     AddColumn(ColumnDefinition),
     DropColumn(String),
-    RenameColumn { old_name: String, new_name: String },
-    AlterColumnType { column: String, new_type: SqlDataType },
+    RenameColumn {
+        old_name: String,
+        new_name: String,
+    },
+    AlterColumnType {
+        column: String,
+        new_type: SqlDataType,
+    },
     AddConstraint(ConstraintDefinition),
     DropConstraint(String),
 }
@@ -253,7 +264,9 @@ impl DdlDmlExecutor {
             }
 
             DdlStatement::AlterTable { name, alterations } => {
-                self.table_ops.alter_table(&name, alterations.clone()).await?;
+                self.table_ops
+                    .alter_table(&name, alterations.clone())
+                    .await?;
                 info!("Altered table: {} ({} changes)", name, alterations.len());
                 ExecutionResult::ok(format!("ALTER TABLE {}", name))
             }
@@ -403,7 +416,10 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
                 if col_def.options.iter().any(|opt| {
                     matches!(
                         opt.option,
-                        sqlparser::ast::ColumnOption::Unique { is_primary: true, .. }
+                        sqlparser::ast::ColumnOption::Unique {
+                            is_primary: true,
+                            ..
+                        }
                     )
                 }) {
                     primary_key.push(col_name.clone());
@@ -424,8 +440,9 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
 
             // Extract primary key from table constraints
             for constraint in &create.constraints {
-                if let sqlparser::ast::TableConstraint::PrimaryKey { columns: pk_cols, .. } =
-                    constraint
+                if let sqlparser::ast::TableConstraint::PrimaryKey {
+                    columns: pk_cols, ..
+                } = constraint
                 {
                     for col in pk_cols {
                         // IndexColumn.column is an OrderByExpr, use to_string()
@@ -456,10 +473,7 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
             if_exists,
             ..
         } => {
-            let name = names
-                .first()
-                .map(|n| n.to_string())
-                .unwrap_or_default();
+            let name = names.first().map(|n| n.to_string()).unwrap_or_default();
 
             match object_type {
                 sqlparser::ast::ObjectType::Table => Ok(DdlStatement::DropTable {
@@ -530,11 +544,7 @@ pub fn parse_dml(sql: &str) -> Result<DmlStatement> {
             // Insert.table is a TableObject in 0.59.0
             let table = insert.table.to_string();
 
-            let columns: Vec<String> = insert
-                .columns
-                .iter()
-                .map(|c| c.value.clone())
-                .collect();
+            let columns: Vec<String> = insert.columns.iter().map(|c| c.value.clone()).collect();
 
             // Extract values from the source
             let values = extract_insert_values(&insert.source)?;
@@ -546,7 +556,12 @@ pub fn parse_dml(sql: &str) -> Result<DmlStatement> {
             })
         }
 
-        sqlparser::ast::Statement::Update { table, assignments, selection, .. } => {
+        sqlparser::ast::Statement::Update {
+            table,
+            assignments,
+            selection,
+            ..
+        } => {
             // TableWithJoins.relation is a TableFactor
             let table_name = extract_table_name(&table.relation)?;
 
@@ -595,11 +610,15 @@ fn extract_table_name(factor: &sqlparser::ast::TableFactor) -> Result<String> {
 fn extract_delete_table(from: &sqlparser::ast::FromTable) -> Result<String> {
     match from {
         sqlparser::ast::FromTable::WithFromKeyword(tables) => {
-            let first = tables.first().ok_or_else(|| anyhow!("DELETE requires FROM clause"))?;
+            let first = tables
+                .first()
+                .ok_or_else(|| anyhow!("DELETE requires FROM clause"))?;
             extract_table_name(&first.relation)
         }
         sqlparser::ast::FromTable::WithoutKeyword(tables) => {
-            let first = tables.first().ok_or_else(|| anyhow!("DELETE requires FROM clause"))?;
+            let first = tables
+                .first()
+                .ok_or_else(|| anyhow!("DELETE requires FROM clause"))?;
             extract_table_name(&first.relation)
         }
     }
@@ -628,23 +647,29 @@ fn convert_sql_type(data_type: &sqlparser::ast::DataType) -> SqlDataType {
             SqlDataType::Decimal(p, s)
         }
         sqlparser::ast::DataType::Varchar(len) => {
-            let max_len = len.as_ref().and_then(|l| {
-                if let sqlparser::ast::CharacterLength::IntegerLength { length, .. } = l {
-                    Some(*length as u32)
-                } else {
-                    None
-                }
-            }).unwrap_or(255);
+            let max_len = len
+                .as_ref()
+                .and_then(|l| {
+                    if let sqlparser::ast::CharacterLength::IntegerLength { length, .. } = l {
+                        Some(*length as u32)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(255);
             SqlDataType::VarChar(max_len)
         }
         sqlparser::ast::DataType::Char(len) => {
-            let max_len = len.as_ref().and_then(|l| {
-                if let sqlparser::ast::CharacterLength::IntegerLength { length, .. } = l {
-                    Some(*length as u32)
-                } else {
-                    None
-                }
-            }).unwrap_or(1);
+            let max_len = len
+                .as_ref()
+                .and_then(|l| {
+                    if let sqlparser::ast::CharacterLength::IntegerLength { length, .. } = l {
+                        Some(*length as u32)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(1);
             SqlDataType::Char(max_len)
         }
         sqlparser::ast::DataType::Text => SqlDataType::Text,
@@ -659,7 +684,10 @@ fn convert_sql_type(data_type: &sqlparser::ast::DataType) -> SqlDataType {
             // Handle vector type - use to_string() for ObjectName
             let type_name = name.to_string().to_uppercase();
             if type_name == "VECTOR" {
-                let dim = tokens.first().and_then(|t| t.to_string().parse::<u32>().ok()).unwrap_or(1536);
+                let dim = tokens
+                    .first()
+                    .and_then(|t| t.to_string().parse::<u32>().ok())
+                    .unwrap_or(1536);
                 SqlDataType::Vector(dim)
             } else {
                 SqlDataType::Text // Fallback
@@ -669,8 +697,12 @@ fn convert_sql_type(data_type: &sqlparser::ast::DataType) -> SqlDataType {
     }
 }
 
-fn extract_insert_values(source: &Option<Box<sqlparser::ast::Query>>) -> Result<Vec<Vec<SqlValue>>> {
-    let query = source.as_ref().ok_or_else(|| anyhow!("INSERT requires VALUES"))?;
+fn extract_insert_values(
+    source: &Option<Box<sqlparser::ast::Query>>,
+) -> Result<Vec<Vec<SqlValue>>> {
+    let query = source
+        .as_ref()
+        .ok_or_else(|| anyhow!("INSERT requires VALUES"))?;
 
     let mut result = Vec::new();
 
@@ -699,9 +731,8 @@ fn extract_value(expr: &sqlparser::ast::Expr) -> Result<SqlValue> {
                     Ok(SqlValue::Integer(n.parse()?))
                 }
             }
-            sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {
-                Ok(SqlValue::Text(s.clone()))
-            }
+            sqlparser::ast::Value::SingleQuotedString(s)
+            | sqlparser::ast::Value::DoubleQuotedString(s) => Ok(SqlValue::Text(s.clone())),
             sqlparser::ast::Value::Boolean(b) => Ok(SqlValue::Boolean(*b)),
             _ => Ok(SqlValue::Null),
         },
@@ -727,7 +758,8 @@ mod tests {
 
     #[test]
     fn test_parse_create_table() {
-        let sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL, email TEXT)";
+        let sql =
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL, email TEXT)";
         let result = parse_ddl(sql).unwrap();
 
         if let DdlStatement::CreateTable { table, .. } = result {
@@ -759,7 +791,12 @@ mod tests {
         let sql = "INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob')";
         let result = parse_dml(sql).unwrap();
 
-        if let DmlStatement::Insert { table, columns, values } = result {
+        if let DmlStatement::Insert {
+            table,
+            columns,
+            values,
+        } = result
+        {
             assert_eq!(table, "users");
             assert_eq!(columns, vec!["id", "name"]);
             assert_eq!(values.len(), 2);
@@ -773,7 +810,12 @@ mod tests {
         let sql = "UPDATE users SET name = 'Charlie' WHERE id = 1";
         let result = parse_dml(sql).unwrap();
 
-        if let DmlStatement::Update { table, updates, where_clause } = result {
+        if let DmlStatement::Update {
+            table,
+            updates,
+            where_clause,
+        } = result
+        {
             assert_eq!(table, "users");
             assert_eq!(updates.len(), 1);
             assert!(where_clause.is_some());
@@ -787,7 +829,11 @@ mod tests {
         let sql = "DELETE FROM users WHERE id = 1";
         let result = parse_dml(sql).unwrap();
 
-        if let DmlStatement::Delete { table, where_clause } = result {
+        if let DmlStatement::Delete {
+            table,
+            where_clause,
+        } = result
+        {
             assert_eq!(table, "users");
             assert!(where_clause.is_some());
         } else {

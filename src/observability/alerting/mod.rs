@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use self::engine::AlertEngine;
 use self::notifications::NotificationManager;
@@ -238,7 +238,10 @@ mod tests {
         };
 
         service.fire_alert(alert.clone()).await.unwrap();
-        service.acknowledge_alert(&alert.key(), "admin").await.unwrap();
+        service
+            .acknowledge_alert(&alert.key(), "admin")
+            .await
+            .unwrap();
 
         let active = service.get_alert(&alert.key()).await.unwrap();
         assert!(active.acknowledged);

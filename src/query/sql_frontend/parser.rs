@@ -12,8 +12,8 @@ use sqlparser::parser::Parser;
 
 // DML types for INSERT/UPDATE/DELETE
 use crate::services::dml::{
-    DmlStatement, SqlValueLiteral, WhereClause, Condition,
-    ComparisonOperator as DmlComparisonOperator, LogicalOperator,
+    ComparisonOperator as DmlComparisonOperator, Condition, DmlStatement, LogicalOperator,
+    SqlValueLiteral, WhereClause,
 };
 
 use crate::query::ast::{
@@ -57,16 +57,18 @@ impl SqlFrontendParser {
     fn convert_statement(&self, statement: &Statement) -> Result<Query> {
         match statement {
             Statement::Query(query) => self.convert_query(query),
-            Statement::Insert { .. } => {
-                Err(anyhow!("INSERT statements are parsed but not yet executed. Use REST/gRPC API for insertions."))
-            }
-            Statement::Update { .. } => {
-                Err(anyhow!("UPDATE statements are parsed but not yet executed. Use REST/gRPC API for updates."))
-            }
-            Statement::Delete { .. } => {
-                Err(anyhow!("DELETE statements are parsed but not yet executed. Use REST/gRPC API for deletions."))
-            }
-            _ => Err(anyhow!("Only SELECT queries are currently supported. For DML operations (INSERT/UPDATE/DELETE), use REST/gRPC API.")),
+            Statement::Insert { .. } => Err(anyhow!(
+                "INSERT statements are parsed but not yet executed. Use REST/gRPC API for insertions."
+            )),
+            Statement::Update { .. } => Err(anyhow!(
+                "UPDATE statements are parsed but not yet executed. Use REST/gRPC API for updates."
+            )),
+            Statement::Delete { .. } => Err(anyhow!(
+                "DELETE statements are parsed but not yet executed. Use REST/gRPC API for deletions."
+            )),
+            _ => Err(anyhow!(
+                "Only SELECT queries are currently supported. For DML operations (INSERT/UPDATE/DELETE), use REST/gRPC API."
+            )),
         }
     }
 
@@ -249,7 +251,11 @@ impl SqlFrontendParser {
         // Convert LIMIT and OFFSET (sqlparser 0.59 uses LimitClause enum)
         let (limit, offset) = if let Some(lc) = &query.limit_clause {
             match lc {
-                sqlparser::ast::LimitClause::LimitOffset { limit: lim, offset: off, .. } => {
+                sqlparser::ast::LimitClause::LimitOffset {
+                    limit: lim,
+                    offset: off,
+                    ..
+                } => {
                     let limit_val = lim.as_ref().and_then(|expr| {
                         if let SqlExpr::Value(value_with_span) = expr {
                             if let Value::Number(n, _) = &value_with_span.value {
@@ -268,7 +274,10 @@ impl SqlFrontendParser {
                     });
                     (limit_val, offset_val)
                 }
-                sqlparser::ast::LimitClause::OffsetCommaLimit { offset: off, limit: lim } => {
+                sqlparser::ast::LimitClause::OffsetCommaLimit {
+                    offset: off,
+                    limit: lim,
+                } => {
                     let limit_val = if let SqlExpr::Value(value_with_span) = lim {
                         if let Value::Number(n, _) = &value_with_span.value {
                             n.parse::<u64>().ok()
@@ -617,14 +626,18 @@ impl SqlFrontendParser {
                                             "km" | "kilometers" => Some("km".to_string()),
                                             "mi" | "miles" => Some("mi".to_string()),
                                             "m" | "meters" => Some("m".to_string()),
-                                            _ => return Err(anyhow!(
-                                                "GEO_WITHIN_DISTANCE: unit must be 'km', 'mi', or 'm'"
-                                            )),
+                                            _ => {
+                                                return Err(anyhow!(
+                                                    "GEO_WITHIN_DISTANCE: unit must be 'km', 'mi', or 'm'"
+                                                ));
+                                            }
                                         }
                                     }
-                                    _ => return Err(anyhow!(
-                                        "GEO_WITHIN_DISTANCE: unit must be a string literal"
-                                    )),
+                                    _ => {
+                                        return Err(anyhow!(
+                                            "GEO_WITHIN_DISTANCE: unit must be a string literal"
+                                        ));
+                                    }
                                 }
                             } else {
                                 Some("km".to_string()) // Default to km
@@ -764,29 +777,52 @@ impl SqlFrontendParser {
             }
 
             // expr LIKE pattern / expr NOT LIKE pattern
-            SqlExpr::Like { negated, expr, pattern, .. } => {
+            SqlExpr::Like {
+                negated,
+                expr,
+                pattern,
+                ..
+            } => {
                 let left_expr = Box::new(self.convert_expr(expr)?);
                 let right_expr = Box::new(self.convert_expr(pattern)?);
                 Ok(Expr::Binary {
                     left: left_expr,
-                    op: if *negated { BinaryOp::NotLike } else { BinaryOp::Like },
+                    op: if *negated {
+                        BinaryOp::NotLike
+                    } else {
+                        BinaryOp::Like
+                    },
                     right: right_expr,
                 })
             }
 
             // Case-insensitive LIKE (ILIKE) - treat as regular LIKE for now
-            SqlExpr::ILike { negated, expr, pattern, .. } => {
+            SqlExpr::ILike {
+                negated,
+                expr,
+                pattern,
+                ..
+            } => {
                 let left_expr = Box::new(self.convert_expr(expr)?);
                 let right_expr = Box::new(self.convert_expr(pattern)?);
                 Ok(Expr::Binary {
                     left: left_expr,
-                    op: if *negated { BinaryOp::NotLike } else { BinaryOp::Like },
+                    op: if *negated {
+                        BinaryOp::NotLike
+                    } else {
+                        BinaryOp::Like
+                    },
                     right: right_expr,
                 })
             }
 
             // expr BETWEEN low AND high
-            SqlExpr::Between { expr, negated, low, high } => {
+            SqlExpr::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => {
                 let converted_expr = Box::new(self.convert_expr(expr)?);
                 let converted_low = Box::new(self.convert_expr(low)?);
                 let converted_high = Box::new(self.convert_expr(high)?);
@@ -817,7 +853,11 @@ impl SqlFrontendParser {
             }
 
             // expr IN (val1, val2, ...)
-            SqlExpr::InList { expr, list, negated } => {
+            SqlExpr::InList {
+                expr,
+                list,
+                negated,
+            } => {
                 let converted_expr = Box::new(self.convert_expr(expr)?);
                 let converted_list: Result<Vec<Expr>> =
                     list.iter().map(|e| self.convert_expr(e)).collect();
@@ -829,9 +869,7 @@ impl SqlFrontendParser {
             }
 
             // Parenthesized expression (nested)
-            SqlExpr::Nested(inner) => {
-                self.convert_expr(inner)
-            }
+            SqlExpr::Nested(inner) => self.convert_expr(inner),
 
             _ => Err(anyhow!("Unsupported expression: {:?}", expr)),
         }
@@ -938,15 +976,14 @@ impl SqlFrontendParser {
     /// Try to convert a statement to DML, returning None for SELECT queries
     fn try_convert_dml(&self, statement: &Statement) -> Result<Option<DmlStatement>> {
         match statement {
-            Statement::Insert(insert) => {
-                Ok(Some(self.convert_insert(insert)?))
-            }
-            Statement::Update { table, assignments, selection, .. } => {
-                Ok(Some(self.convert_update(table, assignments, selection)?))
-            }
-            Statement::Delete(delete) => {
-                Ok(Some(self.convert_delete(delete)?))
-            }
+            Statement::Insert(insert) => Ok(Some(self.convert_insert(insert)?)),
+            Statement::Update {
+                table,
+                assignments,
+                selection,
+                ..
+            } => Ok(Some(self.convert_update(table, assignments, selection)?)),
+            Statement::Delete(delete) => Ok(Some(self.convert_delete(delete)?)),
             Statement::Query(_) => Ok(None), // SELECT query, not DML
             _ => Err(anyhow!("Unsupported statement type for DML")),
         }
@@ -958,9 +995,7 @@ impl SqlFrontendParser {
         let table_name = insert.table.to_string();
 
         // Get column names
-        let columns: Vec<String> = insert.columns.iter()
-            .map(|c| c.value.clone())
-            .collect();
+        let columns: Vec<String> = insert.columns.iter().map(|c| c.value.clone()).collect();
 
         // Get values from source
         let values = match &insert.source {
@@ -988,17 +1023,20 @@ impl SqlFrontendParser {
     }
 
     /// Extract values from INSERT source (VALUES clause)
-    fn extract_values_from_source(&self, source: &sqlparser::ast::Query) -> Result<Vec<Vec<SqlValueLiteral>>> {
+    fn extract_values_from_source(
+        &self,
+        source: &sqlparser::ast::Query,
+    ) -> Result<Vec<Vec<SqlValueLiteral>>> {
         match &*source.body {
-            SetExpr::Values(values) => {
-                values.rows.iter()
-                    .map(|row| {
-                        row.iter()
-                            .map(|expr| self.convert_expr_to_dml_literal(expr))
-                            .collect()
-                    })
-                    .collect()
-            }
+            SetExpr::Values(values) => values
+                .rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|expr| self.convert_expr_to_dml_literal(expr))
+                        .collect()
+                })
+                .collect(),
             _ => Err(anyhow!("INSERT source must be VALUES clause")),
         }
     }
@@ -1011,12 +1049,17 @@ impl SqlFrontendParser {
                 self.convert_value_to_dml_literal(&value_with_span.value)
             }
             SqlExpr::Array(arr) => {
-                let elements: Result<Vec<SqlValueLiteral>> = arr.elem.iter()
+                let elements: Result<Vec<SqlValueLiteral>> = arr
+                    .elem
+                    .iter()
                     .map(|e| self.convert_expr_to_dml_literal(e))
                     .collect();
                 Ok(SqlValueLiteral::Array(elements?))
             }
-            SqlExpr::UnaryOp { op: UnaryOperator::Minus, expr } => {
+            SqlExpr::UnaryOp {
+                op: UnaryOperator::Minus,
+                expr,
+            } => {
                 // Handle negative numbers
                 match self.convert_expr_to_dml_literal(expr)? {
                     SqlValueLiteral::Integer(i) => Ok(SqlValueLiteral::Integer(-i)),
@@ -1043,24 +1086,25 @@ impl SqlFrontendParser {
     }
 
     /// Extract function arguments for DML
-    fn extract_function_args_dml(&self, args: &sqlparser::ast::FunctionArguments) -> Result<Vec<SqlValueLiteral>> {
+    fn extract_function_args_dml(
+        &self,
+        args: &sqlparser::ast::FunctionArguments,
+    ) -> Result<Vec<SqlValueLiteral>> {
         use sqlparser::ast::FunctionArguments;
         match args {
-            FunctionArguments::List(list) => {
-                list.args.iter()
-                    .filter_map(|arg| {
-                        match arg {
-                            FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
-                                self.convert_expr_to_dml_literal(e).ok()
-                            }
-                            _ => None,
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .map(Ok)
-                    .collect()
-            }
+            FunctionArguments::List(list) => list
+                .args
+                .iter()
+                .filter_map(|arg| match arg {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => {
+                        self.convert_expr_to_dml_literal(e).ok()
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(Ok)
+                .collect(),
             FunctionArguments::None => Ok(Vec::new()),
             FunctionArguments::Subquery(_) => Err(anyhow!("Subquery function args not supported")),
         }
@@ -1086,7 +1130,9 @@ impl SqlFrontendParser {
             }
             Value::HexStringLiteral(h) => {
                 // Simple hex decode
-                let bytes: Vec<u8> = h.as_bytes().chunks(2)
+                let bytes: Vec<u8> = h
+                    .as_bytes()
+                    .chunks(2)
                     .filter_map(|chunk| {
                         if chunk.len() == 2 {
                             u8::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()
@@ -1137,16 +1183,28 @@ impl SqlFrontendParser {
     }
 
     /// Convert assignment target to string
-    fn assignment_target_to_string(&self, target: &sqlparser::ast::AssignmentTarget) -> Result<String> {
+    fn assignment_target_to_string(
+        &self,
+        target: &sqlparser::ast::AssignmentTarget,
+    ) -> Result<String> {
         use sqlparser::ast::AssignmentTarget;
         match target {
             AssignmentTarget::ColumnName(names) => {
                 // ObjectName is a newtype around Vec<Ident>, access inner with .0
-                Ok(names.0.iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."))
+                Ok(names
+                    .0
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join("."))
             }
             AssignmentTarget::Tuple(cols) => {
                 // For tuple assignment, join column names
-                Ok(cols.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", "))
+                Ok(cols
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "))
             }
         }
     }
@@ -1214,26 +1272,47 @@ impl SqlFrontendParser {
                         conditions.extend(self.extract_conditions_dml(right)?);
                         Ok(conditions)
                     }
-                    BinaryOperator::Eq | BinaryOperator::NotEq |
-                    BinaryOperator::Lt | BinaryOperator::LtEq |
-                    BinaryOperator::Gt | BinaryOperator::GtEq => {
+                    BinaryOperator::Eq
+                    | BinaryOperator::NotEq
+                    | BinaryOperator::Lt
+                    | BinaryOperator::LtEq
+                    | BinaryOperator::Gt
+                    | BinaryOperator::GtEq => {
                         // Simple comparison condition
                         let column = self.expr_to_column_name_dml(left)?;
                         let operator = self.convert_comparison_op_dml(op)?;
                         let value = self.convert_expr_to_dml_literal(right)?;
-                        Ok(vec![Condition::Comparison { column, operator, value }])
+                        Ok(vec![Condition::Comparison {
+                            column,
+                            operator,
+                            value,
+                        }])
                     }
                     _ => Err(anyhow!("Unsupported operator in WHERE: {:?}", op)),
                 }
             }
-            SqlExpr::InList { expr, list, negated } => {
+            SqlExpr::InList {
+                expr,
+                list,
+                negated,
+            } => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                let values: Result<Vec<SqlValueLiteral>> = list.iter()
+                let values: Result<Vec<SqlValueLiteral>> = list
+                    .iter()
                     .map(|e| self.convert_expr_to_dml_literal(e))
                     .collect();
-                Ok(vec![Condition::In { column, values: values?, negated: *negated }])
+                Ok(vec![Condition::In {
+                    column,
+                    values: values?,
+                    negated: *negated,
+                }])
             }
-            SqlExpr::Between { expr, negated, low, high } => {
+            SqlExpr::Between {
+                expr,
+                negated,
+                low,
+                high,
+            } => {
                 let column = self.expr_to_column_name_dml(expr)?;
                 let low_val = self.convert_expr_to_dml_literal(low)?;
                 let high_val = self.convert_expr_to_dml_literal(high)?;
@@ -1246,20 +1325,33 @@ impl SqlFrontendParser {
             }
             SqlExpr::IsNull(expr) => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                Ok(vec![Condition::IsNull { column, negated: false }])
+                Ok(vec![Condition::IsNull {
+                    column,
+                    negated: false,
+                }])
             }
             SqlExpr::IsNotNull(expr) => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                Ok(vec![Condition::IsNull { column, negated: true }])
+                Ok(vec![Condition::IsNull {
+                    column,
+                    negated: true,
+                }])
             }
-            SqlExpr::Like { expr, pattern, negated, .. } => {
+            SqlExpr::Like {
+                expr,
+                pattern,
+                negated,
+                ..
+            } => {
                 let column = self.expr_to_column_name_dml(expr)?;
                 let pattern_str = self.extract_like_pattern(pattern)?;
-                Ok(vec![Condition::Like { column, pattern: pattern_str, negated: *negated }])
+                Ok(vec![Condition::Like {
+                    column,
+                    pattern: pattern_str,
+                    negated: *negated,
+                }])
             }
-            SqlExpr::Nested(inner) => {
-                self.extract_conditions_dml(inner)
-            }
+            SqlExpr::Nested(inner) => self.extract_conditions_dml(inner),
             _ => Err(anyhow!("Unsupported WHERE expression: {:?}", expr)),
         }
     }
@@ -1267,13 +1359,11 @@ impl SqlFrontendParser {
     /// Extract LIKE pattern string
     fn extract_like_pattern(&self, pattern: &SqlExpr) -> Result<String> {
         match pattern {
-            SqlExpr::Value(value_with_span) => {
-                match &value_with_span.value {
-                    Value::SingleQuotedString(s) => Ok(s.clone()),
-                    Value::DoubleQuotedString(s) => Ok(s.clone()),
-                    _ => Err(anyhow!("LIKE pattern must be a string")),
-                }
-            }
+            SqlExpr::Value(value_with_span) => match &value_with_span.value {
+                Value::SingleQuotedString(s) => Ok(s.clone()),
+                Value::DoubleQuotedString(s) => Ok(s.clone()),
+                _ => Err(anyhow!("LIKE pattern must be a string")),
+            },
             _ => Err(anyhow!("LIKE pattern must be a string literal")),
         }
     }
@@ -1282,9 +1372,11 @@ impl SqlFrontendParser {
     fn expr_to_column_name_dml(&self, expr: &SqlExpr) -> Result<String> {
         match expr {
             SqlExpr::Identifier(ident) => Ok(ident.value.clone()),
-            SqlExpr::CompoundIdentifier(parts) => {
-                Ok(parts.iter().map(|p| p.value.clone()).collect::<Vec<_>>().join("."))
-            }
+            SqlExpr::CompoundIdentifier(parts) => Ok(parts
+                .iter()
+                .map(|p| p.value.clone())
+                .collect::<Vec<_>>()
+                .join(".")),
             _ => Err(anyhow!("Expected column name, got {:?}", expr)),
         }
     }
@@ -1305,7 +1397,10 @@ impl SqlFrontendParser {
     /// Determine the logical operator from an expression (for DML)
     fn determine_logical_operator_dml(&self, expr: &SqlExpr) -> LogicalOperator {
         match expr {
-            SqlExpr::BinaryOp { op: BinaryOperator::Or, .. } => LogicalOperator::Or,
+            SqlExpr::BinaryOp {
+                op: BinaryOperator::Or,
+                ..
+            } => LogicalOperator::Or,
             _ => LogicalOperator::And, // Default to AND
         }
     }
@@ -1322,8 +1417,7 @@ impl Default for SqlFrontendParser {
 // ========================
 
 use crate::services::ddl::{
-    AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement,
-    SqlDataType, TableConstraint,
+    AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, SqlDataType, TableConstraint,
 };
 
 impl SqlFrontendParser {
@@ -1374,7 +1468,10 @@ impl SqlFrontendParser {
                                 changes.push(AlterTableChange::DropColumn(col_name.to_string()));
                             }
                         }
-                        AlterTableOperation::RenameColumn { old_column_name, new_column_name } => {
+                        AlterTableOperation::RenameColumn {
+                            old_column_name,
+                            new_column_name,
+                        } => {
                             changes.push(AlterTableChange::RenameColumn {
                                 old_name: old_column_name.to_string(),
                                 new_name: new_column_name.to_string(),
@@ -1415,7 +1512,10 @@ impl SqlFrontendParser {
                                     });
                                 }
                                 _ => {
-                                    return Err(anyhow!("Unsupported ALTER COLUMN operation: {:?}", op));
+                                    return Err(anyhow!(
+                                        "Unsupported ALTER COLUMN operation: {:?}",
+                                        op
+                                    ));
                                 }
                             }
                         }
@@ -1423,7 +1523,8 @@ impl SqlFrontendParser {
                             use sqlparser::ast::TableConstraint as SqlConstraint;
                             match constraint {
                                 SqlConstraint::Unique { name, columns, .. } => {
-                                    let cols: Vec<String> = columns.iter().map(|c| c.to_string()).collect();
+                                    let cols: Vec<String> =
+                                        columns.iter().map(|c| c.to_string()).collect();
                                     changes.push(AlterTableChange::AddConstraint {
                                         constraint_name: name.as_ref().map(|n| n.to_string()),
                                         constraint: TableConstraint::Unique { columns: cols },
@@ -1437,9 +1538,17 @@ impl SqlFrontendParser {
                                         },
                                     });
                                 }
-                                SqlConstraint::ForeignKey { name, columns, foreign_table, referred_columns, .. } => {
-                                    let cols: Vec<String> = columns.iter().map(|c| c.to_string()).collect();
-                                    let ref_cols: Vec<String> = referred_columns.iter().map(|c| c.to_string()).collect();
+                                SqlConstraint::ForeignKey {
+                                    name,
+                                    columns,
+                                    foreign_table,
+                                    referred_columns,
+                                    ..
+                                } => {
+                                    let cols: Vec<String> =
+                                        columns.iter().map(|c| c.to_string()).collect();
+                                    let ref_cols: Vec<String> =
+                                        referred_columns.iter().map(|c| c.to_string()).collect();
                                     changes.push(AlterTableChange::AddConstraint {
                                         constraint_name: name.as_ref().map(|n| n.to_string()),
                                         constraint: TableConstraint::ForeignKey {
@@ -1459,7 +1568,13 @@ impl SqlFrontendParser {
                                 constraint_name: name.to_string(),
                             });
                         }
-                        AlterTableOperation::ChangeColumn { old_name, new_name, data_type, options, .. } => {
+                        AlterTableOperation::ChangeColumn {
+                            old_name,
+                            new_name,
+                            data_type,
+                            options,
+                            ..
+                        } => {
                             // MySQL-style CHANGE COLUMN (rename + type change)
                             if old_name.to_string() != new_name.to_string() {
                                 changes.push(AlterTableChange::RenameColumn {
@@ -1492,11 +1607,16 @@ impl SqlFrontendParser {
                     }
                 }
 
-                Ok(Some(DdlStatement::AlterTable { table_name, changes }))
+                Ok(Some(DdlStatement::AlterTable {
+                    table_name,
+                    changes,
+                }))
             }
             Statement::CreateTable(_) | Statement::CreateIndex(_) | Statement::Drop { .. } => {
                 // These can be added later if needed
-                Err(anyhow!("CREATE/DROP DDL statements should use the DDL service directly"))
+                Err(anyhow!(
+                    "CREATE/DROP DDL statements should use the DDL service directly"
+                ))
             }
             Statement::Query(_) => Ok(None), // SELECT query, not DDL
             Statement::Insert(_) | Statement::Update { .. } | Statement::Delete(_) => Ok(None), // DML
@@ -1564,15 +1684,18 @@ impl SqlFrontendParser {
             SqlDt::Decimal(info) | SqlDt::Numeric(info) => {
                 use sqlparser::ast::ExactNumberInfo;
                 match info {
-                    ExactNumberInfo::PrecisionAndScale(p, s) => {
-                        Ok(SqlDataType::Decimal { precision: *p as u32, scale: *s as u32 })
-                    }
-                    ExactNumberInfo::Precision(p) => {
-                        Ok(SqlDataType::Decimal { precision: *p as u32, scale: 0 })
-                    }
-                    ExactNumberInfo::None => {
-                        Ok(SqlDataType::Decimal { precision: 38, scale: 9 })
-                    }
+                    ExactNumberInfo::PrecisionAndScale(p, s) => Ok(SqlDataType::Decimal {
+                        precision: *p as u32,
+                        scale: *s as u32,
+                    }),
+                    ExactNumberInfo::Precision(p) => Ok(SqlDataType::Decimal {
+                        precision: *p as u32,
+                        scale: 0,
+                    }),
+                    ExactNumberInfo::None => Ok(SqlDataType::Decimal {
+                        precision: 38,
+                        scale: 9,
+                    }),
                 }
             }
             SqlDt::Varchar(info) | SqlDt::CharVarying(info) => {
@@ -1602,19 +1725,22 @@ impl SqlFrontendParser {
                 match type_name.as_str() {
                     "VECTOR" => {
                         // Parse dimension from modifiers: VECTOR(768)
-                        let dimension = modifiers.first()
+                        let dimension = modifiers
+                            .first()
                             .and_then(|m| m.to_string().parse::<u32>().ok())
                             .unwrap_or(0);
                         Ok(SqlDataType::Vector { dimension })
                     }
                     "SPARSE_VECTOR" => {
-                        let dimension = modifiers.first()
+                        let dimension = modifiers
+                            .first()
                             .and_then(|m| m.to_string().parse::<u32>().ok())
                             .unwrap_or(0);
                         Ok(SqlDataType::SparseVector { dimension })
                     }
                     "BINARY_VECTOR" => {
-                        let dimension = modifiers.first()
+                        let dimension = modifiers
+                            .first()
                             .and_then(|m| m.to_string().parse::<u32>().ok())
                             .unwrap_or(0);
                         Ok(SqlDataType::BinaryVector { dimension })

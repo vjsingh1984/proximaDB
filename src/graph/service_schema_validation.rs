@@ -144,8 +144,7 @@ impl super::GraphOperationsService {
             }
             // Disallow additional properties if configured
             if !ets.allow_additional_properties {
-                let mut allowed: std::collections::HashSet<&str> =
-                    std::collections::HashSet::new();
+                let mut allowed: std::collections::HashSet<&str> = std::collections::HashSet::new();
                 for s in &ets.required_properties {
                     allowed.insert(s.as_str());
                 }

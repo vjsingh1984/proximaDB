@@ -5,13 +5,11 @@
 //! and security policy enforcement.
 
 use super::encryption::{
-    EncryptedField, EncryptionConfig, FieldEncryption, FieldEncryptionError, KeyStore, KeyStoreConfig,
+    EncryptedField, EncryptionConfig, FieldEncryption, FieldEncryptionError, KeyStore,
+    KeyStoreConfig,
 };
 use super::rls::{CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy};
-use super::unified_auth::{
-    AuthenticationConfig, AuthenticationData,
-    UnifiedAuthService,
-};
+use super::unified_auth::{AuthenticationConfig, AuthenticationData, UnifiedAuthService};
 use super::unified_rbac::{
     ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
 };
@@ -149,7 +147,9 @@ impl SecurityCoordinator {
 
     /// Remove an RLS policy from a collection
     pub async fn remove_rls_policy(&self, collection: &str, policy_name: &str) -> Result<()> {
-        self.rls_service.remove_policy(collection, policy_name).await
+        self.rls_service
+            .remove_policy(collection, policy_name)
+            .await
     }
 
     /// Apply RLS filters for a search operation
@@ -190,8 +190,9 @@ impl SecurityCoordinator {
         field_name: &str,
         value: &serde_json::Value,
     ) -> Result<EncryptedField, FieldEncryptionError> {
-        let service = self.encryption_service.as_ref()
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Encryption not enabled".into()))?;
+        let service = self.encryption_service.as_ref().ok_or_else(|| {
+            FieldEncryptionError::EncryptionFailed("Encryption not enabled".into())
+        })?;
         service.encrypt_field(field_name, value)
     }
 
@@ -200,8 +201,9 @@ impl SecurityCoordinator {
         &self,
         encrypted: &EncryptedField,
     ) -> Result<serde_json::Value, FieldEncryptionError> {
-        let service = self.encryption_service.as_ref()
-            .ok_or_else(|| FieldEncryptionError::DecryptionFailed("Encryption not enabled".into()))?;
+        let service = self.encryption_service.as_ref().ok_or_else(|| {
+            FieldEncryptionError::DecryptionFailed("Encryption not enabled".into())
+        })?;
         service.decrypt_field(encrypted)
     }
 
@@ -210,8 +212,9 @@ impl SecurityCoordinator {
         &self,
         metadata: &mut HashMap<String, serde_json::Value>,
     ) -> Result<HashMap<String, EncryptedField>, FieldEncryptionError> {
-        let service = self.encryption_service.as_ref()
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Encryption not enabled".into()))?;
+        let service = self.encryption_service.as_ref().ok_or_else(|| {
+            FieldEncryptionError::EncryptionFailed("Encryption not enabled".into())
+        })?;
         service.encrypt_record_metadata(metadata)
     }
 
@@ -220,8 +223,9 @@ impl SecurityCoordinator {
         &self,
         encrypted_fields: &HashMap<String, EncryptedField>,
     ) -> Result<HashMap<String, serde_json::Value>, FieldEncryptionError> {
-        let service = self.encryption_service.as_ref()
-            .ok_or_else(|| FieldEncryptionError::DecryptionFailed("Encryption not enabled".into()))?;
+        let service = self.encryption_service.as_ref().ok_or_else(|| {
+            FieldEncryptionError::DecryptionFailed("Encryption not enabled".into())
+        })?;
         service.decrypt_record_metadata(encrypted_fields)
     }
 
@@ -231,8 +235,9 @@ impl SecurityCoordinator {
         value: &serde_json::Value,
         truncate_bytes: Option<usize>,
     ) -> Result<String, FieldEncryptionError> {
-        let service = self.encryption_service.as_ref()
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Encryption not enabled".into()))?;
+        let service = self.encryption_service.as_ref().ok_or_else(|| {
+            FieldEncryptionError::EncryptionFailed("Encryption not enabled".into())
+        })?;
         service.generate_search_index(value, truncate_bytes)
     }
 
@@ -242,16 +247,18 @@ impl SecurityCoordinator {
         key_id: &str,
         purpose: &str,
     ) -> Result<(), FieldEncryptionError> {
-        let store = self.key_store.as_ref()
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Key store not enabled".into()))?;
+        let store = self.key_store.as_ref().ok_or_else(|| {
+            FieldEncryptionError::EncryptionFailed("Key store not enabled".into())
+        })?;
         store.create_key(key_id, purpose)?;
         Ok(())
     }
 
     /// Rotate an encryption key
     pub fn rotate_encryption_key(&self, key_id: &str) -> Result<(), FieldEncryptionError> {
-        let store = self.key_store.as_ref()
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Key store not enabled".into()))?;
+        let store = self.key_store.as_ref().ok_or_else(|| {
+            FieldEncryptionError::EncryptionFailed("Key store not enabled".into())
+        })?;
         store.rotate_key(key_id)?;
         Ok(())
     }

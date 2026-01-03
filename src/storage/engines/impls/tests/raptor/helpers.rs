@@ -120,7 +120,14 @@ pub fn generate_unique_test_path() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    format!("/tmp/raptor_test_{}_{}_{}", counter, timestamp, format!("{:?}", thread_id).replace("ThreadId(", "").replace(")", ""))
+    format!(
+        "/tmp/raptor_test_{}_{}_{}",
+        counter,
+        timestamp,
+        format!("{:?}", thread_id)
+            .replace("ThreadId(", "")
+            .replace(")", "")
+    )
 }
 
 /// Generate a unique collection ID for test isolation

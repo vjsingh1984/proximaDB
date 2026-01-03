@@ -100,7 +100,10 @@ impl SessionState {
 
     /// Check if the session is still processing
     pub fn is_processing(&self) -> bool {
-        matches!(self, SessionState::Active | SessionState::Paused | SessionState::Draining)
+        matches!(
+            self,
+            SessionState::Active | SessionState::Paused | SessionState::Draining
+        )
     }
 
     /// Check if the session is terminated
@@ -299,12 +302,7 @@ mod tests {
     #[test]
     fn test_session_state_transitions() {
         let (tx, _rx) = mpsc::channel(1);
-        let session = StreamSession::new(
-            "test".to_string(),
-            SessionConfig::default(),
-            1024,
-            tx,
-        );
+        let session = StreamSession::new("test".to_string(), SessionConfig::default(), 1024, tx);
 
         assert_eq!(session.state.load(), SessionState::Active);
         assert!(session.transition_to(SessionState::Paused));

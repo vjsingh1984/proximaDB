@@ -4,7 +4,7 @@
 //! Reuses GraphEngine's edge traversal methods.
 
 use super::{
-    evaluate_property_filter, ColumnSpec, EdgeDirection, PhysicalOperator, QueryValue, ResultTuple,
+    ColumnSpec, EdgeDirection, PhysicalOperator, QueryValue, ResultTuple, evaluate_property_filter,
 };
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node, PropertyFilter};
@@ -227,7 +227,7 @@ impl PhysicalOperator for ExpandOperator {
                             "Expected node for variable '{}', found {:?}",
                             self.from_variable,
                             input_tuple.get(&self.from_variable)
-                        ))
+                        ));
                     }
                 };
 
@@ -264,7 +264,7 @@ impl PhysicalOperator for ExpandOperator {
 mod tests {
     use super::*;
     use crate::graph::query::operators::scan::NodeScanOperator;
-    use crate::proto::proximadb_v1::{property_value::Value, PropertyValue};
+    use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -363,20 +363,33 @@ mod tests {
                 .collect())
         }
 
-        fn get_neighbors(&self, _node_id: &String, _edge_type: Option<&str>) -> Result<Vec<Arc<Node>>, crate::core::error::ProximaDBError> {
+        fn get_neighbors(
+            &self,
+            _node_id: &String,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Node>>, crate::core::error::ProximaDBError> {
             Ok(vec![])
         }
 
         // Stub implementations
-        async fn insert_node(&self, node: Node) -> Result<Arc<Node>, crate::core::error::ProximaDBError> {
+        async fn insert_node(
+            &self,
+            node: Node,
+        ) -> Result<Arc<Node>, crate::core::error::ProximaDBError> {
             Ok(Arc::new(node))
         }
 
-        async fn update_node(&self, node: Node) -> Result<Arc<Node>, crate::core::error::ProximaDBError> {
+        async fn update_node(
+            &self,
+            node: Node,
+        ) -> Result<Arc<Node>, crate::core::error::ProximaDBError> {
             Ok(Arc::new(node))
         }
 
-        async fn delete_node(&self, _id: &String) -> Result<Option<Arc<Node>>, crate::core::error::ProximaDBError> {
+        async fn delete_node(
+            &self,
+            _id: &String,
+        ) -> Result<Option<Arc<Node>>, crate::core::error::ProximaDBError> {
             Ok(None)
         }
 
@@ -394,11 +407,17 @@ mod tests {
             Ok(None)
         }
 
-        async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>, crate::core::error::ProximaDBError> {
+        async fn update_edge(
+            &self,
+            edge: Edge,
+        ) -> Result<Arc<Edge>, crate::core::error::ProximaDBError> {
             Ok(Arc::new(edge))
         }
 
-        async fn delete_edge(&self, _id: &String) -> Result<Option<Arc<Edge>>, crate::core::error::ProximaDBError> {
+        async fn delete_edge(
+            &self,
+            _id: &String,
+        ) -> Result<Option<Arc<Edge>>, crate::core::error::ProximaDBError> {
             Ok(None)
         }
 
@@ -416,7 +435,12 @@ mod tests {
         let engine = Arc::new(MockEngine::new());
 
         // Create scan operator for alice
-        let scan = NodeScanOperator::new(engine.clone(), Some("Person".to_string()), vec![], "p".to_string());
+        let scan = NodeScanOperator::new(
+            engine.clone(),
+            Some("Person".to_string()),
+            vec![],
+            "p".to_string(),
+        );
 
         // Create expand operator
         let mut expand = ExpandOperator::new(

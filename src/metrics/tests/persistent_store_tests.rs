@@ -25,7 +25,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        format!("/tmp/proximadb_metrics_test_{}_{}",counter, timestamp)
+        format!("/tmp/proximadb_metrics_test_{}_{}", counter, timestamp)
     }
 
     async fn create_test_store() -> Result<MetricsPersistenceLayer> {

@@ -41,15 +41,15 @@
 //! let scores = pagerank.execute(())?;
 //! ```
 
-pub mod traits;
-pub mod community;
 pub mod centrality;
-pub mod pathfinding;
+pub mod community;
 pub mod embeddings;
+pub mod pathfinding;
+pub mod traits;
 
 // Re-export core traits for convenience
 pub use traits::{
-    AlgorithmComplexity, ApproximateAlgorithm, GraphAlgorithm, GraphChange, IncrementalAlgorithm,
-    NoInput, ParallelAlgorithm, SingleNodeInput, NodePairInput, SubgraphInput,
-    CentralityScores, CommunityAssignment, ShortestPath, AllPairsShortestPaths,
+    AlgorithmComplexity, AllPairsShortestPaths, ApproximateAlgorithm, CentralityScores,
+    CommunityAssignment, GraphAlgorithm, GraphChange, IncrementalAlgorithm, NoInput, NodePairInput,
+    ParallelAlgorithm, ShortestPath, SingleNodeInput, SubgraphInput,
 };

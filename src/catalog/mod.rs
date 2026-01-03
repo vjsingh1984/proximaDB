@@ -27,9 +27,9 @@ pub mod cache;
 pub mod schema;
 
 // Always-available catalog implementations
-pub mod native;
 pub mod hive;
 pub mod iceberg;
+pub mod native;
 
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
@@ -38,29 +38,29 @@ pub mod internal;
 pub mod federation;
 
 // Feature-gated implementations
-#[cfg(feature = "aws")]
-pub mod glue;
-#[cfg(feature = "unity-catalog")]
-pub mod unity;
-#[cfg(feature = "polaris-catalog")]
-pub mod polaris;
 #[cfg(feature = "delta-lake")]
 pub mod delta;
+#[cfg(feature = "aws")]
+pub mod glue;
+#[cfg(feature = "polaris-catalog")]
+pub mod polaris;
+#[cfg(feature = "unity-catalog")]
+pub mod unity;
 
 // Re-exports for feature-gated catalogs
-#[cfg(feature = "aws")]
-pub use glue::GlueCatalog;
-#[cfg(feature = "unity-catalog")]
-pub use unity::UnityCatalog;
-#[cfg(feature = "polaris-catalog")]
-pub use polaris::PolarisCatalog;
 #[cfg(feature = "delta-lake")]
 pub use delta::{DeltaCatalog, DeltaCatalogConfig};
+#[cfg(feature = "aws")]
+pub use glue::GlueCatalog;
+#[cfg(feature = "polaris-catalog")]
+pub use polaris::PolarisCatalog;
+#[cfg(feature = "unity-catalog")]
+pub use unity::UnityCatalog;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -100,7 +100,11 @@ impl CatalogManager {
     /// Register a pre-created catalog
     pub async fn register(&self, catalog: Arc<dyn Catalog>) -> Result<()> {
         let name = catalog.name().to_string();
-        info!("Registering catalog: {} (type: {})", name, catalog.catalog_type());
+        info!(
+            "Registering catalog: {} (type: {})",
+            name,
+            catalog.catalog_type()
+        );
 
         let mut catalogs = self.catalogs.write().await;
         catalogs.insert(name.clone(), catalog);
@@ -148,8 +152,7 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            hive::HiveCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = hive::HiveCatalog::new(name.to_string(), config, self.cache.clone()).await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -207,8 +210,7 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            glue::GlueCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = glue::GlueCatalog::new(name.to_string(), config, self.cache.clone()).await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -680,7 +682,9 @@ mod tests {
     #[cfg(not(feature = "aws"))]
     async fn test_create_glue_catalog_without_feature() {
         let manager = CatalogManager::new();
-        let result = manager.create_glue_catalog("glue", "us-east-1", "123456789012").await;
+        let result = manager
+            .create_glue_catalog("glue", "us-east-1", "123456789012")
+            .await;
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.to_string().contains("aws"));
@@ -1037,7 +1041,10 @@ mod tests {
             .unwrap();
 
         // catalog.ns1.ns2.table
-        let (catalog, id) = manager.resolve_table("catalog.db.schema.users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("catalog.db.schema.users")
+            .await
+            .unwrap();
         assert_eq!(catalog.name(), "catalog");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["db", "schema"]);

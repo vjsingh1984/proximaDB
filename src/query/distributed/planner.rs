@@ -108,26 +108,14 @@ impl QueryPlanner {
         // Build subqueries based on strategy
         let (local_subqueries, remote_subqueries) = match strategy {
             DistributionStrategy::LocalOnly => {
-                let local = self.build_local_subqueries(
-                    query,
-                    local_node_id,
-                    shard_info,
-                );
+                let local = self.build_local_subqueries(query, local_node_id, shard_info);
                 (local, Vec::new())
             }
             DistributionStrategy::Distributed => {
-                self.build_distributed_subqueries(
-                    query,
-                    local_node_id,
-                    available_nodes,
-                    shard_info,
-                )
+                self.build_distributed_subqueries(query, local_node_id, available_nodes, shard_info)
             }
             DistributionStrategy::Broadcast => {
-                let broadcast = self.build_broadcast_subqueries(
-                    query,
-                    available_nodes,
-                );
+                let broadcast = self.build_broadcast_subqueries(query, available_nodes);
                 (Vec::new(), broadcast)
             }
         };
@@ -390,13 +378,14 @@ mod tests {
         let collections: HashSet<String> = ["test".to_string()].into_iter().collect();
 
         let mut shard_info = HashMap::new();
-        shard_info.insert("test".to_string(), vec![
-            ShardInfo {
+        shard_info.insert(
+            "test".to_string(),
+            vec![ShardInfo {
                 shard_id: "shard-1".to_string(),
                 primary_node: Some("node-1".to_string()),
                 replica_nodes: vec!["node-2".to_string()],
-            },
-        ]);
+            }],
+        );
 
         // Data is local (node-1 is primary)
         assert!(planner.is_all_data_local("node-1", &collections, &shard_info));
@@ -418,7 +407,9 @@ mod tests {
             ..Default::default()
         }];
 
-        let plan = planner.plan(&query, "node-1", &nodes, &HashMap::new()).unwrap();
+        let plan = planner
+            .plan(&query, "node-1", &nodes, &HashMap::new())
+            .unwrap();
 
         assert_eq!(plan.strategy, DistributionStrategy::LocalOnly);
     }

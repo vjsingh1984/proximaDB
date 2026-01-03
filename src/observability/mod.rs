@@ -106,10 +106,7 @@ impl ObservabilityService {
     }
 
     /// Create a new namespace for observability data
-    pub async fn create_namespace(
-        &self,
-        config: ObservabilityNamespaceConfig,
-    ) -> Result<String> {
+    pub async fn create_namespace(&self, config: ObservabilityNamespaceConfig) -> Result<String> {
         let name = config.name.clone();
         info!("Creating observability namespace: {}", name);
 
@@ -224,9 +221,7 @@ impl ObservabilityService {
         namespace: &str,
         params: MetricAggParams,
     ) -> Result<MetricAggResult> {
-        self.query_engine
-            .aggregate_metrics(namespace, params)
-            .await
+        self.query_engine.aggregate_metrics(namespace, params).await
     }
 
     /// Get namespace stats
@@ -373,14 +368,10 @@ pub struct NamespaceStats {
 // bridging the existing ObservabilityService to the multi-model storage traits.
 
 use crate::storage::traits::{
-    DataPointValue as TraitDataPoint,
-    IngestResult as TraitIngestResult,
-    LogQueryResult as TraitLogQueryResult,
-    MetricAggregationParams as TraitMetricAggParams,
-    MetricAggregationResult as TraitMetricAggResult,
-    NamespaceInfo as TraitNamespaceInfo,
-    ObservabilityStorageOperations,
-    TimeSeriesData as TraitTimeSeriesData,
+    DataPointValue as TraitDataPoint, IngestResult as TraitIngestResult,
+    LogQueryResult as TraitLogQueryResult, MetricAggregationParams as TraitMetricAggParams,
+    MetricAggregationResult as TraitMetricAggResult, NamespaceInfo as TraitNamespaceInfo,
+    ObservabilityStorageOperations, TimeSeriesData as TraitTimeSeriesData,
 };
 use async_trait::async_trait;
 
@@ -407,17 +398,21 @@ fn to_trait_log_query_result(result: &LogQueryResult) -> TraitLogQueryResult {
 /// Convert internal MetricAggResult to trait MetricAggregationResult
 fn to_trait_metric_agg_result(result: &MetricAggResult) -> TraitMetricAggResult {
     TraitMetricAggResult {
-        series: result.series.iter().map(|s| {
-            TraitTimeSeriesData {
+        series: result
+            .series
+            .iter()
+            .map(|s| TraitTimeSeriesData {
                 labels: s.labels.clone(),
-                points: s.points.iter().map(|p| {
-                    TraitDataPoint {
+                points: s
+                    .points
+                    .iter()
+                    .map(|p| TraitDataPoint {
                         timestamp_ns: p.timestamp_ns,
                         value: p.value,
-                    }
-                }).collect(),
-            }
-        }).collect(),
+                    })
+                    .collect(),
+            })
+            .collect(),
         query_time_ms: result.query_time_ms,
     }
 }
@@ -457,7 +452,9 @@ impl ObservabilityStorageOperations for ObservabilityService {
         // TraceData in proto is a single span, convert and write
         for trace_data in traces {
             // Extract service name from attributes or use empty string
-            let service_name = trace_data.attributes.get("service.name")
+            let service_name = trace_data
+                .attributes
+                .get("service.name")
                 .and_then(|v| v.value.as_ref())
                 .and_then(|v| match v {
                     crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some(s.clone()),
@@ -466,23 +463,31 @@ impl ObservabilityStorageOperations for ObservabilityService {
                 .unwrap_or_default();
 
             // Convert SqlValue attributes to String attributes
-            let attributes: std::collections::HashMap<String, String> = trace_data.attributes
+            let attributes: std::collections::HashMap<String, String> = trace_data
+                .attributes
                 .iter()
                 .filter_map(|(k, v)| {
-                    v.value.as_ref().and_then(|val| {
-                        match val {
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some((k.clone(), s.clone())),
-                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => Some((k.clone(), i.to_string())),
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some((k.clone(), f.to_string())),
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Some((k.clone(), b.to_string())),
-                            _ => None,
+                    v.value.as_ref().and_then(|val| match val {
+                        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                            Some((k.clone(), s.clone()))
                         }
+                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                            Some((k.clone(), i.to_string()))
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                            Some((k.clone(), f.to_string()))
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                            Some((k.clone(), b.to_string()))
+                        }
+                        _ => None,
                     })
                 })
                 .collect();
 
             // Extract status code from SpanStatus message
-            let (status_code, status_message) = trace_data.status
+            let (status_code, status_message) = trace_data
+                .status
                 .map(|s| (s.code, s.message.unwrap_or_default()))
                 .unwrap_or((0, String::new())); // 0 = Unset
 
@@ -529,13 +534,23 @@ impl ObservabilityStorageOperations for ObservabilityService {
             start_time_ns,
             end_time_ns,
             query: None, // LogFilter doesn't have text_query, field_filters handle specific conditions
-            severities: filter.as_ref().map(|f| {
-                f.severities.iter().filter_map(|s| {
-                    crate::proto::proximadb_v1::Severity::try_from(*s).ok()
-                }).collect()
-            }).unwrap_or_default(),
-            services: filter.as_ref().map(|f| f.services.clone()).unwrap_or_default(),
-            sources: filter.as_ref().map(|f| f.sources.clone()).unwrap_or_default(),
+            severities: filter
+                .as_ref()
+                .map(|f| {
+                    f.severities
+                        .iter()
+                        .filter_map(|s| crate::proto::proximadb_v1::Severity::try_from(*s).ok())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            services: filter
+                .as_ref()
+                .map(|f| f.services.clone())
+                .unwrap_or_default(),
+            sources: filter
+                .as_ref()
+                .map(|f| f.sources.clone())
+                .unwrap_or_default(),
             limit,
             cursor: None,
         };
@@ -572,7 +587,8 @@ impl ObservabilityStorageOperations for ObservabilityService {
             group_by: params.group_by,
         };
 
-        let result = ObservabilityService::aggregate_metrics(self, namespace, internal_params).await?;
+        let result =
+            ObservabilityService::aggregate_metrics(self, namespace, internal_params).await?;
         Ok(to_trait_metric_agg_result(&result))
     }
 
@@ -603,16 +619,26 @@ impl ObservabilityStorageOperations for ObservabilityService {
                 // Convert String attributes back to SqlValue attributes
                 let mut attributes = std::collections::HashMap::new();
                 for (k, v) in span.attributes {
-                    attributes.insert(k, crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
-                    });
+                    attributes.insert(
+                        k,
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                v,
+                            )),
+                        },
+                    );
                 }
 
                 // Add service.name attribute
                 if !span.service_name.is_empty() {
-                    attributes.insert("service.name".to_string(), crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(span.service_name)),
-                    });
+                    attributes.insert(
+                        "service.name".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                span.service_name,
+                            )),
+                        },
+                    );
                 }
 
                 // Convert status i32 and message to SpanStatus message

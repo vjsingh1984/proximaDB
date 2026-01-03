@@ -199,10 +199,7 @@ pub async fn tls_client_cert_middleware<B>(
 
     // Try to extract client certificate info from extensions
     // The TLS acceptor should have added this during the TLS handshake
-    let cert_info = request
-        .extensions()
-        .get::<ClientCertificateInfo>()
-        .cloned();
+    let cert_info = request.extensions().get::<ClientCertificateInfo>().cloned();
 
     match cert_info {
         Some(info) => {
@@ -286,7 +283,8 @@ pub async fn tls_client_cert_middleware<B>(
                     StatusCode::UNAUTHORIZED,
                     Json(TlsCertErrorResponse {
                         error: "client_certificate_required".to_string(),
-                        message: "Client certificate is required for mTLS authentication".to_string(),
+                        message: "Client certificate is required for mTLS authentication"
+                            .to_string(),
                         code: 401,
                     }),
                 ))
@@ -401,8 +399,14 @@ mod tests {
 
     #[test]
     fn test_matches_cn_pattern_exact() {
-        assert!(matches_cn_pattern("client.example.com", "client.example.com"));
-        assert!(!matches_cn_pattern("other.example.com", "client.example.com"));
+        assert!(matches_cn_pattern(
+            "client.example.com",
+            "client.example.com"
+        ));
+        assert!(!matches_cn_pattern(
+            "other.example.com",
+            "client.example.com"
+        ));
     }
 
     #[test]

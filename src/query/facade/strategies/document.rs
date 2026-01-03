@@ -34,11 +34,11 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
-use crate::storage::document::DocumentService;
 use crate::query::facade::{
-    ExecutionMetrics, QueryContent, QueryContext,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy, QueryType,
 };
+use crate::storage::document::DocumentService;
 
 /// Document Strategy - Real implementation wrapping DocumentService
 ///
@@ -168,7 +168,8 @@ impl DocumentStrategy {
         let docs_count = result.documents.len();
 
         // Convert documents to JSON rows
-        let rows: Vec<serde_json::Value> = result.documents
+        let rows: Vec<serde_json::Value> = result
+            .documents
             .into_iter()
             .map(|doc| {
                 serde_json::json!({
@@ -244,13 +245,18 @@ impl QueryStrategy for DocumentStrategy {
         };
 
         // Execute query
-        let result = self.doc_service.query_documents(&collection, params).await?;
+        let result = self
+            .doc_service
+            .query_documents(&collection, params)
+            .await?;
 
         let execution_time_ms = start.elapsed().as_millis() as u64;
         let facade_result = self.to_facade_result(result, execution_time_ms);
 
         info!(
-            documents = facade_result.metrics.as_ref()
+            documents = facade_result
+                .metrics
+                .as_ref()
                 .and_then(|m| m.extra.get("documents_returned"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),

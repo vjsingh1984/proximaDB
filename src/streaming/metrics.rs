@@ -151,7 +151,9 @@ impl StreamMetrics {
                     "proximadb_stream_ingestion_latency_seconds",
                     "Time from record receipt to buffer insertion",
                 )
-                .buckets(vec![0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]),
+                .buckets(vec![
+                    0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
+                ]),
             )
             .unwrap(),
 
@@ -160,7 +162,9 @@ impl StreamMetrics {
                     "proximadb_stream_ingestion_latency_by_collection_seconds",
                     "Ingestion latency by collection",
                 )
-                .buckets(vec![0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]),
+                .buckets(vec![
+                    0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
+                ]),
                 &["collection"],
             )
             .unwrap(),
@@ -175,11 +179,8 @@ impl StreamMetrics {
             .unwrap(),
 
             batch_size: Histogram::with_opts(
-                HistogramOpts::new(
-                    "proximadb_stream_batch_size",
-                    "Number of records per batch",
-                )
-                .buckets(vec![1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0]),
+                HistogramOpts::new("proximadb_stream_batch_size", "Number of records per batch")
+                    .buckets(vec![1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0]),
             )
             .unwrap(),
 
@@ -330,7 +331,13 @@ impl StreamMetrics {
     }
 
     /// Record a successful flush operation
-    pub fn record_flush_success(&self, collection: &str, records: usize, bytes: usize, retries: u32) {
+    pub fn record_flush_success(
+        &self,
+        collection: &str,
+        records: usize,
+        bytes: usize,
+        retries: u32,
+    ) {
         self.flush_success_total.inc();
         self.records_flushed_total.inc_by(records as f64);
         self.bytes_flushed_total.inc_by(bytes as f64);

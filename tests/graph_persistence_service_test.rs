@@ -4,10 +4,8 @@
 //! Tests actual WAL writing, recovery, and data integrity across engine restart.
 
 use proximadb::{
-    graph::{Edge, Node, PropertyValue, service::GraphOperationsService, engines::GraphEngine},
-    proto::proximadb_v1::{
-        CompressionAlgorithm, GraphStorageConfig, property_value::Value,
-    },
+    graph::{Edge, Node, PropertyValue, engines::GraphEngine, service::GraphOperationsService},
+    proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig, property_value::Value},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,7 +50,7 @@ async fn test_graph_persistence_with_wal_recovery() {
                     engine_type: "ORION".to_string(),
                     base_url: test_dir.to_string(),
                     compression: CompressionAlgorithm::CompressionSnappy as i32,
-                    enable_wal: true,  // KEY: WAL must be enabled!
+                    enable_wal: true, // KEY: WAL must be enabled!
                     snapshot_interval_hours: 24,
                     engine_specific_config: HashMap::new(),
                 }),
@@ -101,14 +99,12 @@ async fn test_graph_persistence_with_wal_recovery() {
                     from_node_id: format!("n{}", from_idx),
                     to_node_id: format!("n{}", to_idx),
                     edge_type: "CONNECTS".to_string(),
-                    properties: HashMap::from([
-                        (
-                            "weight".to_string(),
-                            PropertyValue {
-                                value: Some(Value::DoubleValue(i as f64 / 10.0)),
-                            },
-                        ),
-                    ]),
+                    properties: HashMap::from([(
+                        "weight".to_string(),
+                        PropertyValue {
+                            value: Some(Value::DoubleValue(i as f64 / 10.0)),
+                        },
+                    )]),
                     weight: Some(1.0),
                     created_at_ms: 0,
                     updated_at_ms: 0,
@@ -127,7 +123,8 @@ async fn test_graph_persistence_with_wal_recovery() {
             info!("🛑 Service dropped (simulating server restart)");
 
             Ok::<_, anyhow::Error>(())
-        }).await;
+        })
+        .await;
 
         assert!(
             result.is_ok() && result.unwrap().is_ok(),
@@ -146,7 +143,8 @@ async fn test_graph_persistence_with_wal_recovery() {
                 TEST_GRAPH_ID.to_string(),
                 test_dir.to_string(),
                 true, // enable WAL
-            ).await?;
+            )
+            .await?;
             info!("✅ New engine instance created");
 
             // Trigger WAL recovery
@@ -163,7 +161,10 @@ async fn test_graph_persistence_with_wal_recovery() {
                         assert_eq!(node.labels, vec!["TestNode".to_string()], "Labels mismatch");
 
                         // Verify properties
-                        if let Some(PropertyValue { value: Some(Value::IntValue(idx)) }) = node.properties.get("idx") {
+                        if let Some(PropertyValue {
+                            value: Some(Value::IntValue(idx)),
+                        }) = node.properties.get("idx")
+                        {
                             assert_eq!(*idx, i as i64, "Index property mismatch");
                         } else {
                             panic!("Missing or invalid idx property for {}", node_id);
@@ -222,7 +223,8 @@ async fn test_graph_persistence_with_wal_recovery() {
             info!("   ✓ Complete restart cycle validated");
 
             Ok::<_, anyhow::Error>(())
-        }).await;
+        })
+        .await;
 
         assert!(
             result.is_ok() && result.unwrap().is_ok(),

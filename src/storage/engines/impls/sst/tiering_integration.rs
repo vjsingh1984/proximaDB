@@ -67,12 +67,12 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::storage::tiering::{
-    AccessEvent, MigrationTask, MigrationResult, PerformanceTier, TieringEngineConfig,
+    AccessEvent, MigrationResult, MigrationTask, PerformanceTier, TieringEngineConfig,
     TieringPolicy, TieringPolicyEngine, TieringStats,
 };
 // Import additional types from submodules that aren't re-exported at top level
-use crate::storage::tiering::tracker::AccessType;
 use crate::storage::tiering::policy::TieringMetadata;
+use crate::storage::tiering::tracker::AccessType;
 
 /// Configuration for SST tiering integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,8 +263,14 @@ impl SstTieringIntegration {
 
         self.engine.add_policy(hot_policy).await;
 
-        info!("Added {} default tiering policies",
-            if self.config.archive_tier_path.is_some() { 3 } else { 2 });
+        info!(
+            "Added {} default tiering policies",
+            if self.config.archive_tier_path.is_some() {
+                3
+            } else {
+                2
+            }
+        );
     }
 
     /// Record an access event
@@ -513,7 +519,9 @@ mod tests {
         let integration = SstTieringIntegration::new(config).unwrap();
 
         // Should not panic when disabled
-        integration.record_access("test", "item1", AccessType::Read, 1024).await;
+        integration
+            .record_access("test", "item1", AccessType::Read, 1024)
+            .await;
     }
 
     #[tokio::test]
@@ -524,11 +532,19 @@ mod tests {
         };
         let integration = SstTieringIntegration::new(config).unwrap();
 
-        integration.record_access("test", "item1", AccessType::Read, 1024).await;
-        integration.record_access("test", "item1", AccessType::Read, 1024).await;
+        integration
+            .record_access("test", "item1", AccessType::Read, 1024)
+            .await;
+        integration
+            .record_access("test", "item1", AccessType::Read, 1024)
+            .await;
 
         // Access should be tracked
-        let pattern = integration.engine.access_tracker().get_pattern("test", "item1").await;
+        let pattern = integration
+            .engine
+            .access_tracker()
+            .get_pattern("test", "item1")
+            .await;
         assert!(pattern.is_some());
         assert_eq!(pattern.unwrap().access_count, 2);
     }
@@ -578,9 +594,18 @@ mod tests {
         };
         let integration = SstTieringIntegration::new(config).unwrap();
 
-        assert_eq!(integration.get_tier_path(PerformanceTier::Hot), Some("file:///data/hot"));
-        assert_eq!(integration.get_tier_path(PerformanceTier::Warm), Some("file:///data/warm"));
-        assert_eq!(integration.get_tier_path(PerformanceTier::Cold), Some("s3://bucket/cold"));
+        assert_eq!(
+            integration.get_tier_path(PerformanceTier::Hot),
+            Some("file:///data/hot")
+        );
+        assert_eq!(
+            integration.get_tier_path(PerformanceTier::Warm),
+            Some("file:///data/warm")
+        );
+        assert_eq!(
+            integration.get_tier_path(PerformanceTier::Cold),
+            Some("s3://bucket/cold")
+        );
         assert_eq!(integration.get_tier_path(PerformanceTier::Archive), None);
     }
 

@@ -26,17 +26,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow_array::{RecordBatch, StringArray, Float32Array, Int64Array};
+use arrow_array::{Float32Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
 
-use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, SqlArray, SqlObject};
 use proximadb::proto::proximadb_v1::sql_value::Value as ProtoSqlValueInner;
+use proximadb::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, VectorRecord};
 use proximadb::storage::schema::{
-    ProximaSchema, ProximaDataType,
-    VectorRecordBridge, DefaultVectorRecordBridge, MetadataMode,
+    AvroStyleType, DefaultVectorRecordBridge, InMemorySchemaRegistry, MetadataMode,
+    ProximaDataType, ProximaSchema, SchemaRegistry, VectorRecordBridge,
     infer_schema_from_vector_records,
-    AvroStyleType,
-    SchemaRegistry, InMemorySchemaRegistry,
 };
 
 // ============================================================================
@@ -191,7 +189,10 @@ fn test_proxima_schema_to_arrow_roundtrip() {
 
     // Roundtrip test
     let recovered = ProximaSchema::from_arrow_schema(&arrow_schema, "recovered".to_string());
-    assert_eq!(recovered.active_column_count(), schema.active_column_count());
+    assert_eq!(
+        recovered.active_column_count(),
+        schema.active_column_count()
+    );
 }
 
 #[test]
@@ -203,11 +204,8 @@ fn test_proxima_schema_with_metadata_columns() {
         ("tags".to_string(), ProximaDataType::Json),
     ];
 
-    let schema = ProximaSchema::with_metadata_columns(
-        "custom_schema".to_string(),
-        512,
-        metadata_fields,
-    );
+    let schema =
+        ProximaSchema::with_metadata_columns("custom_schema".to_string(), 512, metadata_fields);
 
     assert_eq!(schema.schema_id, "custom_schema");
     assert_eq!(schema.vector_dimension(), Some(512));
@@ -274,8 +272,8 @@ fn test_vector_record_to_batch_roundtrip() {
 #[test]
 fn test_vector_record_batch_with_json_metadata() {
     let schema = ProximaSchema::vector_record_schema(64);
-    let bridge = DefaultVectorRecordBridge::new(schema)
-        .with_metadata_mode(MetadataMode::JsonString);
+    let bridge =
+        DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
     let records = vec![create_test_record("json_test", 64)];
     let batch = bridge.records_to_batch(&records).unwrap();
@@ -294,15 +292,20 @@ fn test_vector_record_batch_with_json_metadata() {
 #[test]
 fn test_vector_record_batch_with_struct_metadata() {
     let schema = ProximaSchema::vector_record_schema(64);
-    let bridge = DefaultVectorRecordBridge::new(schema)
-        .with_metadata_mode(MetadataMode::ArrowStruct);
+    let bridge =
+        DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::ArrowStruct);
 
     let records = vec![create_test_record("struct_test", 64)];
     let batch = bridge.records_to_batch(&records).unwrap();
 
     // Verify metadata is stored as struct
     let metadata_col = batch.column_by_name("metadata").unwrap();
-    assert!(metadata_col.as_any().downcast_ref::<arrow_array::StructArray>().is_some());
+    assert!(
+        metadata_col
+            .as_any()
+            .downcast_ref::<arrow_array::StructArray>()
+            .is_some()
+    );
 }
 
 #[test]
@@ -333,8 +336,8 @@ fn test_vector_record_empty_metadata() {
 #[test]
 fn test_nested_metadata_array() {
     let schema = ProximaSchema::vector_record_schema(16);
-    let bridge = DefaultVectorRecordBridge::new(schema)
-        .with_metadata_mode(MetadataMode::JsonString);
+    let bridge =
+        DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
     let records = vec![create_record_with_nested_metadata("nested", 16)];
     let batch = bridge.records_to_batch(&records).unwrap();
@@ -360,8 +363,8 @@ fn test_nested_metadata_array() {
 #[test]
 fn test_nested_metadata_object() {
     let schema = ProximaSchema::vector_record_schema(16);
-    let bridge = DefaultVectorRecordBridge::new(schema)
-        .with_metadata_mode(MetadataMode::JsonString);
+    let bridge =
+        DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
     let records = vec![create_record_with_nested_metadata("nested", 16)];
     let batch = bridge.records_to_batch(&records).unwrap();
@@ -419,16 +422,16 @@ fn test_avro_style_with_custom_columns() {
         ("name".to_string(), ProximaDataType::String),
         ("score".to_string(), ProximaDataType::Float64),
         ("count".to_string(), ProximaDataType::Int64),
-        ("tags".to_string(), ProximaDataType::List {
-            element: Box::new(ProximaDataType::String)
-        }),
+        (
+            "tags".to_string(),
+            ProximaDataType::List {
+                element: Box::new(ProximaDataType::String),
+            },
+        ),
     ];
 
-    let schema = ProximaSchema::with_metadata_columns(
-        "custom_avro".to_string(),
-        256,
-        metadata_fields,
-    );
+    let schema =
+        ProximaSchema::with_metadata_columns("custom_avro".to_string(), 256, metadata_fields);
 
     let avro = schema.to_avro_style();
 
@@ -570,7 +573,10 @@ async fn test_schema_registry_store_and_retrieve() {
     let registry = InMemorySchemaRegistry::new();
     let schema = ProximaSchema::vector_record_schema(256);
 
-    registry.register_schema("test_collection", schema.clone()).await.unwrap();
+    registry
+        .register_schema("test_collection", schema.clone())
+        .await
+        .unwrap();
 
     let retrieved = registry.get_schema("test_collection", 0).await.unwrap();
     assert!(retrieved.is_some());
@@ -590,8 +596,14 @@ async fn test_schema_registry_latest() {
     schema_v1.version = 1;
     schema_v1.schema_id = "v1".to_string();
 
-    registry.register_schema("versioned", schema_v0).await.unwrap();
-    registry.register_schema("versioned", schema_v1).await.unwrap();
+    registry
+        .register_schema("versioned", schema_v0)
+        .await
+        .unwrap();
+    registry
+        .register_schema("versioned", schema_v1)
+        .await
+        .unwrap();
 
     let latest = registry.get_latest_schema("versioned").await.unwrap();
     assert!(latest.is_some());
@@ -604,9 +616,15 @@ async fn test_schema_registry_fingerprint_lookup() {
     let schema = ProximaSchema::vector_record_schema(384);
     let fingerprint = schema.fingerprint;
 
-    registry.register_schema("fingerprint_test", schema).await.unwrap();
+    registry
+        .register_schema("fingerprint_test", schema)
+        .await
+        .unwrap();
 
-    let found = registry.get_schema_by_fingerprint(fingerprint).await.unwrap();
+    let found = registry
+        .get_schema_by_fingerprint(fingerprint)
+        .await
+        .unwrap();
     assert!(found.is_some());
     assert_eq!(found.unwrap().vector_dimension(), Some(384));
 }

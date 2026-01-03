@@ -63,15 +63,15 @@
 //! ```
 
 pub mod config;
+pub mod index;
 pub mod reader;
 pub mod writer;
-pub mod index;
 
 // Re-exports
 pub use config::{ArrowBlockConfig, ArrowBlockMetadata};
+pub use index::{ArrowBlockIndex, ArrowIndexEntry};
 pub use reader::ArrowBlockReader;
 pub use writer::ArrowBlockWriter;
-pub use index::{ArrowBlockIndex, ArrowIndexEntry};
 
 use std::io;
 use thiserror::Error;

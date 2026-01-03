@@ -43,7 +43,7 @@ pub use embedding::{EmbeddingConfig, EmbeddingPipeline, EmbeddingProvider};
 pub use filter::{FilterAction, FilterRule, FilterRuleSet};
 pub use schema::{FieldMapping, FieldTransform, SchemaMapper};
 
-use crate::cdc::error::{CdcError, CdcResult};
+use crate::cdc::error::CdcResult;
 use crate::cdc::event::ChangeEvent;
 
 /// Transform pipeline for CDC events
@@ -262,8 +262,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_with_filter() {
-        let filter = FilterRuleSet::new()
-            .with_rule(FilterRule::include_collections(vec!["public.users"]));
+        let filter =
+            FilterRuleSet::new().with_rule(FilterRule::include_collections(vec!["public.users"]));
 
         let pipeline = TransformPipeline::new().with_filter(filter);
         assert!(!pipeline.is_empty());
@@ -289,7 +289,11 @@ mod tests {
     fn test_transform_batch() {
         let pipeline = TransformPipeline::new();
 
-        let events = vec![create_test_event(), create_test_event(), create_test_event()];
+        let events = vec![
+            create_test_event(),
+            create_test_event(),
+            create_test_event(),
+        ];
 
         let results = pipeline.transform_batch(events).unwrap();
         assert_eq!(results.len(), 3);
@@ -303,8 +307,8 @@ mod tests {
         let pipeline = TransformPipeline::new().with_filter(filter);
 
         let events = vec![
-            create_test_event(),  // Insert - will be filtered
-            create_test_event(),  // Insert - will be filtered
+            create_test_event(), // Insert - will be filtered
+            create_test_event(), // Insert - will be filtered
         ];
 
         let results = pipeline.transform_batch(events).unwrap();

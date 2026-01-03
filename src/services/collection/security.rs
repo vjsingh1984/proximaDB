@@ -16,13 +16,13 @@ use tracing::{debug, info, warn};
 
 use crate::audit::logger::{AuditConfig, AuditLogger};
 use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::security::encryption::{EncryptionConfig, FieldEncryption, KeyStore, KeyStoreConfig};
 use crate::security::rls::{CollectionRLS, RLSConfig};
 use crate::security::unified_rbac::UnifiedUserContext;
 use crate::services::operations::{SecureVectorOperations, combine_filters};
-use crate::core::search::FilterExpression;
 
 /// Security-enabled collection service extension
 ///
@@ -55,7 +55,10 @@ impl SecureCollectionService {
         let key_store = Arc::new(KeyStore::new(key_store_config)?);
 
         let encryption_service = if let Some(enc_config) = encryption_config {
-            Some(Arc::new(FieldEncryption::new(key_store.clone(), enc_config)?))
+            Some(Arc::new(FieldEncryption::new(
+                key_store.clone(),
+                enc_config,
+            )?))
         } else {
             None
         };
@@ -97,7 +100,10 @@ impl SecureCollectionService {
     }
 
     /// Get security configuration for a collection
-    pub fn get_collection_security(&self, collection_name: &str) -> Option<CollectionSecurityConfig> {
+    pub fn get_collection_security(
+        &self,
+        collection_name: &str,
+    ) -> Option<CollectionSecurityConfig> {
         let configs = self.collection_configs.read();
         configs.get(collection_name).cloned()
     }
@@ -118,10 +124,10 @@ impl SecureCollectionService {
         user_context: &UnifiedUserContext,
         user_filter: Option<FilterExpression>,
     ) -> Result<Option<FilterExpression>> {
-        let security_config = self.get_collection_security(collection)
-            .unwrap_or_default();
+        let security_config = self.get_collection_security(collection).unwrap_or_default();
 
-        let rls_filter = self.secure_ops
+        let rls_filter = self
+            .secure_ops
             .apply_search_security(collection, user_context, &security_config)
             .await?;
 
@@ -135,8 +141,7 @@ impl SecureCollectionService {
         user_context: &UnifiedUserContext,
         records: &mut Vec<VectorRecord>,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection)
-            .unwrap_or_default();
+        let security_config = self.get_collection_security(collection).unwrap_or_default();
 
         // Check write permission
         self.secure_ops
@@ -157,8 +162,7 @@ impl SecureCollectionService {
         collection: &str,
         records: &mut [VectorRecord],
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection)
-            .unwrap_or_default();
+        let security_config = self.get_collection_security(collection).unwrap_or_default();
 
         self.secure_ops
             .decrypt_search_results(records, &security_config)
@@ -171,8 +175,7 @@ impl SecureCollectionService {
         collection: &str,
         user_context: &UnifiedUserContext,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection)
-            .unwrap_or_default();
+        let security_config = self.get_collection_security(collection).unwrap_or_default();
 
         self.secure_ops
             .check_write_permission(collection, user_context, &security_config)
@@ -185,8 +188,7 @@ impl SecureCollectionService {
         collection: &str,
         user_context: &UnifiedUserContext,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection)
-            .unwrap_or_default();
+        let security_config = self.get_collection_security(collection).unwrap_or_default();
 
         self.secure_ops
             .check_delete_permission(collection, user_context, &security_config)
@@ -202,8 +204,7 @@ impl SecureCollectionService {
         success: bool,
         details: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection)
-            .unwrap_or_default();
+        let security_config = self.get_collection_security(collection).unwrap_or_default();
 
         if !security_config.audit_enabled {
             return Ok(());
@@ -269,7 +270,10 @@ impl SecureCollectionService {
             }
             None => {
                 warn!("No security config found for collection '{}'", collection);
-                Err(anyhow!("Collection '{}' not found in security registry", collection))
+                Err(anyhow!(
+                    "Collection '{}' not found in security registry",
+                    collection
+                ))
             }
         }
     }
@@ -323,7 +327,9 @@ mod tests {
             KeyStoreConfig::default(),
             None,
             AuditConfig::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         assert!(!service.encryption_enabled());
     }
@@ -335,7 +341,9 @@ mod tests {
             KeyStoreConfig::default(),
             None,
             AuditConfig::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let config = CollectionSecurityConfig {
             rls_enabled: true,
@@ -360,7 +368,9 @@ mod tests {
             KeyStoreConfig::default(),
             None,
             AuditConfig::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let config = CollectionSecurityConfig::default();
         service.register_collection_security("test_collection", config);
@@ -379,12 +389,17 @@ mod tests {
             KeyStoreConfig::default(),
             None,
             AuditConfig::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         let user_context = create_test_user_context();
 
         // No security config registered - should use defaults (RLS disabled)
-        let filter = service.secure_search("unregistered", &user_context, None).await.unwrap();
+        let filter = service
+            .secure_search("unregistered", &user_context, None)
+            .await
+            .unwrap();
 
         // With default config (RLS disabled), no additional filter
         assert!(filter.is_none());
@@ -397,13 +412,18 @@ mod tests {
             KeyStoreConfig::default(),
             None,
             AuditConfig::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Register with RLS enabled
-        service.register_collection_security("test_collection", CollectionSecurityConfig {
-            rls_enabled: true,
-            ..Default::default()
-        });
+        service.register_collection_security(
+            "test_collection",
+            CollectionSecurityConfig {
+                rls_enabled: true,
+                ..Default::default()
+            },
+        );
 
         let user_context = create_test_user_context();
         let mut records = vec![VectorRecord {
@@ -413,7 +433,10 @@ mod tests {
             ..Default::default()
         }];
 
-        service.secure_insert("test_collection", &user_context, &mut records).await.unwrap();
+        service
+            .secure_insert("test_collection", &user_context, &mut records)
+            .await
+            .unwrap();
 
         // Should have added owner_id metadata
         assert!(records[0].metadata.contains_key("owner_id"));
@@ -426,26 +449,35 @@ mod tests {
             KeyStoreConfig::default(),
             None,
             AuditConfig::default(),
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         // Register with audit enabled
-        service.register_collection_security("test_collection", CollectionSecurityConfig {
-            audit_enabled: true,
-            audit_level: AuditLevel::All,
-            ..Default::default()
-        });
+        service.register_collection_security(
+            "test_collection",
+            CollectionSecurityConfig {
+                audit_enabled: true,
+                audit_level: AuditLevel::All,
+                ..Default::default()
+            },
+        );
 
         let user_context = create_test_user_context();
 
         // Should not error
-        service.log_collection_access(
-            "test_collection",
-            &user_context,
-            "search",
-            true,
-            Some(HashMap::from([
-                ("query_count".to_string(), serde_json::json!(10)),
-            ])),
-        ).await.unwrap();
+        service
+            .log_collection_access(
+                "test_collection",
+                &user_context,
+                "search",
+                true,
+                Some(HashMap::from([(
+                    "query_count".to_string(),
+                    serde_json::json!(10),
+                )])),
+            )
+            .await
+            .unwrap();
     }
 }

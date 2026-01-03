@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
@@ -102,7 +102,11 @@ impl SchemaBuilder {
     }
 
     /// Add a unique index
-    pub fn unique_index(mut self, name: impl Into<String>, columns: Vec<impl Into<String>>) -> Self {
+    pub fn unique_index(
+        mut self,
+        name: impl Into<String>,
+        columns: Vec<impl Into<String>>,
+    ) -> Self {
         self.indexes.push(
             CatalogIndex::new(
                 name,
@@ -194,12 +198,17 @@ impl EvolutionBuilder {
 
     /// Drop a column
     pub fn drop_column(mut self, name: impl Into<String>) -> Self {
-        self.changes.push(SchemaChange::DropColumn { name: name.into() });
+        self.changes
+            .push(SchemaChange::DropColumn { name: name.into() });
         self
     }
 
     /// Rename a column
-    pub fn rename_column(mut self, old_name: impl Into<String>, new_name: impl Into<String>) -> Self {
+    pub fn rename_column(
+        mut self,
+        old_name: impl Into<String>,
+        new_name: impl Into<String>,
+    ) -> Self {
         self.changes.push(SchemaChange::RenameColumn {
             old_name: old_name.into(),
             new_name: new_name.into(),
@@ -224,7 +233,11 @@ impl EvolutionBuilder {
     }
 
     /// Set default value
-    pub fn set_default(mut self, name: impl Into<String>, default_value: impl Into<String>) -> Self {
+    pub fn set_default(
+        mut self,
+        name: impl Into<String>,
+        default_value: impl Into<String>,
+    ) -> Self {
         self.changes.push(SchemaChange::SetDefault {
             name: name.into(),
             default_value: default_value.into(),
@@ -408,7 +421,8 @@ pub fn apply_evolution(
 
                 // Insert at position or end
                 if let Some(after_col) = after {
-                    if let Some(pos) = new_schema.columns.iter().position(|c| &c.name == after_col) {
+                    if let Some(pos) = new_schema.columns.iter().position(|c| &c.name == after_col)
+                    {
                         new_schema.columns.insert(pos + 1, col);
                     } else {
                         new_schema.columns.push(col);
@@ -502,7 +516,10 @@ pub fn apply_evolution(
 
                 col.nullable = true;
             }
-            SchemaChange::SetDefault { name, default_value } => {
+            SchemaChange::SetDefault {
+                name,
+                default_value,
+            } => {
                 let col = new_schema
                     .columns
                     .iter_mut()
@@ -544,17 +561,25 @@ pub fn apply_evolution(
 
                 // Insert at new position
                 if let Some(after_col) = after {
-                    if let Some(after_pos) = new_schema.columns.iter().position(|c| &c.name == after_col) {
+                    if let Some(after_pos) =
+                        new_schema.columns.iter().position(|c| &c.name == after_col)
+                    {
                         new_schema.columns.insert(after_pos + 1, col);
                     } else {
-                        return Err(anyhow!("Column '{}' not found for AFTER positioning", after_col));
+                        return Err(anyhow!(
+                            "Column '{}' not found for AFTER positioning",
+                            after_col
+                        ));
                     }
                 } else {
                     // FIRST - insert at position 0
                     new_schema.columns.insert(0, col);
                 }
             }
-            SchemaChange::AddConstraint { constraint_name, constraint } => {
+            SchemaChange::AddConstraint {
+                constraint_name,
+                constraint,
+            } => {
                 // Store constraint in schema properties
                 let constraint_key = match &constraint {
                     ColumnConstraint::Unique { columns } => {
@@ -562,9 +587,16 @@ pub fn apply_evolution(
                     }
                     ColumnConstraint::Check { expression: _ } => {
                         // Hash the expression for a shorter key
-                        format!("constraint:check:{}", constraint_name.as_deref().unwrap_or("unnamed"))
+                        format!(
+                            "constraint:check:{}",
+                            constraint_name.as_deref().unwrap_or("unnamed")
+                        )
                     }
-                    ColumnConstraint::ForeignKey { columns, references_table, .. } => {
+                    ColumnConstraint::ForeignKey {
+                        columns,
+                        references_table,
+                        ..
+                    } => {
                         format!("constraint:fk:{}:{}", columns.join(","), references_table)
                     }
                 };
@@ -572,20 +604,27 @@ pub fn apply_evolution(
                 let constraint_value = serde_json::to_string(&constraint)
                     .map_err(|e| anyhow!("Failed to serialize constraint: {}", e))?;
 
-                new_schema.properties.insert(constraint_key, constraint_value);
+                new_schema
+                    .properties
+                    .insert(constraint_key, constraint_value);
 
                 // For unique constraints, also mark in index properties
                 if let ColumnConstraint::Unique { columns } = &constraint {
                     // Check that all columns exist
                     for col_name in columns {
                         if !new_schema.columns.iter().any(|c| &c.name == col_name) {
-                            return Err(anyhow!("Column '{}' not found for UNIQUE constraint", col_name));
+                            return Err(anyhow!(
+                                "Column '{}' not found for UNIQUE constraint",
+                                col_name
+                            ));
                         }
                     }
 
                     // Create an implicit unique index if constraint has a name
                     if let Some(name) = constraint_name {
-                        let unique_index = CatalogIndex::new(name, columns.clone(), CatalogIndexType::BTree).unique();
+                        let unique_index =
+                            CatalogIndex::new(name, columns.clone(), CatalogIndexType::BTree)
+                                .unique();
                         new_schema.indexes.push(unique_index);
                     }
                 }
@@ -601,7 +640,10 @@ pub fn apply_evolution(
 
                 if keys_to_remove.is_empty() {
                     // Check if it's an index-based constraint
-                    let idx_pos = new_schema.indexes.iter().position(|idx| idx.name == *constraint_name);
+                    let idx_pos = new_schema
+                        .indexes
+                        .iter()
+                        .position(|idx| idx.name == *constraint_name);
                     if let Some(pos) = idx_pos {
                         new_schema.indexes.remove(pos);
                     } else {
@@ -612,7 +654,9 @@ pub fn apply_evolution(
                         new_schema.properties.remove(&key);
                     }
                     // Also remove any associated index
-                    new_schema.indexes.retain(|idx| idx.name != *constraint_name);
+                    new_schema
+                        .indexes
+                        .retain(|idx| idx.name != *constraint_name);
                 }
             }
         }
@@ -820,9 +864,7 @@ mod tests {
 
         assert!(schema.columns[1].nullable);
 
-        let evolution = EvolutionBuilder::new()
-            .make_not_nullable("name")
-            .build();
+        let evolution = EvolutionBuilder::new().make_not_nullable("name").build();
 
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
         assert!(!new_schema.columns[1].nullable);
@@ -838,9 +880,7 @@ mod tests {
 
         assert!(!schema.columns[1].nullable);
 
-        let evolution = EvolutionBuilder::new()
-            .make_nullable("name")
-            .build();
+        let evolution = EvolutionBuilder::new().make_nullable("name").build();
 
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
         assert!(new_schema.columns[1].nullable);
@@ -856,9 +896,7 @@ mod tests {
 
         assert_eq!(schema.columns[2].name, "email");
 
-        let evolution = EvolutionBuilder::new()
-            .move_column_first("email")
-            .build();
+        let evolution = EvolutionBuilder::new().move_column_first("email").build();
 
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
         assert_eq!(new_schema.columns[0].name, "email");
@@ -905,7 +943,11 @@ mod tests {
         assert_eq!(new_schema.indexes[0].columns, vec!["email"]);
 
         // Check that constraint is stored in properties
-        assert!(new_schema.properties.contains_key("constraint:unique:email"));
+        assert!(
+            new_schema
+                .properties
+                .contains_key("constraint:unique:email")
+        );
     }
 
     #[test]
@@ -922,7 +964,11 @@ mod tests {
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
 
         // Check that the constraint was stored in properties
-        assert!(new_schema.properties.contains_key("constraint:check:chk_age"));
+        assert!(
+            new_schema
+                .properties
+                .contains_key("constraint:check:chk_age")
+        );
     }
 
     #[test]
@@ -935,9 +981,7 @@ mod tests {
 
         assert_eq!(schema.indexes.len(), 1);
 
-        let evolution = EvolutionBuilder::new()
-            .drop_constraint("uq_email")
-            .build();
+        let evolution = EvolutionBuilder::new().drop_constraint("uq_email").build();
 
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
         assert_eq!(new_schema.indexes.len(), 0);
@@ -957,7 +1001,10 @@ mod tests {
             .build();
 
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
-        assert_eq!(new_schema.columns[1].default_value, Some("true".to_string()));
+        assert_eq!(
+            new_schema.columns[1].default_value,
+            Some("true".to_string())
+        );
     }
 
     #[test]
@@ -969,9 +1016,7 @@ mod tests {
 
         assert_eq!(schema.columns[1].default_value, Some("true".to_string()));
 
-        let evolution = EvolutionBuilder::new()
-            .drop_default("active")
-            .build();
+        let evolution = EvolutionBuilder::new().drop_default("active").build();
 
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
         assert!(new_schema.columns[1].default_value.is_none());
@@ -1023,10 +1068,18 @@ mod tests {
         let new_schema = apply_evolution(&schema, &evolution).unwrap();
 
         // Check all changes were applied
-        let email_col = new_schema.columns.iter().find(|c| c.name == "email").unwrap();
+        let email_col = new_schema
+            .columns
+            .iter()
+            .find(|c| c.name == "email")
+            .unwrap();
         assert!(!email_col.nullable);
 
-        let name_col = new_schema.columns.iter().find(|c| c.name == "name").unwrap();
+        let name_col = new_schema
+            .columns
+            .iter()
+            .find(|c| c.name == "name")
+            .unwrap();
         assert_eq!(name_col.default_value, Some("'unknown'".to_string()));
 
         assert_eq!(new_schema.indexes.len(), 1);

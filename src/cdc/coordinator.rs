@@ -21,9 +21,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{RwLock, mpsc, watch};
 
-use super::config::{CdcConfig, SinkConfig, SourceConfig, TransformConfig};
+use super::config::{CdcConfig, SinkConfig, TransformConfig};
 use super::error::{CdcError, CdcResult};
 use super::event::ChangeEvent;
 use super::metrics::CdcMetrics;
@@ -93,26 +93,25 @@ impl CdcCoordinator {
     /// Create a new CDC coordinator with the given configuration
     pub async fn new(config: CdcConfig) -> CdcResult<Self> {
         // Initialize offset store based on config
-        let offset_store: Arc<dyn OffsetStore> = match config.offset_storage.storage_type {
-            super::config::OffsetStorageType::Memory => Arc::new(MemoryOffsetStore::new()),
-            super::config::OffsetStorageType::File => {
-                let path = config
-                    .offset_storage
-                    .path
-                    .clone()
-                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/proximadb/cdc/offsets"));
-                Arc::new(FileOffsetStore::new(path).await?)
-            }
-            super::config::OffsetStorageType::RocksDb => {
-                // Fallback to file for now
-                let path = config
-                    .offset_storage
-                    .path
-                    .clone()
-                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/proximadb/cdc/offsets"));
-                Arc::new(FileOffsetStore::new(path).await?)
-            }
-        };
+        let offset_store: Arc<dyn OffsetStore> =
+            match config.offset_storage.storage_type {
+                super::config::OffsetStorageType::Memory => Arc::new(MemoryOffsetStore::new()),
+                super::config::OffsetStorageType::File => {
+                    let path =
+                        config.offset_storage.path.clone().unwrap_or_else(|| {
+                            std::path::PathBuf::from("/tmp/proximadb/cdc/offsets")
+                        });
+                    Arc::new(FileOffsetStore::new(path).await?)
+                }
+                super::config::OffsetStorageType::RocksDb => {
+                    // Fallback to file for now
+                    let path =
+                        config.offset_storage.path.clone().unwrap_or_else(|| {
+                            std::path::PathBuf::from("/tmp/proximadb/cdc/offsets")
+                        });
+                    Arc::new(FileOffsetStore::new(path).await?)
+                }
+            };
 
         let (event_tx, event_rx) = mpsc::channel(config.settings.queue_size);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -224,21 +223,25 @@ impl CdcCoordinator {
         // Start all sources
         for (name, source) in &self.sources {
             let mut source = source.write().await;
-            let handle = source.start(event_tx.clone(), self.offset_store.clone()).await?;
+            let handle = source
+                .start(event_tx.clone(), self.offset_store.clone())
+                .await?;
             self.source_handles.insert(name.clone(), handle);
             tracing::info!("Started CDC source: {}", name);
         }
 
         // Create coordinator handle
         let handle = CoordinatorHandle {
-            shutdown_tx: self
-                .shutdown_tx
-                .clone()
-                .ok_or_else(|| CdcError::InvalidState("Shutdown channel not initialized".to_string()))?,
+            shutdown_tx: self.shutdown_tx.clone().ok_or_else(|| {
+                CdcError::InvalidState("Shutdown channel not initialized".to_string())
+            })?,
         };
 
         self.status = CoordinatorStatus::Running;
-        tracing::info!("CDC Coordinator started with {} sources", self.sources.len());
+        tracing::info!(
+            "CDC Coordinator started with {} sources",
+            self.sources.len()
+        );
 
         Ok(handle)
     }
@@ -294,9 +297,10 @@ impl CdcCoordinator {
     ///
     /// This method should be called in a loop to process incoming events
     pub async fn process_events(&mut self) -> CdcResult<Option<ChangeEvent>> {
-        let rx = self.event_rx.as_mut().ok_or_else(|| {
-            CdcError::InvalidState("Event receiver not initialized".to_string())
-        })?;
+        let rx = self
+            .event_rx
+            .as_mut()
+            .ok_or_else(|| CdcError::InvalidState("Event receiver not initialized".to_string()))?;
 
         match rx.try_recv() {
             Ok(event) => {
@@ -310,9 +314,9 @@ impl CdcCoordinator {
                 Ok(Some(event))
             }
             Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                Err(CdcError::Coordinator("Event channel disconnected".to_string()))
-            }
+            Err(mpsc::error::TryRecvError::Disconnected) => Err(CdcError::Coordinator(
+                "Event channel disconnected".to_string(),
+            )),
         }
     }
 
@@ -380,7 +384,11 @@ mod tests {
         let source = Box::new(MockSource::new("test_source", vec![]));
         coordinator.register_source(source).await.unwrap();
 
-        assert!(coordinator.source_names().contains(&"test_source".to_string()));
+        assert!(
+            coordinator
+                .source_names()
+                .contains(&"test_source".to_string())
+        );
     }
 
     #[tokio::test]
@@ -413,7 +421,11 @@ mod tests {
         let transform = TransformConfig::vectorization("vectorize");
         coordinator.register_transform(transform).await.unwrap();
 
-        assert!(coordinator.transform_names().contains(&"vectorize".to_string()));
+        assert!(
+            coordinator
+                .transform_names()
+                .contains(&"vectorize".to_string())
+        );
     }
 
     #[tokio::test]

@@ -10,11 +10,11 @@
 //! - Certificate parsing and validation
 //! - TLS server configuration
 
-use std::sync::Arc;
 use proximadb::network::tls::{
-    CertificateConfig, CertificateManager, CertificateSubject, ClientCertificateInfo,
-    TlsConfig, TlsServerConfig,
+    CertificateConfig, CertificateManager, CertificateSubject, ClientCertificateInfo, TlsConfig,
+    TlsServerConfig,
 };
+use std::sync::Arc;
 use tempfile::TempDir;
 
 // ============================================================================
@@ -98,7 +98,9 @@ fn test_generate_client_certificate_signed_by_ca() {
         .generate_client_cert("client1.example.com", &ca.cert_pem, &ca.key_pem)
         .unwrap();
 
-    let parsed = manager.parse_certificate(client.cert_pem.as_bytes()).unwrap();
+    let parsed = manager
+        .parse_certificate(client.cert_pem.as_bytes())
+        .unwrap();
 
     // Verify client certificate properties
     assert!(!parsed.is_ca);
@@ -134,9 +136,21 @@ fn test_certificate_with_multiple_sans() {
     let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
 
     // Verify SANs are present
-    assert!(parsed.san_dns_names.contains(&"multi-san.example.com".to_string()));
-    assert!(parsed.san_dns_names.contains(&"alt1.example.com".to_string()));
-    assert!(parsed.san_dns_names.contains(&"*.wildcard.example.com".to_string()));
+    assert!(
+        parsed
+            .san_dns_names
+            .contains(&"multi-san.example.com".to_string())
+    );
+    assert!(
+        parsed
+            .san_dns_names
+            .contains(&"alt1.example.com".to_string())
+    );
+    assert!(
+        parsed
+            .san_dns_names
+            .contains(&"*.wildcard.example.com".to_string())
+    );
 }
 
 // ============================================================================
@@ -260,8 +274,7 @@ fn test_tls_config_default() {
 #[test]
 fn test_tls_config_with_auto_certificates() {
     let temp_dir = TempDir::new().unwrap();
-    let config = TlsConfig::new(true)
-        .with_auto_certificates(temp_dir.path().to_path_buf());
+    let config = TlsConfig::new(true).with_auto_certificates(temp_dir.path().to_path_buf());
 
     assert!(config.enabled);
     assert!(config.certificate_manager.is_some());
@@ -493,8 +506,12 @@ async fn test_full_certificate_chain() {
 
     // Parse all certificates
     let ca_parsed = manager.parse_certificate(ca.cert_pem.as_bytes()).unwrap();
-    let server_parsed = manager.parse_certificate(server.cert_pem.as_bytes()).unwrap();
-    let client_parsed = manager.parse_certificate(client.cert_pem.as_bytes()).unwrap();
+    let server_parsed = manager
+        .parse_certificate(server.cert_pem.as_bytes())
+        .unwrap();
+    let client_parsed = manager
+        .parse_certificate(client.cert_pem.as_bytes())
+        .unwrap();
 
     // Verify CA properties
     assert!(ca_parsed.is_ca);
@@ -502,11 +519,17 @@ async fn test_full_certificate_chain() {
 
     // Verify server certificate
     assert!(!server_parsed.is_ca);
-    assert_eq!(server_parsed.subject_cn, Some("server.example.com".to_string()));
+    assert_eq!(
+        server_parsed.subject_cn,
+        Some("server.example.com".to_string())
+    );
 
     // Verify client certificate
     assert!(!client_parsed.is_ca);
-    assert_eq!(client_parsed.subject_cn, Some("client.example.com".to_string()));
+    assert_eq!(
+        client_parsed.subject_cn,
+        Some("client.example.com".to_string())
+    );
 
     // Both should be issued by the same CA
     assert_eq!(server_parsed.issuer_cn, client_parsed.issuer_cn);
@@ -520,9 +543,18 @@ async fn test_full_certificate_chain() {
 fn test_matches_cn_pattern_exact_match() {
     use proximadb::network::middleware::matches_cn_pattern;
 
-    assert!(matches_cn_pattern("client.example.com", "client.example.com"));
-    assert!(!matches_cn_pattern("other.example.com", "client.example.com"));
-    assert!(!matches_cn_pattern("CLIENT.EXAMPLE.COM", "client.example.com")); // Case sensitive
+    assert!(matches_cn_pattern(
+        "client.example.com",
+        "client.example.com"
+    ));
+    assert!(!matches_cn_pattern(
+        "other.example.com",
+        "client.example.com"
+    ));
+    assert!(!matches_cn_pattern(
+        "CLIENT.EXAMPLE.COM",
+        "client.example.com"
+    )); // Case sensitive
 }
 
 #[test]
@@ -536,7 +568,10 @@ fn test_matches_cn_pattern_wildcard_single_level() {
 
     // Should NOT match multi-level
     assert!(!matches_cn_pattern("a.b.example.com", "*.example.com"));
-    assert!(!matches_cn_pattern("client.api.example.com", "*.example.com"));
+    assert!(!matches_cn_pattern(
+        "client.api.example.com",
+        "*.example.com"
+    ));
 
     // Should NOT match the base domain
     assert!(!matches_cn_pattern("example.com", "*.example.com"));
@@ -608,13 +643,24 @@ fn test_tls_client_cert_config_builder() {
         .with_default_roles(vec!["admin".to_string(), "reader".to_string()]);
 
     assert_eq!(config.allowed_cn_patterns.len(), 2);
-    assert!(config.allowed_cn_patterns.contains(&"*.example.com".to_string()));
-    assert!(config.allowed_cn_patterns.contains(&"admin.internal".to_string()));
+    assert!(
+        config
+            .allowed_cn_patterns
+            .contains(&"*.example.com".to_string())
+    );
+    assert!(
+        config
+            .allowed_cn_patterns
+            .contains(&"admin.internal".to_string())
+    );
     assert_eq!(
         config.cn_to_user_mapping.get("admin.internal"),
         Some(&"admin-service".to_string())
     );
-    assert_eq!(config.default_roles, vec!["admin".to_string(), "reader".to_string()]);
+    assert_eq!(
+        config.default_roles,
+        vec!["admin".to_string(), "reader".to_string()]
+    );
 }
 
 // ============================================================================
@@ -642,7 +688,10 @@ fn test_server_certificate_with_all_subject_fields() {
     let cert = manager.generate_self_signed().unwrap();
     let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
 
-    assert_eq!(parsed.subject_cn, Some("full-subject.example.com".to_string()));
+    assert_eq!(
+        parsed.subject_cn,
+        Some("full-subject.example.com".to_string())
+    );
 }
 
 #[test]
@@ -790,8 +839,7 @@ fn test_multi_server_tls_config_default() {
 fn test_multi_server_tls_config_with_certificates() {
     use proximadb::network::multi_server::TLSConfig;
 
-    let config = TLSConfig::new()
-        .with_certificates("/path/to/cert.pem", "/path/to/key.pem");
+    let config = TLSConfig::new().with_certificates("/path/to/cert.pem", "/path/to/key.pem");
 
     assert!(config.enabled);
     assert_eq!(config.cert_file, Some("/path/to/cert.pem".to_string()));
@@ -816,8 +864,7 @@ fn test_multi_server_tls_config_with_mtls() {
 fn test_multi_server_tls_config_auto_generate() {
     use proximadb::network::multi_server::TLSConfig;
 
-    let config = TLSConfig::new()
-        .with_auto_generate(90);
+    let config = TLSConfig::new().with_auto_generate(90);
 
     assert!(config.auto_generate);
     assert_eq!(config.validity_days, 90);

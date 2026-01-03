@@ -3,18 +3,18 @@
 // Evaluates filter conditions against documents at query time.
 // Used for conditions that cannot be accelerated by indexes.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
 use crate::proto::proximadb_v1::{
-    sql_value::Value as SqlValueVariant, DocFilterCondition, DocFilterOperator, DocumentFilter,
-    SqlArray, SqlObject, SqlValue,
+    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlArray, SqlObject, SqlValue,
+    sql_value::Value as SqlValueVariant,
 };
 
-use super::super::indexes::IndexValue;
 use super::super::DocumentRecord;
+use super::super::indexes::IndexValue;
 
 /// Filter evaluator for document queries
 pub struct FilterEvaluator {
@@ -69,10 +69,18 @@ impl FilterEvaluator {
         match operator {
             DocFilterOperator::Eq => self.eval_eq(&doc_value, &condition.value),
             DocFilterOperator::Ne => !self.eval_eq(&doc_value, &condition.value),
-            DocFilterOperator::Gt => self.eval_comparison(&doc_value, &condition.value, |a, b| a > b),
-            DocFilterOperator::Gte => self.eval_comparison(&doc_value, &condition.value, |a, b| a >= b),
-            DocFilterOperator::Lt => self.eval_comparison(&doc_value, &condition.value, |a, b| a < b),
-            DocFilterOperator::Lte => self.eval_comparison(&doc_value, &condition.value, |a, b| a <= b),
+            DocFilterOperator::Gt => {
+                self.eval_comparison(&doc_value, &condition.value, |a, b| a > b)
+            }
+            DocFilterOperator::Gte => {
+                self.eval_comparison(&doc_value, &condition.value, |a, b| a >= b)
+            }
+            DocFilterOperator::Lt => {
+                self.eval_comparison(&doc_value, &condition.value, |a, b| a < b)
+            }
+            DocFilterOperator::Lte => {
+                self.eval_comparison(&doc_value, &condition.value, |a, b| a <= b)
+            }
             DocFilterOperator::In => self.eval_in(&doc_value, &condition.values),
             DocFilterOperator::NotIn => !self.eval_in(&doc_value, &condition.values),
             DocFilterOperator::Contains => self.eval_contains(&doc_value, &condition.value),
@@ -245,13 +253,21 @@ impl FilterEvaluator {
     fn sql_values_equal(&self, a: &SqlValue, b: &SqlValue) -> bool {
         match (&a.value, &b.value) {
             (Some(SqlValueVariant::NullValue(_)), Some(SqlValueVariant::NullValue(_))) => true,
-            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => va == vb,
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => va == vb,
+            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => {
+                va == vb
+            }
+            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => {
+                va == vb
+            }
             (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::NumberValue(vb))) => {
                 (va - vb).abs() < f64::EPSILON
             }
-            (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => va == vb,
-            (Some(SqlValueVariant::BytesValue(va)), Some(SqlValueVariant::BytesValue(vb))) => va == vb,
+            (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => {
+                va == vb
+            }
+            (Some(SqlValueVariant::BytesValue(va)), Some(SqlValueVariant::BytesValue(vb))) => {
+                va == vb
+            }
             // Cross-type numeric comparison
             (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => {
                 (*va as f64 - vb).abs() < f64::EPSILON
@@ -355,12 +371,10 @@ impl FilterEvaluator {
 
     /// Evaluate TYPE operator
     fn eval_type(&self, doc_value: &Option<SqlValue>, filter_value: &Option<SqlValue>) -> bool {
-        let expected_type = filter_value
-            .as_ref()
-            .and_then(|v| match &v.value {
-                Some(SqlValueVariant::StringValue(s)) => Some(s.as_str()),
-                _ => None,
-            });
+        let expected_type = filter_value.as_ref().and_then(|v| match &v.value {
+            Some(SqlValueVariant::StringValue(s)) => Some(s.as_str()),
+            _ => None,
+        });
 
         match (doc_value, expected_type) {
             (Some(doc), Some(expected)) => {

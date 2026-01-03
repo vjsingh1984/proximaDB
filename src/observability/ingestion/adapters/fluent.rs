@@ -35,14 +35,13 @@
 // - Shared key authentication
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 
 use super::{AdapterConfig, InputAdapter};
 use crate::proto::proximadb_v1::{LogEntry, Severity, SqlValue};
@@ -124,13 +123,32 @@ impl FluentAdapter {
         let fields: HashMap<String, SqlValue> = record
             .iter()
             .filter(|(k, _)| {
-                !["message", "log", "msg", "level", "severity", "host", "hostname",
-                  "service", "app", "application", "time", "timestamp"]
-                    .contains(&k.as_str())
+                ![
+                    "message",
+                    "log",
+                    "msg",
+                    "level",
+                    "severity",
+                    "host",
+                    "hostname",
+                    "service",
+                    "app",
+                    "application",
+                    "time",
+                    "timestamp",
+                ]
+                .contains(&k.as_str())
             })
-            .map(|(k, v)| (k.clone(), SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string()))
-            }))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            v.to_string(),
+                        )),
+                    },
+                )
+            })
             .collect();
 
         LogEntry {
@@ -226,6 +244,7 @@ impl InputAdapter for FluentAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     #[test]
     fn test_parse_level() {

@@ -278,9 +278,9 @@ impl DocumentMetricsCollector {
         // For MVP: Return estimated values
         // In production, this would query DocumentService.list_collections()
         (
-            5,                          // total_collections
-            1000,                       // total_documents
-            10 * 1024 * 1024,          // 10MB total storage
+            5,                // total_collections
+            1000,             // total_documents
+            10 * 1024 * 1024, // 10MB total storage
         )
     }
 
@@ -289,10 +289,10 @@ impl DocumentMetricsCollector {
         // For MVP: Return estimated values based on typical hot/cold distribution
         // In production, this would query the actual document store tiers
         (
-            800,                        // hot_tier_documents (80% in hot tier)
-            200,                        // cold_tier_documents (20% in cold tier)
-            8 * 1024 * 1024,           // hot_tier_bytes
-            2 * 1024 * 1024,           // cold_tier_bytes
+            800,             // hot_tier_documents (80% in hot tier)
+            200,             // cold_tier_documents (20% in cold tier)
+            8 * 1024 * 1024, // hot_tier_bytes
+            2 * 1024 * 1024, // cold_tier_bytes
         )
     }
 
@@ -301,9 +301,9 @@ impl DocumentMetricsCollector {
         // For MVP: Return estimated values
         // In production, this would query IndexManager for actual stats
         (
-            5 * 1024 * 1024,           // fulltext_index_size_bytes (5MB)
-            10,                         // path_indexes_count
-            5,                          // array_indexes_count
+            5 * 1024 * 1024, // fulltext_index_size_bytes (5MB)
+            10,              // path_indexes_count
+            5,               // array_indexes_count
         )
     }
 
@@ -390,8 +390,9 @@ impl DocumentMetricsCollector {
         // Success rates
         let total_insert_ops = current.insert_count;
         if total_insert_ops > 0 {
-            let success_rate =
-                ((total_insert_ops - current.insert_errors) as f64 / total_insert_ops as f64) * 100.0;
+            let success_rate = ((total_insert_ops - current.insert_errors) as f64
+                / total_insert_ops as f64)
+                * 100.0;
             metrics.insert(
                 "proximadb_document_insert_success_rate_percent".to_string(),
                 success_rate,
@@ -465,8 +466,7 @@ impl DocumentMetricsCollector {
                 .as_secs_f64();
             if time_diff > 0.0 {
                 // Insert rate
-                let insert_rate =
-                    (current.insert_count - prev.insert_count) as f64 / time_diff;
+                let insert_rate = (current.insert_count - prev.insert_count) as f64 / time_diff;
                 metrics.insert(
                     "proximadb_document_inserts_per_second".to_string(),
                     insert_rate,
@@ -480,16 +480,14 @@ impl DocumentMetricsCollector {
                 );
 
                 // Update rate
-                let update_rate =
-                    (current.update_count - prev.update_count) as f64 / time_diff;
+                let update_rate = (current.update_count - prev.update_count) as f64 / time_diff;
                 metrics.insert(
                     "proximadb_document_updates_per_second".to_string(),
                     update_rate,
                 );
 
                 // Delete rate
-                let delete_rate =
-                    (current.delete_count - prev.delete_count) as f64 / time_diff;
+                let delete_rate = (current.delete_count - prev.delete_count) as f64 / time_diff;
                 metrics.insert(
                     "proximadb_document_deletes_per_second".to_string(),
                     delete_rate,
@@ -570,9 +568,21 @@ mod tests {
 
         let sample = collector.collect().await.unwrap();
         assert_eq!(sample.collector, "document_store");
-        assert!(sample.values.contains_key("proximadb_document_collections_total"));
-        assert!(sample.values.contains_key("proximadb_document_documents_total"));
-        assert!(sample.values.contains_key("proximadb_document_insert_total"));
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_collections_total")
+        );
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_documents_total")
+        );
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_insert_total")
+        );
         assert!(sample.values.contains_key("proximadb_document_query_total"));
     }
 
@@ -675,15 +685,21 @@ mod tests {
         let sample = collector.collect().await.unwrap();
 
         // Check tiering metrics are present
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_hot_tier_documents"));
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_cold_tier_documents"));
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_hot_tier_ratio"));
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_hot_tier_documents")
+        );
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_cold_tier_documents")
+        );
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_hot_tier_ratio")
+        );
     }
 
     #[tokio::test]
@@ -693,15 +709,21 @@ mod tests {
         let sample = collector.collect().await.unwrap();
 
         // Check index metrics are present
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_fulltext_index_bytes"));
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_path_indexes_count"));
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_array_indexes_count"));
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_fulltext_index_bytes")
+        );
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_path_indexes_count")
+        );
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_array_indexes_count")
+        );
     }
 
     #[tokio::test]
@@ -743,9 +765,11 @@ mod tests {
         let sample = collector.collect().await.unwrap();
 
         // Rate calculations should be present (based on time between collections)
-        assert!(sample
-            .values
-            .contains_key("proximadb_document_inserts_per_second"));
+        assert!(
+            sample
+                .values
+                .contains_key("proximadb_document_inserts_per_second")
+        );
     }
 
     #[tokio::test]

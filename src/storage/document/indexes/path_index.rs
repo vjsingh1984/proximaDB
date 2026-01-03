@@ -78,7 +78,9 @@ impl PartialOrd for OrderedFloat {
 
 impl Ord for OrderedFloat {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -240,25 +242,33 @@ impl PathIndex {
             }
             PathQueryCondition::Gt(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in tree.range((std::ops::Bound::Excluded(key), std::ops::Bound::Unbounded)) {
+                for (k, ids) in
+                    tree.range((std::ops::Bound::Excluded(key), std::ops::Bound::Unbounded))
+                {
                     results.extend(ids.iter().cloned());
                 }
             }
             PathQueryCondition::Gte(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in tree.range((std::ops::Bound::Included(key), std::ops::Bound::Unbounded)) {
+                for (k, ids) in
+                    tree.range((std::ops::Bound::Included(key), std::ops::Bound::Unbounded))
+                {
                     results.extend(ids.iter().cloned());
                 }
             }
             PathQueryCondition::Lt(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in tree.range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(key))) {
+                for (k, ids) in
+                    tree.range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(key)))
+                {
                     results.extend(ids.iter().cloned());
                 }
             }
             PathQueryCondition::Lte(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in tree.range((std::ops::Bound::Unbounded, std::ops::Bound::Included(key))) {
+                for (k, ids) in
+                    tree.range((std::ops::Bound::Unbounded, std::ops::Bound::Included(key)))
+                {
                     results.extend(ids.iter().cloned());
                 }
             }
@@ -321,7 +331,9 @@ mod tests {
         index.insert("doc2", IndexValue::Int(30)).unwrap();
         index.insert("doc3", IndexValue::Int(25)).unwrap();
 
-        let results = index.query(&PathQueryCondition::Eq(IndexValue::Int(25))).unwrap();
+        let results = index
+            .query(&PathQueryCondition::Eq(IndexValue::Int(25)))
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert!(results.contains(&"doc1".to_string()));
         assert!(results.contains(&"doc3".to_string()));
@@ -331,7 +343,9 @@ mod tests {
     fn test_path_index_unique() {
         let index = PathIndex::new("$.email", true, false);
 
-        index.insert("doc1", IndexValue::String("a@b.com".to_string())).unwrap();
+        index
+            .insert("doc1", IndexValue::String("a@b.com".to_string()))
+            .unwrap();
         let result = index.insert("doc2", IndexValue::String("a@b.com".to_string()));
 
         assert!(result.is_err());

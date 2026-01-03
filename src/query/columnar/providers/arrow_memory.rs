@@ -127,10 +127,8 @@ impl ArrowInMemoryProvider {
                 for expr in exprs {
                     let mask = Self::filter_to_boolean_array(batch, expr)?;
                     result = Some(match result {
-                        Some(existing) => {
-                            arrow::compute::and(&existing, &mask)
-                                .map_err(|e| anyhow::anyhow!("AND operation failed: {}", e))?
-                        }
+                        Some(existing) => arrow::compute::and(&existing, &mask)
+                            .map_err(|e| anyhow::anyhow!("AND operation failed: {}", e))?,
                         None => mask,
                     });
                 }
@@ -142,10 +140,8 @@ impl ArrowInMemoryProvider {
                 for expr in exprs {
                     let mask = Self::filter_to_boolean_array(batch, expr)?;
                     result = Some(match result {
-                        Some(existing) => {
-                            arrow::compute::or(&existing, &mask)
-                                .map_err(|e| anyhow::anyhow!("OR operation failed: {}", e))?
-                        }
+                        Some(existing) => arrow::compute::or(&existing, &mask)
+                            .map_err(|e| anyhow::anyhow!("OR operation failed: {}", e))?,
                         None => mask,
                     });
                 }
@@ -226,12 +222,16 @@ impl ArrowInMemoryProvider {
         if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>() {
             if let Some(val) = value.as_f64() {
                 return match op {
-                    ComparisonOperator::Equals => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some((float_array.value(i) - val).abs() < f64::EPSILON)),
-                    )),
-                    ComparisonOperator::NotEquals => Ok(BooleanArray::from_iter(
-                        (0..num_rows).map(|i| Some((float_array.value(i) - val).abs() >= f64::EPSILON)),
-                    )),
+                    ComparisonOperator::Equals => {
+                        Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
+                            Some((float_array.value(i) - val).abs() < f64::EPSILON)
+                        })))
+                    }
+                    ComparisonOperator::NotEquals => {
+                        Ok(BooleanArray::from_iter((0..num_rows).map(|i| {
+                            Some((float_array.value(i) - val).abs() >= f64::EPSILON)
+                        })))
+                    }
                     ComparisonOperator::LessThan => Ok(BooleanArray::from_iter(
                         (0..num_rows).map(|i| Some(float_array.value(i) < val)),
                     )),
@@ -514,11 +514,7 @@ mod tests {
         let id_array = StringArray::from(vec!["a", "b", "c", "d"]);
         let value_array = Int64Array::from(vec![1, 2, 3, 4]);
 
-        RecordBatch::try_new(
-            schema,
-            vec![Arc::new(id_array), Arc::new(value_array)],
-        )
-        .unwrap()
+        RecordBatch::try_new(schema, vec![Arc::new(id_array), Arc::new(value_array)]).unwrap()
     }
 
     #[tokio::test]

@@ -11,8 +11,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use crate::llm::config::RAGConfig;
@@ -206,7 +206,11 @@ impl RAGPipeline {
     }
 
     /// Index documents into a collection
-    pub async fn index_documents(&self, collection: &str, documents: Vec<Document>) -> Result<usize> {
+    pub async fn index_documents(
+        &self,
+        collection: &str,
+        documents: Vec<Document>,
+    ) -> Result<usize> {
         let doc_count = documents.len();
 
         // Update collection tracking

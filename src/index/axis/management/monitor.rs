@@ -14,6 +14,7 @@ use tokio::sync::{RwLock, broadcast};
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
+#[allow(unused_imports)]
 use crate::metrics::collectors::MetricsCollector as MetricsCollectorTrait;
 
 use crate::index::axis::{AlertThresholds, AxisConfig, MonitoringConfig};

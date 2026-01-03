@@ -12,8 +12,8 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use super::rules::{AlertRule, AlertRuleId, RuleCondition};
 use super::Alert;
+use super::rules::{AlertRule, AlertRuleId, RuleCondition};
 
 /// Alert evaluation engine
 pub struct AlertEngine {
@@ -153,9 +153,12 @@ impl AlertEngine {
 
         if triggered {
             let threshold = match &rule.condition {
-                RuleCondition::Above(t) | RuleCondition::Below(t) |
-                RuleCondition::Equal(t) | RuleCondition::NotEqual(t) |
-                RuleCondition::AboveOrEqual(t) | RuleCondition::BelowOrEqual(t) => Some(*t),
+                RuleCondition::Above(t)
+                | RuleCondition::Below(t)
+                | RuleCondition::Equal(t)
+                | RuleCondition::NotEqual(t)
+                | RuleCondition::AboveOrEqual(t)
+                | RuleCondition::BelowOrEqual(t) => Some(*t),
                 RuleCondition::Between(low, _) => Some(*low),
                 RuleCondition::Outside(_, high) => Some(*high),
                 RuleCondition::RateOfChange(rate) => Some(*rate),
@@ -209,6 +212,7 @@ impl Default for AlertEngine {
 mod tests {
     use super::*;
     use crate::observability::alerting::rules::AlertRule;
+    use crate::observability::alerting::AlertSeverity;
 
     #[tokio::test]
     async fn test_register_rule() {

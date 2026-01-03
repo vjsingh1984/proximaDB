@@ -172,7 +172,7 @@ impl GraphOperationsService {
             _ => {
                 return Err(ProximaDBError::InvalidInput(
                     "Centrality algorithms currently only support ORION engine".to_string(),
-                ))
+                ));
             }
         };
 
@@ -271,7 +271,7 @@ impl GraphOperationsService {
                 return Err(ProximaDBError::InvalidInput(
                     "Community detection algorithms currently only support ORION engine"
                         .to_string(),
-                ))
+                ));
             }
         };
 
@@ -289,8 +289,11 @@ impl GraphOperationsService {
                 let csr = Arc::new(csr_guard.clone());
                 drop(csr_guard);
 
-                let louvain =
-                    LouvainCommunityDetection::new(csr.clone(), config.resolution, config.max_iterations);
+                let louvain = LouvainCommunityDetection::new(
+                    csr.clone(),
+                    config.resolution,
+                    config.max_iterations,
+                );
 
                 let communities = louvain.execute(NoInput)?;
 
@@ -587,7 +590,11 @@ mod tests {
         let service = GraphOperationsService::new();
         let graph_id = create_test_graph(&service).await;
 
-        let node_ids = vec!["n0".to_string(), "n1".to_string(), "nonexistent".to_string()];
+        let node_ids = vec![
+            "n0".to_string(),
+            "n1".to_string(),
+            "nonexistent".to_string(),
+        ];
         let scores = service
             .get_node_centrality(&graph_id, CentralityAlgorithm::PageRank, &node_ids)
             .await

@@ -61,7 +61,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_schema::{DataType as ArrowDataType, Field, Schema as ArrowSchema};
 use async_trait::async_trait;
@@ -74,8 +74,8 @@ use tracing::{debug, info, warn};
 
 use super::StorageOptions;
 use crate::storage::formats::{
-    CompressionCodec, FileEntry, FilterExpression, FormatType, MergeAction, OptimizeContext,
-    OptimizeResult, ReadContext, RecordBatchStream, Snapshot, StorageFormat, OpenTableFormat,
+    CompressionCodec, FileEntry, FilterExpression, FormatType, MergeAction, OpenTableFormat,
+    OptimizeContext, OptimizeResult, ReadContext, RecordBatchStream, Snapshot, StorageFormat,
     VectorBatchStream, VectorReadContext, WriteContext, WriteMode,
 };
 
@@ -433,11 +433,14 @@ impl DeltaLakeFormat {
             return Err(anyhow!("No commits found in delta log"));
         }
 
-        let target_version = version.unwrap_or_else(|| commits.last().map(|(v, _)| *v).unwrap_or(0));
+        let target_version =
+            version.unwrap_or_else(|| commits.last().map(|(v, _)| *v).unwrap_or(0));
 
         // Find checkpoint if available
         let checkpoint_version = self.find_latest_checkpoint().await?;
-        let start_version = checkpoint_version.filter(|cv| *cv <= target_version).unwrap_or(0);
+        let start_version = checkpoint_version
+            .filter(|cv| *cv <= target_version)
+            .unwrap_or(0);
 
         // Collect all actions from start_version to target_version
         let mut all_files: HashMap<String, AddAction> = HashMap::new();
@@ -466,7 +469,8 @@ impl DeltaLakeFormat {
                 }
 
                 // Parse each action
-                if let Ok(action) = serde_json::from_str::<HashMap<String, serde_json::Value>>(line) {
+                if let Ok(action) = serde_json::from_str::<HashMap<String, serde_json::Value>>(line)
+                {
                     if let Some(add) = action.get("add") {
                         let add: AddAction = serde_json::from_value(add.clone())?;
                         all_files.insert(add.path.clone(), add);
@@ -527,7 +531,8 @@ impl DeltaLakeFormat {
         }
 
         let delta_schema: DeltaSchema = serde_json::from_str(schema_string)?;
-        let fields: Vec<Field> = delta_schema.fields
+        let fields: Vec<Field> = delta_schema
+            .fields
             .iter()
             .map(|f| {
                 let arrow_type = self.delta_type_to_arrow(&f.field_type);
@@ -561,12 +566,20 @@ impl DeltaLakeFormat {
                         "array" => {
                             if let Some(element) = obj.get("elementType") {
                                 let element_type = self.delta_type_to_arrow(element);
-                                ArrowDataType::List(Arc::new(Field::new("item", element_type, true)))
+                                ArrowDataType::List(Arc::new(Field::new(
+                                    "item",
+                                    element_type,
+                                    true,
+                                )))
                             } else {
-                                ArrowDataType::List(Arc::new(Field::new("item", ArrowDataType::Utf8, true)))
+                                ArrowDataType::List(Arc::new(Field::new(
+                                    "item",
+                                    ArrowDataType::Utf8,
+                                    true,
+                                )))
                             }
                         }
-                        "map" => ArrowDataType::Utf8, // Simplified
+                        "map" => ArrowDataType::Utf8,    // Simplified
                         "struct" => ArrowDataType::Utf8, // Simplified
                         _ => ArrowDataType::Utf8,
                     }
@@ -580,20 +593,24 @@ impl DeltaLakeFormat {
 
     /// Convert internal snapshot to public Snapshot type
     fn to_public_snapshot(&self, internal: &DeltaSnapshot) -> Snapshot {
-        let files: Vec<FileEntry> = internal.files.iter().map(|f| {
-            FileEntry {
-                path: f.path.clone(),
-                size_bytes: f.size as u64,
-                record_count: 0, // Would need to parse stats
-                partition_values: if f.partition_values.is_empty() {
-                    None
-                } else {
-                    Some(f.partition_values.clone())
-                },
-                stats: None, // Would need to parse stats JSON
-                created_at: Utc.timestamp_millis_opt(f.modification_time).unwrap(),
-            }
-        }).collect();
+        let files: Vec<FileEntry> = internal
+            .files
+            .iter()
+            .map(|f| {
+                FileEntry {
+                    path: f.path.clone(),
+                    size_bytes: f.size as u64,
+                    record_count: 0, // Would need to parse stats
+                    partition_values: if f.partition_values.is_empty() {
+                        None
+                    } else {
+                        Some(f.partition_values.clone())
+                    },
+                    stats: None, // Would need to parse stats JSON
+                    created_at: Utc.timestamp_millis_opt(f.modification_time).unwrap(),
+                }
+            })
+            .collect();
 
         Snapshot {
             version: internal.version,
@@ -656,7 +673,8 @@ impl DeltaLakeFormat {
 
     /// Convert Arrow schema to Delta schema JSON
     fn arrow_schema_to_delta(&self, schema: &ArrowSchema) -> Result<String> {
-        let fields: Vec<serde_json::Value> = schema.fields()
+        let fields: Vec<serde_json::Value> = schema
+            .fields()
             .iter()
             .map(|f| {
                 let delta_type = self.arrow_type_to_delta(f.data_type());
@@ -799,9 +817,16 @@ impl StorageFormat for DeltaLakeFormat {
     }
 
     fn supports_feature(&self, feature: &str) -> bool {
-        matches!(feature,
-            "acid" | "time_travel" | "schema_evolution" |
-            "partitioning" | "z_ordering" | "merge" | "delete" | "update"
+        matches!(
+            feature,
+            "acid"
+                | "time_travel"
+                | "schema_evolution"
+                | "partitioning"
+                | "z_ordering"
+                | "merge"
+                | "delete"
+                | "update"
         )
     }
 }
@@ -831,9 +856,15 @@ impl OpenTableFormat for DeltaLakeFormat {
         Ok(commits.into_iter().map(|(v, _)| v).collect())
     }
 
-    async fn read_snapshot(&self, snapshot: &Snapshot, ctx: &ReadContext) -> Result<RecordBatchStream> {
+    async fn read_snapshot(
+        &self,
+        snapshot: &Snapshot,
+        ctx: &ReadContext,
+    ) -> Result<RecordBatchStream> {
         // Get list of Parquet files to read
-        let files: Vec<String> = snapshot.files.iter()
+        let files: Vec<String> = snapshot
+            .files
+            .iter()
             .map(|f| {
                 let table_path = Path::new(&self.config.table_uri);
                 table_path.join(&f.path).to_string_lossy().to_string()
@@ -854,26 +885,39 @@ impl OpenTableFormat for DeltaLakeFormat {
                 let projection = projection.clone();
                 let filter = filter.clone();
                 async move {
-                    Self::read_parquet_file(&file_path, batch_size, projection.as_ref(), filter.as_ref()).await
+                    Self::read_parquet_file(
+                        &file_path,
+                        batch_size,
+                        projection.as_ref(),
+                        filter.as_ref(),
+                    )
+                    .await
                 }
             })
-            .flat_map(|result| {
-                match result {
-                    Ok(batches) => stream::iter(batches.into_iter().map(Ok)).boxed(),
-                    Err(e) => stream::once(async move { Err(e) }).boxed(),
-                }
+            .flat_map(|result| match result {
+                Ok(batches) => stream::iter(batches.into_iter().map(Ok)).boxed(),
+                Err(e) => stream::once(async move { Err(e) }).boxed(),
             });
 
         Ok(Box::pin(batches_stream))
     }
 
-    async fn read_snapshot_vectors(&self, _snapshot: &Snapshot, _ctx: &VectorReadContext) -> Result<Option<VectorBatchStream>> {
+    async fn read_snapshot_vectors(
+        &self,
+        _snapshot: &Snapshot,
+        _ctx: &VectorReadContext,
+    ) -> Result<Option<VectorBatchStream>> {
         // Delta Lake doesn't have native vector support
         // Would need to read Parquet and extract vector columns
         Ok(None)
     }
 
-    async fn write_atomic(&self, _table_path: &str, batches: Vec<RecordBatch>, ctx: &WriteContext) -> Result<Snapshot> {
+    async fn write_atomic(
+        &self,
+        _table_path: &str,
+        batches: Vec<RecordBatch>,
+        ctx: &WriteContext,
+    ) -> Result<Snapshot> {
         // Ensure table exists
         if !self.table_exists().await? {
             if let Some(batch) = batches.first() {
@@ -981,7 +1025,8 @@ impl OpenTableFormat for DeltaLakeFormat {
         for (version, path) in commits.iter().rev() {
             let content = fs::read_to_string(path).await?;
             for line in content.lines() {
-                if let Ok(action) = serde_json::from_str::<HashMap<String, serde_json::Value>>(line) {
+                if let Ok(action) = serde_json::from_str::<HashMap<String, serde_json::Value>>(line)
+                {
                     if let Some(info) = action.get("commitInfo") {
                         let commit_info: CommitInfoAction = serde_json::from_value(info.clone())?;
                         let commit_time = Utc.timestamp_millis_opt(commit_info.timestamp).unwrap();
@@ -1051,7 +1096,9 @@ impl OpenTableFormat for DeltaLakeFormat {
         let current = self.load_snapshot(None).await?;
 
         // Find small files to compact
-        let small_files: Vec<_> = current.files.iter()
+        let small_files: Vec<_> = current
+            .files
+            .iter()
             .filter(|f| (f.size as u64) < ctx.target_file_size_bytes / 2)
             .collect();
 
@@ -1083,9 +1130,8 @@ impl OpenTableFormat for DeltaLakeFormat {
         let cutoff = Utc::now().timestamp_millis() - retention_ms as i64;
 
         let current = self.load_snapshot(None).await?;
-        let active_files: std::collections::HashSet<_> = current.files.iter()
-            .map(|f| f.path.clone())
-            .collect();
+        let active_files: std::collections::HashSet<_> =
+            current.files.iter().map(|f| f.path.clone()).collect();
 
         let table_path = Path::new(&self.config.table_uri);
         let mut removed_bytes = 0u64;
@@ -1110,7 +1156,8 @@ impl OpenTableFormat for DeltaLakeFormat {
             // Check modification time
             if let Ok(metadata) = entry.metadata().await {
                 if let Ok(modified) = metadata.modified() {
-                    let modified_ms = modified.duration_since(std::time::UNIX_EPOCH)
+                    let modified_ms = modified
+                        .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(0);
 
@@ -1183,28 +1230,23 @@ impl DeltaLakeFormat {
         use std::fs::File;
 
         let file = File::open(path)?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?
-            .with_batch_size(batch_size);
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?.with_batch_size(batch_size);
 
         let reader = if let Some(cols) = projection {
             // Project specific columns
             let schema = builder.schema();
-            let indices: Vec<usize> = cols.iter()
+            let indices: Vec<usize> = cols
+                .iter()
                 .filter_map(|name| schema.index_of(name).ok())
                 .collect();
 
-            let mask = parquet::arrow::ProjectionMask::roots(
-                builder.parquet_schema(),
-                indices,
-            );
+            let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), indices);
             builder.with_projection(mask).build()?
         } else {
             builder.build()?
         };
 
-        let batches: Vec<RecordBatch> = reader
-            .filter_map(|r| r.ok())
-            .collect();
+        let batches: Vec<RecordBatch> = reader.filter_map(|r| r.ok()).collect();
 
         Ok(batches)
     }

@@ -415,7 +415,10 @@ impl TieringPolicyEngine {
     /// Force evaluate a specific collection
     pub async fn evaluate_collection(&self, collection: &str) -> Result<Vec<MigrationTask>> {
         let policies = self.policies.read().await;
-        let patterns = self.access_tracker.get_collection_patterns(collection).await;
+        let patterns = self
+            .access_tracker
+            .get_collection_patterns(collection)
+            .await;
 
         let mut tasks = Vec::new();
 
@@ -557,8 +560,8 @@ mod tests {
 
         engine.add_policy(policy).await;
 
-        let metadata = TieringMetadata::new("item1", "test", PerformanceTier::Cold)
-            .with_access_count(15); // Above threshold
+        let metadata =
+            TieringMetadata::new("item1", "test", PerformanceTier::Cold).with_access_count(15); // Above threshold
 
         let policies = engine.get_policies().await;
         let action = engine.evaluate_item(&policies, &metadata).await;

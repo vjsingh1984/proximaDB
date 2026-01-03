@@ -433,9 +433,9 @@ impl CollectionService {
                 enabled: Some(true),
                 is_primary: Some(true),
                 hnsw_config: Some(HnswConfig {
-                    m: Some(16),                    // Balanced connectivity
-                    ef_construction: Some(200),     // Good build quality
-                    ef_search: Some(50),            // Fast search with good recall
+                    m: Some(16),                // Balanced connectivity
+                    ef_construction: Some(200), // Good build quality
+                    ef_search: Some(50),        // Fast search with good recall
                     max_partition_size: Some(100_000),
                     adaptive_parameters: Some(true),
                     use_simd: Some(true),
@@ -1343,9 +1343,18 @@ impl CollectionService {
         let mut created_components = Vec::new();
 
         // Build paths under base location using StoragePath utility (tenant-aware)
-        let write_buffer_dir = StoragePath::collection_wal_path_with_tenant(base_location, tenant_id, collection_uuid);
-        let data_dir = StoragePath::collection_data_path_with_tenant(base_location, tenant_id, collection_uuid);
-        let indexes_dir = StoragePath::collection_index_path_with_tenant(base_location, tenant_id, collection_uuid);
+        let write_buffer_dir =
+            StoragePath::collection_wal_path_with_tenant(base_location, tenant_id, collection_uuid);
+        let data_dir = StoragePath::collection_data_path_with_tenant(
+            base_location,
+            tenant_id,
+            collection_uuid,
+        );
+        let indexes_dir = StoragePath::collection_index_path_with_tenant(
+            base_location,
+            tenant_id,
+            collection_uuid,
+        );
 
         // Create directories
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(base_location) {

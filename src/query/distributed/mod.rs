@@ -49,12 +49,12 @@
 //! 5. **Aggregate Results**: Merge remote and local results using FusionEngine
 //! 6. **Return Response**: Send unified response to client
 
+pub mod aggregator;
 pub mod coordinator;
 pub mod planner;
 pub mod remote;
-pub mod aggregator;
 
-pub use coordinator::{DistributedQueryCoordinator, DistributedQueryConfig, QueryPlan, ShardInfo};
-pub use planner::{ShardedSubQuery, DistributionStrategy};
+pub use aggregator::{AggregationStrategy, ResultAggregator};
+pub use coordinator::{DistributedQueryConfig, DistributedQueryCoordinator, QueryPlan, ShardInfo};
+pub use planner::{DistributionStrategy, ShardedSubQuery};
 pub use remote::{RemoteExecutor, RemoteQueryResult};
-pub use aggregator::{ResultAggregator, AggregationStrategy};

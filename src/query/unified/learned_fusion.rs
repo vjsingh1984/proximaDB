@@ -22,13 +22,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
 
 use super::ast::DataModel;
-use super::fusion::{SubQueryResult, merge_record_data, aggregate_metrics, compute_rrf_scores};
-use super::{QueryResult, UnifiedRecord, QueryMetrics};
+use super::fusion::{SubQueryResult, aggregate_metrics, compute_rrf_scores, merge_record_data};
+use super::{QueryMetrics, QueryResult, UnifiedRecord};
 
 /// Configuration for learned fusion
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +112,12 @@ impl FusionFeatures {
         features.extend(&self.query_features);
 
         // Add model features in deterministic order
-        for model in [DataModel::Vector, DataModel::Document, DataModel::Graph, DataModel::Observability] {
+        for model in [
+            DataModel::Vector,
+            DataModel::Document,
+            DataModel::Graph,
+            DataModel::Observability,
+        ] {
             if let Some(mf) = self.model_features.get(&model) {
                 features.extend(mf);
             } else {
@@ -233,7 +238,8 @@ impl FusionModel for LinearFusionModel {
         let base_score = self.forward(&flat_features);
 
         // Adjust by record-specific features if available
-        let scores: Vec<f64> = record_ids.iter()
+        let scores: Vec<f64> = record_ids
+            .iter()
             .map(|id| {
                 if let Some(record_features) = features.record_features.get(id) {
                     let record_score = self.forward(record_features);
@@ -322,8 +328,13 @@ impl FusionModel for LinearFusionModel {
     }
 
     fn save(&self) -> Result<Vec<u8>> {
-        let data = bincode::serialize(&(&self.weights, self.bias, self.learning_rate, self.regularization))
-            .map_err(|e| anyhow!("Failed to serialize model: {}", e))?;
+        let data = bincode::serialize(&(
+            &self.weights,
+            self.bias,
+            self.learning_rate,
+            self.regularization,
+        ))
+        .map_err(|e| anyhow!("Failed to serialize model: {}", e))?;
         Ok(data)
     }
 
@@ -405,7 +416,8 @@ impl GradientBoostingModel {
         // Find best split across features
         for feature_idx in 0..num_features {
             // Get feature values and sort
-            let mut values: Vec<(f64, f64)> = samples.iter()
+            let mut values: Vec<(f64, f64)> = samples
+                .iter()
                 .map(|(f, t)| (f.get(feature_idx).copied().unwrap_or(0.0), *t))
                 .collect();
             values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -415,15 +427,25 @@ impl GradientBoostingModel {
                 let threshold = (values[i].0 + values[i + 1].0) / 2.0;
 
                 // Compute left and right means
-                let (left_sum, left_count) = values.iter()
+                let (left_sum, left_count) = values
+                    .iter()
                     .take(i + 1)
                     .fold((0.0, 0), |(s, c), (_, t)| (s + t, c + 1));
-                let (right_sum, right_count) = values.iter()
+                let (right_sum, right_count) = values
+                    .iter()
                     .skip(i + 1)
                     .fold((0.0, 0), |(s, c), (_, t)| (s + t, c + 1));
 
-                let left_value = if left_count > 0 { left_sum / left_count as f64 } else { 0.0 };
-                let right_value = if right_count > 0 { right_sum / right_count as f64 } else { 0.0 };
+                let left_value = if left_count > 0 {
+                    left_sum / left_count as f64
+                } else {
+                    0.0
+                };
+                let right_value = if right_count > 0 {
+                    right_sum / right_count as f64
+                } else {
+                    0.0
+                };
 
                 // Compute MSE loss
                 let mut loss = 0.0;
@@ -459,7 +481,8 @@ impl FusionModel for GradientBoostingModel {
         let base_score = self.forward(&flat_features);
 
         // Adjust by record-specific features if available
-        let scores: Vec<f64> = record_ids.iter()
+        let scores: Vec<f64> = record_ids
+            .iter()
             .map(|id| {
                 if let Some(record_features) = features.record_features.get(id) {
                     let record_score = self.forward(record_features);
@@ -487,11 +510,13 @@ impl FusionModel for GradientBoostingModel {
         }
 
         // Prepare training data
-        let feature_vecs: Vec<Vec<f64>> = samples.iter()
+        let feature_vecs: Vec<Vec<f64>> = samples
+            .iter()
             .map(|s| s.features.to_flat_vector())
             .collect();
 
-        let targets: Vec<f64> = samples.iter()
+        let targets: Vec<f64> = samples
+            .iter()
             .map(|s| {
                 if s.target_scores.is_empty() {
                     0.5
@@ -502,7 +527,8 @@ impl FusionModel for GradientBoostingModel {
             .collect();
 
         // Compute residuals
-        let mut residuals: Vec<f64> = targets.iter()
+        let mut residuals: Vec<f64> = targets
+            .iter()
             .zip(feature_vecs.iter())
             .map(|(t, f)| t - self.forward(f))
             .collect();
@@ -512,7 +538,8 @@ impl FusionModel for GradientBoostingModel {
 
         // Fit trees to residuals
         while self.trees.len() < self.max_trees {
-            let samples_with_residuals: Vec<(&[f64], f64)> = feature_vecs.iter()
+            let samples_with_residuals: Vec<(&[f64], f64)> = feature_vecs
+                .iter()
                 .zip(residuals.iter())
                 .map(|(f, r)| (f.as_slice(), *r))
                 .collect();
@@ -532,7 +559,8 @@ impl FusionModel for GradientBoostingModel {
                 iterations += 1;
 
                 // Check convergence
-                let mse: f64 = residuals.iter().map(|r| r.powi(2)).sum::<f64>() / residuals.len() as f64;
+                let mse: f64 =
+                    residuals.iter().map(|r| r.powi(2)).sum::<f64>() / residuals.len() as f64;
                 total_loss = mse;
 
                 if mse < 1e-6 {
@@ -563,15 +591,20 @@ impl FusionModel for GradientBoostingModel {
     }
 
     fn save(&self) -> Result<Vec<u8>> {
-        let data = bincode::serialize(&(&self.trees, self.learning_rate, self.max_trees, &self.feature_importance))
-            .map_err(|e| anyhow!("Failed to serialize model: {}", e))?;
+        let data = bincode::serialize(&(
+            &self.trees,
+            self.learning_rate,
+            self.max_trees,
+            &self.feature_importance,
+        ))
+        .map_err(|e| anyhow!("Failed to serialize model: {}", e))?;
         Ok(data)
     }
 
     fn load(&mut self, data: &[u8]) -> Result<()> {
         let (trees, lr, max_trees, importance): (Vec<DecisionStump>, f64, usize, Vec<f64>) =
             bincode::deserialize(data)
-            .map_err(|e| anyhow!("Failed to deserialize model: {}", e))?;
+                .map_err(|e| anyhow!("Failed to deserialize model: {}", e))?;
         self.trees = trees;
         self.learning_rate = lr;
         self.max_trees = max_trees;
@@ -654,7 +687,8 @@ impl LearnedFusion {
         let mut all_records: HashMap<String, UnifiedRecord> = HashMap::new();
         for result in &sub_results {
             for record in &result.records {
-                all_records.entry(record.id.clone())
+                all_records
+                    .entry(record.id.clone())
                     .and_modify(|existing| {
                         self.merge_record_data(existing, record);
                     })
@@ -675,7 +709,8 @@ impl LearnedFusion {
         };
 
         // Apply scores to records
-        let mut records: Vec<UnifiedRecord> = record_ids.into_iter()
+        let mut records: Vec<UnifiedRecord> = record_ids
+            .into_iter()
             .zip(scores.into_iter())
             .map(|(id, score)| {
                 let mut record = all_records.remove(&id).unwrap();
@@ -686,7 +721,8 @@ impl LearnedFusion {
 
         // Sort by score
         records.sort_by(|a, b| {
-            b.score.unwrap_or(0.0)
+            b.score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -734,10 +770,17 @@ impl LearnedFusion {
     }
 
     /// Record user feedback for learning
-    pub fn record_feedback(&self, features: FusionFeatures, feedback: FeedbackSignal) -> Result<()> {
+    pub fn record_feedback(
+        &self,
+        features: FusionFeatures,
+        feedback: FeedbackSignal,
+    ) -> Result<()> {
         // Convert feedback to target scores
         let target_scores = match &feedback {
-            FeedbackSignal::Click { record_id, position } => {
+            FeedbackSignal::Click {
+                record_id,
+                position,
+            } => {
                 // Position-based target: higher score for earlier positions
                 let mut scores = HashMap::new();
                 let target = 1.0 / (*position as f64 + 1.0);
@@ -751,7 +794,10 @@ impl LearnedFusion {
                 // Negative signal - all results were poor
                 HashMap::new()
             }
-            FeedbackSignal::RelevanceJudgment { record_id, relevant } => {
+            FeedbackSignal::RelevanceJudgment {
+                record_id,
+                relevant,
+            } => {
                 let mut scores = HashMap::new();
                 scores.insert(record_id.clone(), if *relevant { 1.0 } else { 0.0 });
                 scores
@@ -791,8 +837,10 @@ impl LearnedFusion {
 
         *self.is_trained.write().unwrap() = true;
 
-        info!("Trained fusion model on {} samples, loss: {:.4}",
-              metrics.num_samples, metrics.loss);
+        info!(
+            "Trained fusion model on {} samples, loss: {:.4}",
+            metrics.num_samples, metrics.loss
+        );
 
         Ok(metrics)
     }
@@ -838,7 +886,11 @@ impl LearnedFusion {
     }
 
     /// Fallback RRF scoring when model not trained
-    fn fallback_rrf_scores(&self, sub_results: &[SubQueryResult], record_ids: &[String]) -> Vec<f64> {
+    fn fallback_rrf_scores(
+        &self,
+        sub_results: &[SubQueryResult],
+        record_ids: &[String],
+    ) -> Vec<f64> {
         // Delegate to canonical RRF implementation with k=60
         compute_rrf_scores(sub_results, record_ids, 60)
     }
@@ -889,7 +941,9 @@ impl FeatureExtractor {
         // Per-model features
         for result in sub_results {
             let model_features = self.extract_model_features(result);
-            features.model_features.insert(result.source_model.clone(), model_features);
+            features
+                .model_features
+                .insert(result.source_model.clone(), model_features);
         }
 
         // Per-record features
@@ -908,9 +962,7 @@ impl FeatureExtractor {
         features[0] = sub_results.len() as f64 / 4.0; // Normalize by max modalities
 
         // Total results
-        let total_results: usize = sub_results.iter()
-            .map(|r| r.records.len())
-            .sum();
+        let total_results: usize = sub_results.iter().map(|r| r.records.len()).sum();
         features[1] = (total_results as f64).ln().max(0.0) / 10.0; // Log-normalized
 
         // Average result size per modality
@@ -919,22 +971,28 @@ impl FeatureExtractor {
         }
 
         // Score distribution statistics
-        let all_scores: Vec<f64> = sub_results.iter()
+        let all_scores: Vec<f64> = sub_results
+            .iter()
             .flat_map(|r| r.records.iter())
             .filter_map(|rec| rec.score)
             .collect();
 
         if !all_scores.is_empty() {
             let mean = all_scores.iter().sum::<f64>() / all_scores.len() as f64;
-            let variance = all_scores.iter()
-                .map(|s| (s - mean).powi(2))
-                .sum::<f64>() / all_scores.len() as f64;
+            let variance = all_scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>()
+                / all_scores.len() as f64;
             let std_dev = variance.sqrt();
 
             features[3] = mean;
             features[4] = std_dev;
-            features[5] = *all_scores.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0);
-            features[6] = *all_scores.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0);
+            features[5] = *all_scores
+                .iter()
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(&0.0);
+            features[6] = *all_scores
+                .iter()
+                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(&0.0);
         }
 
         // Execution time features
@@ -951,20 +1009,23 @@ impl FeatureExtractor {
         features[0] = (result.records.len() as f64).ln().max(0.0) / 10.0;
 
         // Score statistics for this model
-        let scores: Vec<f64> = result.records.iter()
-            .filter_map(|r| r.score)
-            .collect();
+        let scores: Vec<f64> = result.records.iter().filter_map(|r| r.score).collect();
 
         if !scores.is_empty() {
             let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-            let variance = scores.iter()
-                .map(|s| (s - mean).powi(2))
-                .sum::<f64>() / scores.len() as f64;
+            let variance =
+                scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / scores.len() as f64;
 
             features[1] = mean;
             features[2] = variance.sqrt();
-            features[3] = *scores.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0);
-            features[4] = *scores.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0.0);
+            features[3] = *scores
+                .iter()
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(&0.0);
+            features[4] = *scores
+                .iter()
+                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(&0.0);
         }
 
         // Execution time
@@ -991,7 +1052,8 @@ impl FeatureExtractor {
 
         for result in sub_results {
             for (rank, record) in result.records.iter().enumerate() {
-                let features = record_features.entry(record.id.clone())
+                let features = record_features
+                    .entry(record.id.clone())
                     .or_insert_with(|| vec![0.0; self.num_features]);
 
                 // Rank in this result list
@@ -1035,9 +1097,8 @@ impl FeatureExtractor {
         // Count overlapping records between modalities
         let mut id_sets: Vec<std::collections::HashSet<String>> = Vec::new();
         for result in sub_results {
-            let ids: std::collections::HashSet<String> = result.records.iter()
-                .map(|r| r.id.clone())
-                .collect();
+            let ids: std::collections::HashSet<String> =
+                result.records.iter().map(|r| r.id.clone()).collect();
             id_sets.push(ids);
         }
 
@@ -1047,7 +1108,8 @@ impl FeatureExtractor {
 
         for i in 0..id_sets.len() {
             for j in (i + 1)..id_sets.len() {
-                let intersection: std::collections::HashSet<_> = id_sets[i].intersection(&id_sets[j]).collect();
+                let intersection: std::collections::HashSet<_> =
+                    id_sets[i].intersection(&id_sets[j]).collect();
                 let union: std::collections::HashSet<_> = id_sets[i].union(&id_sets[j]).collect();
 
                 if !union.is_empty() {
@@ -1057,28 +1119,41 @@ impl FeatureExtractor {
             }
         }
 
-        features[0] = if pair_count > 0 { overlap_sum / pair_count as f64 } else { 0.0 };
+        features[0] = if pair_count > 0 {
+            overlap_sum / pair_count as f64
+        } else {
+            0.0
+        };
 
         // Score correlation between modalities
         if sub_results.len() >= 2 {
-            let scores1: HashMap<String, f64> = sub_results[0].records.iter()
+            let scores1: HashMap<String, f64> = sub_results[0]
+                .records
+                .iter()
                 .filter_map(|r| r.score.map(|s| (r.id.clone(), s)))
                 .collect();
-            let scores2: HashMap<String, f64> = sub_results[1].records.iter()
+            let scores2: HashMap<String, f64> = sub_results[1]
+                .records
+                .iter()
                 .filter_map(|r| r.score.map(|s| (r.id.clone(), s)))
                 .collect();
 
-            let common_ids: Vec<&String> = scores1.keys()
+            let common_ids: Vec<&String> = scores1
+                .keys()
                 .filter(|id| scores2.contains_key(*id))
                 .collect();
 
             if common_ids.len() >= 2 {
-                let mean1: f64 = common_ids.iter()
+                let mean1: f64 = common_ids
+                    .iter()
                     .filter_map(|id| scores1.get(*id))
-                    .sum::<f64>() / common_ids.len() as f64;
-                let mean2: f64 = common_ids.iter()
+                    .sum::<f64>()
+                    / common_ids.len() as f64;
+                let mean2: f64 = common_ids
+                    .iter()
                     .filter_map(|id| scores2.get(*id))
-                    .sum::<f64>() / common_ids.len() as f64;
+                    .sum::<f64>()
+                    / common_ids.len() as f64;
 
                 let mut cov = 0.0;
                 let mut var1 = 0.0;
@@ -1138,7 +1213,9 @@ mod tests {
     fn test_linear_model_predict() {
         let model = LinearFusionModel::new(32, 0.01, 0.001);
         let features = FusionFeatures::new(32);
-        let scores = model.predict(&features, &["a".to_string(), "b".to_string()]).unwrap();
+        let scores = model
+            .predict(&features, &["a".to_string(), "b".to_string()])
+            .unwrap();
 
         assert_eq!(scores.len(), 2);
         // Scores should be in [0, 1] due to sigmoid
@@ -1157,15 +1234,21 @@ mod tests {
     fn test_feature_extraction() {
         let extractor = FeatureExtractor::new(32);
 
-        let result1 = make_sub_result(DataModel::Vector, vec![
-            make_record("a", 0.9, DataModel::Vector),
-            make_record("b", 0.8, DataModel::Vector),
-        ]);
+        let result1 = make_sub_result(
+            DataModel::Vector,
+            vec![
+                make_record("a", 0.9, DataModel::Vector),
+                make_record("b", 0.8, DataModel::Vector),
+            ],
+        );
 
-        let result2 = make_sub_result(DataModel::Document, vec![
-            make_record("b", 0.85, DataModel::Document),
-            make_record("c", 0.75, DataModel::Document),
-        ]);
+        let result2 = make_sub_result(
+            DataModel::Document,
+            vec![
+                make_record("b", 0.85, DataModel::Document),
+                make_record("c", 0.75, DataModel::Document),
+            ],
+        );
 
         let features = extractor.extract(&[result1, result2]);
 
@@ -1182,15 +1265,21 @@ mod tests {
         let config = LearnedFusionConfig::default();
         let fusion = LearnedFusion::new(config);
 
-        let result1 = make_sub_result(DataModel::Vector, vec![
-            make_record("a", 0.9, DataModel::Vector),
-            make_record("b", 0.8, DataModel::Vector),
-        ]);
+        let result1 = make_sub_result(
+            DataModel::Vector,
+            vec![
+                make_record("a", 0.9, DataModel::Vector),
+                make_record("b", 0.8, DataModel::Vector),
+            ],
+        );
 
-        let result2 = make_sub_result(DataModel::Document, vec![
-            make_record("b", 0.85, DataModel::Document),
-            make_record("c", 0.75, DataModel::Document),
-        ]);
+        let result2 = make_sub_result(
+            DataModel::Document,
+            vec![
+                make_record("b", 0.85, DataModel::Document),
+                make_record("c", 0.75, DataModel::Document),
+            ],
+        );
 
         let fused = fusion.fuse(vec![result1, result2]).unwrap();
 

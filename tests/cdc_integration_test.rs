@@ -22,37 +22,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use proximadb::cdc::event::{
-    ChangeEvent,
-    Operation,
-    RecordState,
-    SourceInfo,
-    TransactionInfo,
-};
+use proximadb::cdc::event::{ChangeEvent, Operation, RecordState, SourceInfo, TransactionInfo};
 use proximadb::cdc::outbound::{
-    DeduplicationCache,
-    DeduplicationStrategy,
-    EventRouter,
-    ExactlyOnceManager,
-    IdempotencyKey,
-    OutboundConfig,
-    Position,
-    PositionTracker,
-    RouteRule,
-    SubscriptionStatus,
-    TransactionState,
+    DeduplicationCache, DeduplicationStrategy, EventRouter, ExactlyOnceManager, IdempotencyKey,
+    OutboundConfig, Position, PositionTracker, RouteRule, SubscriptionStatus, TransactionState,
     WalSubscriber,
 };
-use proximadb::cdc::transform::{
-    FilterRule,
-    FilterRuleSet,
-    SchemaMapper,
-    TransformPipeline,
-};
-use proximadb::cdc::sinks::{
-    KafkaConfig,
-    WebhookConfig,
-};
+use proximadb::cdc::sinks::{KafkaConfig, WebhookConfig};
+use proximadb::cdc::transform::{FilterRule, FilterRuleSet, SchemaMapper, TransformPipeline};
 
 // =============================================================================
 // Helper Functions
@@ -63,12 +40,7 @@ fn create_test_source() -> SourceInfo {
 }
 
 fn create_insert_event(collection: &str, key: &str, lsn: u64) -> ChangeEvent {
-    let mut event = ChangeEvent::new(
-        create_test_source(),
-        Operation::Insert,
-        collection,
-        key,
-    );
+    let mut event = ChangeEvent::new(create_test_source(), Operation::Insert, collection, key);
     event.lsn = lsn;
 
     let mut metadata = HashMap::new();
@@ -80,12 +52,7 @@ fn create_insert_event(collection: &str, key: &str, lsn: u64) -> ChangeEvent {
 }
 
 fn create_update_event(collection: &str, key: &str, lsn: u64) -> ChangeEvent {
-    let mut event = ChangeEvent::new(
-        create_test_source(),
-        Operation::Update,
-        collection,
-        key,
-    );
+    let mut event = ChangeEvent::new(create_test_source(), Operation::Update, collection, key);
     event.lsn = lsn;
 
     let before = RecordState::with_vector(vec![0.1, 0.2, 0.3]);
@@ -98,12 +65,7 @@ fn create_update_event(collection: &str, key: &str, lsn: u64) -> ChangeEvent {
 }
 
 fn create_delete_event(collection: &str, key: &str, lsn: u64) -> ChangeEvent {
-    let mut event = ChangeEvent::new(
-        create_test_source(),
-        Operation::Delete,
-        collection,
-        key,
-    );
+    let mut event = ChangeEvent::new(create_test_source(), Operation::Delete, collection, key);
     event.lsn = lsn;
     event.before = Some(RecordState::with_vector(vec![0.1, 0.2, 0.3]));
     event
@@ -172,8 +134,7 @@ fn test_transaction_info() {
 
 #[test]
 fn test_deduplication_by_event_id() {
-    let cache = DeduplicationCache::new(100)
-        .with_strategy(DeduplicationStrategy::ByEventId);
+    let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::ByEventId);
 
     let event1 = create_insert_event("products", "p1", 100);
     let event2 = create_insert_event("products", "p2", 101);
@@ -195,8 +156,7 @@ fn test_deduplication_by_event_id() {
 
 #[test]
 fn test_deduplication_by_lsn() {
-    let cache = DeduplicationCache::new(100)
-        .with_strategy(DeduplicationStrategy::ByLsn);
+    let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::ByLsn);
 
     let mut event1 = create_insert_event("products", "p1", 100);
     let mut event2 = create_insert_event("products", "p2", 100); // Same LSN
@@ -294,7 +254,9 @@ fn test_exactly_once_transaction_lifecycle() {
     let key = IdempotencyKey::new("event_1", 100, "kafka");
 
     // Begin transaction
-    let txn_id = manager.begin_transaction(key.clone()).expect("begin failed");
+    let txn_id = manager
+        .begin_transaction(key.clone())
+        .expect("begin failed");
     assert_eq!(manager.get_state(&txn_id), Some(TransactionState::Pending));
 
     // Add events
@@ -319,7 +281,9 @@ fn test_exactly_once_abort_and_retry() {
 
     // Begin and abort
     let txn_id = manager.begin_transaction(key.clone()).unwrap();
-    manager.abort(&txn_id, Some("test error".to_string())).unwrap();
+    manager
+        .abort(&txn_id, Some("test error".to_string()))
+        .unwrap();
 
     // Should be able to retry
     let new_key = IdempotencyKey::new("event_1", 100, "kafka");
@@ -360,14 +324,14 @@ fn test_router_basic_routing() {
     router.add_rule(
         RouteRule::new("products_to_kafka")
             .with_collection("products*")
-            .with_sink("kafka")
+            .with_sink("kafka"),
     );
 
     // Route users to webhook
     router.add_rule(
         RouteRule::new("users_to_webhook")
             .with_collection("users")
-            .with_sink("webhook")
+            .with_sink("webhook"),
     );
 
     // Products should go to kafka
@@ -395,7 +359,7 @@ fn test_router_default_sink() {
     router.add_rule(
         RouteRule::new("products_only")
             .with_collection("products")
-            .with_sink("kafka")
+            .with_sink("kafka"),
     );
 
     router.set_default_sinks(vec!["backup".to_string()]);
@@ -420,7 +384,7 @@ fn test_router_operation_filter() {
         RouteRule::new("inserts_only")
             .with_collection("*")
             .with_operations(vec![Operation::Insert])
-            .with_sink("insert_handler")
+            .with_sink("insert_handler"),
     );
 
     // Insert should match
@@ -449,14 +413,14 @@ fn test_router_terminal_rule() {
             .with_collection("products")
             .with_sink("primary")
             .with_priority(-1) // Higher priority
-            .terminal()
+            .terminal(),
     );
 
     // Second rule should be skipped for products
     router.add_rule(
         RouteRule::new("backup_rule")
             .with_collection("*")
-            .with_sink("backup")
+            .with_sink("backup"),
     );
 
     // Products only go to primary (terminal stops processing)
@@ -493,8 +457,7 @@ async fn test_subscriber_initialization() {
 
 #[tokio::test]
 async fn test_subscriber_poll_and_ack() {
-    let config = OutboundConfig::new()
-        .with_collection("products");
+    let config = OutboundConfig::new().with_collection("products");
 
     let subscriber = WalSubscriber::new("test_sub", config);
 
@@ -523,17 +486,16 @@ async fn test_subscriber_poll_and_ack() {
 
 #[tokio::test]
 async fn test_subscriber_collection_filter() {
-    let config = OutboundConfig::new()
-        .with_collection("products"); // Only products
+    let config = OutboundConfig::new().with_collection("products"); // Only products
 
     let subscriber = WalSubscriber::new("test_sub", config);
 
     // Push mixed events
     let events = vec![
         create_insert_event("products", "p1", 100),
-        create_insert_event("users", "u1", 101),     // Filtered
+        create_insert_event("users", "u1", 101), // Filtered
         create_insert_event("products", "p2", 102),
-        create_insert_event("orders", "o1", 103),    // Filtered
+        create_insert_event("orders", "o1", 103), // Filtered
     ];
     subscriber.push_events(events);
 
@@ -552,8 +514,8 @@ async fn test_subscriber_collection_filter() {
 #[test]
 fn test_transform_pipeline_filter() {
     // Add filter to only include inserts
-    let filter = FilterRuleSet::new()
-        .with_rule(FilterRule::include_operations(vec![Operation::Insert]));
+    let filter =
+        FilterRuleSet::new().with_rule(FilterRule::include_operations(vec![Operation::Insert]));
     let pipeline = TransformPipeline::new().with_filter(filter);
 
     let events = vec![
@@ -575,9 +537,7 @@ fn test_transform_pipeline_schema_mapping() {
     let mapper = SchemaMapper::new().map_collection("items");
     let pipeline = TransformPipeline::new().with_schema_mapper(mapper);
 
-    let events = vec![
-        create_insert_event("products", "p1", 100),
-    ];
+    let events = vec![create_insert_event("products", "p1", 100)];
 
     let result = pipeline.transform_batch(events).expect("transform failed");
 
@@ -623,8 +583,7 @@ fn test_kafka_config() {
 
 #[test]
 fn test_webhook_config() {
-    let config = WebhookConfig::new("https://example.com/webhook")
-        .with_timeout(5000);
+    let config = WebhookConfig::new("https://example.com/webhook").with_timeout(5000);
 
     assert_eq!(config.url, "https://example.com/webhook");
     assert_eq!(config.timeout_ms, 5000);
@@ -649,12 +608,14 @@ async fn test_end_to_end_cdc_flow() {
     router.add_rule(
         RouteRule::new("all_to_kafka")
             .with_collection("*")
-            .with_sink("kafka")
+            .with_sink("kafka"),
     );
 
     // 4. Transform pipeline
-    let filter = FilterRuleSet::new()
-        .with_rule(FilterRule::include_operations(vec![Operation::Insert, Operation::Update]));
+    let filter = FilterRuleSet::new().with_rule(FilterRule::include_operations(vec![
+        Operation::Insert,
+        Operation::Update,
+    ]));
     let pipeline = TransformPipeline::new().with_filter(filter);
 
     // Simulate CDC flow
@@ -666,7 +627,9 @@ async fn test_end_to_end_cdc_flow() {
     ];
 
     // Step 1: Transform (filter deletes)
-    let events = pipeline.transform_batch(input_events).expect("transform failed");
+    let events = pipeline
+        .transform_batch(input_events)
+        .expect("transform failed");
     assert_eq!(events.len(), 3); // Delete was filtered
 
     // Step 2: Deduplicate
@@ -718,12 +681,12 @@ async fn test_subscriber_with_router() {
     router.add_rule(
         RouteRule::new("products_to_kafka")
             .with_collection("products")
-            .with_sink("kafka")
+            .with_sink("kafka"),
     );
     router.add_rule(
         RouteRule::new("products_to_webhook")
             .with_collection("products")
-            .with_sink("webhook")
+            .with_sink("webhook"),
     );
 
     // Push events

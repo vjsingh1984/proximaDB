@@ -1212,7 +1212,10 @@ impl HardwareCapabilities {
                     });
                 }
                 Err(err) => {
-                    tracing::warn!("GPU detection failed, disabling GPU acceleration: {:?}", err);
+                    tracing::warn!(
+                        "GPU detection failed, disabling GPU acceleration: {:?}",
+                        err
+                    );
                     return Ok(GpuCapabilities {
                         backend: GpuBackend::None,
                         devices: vec![],
@@ -1468,18 +1471,12 @@ pub fn log_hardware_capabilities_summary() -> String {
     // Build summary
     let summary = format!(
         "Hardware: {} cores, {} SIMD, {:.1}GB/{:.1}GB RAM",
-        caps.cpu.physical_cores,
-        backend_str,
-        avail_mem_gb,
-        total_mem_gb
+        caps.cpu.physical_cores, backend_str, avail_mem_gb, total_mem_gb
     );
 
     info!(
         "🖥️  ProximaDB Hardware: {} ({} cores), {} SIMD, {:.1}GB available",
-        caps.cpu.model_name,
-        caps.cpu.physical_cores,
-        backend_str,
-        avail_mem_gb
+        caps.cpu.model_name, caps.cpu.physical_cores, backend_str, avail_mem_gb
     );
 
     summary

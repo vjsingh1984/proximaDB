@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::time::sleep;
 
 const BASE_URL: &str = "http://127.0.0.1:5678";
@@ -57,7 +57,11 @@ async fn test_document_collection_lifecycle() {
         .await
         .expect("Failed to create collection");
 
-    assert!(create_resp.status().is_success(), "Create collection failed: {:?}", create_resp.text().await);
+    assert!(
+        create_resp.status().is_success(),
+        "Create collection failed: {:?}",
+        create_resp.text().await
+    );
 
     // 2. List collections
     let list_resp = client
@@ -69,11 +73,18 @@ async fn test_document_collection_lifecycle() {
     assert!(list_resp.status().is_success());
     let list_body: Value = list_resp.json().await.unwrap();
     let collections = list_body["collections"].as_array().unwrap();
-    assert!(collections.iter().any(|c| c["name"] == "test_lifecycle_docs"));
+    assert!(
+        collections
+            .iter()
+            .any(|c| c["name"] == "test_lifecycle_docs")
+    );
 
     // 3. Clean up - delete collection
     let delete_resp = client
-        .delete(format!("{}/api/v1/documents/collections/test_lifecycle_docs", BASE_URL))
+        .delete(format!(
+            "{}/api/v1/documents/collections/test_lifecycle_docs",
+            BASE_URL
+        ))
         .send()
         .await
         .expect("Failed to delete collection");
@@ -105,7 +116,10 @@ async fn test_document_crud_operations() {
 
     // 1. Insert document
     let insert_resp = client
-        .post(format!("{}/api/v1/documents/collections/{}/documents", BASE_URL, collection_name))
+        .post(format!(
+            "{}/api/v1/documents/collections/{}/documents",
+            BASE_URL, collection_name
+        ))
         .json(&json!({
             "id": "doc_crud_001",
             "document": {
@@ -119,11 +133,18 @@ async fn test_document_crud_operations() {
         .await
         .expect("Failed to insert document");
 
-    assert!(insert_resp.status().is_success(), "Insert failed: {:?}", insert_resp.text().await);
+    assert!(
+        insert_resp.status().is_success(),
+        "Insert failed: {:?}",
+        insert_resp.text().await
+    );
 
     // 2. Get document
     let get_resp = client
-        .get(format!("{}/api/v1/documents/collections/{}/documents/doc_crud_001", BASE_URL, collection_name))
+        .get(format!(
+            "{}/api/v1/documents/collections/{}/documents/doc_crud_001",
+            BASE_URL, collection_name
+        ))
         .send()
         .await
         .expect("Failed to get document");
@@ -137,7 +158,10 @@ async fn test_document_crud_operations() {
 
     // 3. Delete document
     let delete_resp = client
-        .delete(format!("{}/api/v1/documents/collections/{}/documents/doc_crud_001", BASE_URL, collection_name))
+        .delete(format!(
+            "{}/api/v1/documents/collections/{}/documents/doc_crud_001",
+            BASE_URL, collection_name
+        ))
         .send()
         .await
         .expect("Failed to delete document");
@@ -146,16 +170,25 @@ async fn test_document_crud_operations() {
 
     // 4. Verify document is deleted (should return error)
     let verify_resp = client
-        .get(format!("{}/api/v1/documents/collections/{}/documents/doc_crud_001", BASE_URL, collection_name))
+        .get(format!(
+            "{}/api/v1/documents/collections/{}/documents/doc_crud_001",
+            BASE_URL, collection_name
+        ))
         .send()
         .await
         .expect("Failed to verify deletion");
 
-    assert!(!verify_resp.status().is_success(), "Document should be deleted");
+    assert!(
+        !verify_resp.status().is_success(),
+        "Document should be deleted"
+    );
 
     // Cleanup
     let _ = client
-        .delete(format!("{}/api/v1/documents/collections/{}", BASE_URL, collection_name))
+        .delete(format!(
+            "{}/api/v1/documents/collections/{}",
+            BASE_URL, collection_name
+        ))
         .send()
         .await;
 }
@@ -185,7 +218,10 @@ async fn test_document_query() {
     // Insert multiple documents
     for i in 0..5 {
         let _ = client
-            .post(format!("{}/api/v1/documents/collections/{}/documents", BASE_URL, collection_name))
+            .post(format!(
+                "{}/api/v1/documents/collections/{}/documents",
+                BASE_URL, collection_name
+            ))
             .json(&json!({
                 "id": format!("query_doc_{}", i),
                 "document": {
@@ -200,7 +236,10 @@ async fn test_document_query() {
 
     // Query documents with limit
     let query_resp = client
-        .get(format!("{}/api/v1/documents/collections/{}/documents?limit=3", BASE_URL, collection_name))
+        .get(format!(
+            "{}/api/v1/documents/collections/{}/documents?limit=3",
+            BASE_URL, collection_name
+        ))
         .send()
         .await
         .expect("Failed to query documents");
@@ -212,7 +251,10 @@ async fn test_document_query() {
 
     // Cleanup
     let _ = client
-        .delete(format!("{}/api/v1/documents/collections/{}", BASE_URL, collection_name))
+        .delete(format!(
+            "{}/api/v1/documents/collections/{}",
+            BASE_URL, collection_name
+        ))
         .send()
         .await;
 }
@@ -248,7 +290,10 @@ async fn test_observability_namespace_management() {
 
     // May fail if namespace exists, which is ok
     let status = create_resp.status();
-    assert!(status.is_success() || status.as_u16() == 500, "Unexpected error");
+    assert!(
+        status.is_success() || status.as_u16() == 500,
+        "Unexpected error"
+    );
 }
 
 #[tokio::test]
@@ -280,7 +325,10 @@ async fn test_log_ingestion_and_query() {
 
     // 1. Ingest single log
     let single_resp = client
-        .post(format!("{}/api/v1/observability/namespaces/{}/logs", BASE_URL, namespace))
+        .post(format!(
+            "{}/api/v1/observability/namespaces/{}/logs",
+            BASE_URL, namespace
+        ))
         .json(&json!({
             "timestamp_ns": now_ns,
             "message": "Single test log message",
@@ -292,7 +340,11 @@ async fn test_log_ingestion_and_query() {
         .await
         .expect("Failed to ingest single log");
 
-    assert!(single_resp.status().is_success(), "Single log ingest failed: {:?}", single_resp.text().await);
+    assert!(
+        single_resp.status().is_success(),
+        "Single log ingest failed: {:?}",
+        single_resp.text().await
+    );
 
     // 2. Ingest bulk logs
     let logs: Vec<Value> = (0..5)
@@ -308,19 +360,29 @@ async fn test_log_ingestion_and_query() {
         .collect();
 
     let bulk_resp = client
-        .post(format!("{}/api/v1/observability/namespaces/{}/logs/_bulk", BASE_URL, namespace))
+        .post(format!(
+            "{}/api/v1/observability/namespaces/{}/logs/_bulk",
+            BASE_URL, namespace
+        ))
         .json(&json!({ "logs": logs }))
         .send()
         .await
         .expect("Failed to ingest bulk logs");
 
-    assert!(bulk_resp.status().is_success(), "Bulk ingest failed: {:?}", bulk_resp.text().await);
+    assert!(
+        bulk_resp.status().is_success(),
+        "Bulk ingest failed: {:?}",
+        bulk_resp.text().await
+    );
     let bulk_result: Value = bulk_resp.json().await.unwrap();
     assert_eq!(bulk_result["ingested"], 5);
 
     // 3. Query logs
     let query_resp = client
-        .post(format!("{}/api/v1/observability/namespaces/{}/logs/_search", BASE_URL, namespace))
+        .post(format!(
+            "{}/api/v1/observability/namespaces/{}/logs/_search",
+            BASE_URL, namespace
+        ))
         .json(&json!({
             "start_time_ns": now_ns - 3600_000_000_000_i64,  // 1 hour ago
             "end_time_ns": now_ns + 60_000_000_000_i64,     // 1 minute from now
@@ -366,7 +428,10 @@ async fn test_metric_ingestion_and_aggregation() {
     // 1. Ingest metrics
     for i in 0..10 {
         let metric_resp = client
-            .post(format!("{}/api/v1/observability/namespaces/{}/metrics", BASE_URL, namespace))
+            .post(format!(
+                "{}/api/v1/observability/namespaces/{}/metrics",
+                BASE_URL, namespace
+            ))
             .json(&json!({
                 "name": "test.latency",
                 "timestamp_ns": now_ns + i * 1_000_000_000_i64,  // 1 second apart
@@ -385,7 +450,10 @@ async fn test_metric_ingestion_and_aggregation() {
 
     // 2. Aggregate metrics
     let agg_resp = client
-        .post(format!("{}/api/v1/observability/namespaces/{}/metrics/_aggregate", BASE_URL, namespace))
+        .post(format!(
+            "{}/api/v1/observability/namespaces/{}/metrics/_aggregate",
+            BASE_URL, namespace
+        ))
         .json(&json!({
             "metric_name": "test.latency",
             "start_time_ns": now_ns - 3600_000_000_000_i64,
@@ -430,7 +498,10 @@ async fn test_document_and_observability_combined() {
 
     // Insert a document
     let insert_resp = client
-        .post(format!("{}/api/v1/documents/collections/{}/documents", BASE_URL, collection))
+        .post(format!(
+            "{}/api/v1/documents/collections/{}/documents",
+            BASE_URL, collection
+        ))
         .json(&json!({
             "id": "combined_doc_1",
             "document": {"type": "combined_test", "value": 42}
@@ -449,7 +520,10 @@ async fn test_document_and_observability_combined() {
         .await;
 
     let log_resp = client
-        .post(format!("{}/api/v1/observability/namespaces/{}/logs", BASE_URL, namespace))
+        .post(format!(
+            "{}/api/v1/observability/namespaces/{}/logs",
+            BASE_URL, namespace
+        ))
         .json(&json!({
             "message": "Created document combined_doc_1",
             "severity": "info",
@@ -463,7 +537,10 @@ async fn test_document_and_observability_combined() {
 
     // Record a metric
     let metric_resp = client
-        .post(format!("{}/api/v1/observability/namespaces/{}/metrics", BASE_URL, namespace))
+        .post(format!(
+            "{}/api/v1/observability/namespaces/{}/metrics",
+            BASE_URL, namespace
+        ))
         .json(&json!({
             "name": "document.insert.latency",
             "value": 5.2,
@@ -476,7 +553,10 @@ async fn test_document_and_observability_combined() {
 
     // Cleanup
     let _ = client
-        .delete(format!("{}/api/v1/documents/collections/{}", BASE_URL, collection))
+        .delete(format!(
+            "{}/api/v1/documents/collections/{}",
+            BASE_URL, collection
+        ))
         .send()
         .await;
 }

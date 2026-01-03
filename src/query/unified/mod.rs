@@ -76,12 +76,15 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{debug, info};
 
-pub use ast::{MultiModelQuery, QueryComponent, DataModel};
+pub use ast::{DataModel, MultiModelQuery, QueryComponent};
 pub use decomposition::QueryDecomposer;
 pub use executor::ParallelExecutor;
 pub use fusion::{FusionStrategy, ResultFuser};
-pub use learned_fusion::{LearnedFusion, LearnedFusionConfig, FusionModelType, FusionFeatures, TrainingSample, FeedbackSignal, TrainingMetrics};
-pub use reranking::{CrossModalReranker, RerankConfig, QueryContext, QueryIntent, RerankedResult};
+pub use learned_fusion::{
+    FeedbackSignal, FusionFeatures, FusionModelType, LearnedFusion, LearnedFusionConfig,
+    TrainingMetrics, TrainingSample,
+};
+pub use reranking::{CrossModalReranker, QueryContext, QueryIntent, RerankConfig, RerankedResult};
 pub use uql::{UQLParser, UQLStatement};
 
 use crate::storage::document::DocumentService;
@@ -153,20 +156,25 @@ impl UnifiedQueryEngine {
 
         // 1. Parse and decompose the query
         let multi_model_query = self.decomposer.decompose(query)?;
-        debug!("Decomposed into {} components", multi_model_query.components.len());
+        debug!(
+            "Decomposed into {} components",
+            multi_model_query.components.len()
+        );
 
         // 2. Execute sub-queries in parallel
-        let sub_results = self.executor.execute_parallel(
-            &multi_model_query,
-            self.storage_engine.clone(),
-            self.document_service.clone(),
-        ).await?;
+        let sub_results = self
+            .executor
+            .execute_parallel(
+                &multi_model_query,
+                self.storage_engine.clone(),
+                self.document_service.clone(),
+            )
+            .await?;
 
         // 3. Fuse results based on strategy
-        let fused_result = self.fuser.fuse(
-            sub_results,
-            &multi_model_query.fusion_strategy,
-        )?;
+        let fused_result = self
+            .fuser
+            .fuse(sub_results, &multi_model_query.fusion_strategy)?;
 
         Ok(fused_result)
     }
@@ -180,13 +188,17 @@ impl UnifiedQueryEngine {
         let mut multi_model_query = self.decomposer.decompose(query)?;
         multi_model_query.fusion_strategy = fusion;
 
-        let sub_results = self.executor.execute_parallel(
-            &multi_model_query,
-            self.storage_engine.clone(),
-            self.document_service.clone(),
-        ).await?;
+        let sub_results = self
+            .executor
+            .execute_parallel(
+                &multi_model_query,
+                self.storage_engine.clone(),
+                self.document_service.clone(),
+            )
+            .await?;
 
-        self.fuser.fuse(sub_results, &multi_model_query.fusion_strategy)
+        self.fuser
+            .fuse(sub_results, &multi_model_query.fusion_strategy)
     }
 
     /// Explain the query execution plan
@@ -197,13 +209,15 @@ impl UnifiedQueryEngine {
         let estimated_total_cost = self.estimate_total_cost(&multi_model_query);
 
         Ok(QueryPlan {
-            components: multi_model_query.components.iter().map(|c| {
-                ComponentPlan {
+            components: multi_model_query
+                .components
+                .iter()
+                .map(|c| ComponentPlan {
                     model: c.model.clone(),
                     estimated_cost: self.estimate_cost(c),
                     parallelizable: c.is_parallelizable(),
-                }
-            }).collect(),
+                })
+                .collect(),
             fusion_strategy: multi_model_query.fusion_strategy,
             estimated_total_cost,
         })
@@ -212,16 +226,18 @@ impl UnifiedQueryEngine {
     fn estimate_cost(&self, component: &QueryComponent) -> f64 {
         // Simple cost estimation based on model type
         match component.model {
-            DataModel::Vector => 1.0,  // Vector search is typically fast
-            DataModel::Document => 2.0, // Document queries vary
-            DataModel::Graph => 3.0,   // Graph traversal can be expensive
+            DataModel::Vector => 1.0,        // Vector search is typically fast
+            DataModel::Document => 2.0,      // Document queries vary
+            DataModel::Graph => 3.0,         // Graph traversal can be expensive
             DataModel::Observability => 2.5, // Log queries depend on time range
         }
     }
 
     fn estimate_total_cost(&self, query: &MultiModelQuery) -> f64 {
         // Parallel execution reduces total cost
-        let component_costs: Vec<f64> = query.components.iter()
+        let component_costs: Vec<f64> = query
+            .components
+            .iter()
             .map(|c| self.estimate_cost(c))
             .collect();
 

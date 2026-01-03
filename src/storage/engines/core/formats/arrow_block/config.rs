@@ -2,8 +2,8 @@
 //!
 //! Configuration types for Arrow block storage format.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for Arrow block storage
 #[derive(Debug, Clone)]
@@ -104,7 +104,8 @@ impl ArrowBlockConfig {
 
     /// Add custom metadata
     pub fn with_metadata(mut self, key: &str, value: &str) -> Self {
-        self.custom_metadata.insert(key.to_string(), value.to_string());
+        self.custom_metadata
+            .insert(key.to_string(), value.to_string());
         self
     }
 }
@@ -199,7 +200,10 @@ mod tests {
 
         assert_eq!(config.dimension, 1536);
         assert_eq!(config.records_per_block, 4000);
-        assert_eq!(config.custom_metadata.get("collection"), Some(&"test".to_string()));
+        assert_eq!(
+            config.custom_metadata.get("collection"),
+            Some(&"test".to_string())
+        );
     }
 
     #[test]

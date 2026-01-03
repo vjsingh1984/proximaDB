@@ -3,11 +3,9 @@
 //! This module provides streaming write capabilities for Parquet files,
 //! optimized for large datasets with batch processing and row group management.
 
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use anyhow::{Result, anyhow};
-use arrow::array::{
-    ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array,
-};
+use arrow::array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use std::collections::HashMap;
@@ -483,7 +481,6 @@ impl StreamingParquetWriter {
         // Extra metadata - Create a Map array matching the schema
         // The schema expects a struct with "key" and "value" fields
         use arrow_array::{MapArray, StructArray};
-        
 
         // Create struct array for the entries
         let key_field = Field::new("key", DataType::Utf8, false);

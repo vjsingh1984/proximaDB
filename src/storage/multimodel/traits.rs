@@ -2,15 +2,15 @@
 //!
 //! Defines the core traits for the unified multi-model storage system.
 
+use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
-use anyhow::Result;
 
+use crate::graph::engines::GraphEngine;
 use crate::storage::traits::{
     DataModel, DocumentStorageOperations, MultiModelStats, ObservabilityStorageOperations,
     UnifiedStorageEngine,
 };
-use crate::graph::engines::GraphEngine;
 
 /// Model type discriminator for routing operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -174,7 +174,10 @@ impl MultiModelStorageEngineBuilder {
     }
 
     /// Set the observability store
-    pub fn with_observability_store(mut self, store: Arc<dyn ObservabilityStorageOperations>) -> Self {
+    pub fn with_observability_store(
+        mut self,
+        store: Arc<dyn ObservabilityStorageOperations>,
+    ) -> Self {
         self.observability_store = Some(store);
         self
     }
@@ -221,8 +224,14 @@ mod tests {
         assert_eq!(ModelType::from(DataModel::Vector), ModelType::Vector);
         assert_eq!(ModelType::from(DataModel::Document), ModelType::Document);
         assert_eq!(ModelType::from(DataModel::Graph), ModelType::Graph);
-        assert_eq!(ModelType::from(DataModel::Relational), ModelType::Relational);
-        assert_eq!(ModelType::from(DataModel::Observability), ModelType::Observability);
+        assert_eq!(
+            ModelType::from(DataModel::Relational),
+            ModelType::Relational
+        );
+        assert_eq!(
+            ModelType::from(DataModel::Observability),
+            ModelType::Observability
+        );
     }
 
     #[test]
@@ -230,7 +239,13 @@ mod tests {
         assert_eq!(DataModel::from(ModelType::Vector), DataModel::Vector);
         assert_eq!(DataModel::from(ModelType::Document), DataModel::Document);
         assert_eq!(DataModel::from(ModelType::Graph), DataModel::Graph);
-        assert_eq!(DataModel::from(ModelType::Relational), DataModel::Relational);
-        assert_eq!(DataModel::from(ModelType::Observability), DataModel::Observability);
+        assert_eq!(
+            DataModel::from(ModelType::Relational),
+            DataModel::Relational
+        );
+        assert_eq!(
+            DataModel::from(ModelType::Observability),
+            DataModel::Observability
+        );
     }
 }

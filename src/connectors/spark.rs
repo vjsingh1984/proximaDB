@@ -61,7 +61,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::Schema as ArrowSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::storage::formats::{FileSplit, SplitType};
+use crate::storage::formats::FileSplit;
 use crate::storage::schema::ProximaSchema;
 
 /// Configuration for Spark connector
@@ -159,8 +159,16 @@ impl SparkInputPartition {
             partition_id,
             splits,
             preferred_locations,
-            estimated_rows: if estimated_rows > 0 { Some(estimated_rows as i64) } else { None },
-            estimated_bytes: if estimated_bytes > 0 { Some(estimated_bytes as i64) } else { None },
+            estimated_rows: if estimated_rows > 0 {
+                Some(estimated_rows as i64)
+            } else {
+                None
+            },
+            estimated_bytes: if estimated_bytes > 0 {
+                Some(estimated_bytes as i64)
+            } else {
+                None
+            },
         }
     }
 }
@@ -502,11 +510,7 @@ pub fn jni_close_partition_reader(_reader_handle: i64) {
 /// JNI: Create data writer
 ///
 /// Called from Java: `native long createDataWriter(String tableName, String schemaJson, int partitionId);`
-pub fn jni_create_data_writer(
-    _table_name: &str,
-    _schema_json: &str,
-    _partition_id: i32,
-) -> i64 {
+pub fn jni_create_data_writer(_table_name: &str, _schema_json: &str, _partition_id: i32) -> i64 {
     // TODO: Create writer and return handle
     0
 }
@@ -579,11 +583,9 @@ mod tests {
 
     #[test]
     fn test_spark_write_mode() {
-        let builder = SparkWriteBuilder::new(
-            "test_table".to_string(),
-            Arc::new(ArrowSchema::empty()),
-        )
-        .with_mode(SparkWriteMode::Overwrite);
+        let builder =
+            SparkWriteBuilder::new("test_table".to_string(), Arc::new(ArrowSchema::empty()))
+                .with_mode(SparkWriteMode::Overwrite);
 
         assert_eq!(builder.mode, SparkWriteMode::Overwrite);
     }

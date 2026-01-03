@@ -31,86 +31,104 @@
 //! ProximaHeaderCache caches file metadata for sub-millisecond pruning decisions BEFORE
 //! issuing any S3/cloud I/O. This enables 80-95% I/O reduction for selective queries.
 
-pub mod proxima_schema;
+pub mod bloom_consolidator;
+pub mod centroid_tree;
 pub mod evolution;
+pub mod header_cache;
+pub mod header_loaders;
+pub mod proxima_schema;
+pub mod pruning_strategies;
 pub mod registry;
 pub mod type_mapping;
 pub mod vector_record_bridge;
-pub mod header_cache;
-pub mod header_loaders;
-pub mod pruning_strategies;
-pub mod centroid_tree;
-pub mod bloom_consolidator;
 
 // Re-exports
-pub use proxima_schema::{
-    ProximaSchema, ProximaColumn, ProximaDataType, VectorElementType,
-    TimeUnit, DefaultValue, AutoGenerateType,
-};
 pub use evolution::{
-    SchemaEvolution, SchemaEvolutionOp, EvolutionValidation, TypeCompatibility,
-    MigrationPlan, MigrationStep, MigrationCost, DefaultSchemaEvolution,
+    DefaultSchemaEvolution, EvolutionValidation, MigrationCost, MigrationPlan, MigrationStep,
+    SchemaEvolution, SchemaEvolutionOp, TypeCompatibility,
+};
+pub use proxima_schema::{
+    AutoGenerateType, DefaultValue, ProximaColumn, ProximaDataType, ProximaSchema, TimeUnit,
+    VectorElementType,
 };
 pub use registry::{
-    SchemaRegistry, SchemaVersionInfo, InMemorySchemaRegistry, PersistentSchemaRegistry,
+    InMemorySchemaRegistry, PersistentSchemaRegistry, SchemaRegistry, SchemaVersionInfo,
 };
 pub use type_mapping::TypeMapper;
 
 // VectorRecord bridge exports
 pub use vector_record_bridge::{
+    AvroStyleField,
+    // Avro-style schema serialization
+    AvroStyleSchema,
+    AvroStyleType,
+    DefaultVectorRecordBridge,
+    MetadataMode,
     // Core trait and implementation
-    VectorRecordBridge, DefaultVectorRecordBridge, MetadataMode,
+    VectorRecordBridge,
     // Schema inference
     infer_schema_from_vector_records,
-    // Avro-style schema serialization
-    AvroStyleSchema, AvroStyleField, AvroStyleType,
 };
 
 // Header cache exports
 pub use header_cache::{
-    // Core types
-    ProximaHeaderCache, CachedHeader, RowGroupMeta, ColumnBounds, ColumnValue,
-    // Spatial pruning
-    SpatialRange, ScalarPredicate,
+    CacheStats,
+    CachedHeader,
+    CachingHeaderLoader,
+    ColumnBounds,
+    ColumnValue,
     // Encoding and stats
-    EncodingInfo, IoSavingsEstimate, CacheStats,
-    // Global cache
-    global_header_cache, init_global_header_cache,
+    EncodingInfo,
     // Header loading
-    HeaderLoader, CachingHeaderLoader,
+    HeaderLoader,
+    IoSavingsEstimate,
+    // Core types
+    ProximaHeaderCache,
+    RowGroupMeta,
+    ScalarPredicate,
+    // Spatial pruning
+    SpatialRange,
+    // Global cache
+    global_header_cache,
+    init_global_header_cache,
 };
 
 // Header loader implementations (bridges to existing readers)
 pub use header_loaders::{
+    // Registry
+    HeaderLoaderRegistry,
     // Parquet-based loaders (VIPER, NOVA, RAPTOR)
     ParquetHeaderLoader,
     // ProximaBlocks-based loaders (SST, HELIX, SWIFT)
     ProximaBlocksHeaderLoader,
-    // Registry
-    HeaderLoaderRegistry,
 };
 
 // Pruning strategies (SOLID principle: Interface Segregation)
 pub use pruning_strategies::{
-    // Core traits
-    VectorPruner, ScalarPruner, SpatialPruner, BloomChecker,
-    // Result types
-    PruningResult, PruningStats, BloomCheckResult,
+    BloomCheckResult,
+    BloomChecker,
     // Composite pruner
-    CompositePruner, SpatialRangeType,
+    CompositePruner,
+    NullBloomChecker,
+    NullScalarPruner,
     // Null implementations (for testing and fallback)
-    NullVectorPruner, NullScalarPruner, NullBloomChecker,
+    NullVectorPruner,
+    // Result types
+    PruningResult,
+    PruningStats,
+    ScalarPruner,
+    SpatialPruner,
+    SpatialRangeType,
+    // Core traits
+    VectorPruner,
 };
 
 // CentroidTree for O(log n) vector pruning
-pub use centroid_tree::{
-    CentroidTree, CentroidNode, CentroidTreeConfig, SharedCentroidTree,
-};
+pub use centroid_tree::{CentroidNode, CentroidTree, CentroidTreeConfig, SharedCentroidTree};
 
 // Bloom filter consolidation
 pub use bloom_consolidator::{
-    BloomConsolidator, ConsolidatedBloom, SharedConsolidatedBloom,
-    IncrementalBloomBuilder,
+    BloomConsolidator, ConsolidatedBloom, IncrementalBloomBuilder, SharedConsolidatedBloom,
 };
 
 // Enhanced header cache with CentroidTree integration

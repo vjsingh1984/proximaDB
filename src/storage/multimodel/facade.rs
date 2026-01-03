@@ -3,29 +3,24 @@
 //! Unified entry point for all multi-model storage operations.
 //! Routes operations to appropriate specialized stores based on data model.
 
-use std::sync::Arc;
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
+use std::sync::Arc;
 
 use crate::catalog::internal::{
-    InternalSchemaRegistry, InformationSchema, CatalogObject, ObjectType,
-};
-use crate::storage::traits::{
-    DocumentStorageOperations, MultiModelStats, ObservabilityStorageOperations,
-    UnifiedStorageEngine, FlushParameters, CompactionParameters,
+    CatalogObject, InformationSchema, InternalSchemaRegistry, ObjectType,
 };
 use crate::graph::engines::GraphEngine;
+use crate::storage::traits::{
+    CompactionParameters, DocumentStorageOperations, FlushParameters, MultiModelStats,
+    ObservabilityStorageOperations, UnifiedStorageEngine,
+};
 
-use super::traits::{
-    ModelType, MultiModelStorageEngine, StoreCapabilities,
-};
 use super::stores::{
-    DocumentStore, DocumentStoreConfig,
-    GraphStore, GraphStoreConfig,
-    ObservabilityStore, ObservabilityStoreConfig,
-    RDBMSStore, RDBMSStoreConfig,
-    VectorStore, VectorStoreConfig,
+    DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, ObservabilityStore,
+    ObservabilityStoreConfig, RDBMSStore, RDBMSStoreConfig, VectorStore, VectorStoreConfig,
 };
+use super::traits::{ModelType, MultiModelStorageEngine, StoreCapabilities};
 
 /// Configuration for the multi-model storage facade
 #[derive(Debug, Clone)]
@@ -114,7 +109,10 @@ impl MultiModelStorageFacade {
     }
 
     /// Create a new facade with a custom schema registry
-    pub fn with_registry(config: MultiModelFacadeConfig, registry: Arc<InternalSchemaRegistry>) -> Self {
+    pub fn with_registry(
+        config: MultiModelFacadeConfig,
+        registry: Arc<InternalSchemaRegistry>,
+    ) -> Self {
         Self {
             vector_store: None,
             document_store: None,
@@ -256,25 +254,33 @@ impl Default for MultiModelStorageFacade {
 impl MultiModelStorageEngine for MultiModelStorageFacade {
     fn vector_store(&self) -> Option<Arc<dyn UnifiedStorageEngine>> {
         // Return the primary engine from VectorStore
-        self.vector_store.as_ref()
+        self.vector_store
+            .as_ref()
             .and_then(|s| s.primary_engine().cloned())
     }
 
     fn document_store(&self) -> Option<Arc<dyn DocumentStorageOperations>> {
-        self.document_store.as_ref().map(|s| s.clone() as Arc<dyn DocumentStorageOperations>)
+        self.document_store
+            .as_ref()
+            .map(|s| s.clone() as Arc<dyn DocumentStorageOperations>)
     }
 
     fn graph_store(&self) -> Option<Arc<dyn GraphEngine>> {
-        self.graph_store.as_ref().map(|s| s.clone() as Arc<dyn GraphEngine>)
+        self.graph_store
+            .as_ref()
+            .map(|s| s.clone() as Arc<dyn GraphEngine>)
     }
 
     fn observability_store(&self) -> Option<Arc<dyn ObservabilityStorageOperations>> {
-        self.observability_store.as_ref().map(|s| s.clone() as Arc<dyn ObservabilityStorageOperations>)
+        self.observability_store
+            .as_ref()
+            .map(|s| s.clone() as Arc<dyn ObservabilityStorageOperations>)
     }
 
     fn rdbms_store(&self) -> Option<Arc<dyn UnifiedStorageEngine>> {
         // Return the primary engine from RDBMSStore
-        self.rdbms_store.as_ref()
+        self.rdbms_store
+            .as_ref()
             .and_then(|s| s.primary_engine().cloned())
     }
 
@@ -487,7 +493,9 @@ mod tests {
         assert_eq!(all.len(), 4);
 
         // List by type
-        let vectors = facade.list_objects_by_type(ObjectType::VectorCollection).await;
+        let vectors = facade
+            .list_objects_by_type(ObjectType::VectorCollection)
+            .await;
         assert_eq!(vectors.len(), 1);
 
         let graphs = facade.list_objects_by_type(ObjectType::Graph).await;

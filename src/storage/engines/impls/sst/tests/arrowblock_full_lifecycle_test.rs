@@ -37,9 +37,9 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::core::search::results::OptimizedSearchRecord;
-    use crate::core::search::SearchParams;
     use crate::core::SstConfig;
+    use crate::core::search::SearchParams;
+    use crate::core::search::results::OptimizedSearchRecord;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, SqlValue, StorageAssignment, StorageConfig, VectorRecord,
     };
@@ -182,7 +182,10 @@ mod tests {
         // =========================================================================
         // Phase 1: Perform multiple flushes to create multiple .arrow files
         // =========================================================================
-        info!("Phase 1: Performing {} flushes to create multiple .arrow files", num_batches);
+        info!(
+            "Phase 1: Performing {} flushes to create multiple .arrow files",
+            num_batches
+        );
 
         let mut all_vectors: Vec<VectorRecord> = Vec::new();
 
@@ -220,7 +223,8 @@ mod tests {
             assert_eq!(
                 flush_result.entries_flushed.unwrap_or(0),
                 vectors_per_batch as u64,
-                "Should flush all vectors in batch {}", batch_idx
+                "Should flush all vectors in batch {}",
+                batch_idx
             );
 
             info!(
@@ -240,7 +244,10 @@ mod tests {
         let fs = filesystem.get_filesystem(&format!("file://{}", data_path))?;
         let files = fs.list(&format!("file://{}", data_path)).await?;
 
-        let arrow_files: Vec<_> = files.iter().filter(|f| f.name.ends_with(".arrow")).collect();
+        let arrow_files: Vec<_> = files
+            .iter()
+            .filter(|f| f.name.ends_with(".arrow"))
+            .collect();
 
         info!("Found {} Arrow files on disk:", arrow_files.len());
         for file in &arrow_files {

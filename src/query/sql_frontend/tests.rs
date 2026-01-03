@@ -348,16 +348,15 @@ mod tests {
         let sql = "SELECT id FROM products WHERE name LIKE '%phone%'";
 
         let result = parser.parse(sql);
-        assert!(
-            result.is_ok(),
-            "Failed to parse LIKE: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "Failed to parse LIKE: {:?}", result.err());
 
         match result.unwrap() {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
-                if let Some(Expr::Binary { op: BinaryOp::Like, .. }) = &select.selection {
+                if let Some(Expr::Binary {
+                    op: BinaryOp::Like, ..
+                }) = &select.selection
+                {
                     // Correctly parsed LIKE
                 } else {
                     panic!("Expected LIKE expression in WHERE clause");
@@ -382,7 +381,11 @@ mod tests {
         match result.unwrap() {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
-                if let Some(Expr::Binary { op: BinaryOp::NotLike, .. }) = &select.selection {
+                if let Some(Expr::Binary {
+                    op: BinaryOp::NotLike,
+                    ..
+                }) = &select.selection
+                {
                     // Correctly parsed NOT LIKE
                 } else {
                     panic!("Expected NOT LIKE expression in WHERE clause");
@@ -617,7 +620,10 @@ mod tests {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
                 // The expression should be parsed as (A AND B) OR (C AND D)
-                if let Some(Expr::Binary { op: BinaryOp::Or, .. }) = &select.selection {
+                if let Some(Expr::Binary {
+                    op: BinaryOp::Or, ..
+                }) = &select.selection
+                {
                     // Correctly parsed as OR at the top level
                 } else {
                     panic!("Expected OR at top level of complex WHERE clause");
@@ -668,7 +674,10 @@ mod tests {
                     "JOIN should have ON condition"
                 );
                 // The ON condition should be a complex AND expression
-                if let Some(Expr::Binary { op: BinaryOp::And, .. }) = &select.joins[0].on_condition {
+                if let Some(Expr::Binary {
+                    op: BinaryOp::And, ..
+                }) = &select.joins[0].on_condition
+                {
                     // Correctly parsed complex ON condition
                 } else {
                     panic!("Expected AND expression in JOIN ON condition");
@@ -698,7 +707,11 @@ mod tests {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 2);
                 // Check second projection is GeoDistance
-                if let ProjectionItem { expr: Expr::GeoDistance { .. }, alias } = &select.projection[1] {
+                if let ProjectionItem {
+                    expr: Expr::GeoDistance { .. },
+                    alias,
+                } = &select.projection[1]
+                {
                     assert_eq!(alias.as_ref().map(|s| s.as_str()), Some("dist"));
                 } else {
                     panic!("Expected GeoDistance expression in projection");
@@ -722,7 +735,8 @@ mod tests {
     #[test]
     fn test_parse_geo_within_distance() {
         let parser = SqlFrontendParser::new();
-        let sql = "SELECT * FROM locations WHERE GEO_WITHIN_DISTANCE(lat, lon, 37.7749, -122.4194, 10.0)";
+        let sql =
+            "SELECT * FROM locations WHERE GEO_WITHIN_DISTANCE(lat, lon, 37.7749, -122.4194, 10.0)";
 
         let result = parser.parse(sql);
         assert!(
@@ -735,7 +749,9 @@ mod tests {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
                 if let Some(Expr::GeoWithinDistance { radius, unit, .. }) = &select.selection {
-                    assert!(matches!(radius.as_ref(), Expr::Literal(Literal::Number(n)) if (*n - 10.0).abs() < 0.001));
+                    assert!(
+                        matches!(radius.as_ref(), Expr::Literal(Literal::Number(n)) if (*n - 10.0).abs() < 0.001)
+                    );
                     assert_eq!(unit.as_ref().map(|s| s.as_str()), Some("km")); // Default unit
                 } else {
                     panic!("Expected GeoWithinDistance in WHERE clause");
@@ -748,7 +764,8 @@ mod tests {
     #[test]
     fn test_parse_geo_within_distance_with_unit() {
         let parser = SqlFrontendParser::new();
-        let sql = "SELECT * FROM locations WHERE GEO_NEAR(lat, lon, 34.0522, -118.2437, 50.0, 'mi')";
+        let sql =
+            "SELECT * FROM locations WHERE GEO_NEAR(lat, lon, 34.0522, -118.2437, 50.0, 'mi')";
 
         let result = parser.parse(sql);
         assert!(
@@ -772,7 +789,8 @@ mod tests {
     #[test]
     fn test_parse_geo_within_box() {
         let parser = SqlFrontendParser::new();
-        let sql = "SELECT id FROM places WHERE GEO_WITHIN_BOX(lat, lon, 37.0, -123.0, 38.0, -122.0)";
+        let sql =
+            "SELECT id FROM places WHERE GEO_WITHIN_BOX(lat, lon, 37.0, -123.0, 38.0, -122.0)";
 
         let result = parser.parse(sql);
         assert!(
@@ -785,7 +803,10 @@ mod tests {
         fn extract_number(expr: &Expr) -> Option<f64> {
             match expr {
                 Expr::Literal(Literal::Number(n)) => Some(*n),
-                Expr::Unary { op: UnaryOp::Neg, expr } => {
+                Expr::Unary {
+                    op: UnaryOp::Neg,
+                    expr,
+                } => {
                     if let Expr::Literal(Literal::Number(n)) = expr.as_ref() {
                         Some(-*n)
                     } else {
@@ -799,17 +820,44 @@ mod tests {
         match result.unwrap() {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
-                if let Some(Expr::GeoWithinBox { sw_lat, sw_lon, ne_lat, ne_lon, .. }) = &select.selection {
+                if let Some(Expr::GeoWithinBox {
+                    sw_lat,
+                    sw_lon,
+                    ne_lat,
+                    ne_lon,
+                    ..
+                }) = &select.selection
+                {
                     // Check bounding box coordinates
-                    let sw_lat_val = extract_number(sw_lat.as_ref()).expect("sw_lat should be a number");
-                    let sw_lon_val = extract_number(sw_lon.as_ref()).expect("sw_lon should be a number");
-                    let ne_lat_val = extract_number(ne_lat.as_ref()).expect("ne_lat should be a number");
-                    let ne_lon_val = extract_number(ne_lon.as_ref()).expect("ne_lon should be a number");
+                    let sw_lat_val =
+                        extract_number(sw_lat.as_ref()).expect("sw_lat should be a number");
+                    let sw_lon_val =
+                        extract_number(sw_lon.as_ref()).expect("sw_lon should be a number");
+                    let ne_lat_val =
+                        extract_number(ne_lat.as_ref()).expect("ne_lat should be a number");
+                    let ne_lon_val =
+                        extract_number(ne_lon.as_ref()).expect("ne_lon should be a number");
 
-                    assert!((sw_lat_val - 37.0).abs() < 0.001, "sw_lat mismatch: {}", sw_lat_val);
-                    assert!((sw_lon_val - (-123.0)).abs() < 0.001, "sw_lon mismatch: {}", sw_lon_val);
-                    assert!((ne_lat_val - 38.0).abs() < 0.001, "ne_lat mismatch: {}", ne_lat_val);
-                    assert!((ne_lon_val - (-122.0)).abs() < 0.001, "ne_lon mismatch: {}", ne_lon_val);
+                    assert!(
+                        (sw_lat_val - 37.0).abs() < 0.001,
+                        "sw_lat mismatch: {}",
+                        sw_lat_val
+                    );
+                    assert!(
+                        (sw_lon_val - (-123.0)).abs() < 0.001,
+                        "sw_lon mismatch: {}",
+                        sw_lon_val
+                    );
+                    assert!(
+                        (ne_lat_val - 38.0).abs() < 0.001,
+                        "ne_lat mismatch: {}",
+                        ne_lat_val
+                    );
+                    assert!(
+                        (ne_lon_val - (-122.0)).abs() < 0.001,
+                        "ne_lon mismatch: {}",
+                        ne_lon_val
+                    );
                 } else {
                     panic!("Expected GeoWithinBox in WHERE clause");
                 }
@@ -854,7 +902,11 @@ mod tests {
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 1);
-                if let ProjectionItem { expr: Expr::GeoPoint { .. }, alias } = &select.projection[0] {
+                if let ProjectionItem {
+                    expr: Expr::GeoPoint { .. },
+                    alias,
+                } = &select.projection[0]
+                {
                     assert_eq!(alias.as_ref().map(|s| s.as_str()), Some("location"));
                 } else {
                     panic!("Expected GeoPoint expression in projection");
@@ -886,8 +938,14 @@ mod tests {
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 3);
-                assert!(matches!(select.selection, Some(Expr::GeoWithinDistance { .. })));
-                assert!(matches!(&select.projection[2].expr, Expr::GeoDistance { .. }));
+                assert!(matches!(
+                    select.selection,
+                    Some(Expr::GeoWithinDistance { .. })
+                ));
+                assert!(matches!(
+                    &select.projection[2].expr,
+                    Expr::GeoDistance { .. }
+                ));
                 assert_eq!(select.limit, Some(10));
             }
             _ => panic!("Unexpected query type"),

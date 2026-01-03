@@ -64,5 +64,5 @@ pub mod deserializer;
 pub use config::{
     CommitStrategy, ConsumerGroupConfig, DeserializationFormat, DlqConfig, KafkaConsumerConfig,
 };
-pub use consumer::{KafkaVectorConsumer, ConsumerHandle, ConsumerStatus};
-pub use deserializer::{MessageDeserializer, VectorMessage, DeserializationError};
+pub use consumer::{ConsumerHandle, ConsumerStatus, KafkaVectorConsumer};
+pub use deserializer::{DeserializationError, MessageDeserializer, VectorMessage};

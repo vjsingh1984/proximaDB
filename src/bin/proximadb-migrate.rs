@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Semaphore;
-use tracing::{info, warn, error, Level};
+use tracing::{Level, error, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
 /// ProximaDB Migration Tool - Migrate from VectorRecord to ProximaSchema
@@ -155,7 +155,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
-    let log_level = if cli.verbose { Level::DEBUG } else { Level::INFO };
+    let log_level = if cli.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
     let subscriber = FmtSubscriber::builder()
         .with_max_level(log_level)
         .with_target(false)
@@ -174,25 +178,27 @@ async fn main() -> Result<()> {
             parallel,
             skip_migrated,
         } => {
-            run_migration(collection, all, dry_run, parallel, skip_migrated, &cli.config).await
+            run_migration(
+                collection,
+                all,
+                dry_run,
+                parallel,
+                skip_migrated,
+                &cli.config,
+            )
+            .await
         }
         Commands::Validate {
             collection,
             all,
             check_counts,
             verify_checksums,
-        } => {
-            run_validation(collection, all, check_counts, verify_checksums, &cli.config).await
-        }
-        Commands::Status { detailed } => {
-            show_status(detailed, &cli.config).await
-        }
+        } => run_validation(collection, all, check_counts, verify_checksums, &cli.config).await,
+        Commands::Status { detailed } => show_status(detailed, &cli.config).await,
         Commands::Rollback {
             collection,
             to_version,
-        } => {
-            run_rollback(&collection, to_version, &cli.config).await
-        }
+        } => run_rollback(&collection, to_version, &cli.config).await,
     }
 }
 
@@ -246,8 +252,11 @@ async fn run_migration(
         return Ok(());
     }
 
-    info!("Migrating {} collections with {} parallel workers",
-          collections_to_migrate.len(), parallel);
+    info!(
+        "Migrating {} collections with {} parallel workers",
+        collections_to_migrate.len(),
+        parallel
+    );
 
     // Create semaphore for parallel limiting
     let semaphore = Arc::new(Semaphore::new(parallel));
@@ -392,14 +401,13 @@ async fn run_validation(
     let mut all_valid = true;
 
     for name in collections {
-        let result = validate_collection(&name, check_counts, verify_checksums, config_path).await?;
+        let result =
+            validate_collection(&name, check_counts, verify_checksums, config_path).await?;
 
         if result.is_valid {
             info!(
                 "VALID: {} - {} rows, schema matches: {}",
-                result.collection_name,
-                result.source_row_count,
-                result.schema_matches
+                result.collection_name, result.source_row_count, result.schema_matches
             );
         } else {
             all_valid = false;
@@ -461,8 +469,10 @@ async fn show_status(detailed: bool, config_path: &PathBuf) -> Result<()> {
     let mut total_rows = 0u64;
     let mut total_bytes = 0u64;
 
-    println!("\n{:<30} {:>10} {:>10} {:>12} {:>10}",
-             "Collection", "Version", "Rows", "Size", "Status");
+    println!(
+        "\n{:<30} {:>10} {:>10} {:>12} {:>10}",
+        "Collection", "Version", "Rows", "Size", "Status"
+    );
     println!("{}", "-".repeat(75));
 
     for name in &collections {

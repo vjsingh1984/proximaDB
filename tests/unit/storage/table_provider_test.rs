@@ -22,10 +22,9 @@ use datafusion::execution::context::SessionState;
 use datafusion::prelude::*;
 
 use proximadb::datafusion::{
-    NullSplitReader, ProximaScanExec,
-    ProximaDataFusionTable, ProximaDataFusionTableConfig,
-    CollectionInfo, EngineType, NullProximaTableProvider, ProximaTableProvider, PruningStatistics,
-    FileSplit,
+    CollectionInfo, EngineType, FileSplit, NullProximaTableProvider, NullSplitReader,
+    ProximaDataFusionTable, ProximaDataFusionTableConfig, ProximaScanExec, ProximaTableProvider,
+    PruningStatistics,
 };
 use proximadb::storage::formats::splits::{
     ColumnBounds, ScalarPredicate, ScalarValue, SpatialBounds, SplitStatistics,
@@ -45,7 +44,13 @@ fn test_schema() -> SchemaRef {
 }
 
 fn create_test_split(path: &str, block_id: u32, row_count: u64) -> FileSplit {
-    FileSplit::new_block(path.to_string(), block_id, block_id as u64 * 1024, 1024, row_count)
+    FileSplit::new_block(
+        path.to_string(),
+        block_id,
+        block_id as u64 * 1024,
+        1024,
+        row_count,
+    )
 }
 
 fn create_split_with_stats(path: &str, block_id: u32, row_count: u64) -> FileSplit {
@@ -100,7 +105,10 @@ fn test_file_split_creation() {
 fn test_file_split_row_group() {
     let split = FileSplit::new_row_group("/data/file.parquet".to_string(), 0, 0, 65536, 10000);
 
-    assert!(matches!(split.split_type, proximadb::storage::formats::splits::SplitType::RowGroup { .. }));
+    assert!(matches!(
+        split.split_type,
+        proximadb::storage::formats::splits::SplitType::RowGroup { .. }
+    ));
     assert_eq!(split.statistics.row_count, Some(10000));
 }
 
@@ -115,7 +123,10 @@ fn test_file_split_hilbert_range() {
         Some(vec![0.5, 0.5, 0.5]),
     );
 
-    assert!(matches!(split.split_type, proximadb::storage::formats::splits::SplitType::HilbertRange { .. }));
+    assert!(matches!(
+        split.split_type,
+        proximadb::storage::formats::splits::SplitType::HilbertRange { .. }
+    ));
 }
 
 // ============================================================================
@@ -133,7 +144,10 @@ fn test_split_scalar_pruning_equal() {
     assert!(split.can_prune_scalar("price", &ScalarPredicate::Equal(ScalarValue::Float64(5.0))));
 
     // Value above range - can prune
-    assert!(split.can_prune_scalar("price", &ScalarPredicate::Equal(ScalarValue::Float64(150.0))));
+    assert!(split.can_prune_scalar(
+        "price",
+        &ScalarPredicate::Equal(ScalarValue::Float64(150.0))
+    ));
 }
 
 #[test]
@@ -141,10 +155,16 @@ fn test_split_scalar_pruning_less_than() {
     let split = create_split_with_stats("/data/file.sst", 0, 100);
 
     // price < 10 when min is 10 - can prune
-    assert!(split.can_prune_scalar("price", &ScalarPredicate::LessThan(ScalarValue::Float64(10.0))));
+    assert!(split.can_prune_scalar(
+        "price",
+        &ScalarPredicate::LessThan(ScalarValue::Float64(10.0))
+    ));
 
     // price < 50 when min is 10 - cannot prune (some values match)
-    assert!(!split.can_prune_scalar("price", &ScalarPredicate::LessThan(ScalarValue::Float64(50.0))));
+    assert!(!split.can_prune_scalar(
+        "price",
+        &ScalarPredicate::LessThan(ScalarValue::Float64(50.0))
+    ));
 }
 
 #[test]
@@ -152,10 +172,16 @@ fn test_split_scalar_pruning_greater_than() {
     let split = create_split_with_stats("/data/file.sst", 0, 100);
 
     // price > 100 when max is 100 - can prune
-    assert!(split.can_prune_scalar("price", &ScalarPredicate::GreaterThan(ScalarValue::Float64(100.0))));
+    assert!(split.can_prune_scalar(
+        "price",
+        &ScalarPredicate::GreaterThan(ScalarValue::Float64(100.0))
+    ));
 
     // price > 50 when max is 100 - cannot prune
-    assert!(!split.can_prune_scalar("price", &ScalarPredicate::GreaterThan(ScalarValue::Float64(50.0))));
+    assert!(!split.can_prune_scalar(
+        "price",
+        &ScalarPredicate::GreaterThan(ScalarValue::Float64(50.0))
+    ));
 }
 
 #[test]
@@ -369,12 +395,8 @@ fn test_datafusion_table_schema() {
     let info = CollectionInfo::new("test_vectors".to_string(), 128, EngineType::Sst);
     let reader = Arc::new(NullSplitReader::new(schema.clone(), EngineType::Sst));
 
-    let table = ProximaDataFusionTable::new(
-        "test_vectors".to_string(),
-        info,
-        schema.clone(),
-        reader,
-    );
+    let table =
+        ProximaDataFusionTable::new("test_vectors".to_string(), info, schema.clone(), reader);
 
     assert_eq!(table.schema().fields().len(), 4);
     assert_eq!(table.engine_type(), EngineType::Sst);
@@ -393,8 +415,8 @@ fn test_datafusion_table_with_splits() {
         FileSplit::new_row_group("/data/part2.parquet".to_string(), 0, 0, 65536, 8000),
     ];
 
-    let table = ProximaDataFusionTable::new("test".to_string(), info, schema, reader)
-        .with_splits(splits);
+    let table =
+        ProximaDataFusionTable::new("test".to_string(), info, schema, reader).with_splits(splits);
 
     let stats = table.pruning_stats().expect("Should have pruning stats");
     assert_eq!(stats.total_splits, 3);
@@ -403,8 +425,8 @@ fn test_datafusion_table_with_splits() {
 #[tokio::test]
 async fn test_datafusion_table_scan() {
     let schema = test_schema();
-    let info = CollectionInfo::new("vectors".to_string(), 512, EngineType::Helix)
-        .with_vector_count(10000);
+    let info =
+        CollectionInfo::new("vectors".to_string(), 512, EngineType::Helix).with_vector_count(10000);
     let reader = Arc::new(NullSplitReader::new(schema.clone(), EngineType::Helix));
 
     let splits = vec![
@@ -436,8 +458,8 @@ async fn test_datafusion_table_get_splits() {
 
     let splits = vec![create_test_split("/data/file.swift", 0, 500)];
 
-    let table = ProximaDataFusionTable::new("test".to_string(), info, schema, reader)
-        .with_splits(splits);
+    let table =
+        ProximaDataFusionTable::new("test".to_string(), info, schema, reader).with_splits(splits);
 
     let retrieved = table.get_splits(&[]).await.expect("Should get splits");
     assert_eq!(retrieved.len(), 1);
@@ -472,8 +494,8 @@ fn test_collection_info_vector_size() {
 
 #[test]
 fn test_collection_info_estimated_size() {
-    let info = CollectionInfo::new("test".to_string(), 512, EngineType::Nova)
-        .with_vector_count(10000);
+    let info =
+        CollectionInfo::new("test".to_string(), 512, EngineType::Nova).with_vector_count(10000);
     assert_eq!(info.estimated_vector_data_size(), 10000 * 512 * 4);
 }
 
@@ -495,9 +517,18 @@ fn test_engine_type_display() {
 fn test_engine_type_conversion() {
     use proximadb::storage::traits::StorageEngineStrategy;
 
-    assert_eq!(EngineType::from(StorageEngineStrategy::Sst), EngineType::Sst);
-    assert_eq!(EngineType::from(StorageEngineStrategy::Viper), EngineType::Viper);
-    assert_eq!(StorageEngineStrategy::from(EngineType::Nova), StorageEngineStrategy::Nova);
+    assert_eq!(
+        EngineType::from(StorageEngineStrategy::Sst),
+        EngineType::Sst
+    );
+    assert_eq!(
+        EngineType::from(StorageEngineStrategy::Viper),
+        EngineType::Viper
+    );
+    assert_eq!(
+        StorageEngineStrategy::from(EngineType::Nova),
+        StorageEngineStrategy::Nova
+    );
 }
 
 // ============================================================================
@@ -522,7 +553,10 @@ async fn test_null_provider_get_splits() {
     let info = CollectionInfo::new("test".to_string(), 128, EngineType::Helix);
     let provider = NullProximaTableProvider::new(schema, info);
 
-    let splits = provider.get_splits(&[]).await.expect("Should return empty splits");
+    let splits = provider
+        .get_splits(&[])
+        .await
+        .expect("Should return empty splits");
     assert!(splits.is_empty());
 }
 

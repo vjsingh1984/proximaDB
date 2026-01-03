@@ -188,32 +188,17 @@ pub enum PropertyProjection {
     /// Simple variable (e.g., RETURN n)
     Variable(String),
     /// Property access (e.g., RETURN n.name)
-    Property {
-        variable: String,
-        property: String,
-    },
+    Property { variable: String, property: String },
     /// COUNT(*) aggregation
     Count,
     /// SUM(variable.property) aggregation
-    Sum {
-        variable: String,
-        property: String,
-    },
+    Sum { variable: String, property: String },
     /// AVG(variable.property) aggregation
-    Avg {
-        variable: String,
-        property: String,
-    },
+    Avg { variable: String, property: String },
     /// MIN(variable.property) aggregation
-    Min {
-        variable: String,
-        property: String,
-    },
+    Min { variable: String, property: String },
     /// MAX(variable.property) aggregation
-    Max {
-        variable: String,
-        property: String,
-    },
+    Max { variable: String, property: String },
 }
 
 /// Order by specification
@@ -398,10 +383,7 @@ pub enum SetItem {
         properties: HashMap<String, serde_json::Value>,
     },
     /// Add label: SET n:NewLabel
-    AddLabel {
-        variable: String,
-        label: String,
-    },
+    AddLabel { variable: String, label: String },
 }
 
 /// REMOVE clause for removing properties and labels
@@ -415,15 +397,9 @@ pub struct RemoveClause {
 #[derive(Debug, Clone)]
 pub enum RemoveItem {
     /// Remove a property: REMOVE n.property
-    Property {
-        variable: String,
-        property: String,
-    },
+    Property { variable: String, property: String },
     /// Remove a label: REMOVE n:Label
-    Label {
-        variable: String,
-        label: String,
-    },
+    Label { variable: String, label: String },
 }
 
 /// MERGE clause for create-if-not-exists pattern
@@ -485,22 +461,30 @@ impl CypherQuery {
 
     /// Check if this query has any MATCH clauses
     pub fn has_match(&self) -> bool {
-        self.reading_clauses.iter().any(|c| matches!(c, ReadingClause::Match { .. }))
+        self.reading_clauses
+            .iter()
+            .any(|c| matches!(c, ReadingClause::Match { .. }))
     }
 
     /// Check if this query has any CREATE clauses
     pub fn has_create(&self) -> bool {
-        self.updating_clauses.iter().any(|c| matches!(c, UpdatingClause::Create(_)))
+        self.updating_clauses
+            .iter()
+            .any(|c| matches!(c, UpdatingClause::Create(_)))
     }
 
     /// Check if this query has any DELETE clauses
     pub fn has_delete(&self) -> bool {
-        self.updating_clauses.iter().any(|c| matches!(c, UpdatingClause::Delete(_)))
+        self.updating_clauses
+            .iter()
+            .any(|c| matches!(c, UpdatingClause::Delete(_)))
     }
 
     /// Check if this query has any MERGE clauses
     pub fn has_merge(&self) -> bool {
-        self.updating_clauses.iter().any(|c| matches!(c, UpdatingClause::Merge(_)))
+        self.updating_clauses
+            .iter()
+            .any(|c| matches!(c, UpdatingClause::Merge(_)))
     }
 }
 
@@ -563,7 +547,12 @@ impl SetClause {
     }
 
     /// Add a property set
-    pub fn set_property(mut self, variable: &str, property: &str, value: serde_json::Value) -> Self {
+    pub fn set_property(
+        mut self,
+        variable: &str,
+        property: &str,
+        value: serde_json::Value,
+    ) -> Self {
         self.items.push(SetItem::Property {
             variable: variable.to_string(),
             property: property.to_string(),

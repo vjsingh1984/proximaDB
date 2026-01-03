@@ -11,8 +11,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use crate::llm::config::{EmbeddingProvider, LLMConfig};
@@ -190,7 +190,10 @@ impl EmbeddingService {
     }
 
     /// Generate embeddings for batch of texts
-    pub async fn embed_batch(&self, request: BatchEmbeddingRequest) -> Result<BatchEmbeddingResponse> {
+    pub async fn embed_batch(
+        &self,
+        request: BatchEmbeddingRequest,
+    ) -> Result<BatchEmbeddingResponse> {
         let start = std::time::Instant::now();
         let mut embeddings = Vec::with_capacity(request.texts.len());
         let mut cached_count = 0;

@@ -6,15 +6,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use proximadb::query::unified::UnifiedRecord;
+use proximadb::query::unified::ast::{
+    DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, GraphTraversalExpr, PathFilter,
+    StartNodeSpec, TraversalDirection, VectorSearchExpr, VectorSearchParams,
+};
+use proximadb::query::unified::fusion::SubQueryResult;
 use proximadb::query::unified::{
     DataModel, FusionStrategy, MultiModelQuery, QueryDecomposer, ResultFuser, UnifiedQueryConfig,
 };
-use proximadb::query::unified::ast::{
-    DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, GraphTraversalExpr,
-    PathFilter, StartNodeSpec, TraversalDirection, VectorSearchExpr, VectorSearchParams,
-};
-use proximadb::query::unified::fusion::SubQueryResult;
-use proximadb::query::unified::UnifiedRecord;
 
 /// Test query decomposition of a hybrid vector + document query
 #[test]
@@ -24,14 +24,27 @@ fn test_decompose_hybrid_vector_document_query() {
     let query = "SELECT * FROM products WHERE $.category = 'electronics' AND VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 10";
     let result = decomposer.decompose(query);
 
-    assert!(result.is_ok(), "Failed to decompose query: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to decompose query: {:?}",
+        result.err()
+    );
     let multi_query = result.unwrap();
 
     // Should have both vector and document components
-    let has_vector = multi_query.components.iter().any(|c| c.model == DataModel::Vector);
-    let has_document = multi_query.components.iter().any(|c| c.model == DataModel::Document);
+    let has_vector = multi_query
+        .components
+        .iter()
+        .any(|c| c.model == DataModel::Vector);
+    let has_document = multi_query
+        .components
+        .iter()
+        .any(|c| c.model == DataModel::Document);
 
-    assert!(has_vector || has_document, "Should have at least one component");
+    assert!(
+        has_vector || has_document,
+        "Should have at least one component"
+    );
 }
 
 /// Test query decomposition of a pure vector search
@@ -51,7 +64,10 @@ fn test_decompose_vector_only_query() {
         .filter(|c| c.model == DataModel::Vector)
         .collect();
 
-    assert!(!vector_components.is_empty(), "Should have vector component");
+    assert!(
+        !vector_components.is_empty(),
+        "Should have vector component"
+    );
 }
 
 /// Test query decomposition of a document query with JSON path
@@ -106,7 +122,10 @@ fn test_intersection_fusion() {
         records_returned: 3,
     };
 
-    let result = fuser.fuse(vec![vector_result, document_result], &FusionStrategy::Intersection);
+    let result = fuser.fuse(
+        vec![vector_result, document_result],
+        &FusionStrategy::Intersection,
+    );
 
     assert!(result.is_ok());
     let fused = result.unwrap();
@@ -148,7 +167,9 @@ fn test_union_fusion() {
         records_returned: 2,
     };
 
-    let fused = fuser.fuse(vec![result1, result2], &FusionStrategy::Union).unwrap();
+    let fused = fuser
+        .fuse(vec![result1, result2], &FusionStrategy::Union)
+        .unwrap();
 
     // Union should include all unique IDs (id_1, id_2, id_3)
     assert_eq!(fused.records.len(), 3);
@@ -199,8 +220,20 @@ fn test_rrf_fusion() {
     // Both id_1 and id_2 should have similar RRF scores since they alternate positions
     assert_eq!(fused.records.len(), 2);
 
-    let id1_score = fused.records.iter().find(|r| r.id == "id_1").unwrap().score.unwrap();
-    let id2_score = fused.records.iter().find(|r| r.id == "id_2").unwrap().score.unwrap();
+    let id1_score = fused
+        .records
+        .iter()
+        .find(|r| r.id == "id_1")
+        .unwrap()
+        .score
+        .unwrap();
+    let id2_score = fused
+        .records
+        .iter()
+        .find(|r| r.id == "id_2")
+        .unwrap()
+        .score
+        .unwrap();
 
     // Both should be close since they each have one #1 rank and one #2 rank
     assert!((id1_score - id2_score).abs() < 0.01);
@@ -238,7 +271,9 @@ fn test_weighted_ranked_fusion() {
         records_returned: 1,
     };
 
-    let fused = fuser.fuse(vec![vector_result, document_result], &strategy).unwrap();
+    let fused = fuser
+        .fuse(vec![vector_result, document_result], &strategy)
+        .unwrap();
 
     assert_eq!(fused.records.len(), 1);
     // The combined score should reflect the 2x weight for vectors
@@ -273,7 +308,10 @@ fn test_build_multimodel_query() {
         .with_limit(10);
 
     assert_eq!(query.components.len(), 2);
-    assert!(matches!(query.fusion_strategy, FusionStrategy::Intersection));
+    assert!(matches!(
+        query.fusion_strategy,
+        FusionStrategy::Intersection
+    ));
     assert_eq!(query.limit, Some(10));
 }
 
@@ -324,7 +362,9 @@ fn test_single_result_passthrough() {
         records_returned: 2,
     };
 
-    let fused = fuser.fuse(vec![single_result], &FusionStrategy::Intersection).unwrap();
+    let fused = fuser
+        .fuse(vec![single_result], &FusionStrategy::Intersection)
+        .unwrap();
 
     // Single result should pass through unchanged
     assert_eq!(fused.records.len(), 2);

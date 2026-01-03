@@ -10,8 +10,7 @@ fn embedded_flush_persists_and_recovers() {
     std::fs::create_dir_all(&data_path).expect("create data dir");
 
     // Create DB, insert, and flush
-    let mut config =
-        EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
+    let mut config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
     config.enable_wal = true;
     let db = EmbeddedProximaDB::new(config).expect("create db");
 
@@ -19,10 +18,7 @@ fn embedded_flush_persists_and_recovers() {
         .expect("create collection");
 
     let ids = vec!["v0".to_string(), "v1".to_string()];
-    let vectors = vec![
-        vec![0.1_f32, 0.2, 0.3, 0.4],
-        vec![0.1_f32, 0.2, 0.3, 0.5],
-    ];
+    let vectors = vec![vec![0.1_f32, 0.2, 0.3, 0.4], vec![0.1_f32, 0.2, 0.3, 0.5]];
 
     db.insert("test_collection", ids.clone(), vectors.clone(), None)
         .expect("insert");
@@ -33,8 +29,7 @@ fn embedded_flush_persists_and_recovers() {
     drop(db); // close database
 
     // Reopen and search; results should be served from flushed storage, not WAL
-    let mut reopen_config =
-        EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
+    let mut reopen_config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
     reopen_config.enable_wal = true;
     let reopened = EmbeddedProximaDB::new(reopen_config).expect("reopen db");
 
@@ -74,7 +69,9 @@ fn embedded_flush_persists_many_vectors() {
 
     for i in 0..num_vectors {
         ids.push(format!("vec_{}", i));
-        let vector: Vec<f32> = (0..dimension).map(|j| (i as f32 * 0.01 + j as f32 * 0.001)).collect();
+        let vector: Vec<f32> = (0..dimension)
+            .map(|j| (i as f32 * 0.01 + j as f32 * 0.001))
+            .collect();
         vectors.push(vector);
     }
 
@@ -94,11 +91,20 @@ fn embedded_flush_persists_many_vectors() {
                 let path = entry.path();
                 let prefix = "  ".repeat(indent);
                 if path.is_dir() {
-                    eprintln!("{}📁 {}/", prefix, path.file_name().unwrap().to_string_lossy());
+                    eprintln!(
+                        "{}📁 {}/",
+                        prefix,
+                        path.file_name().unwrap().to_string_lossy()
+                    );
                     print_dir_recursive(&path, indent + 1);
                 } else {
                     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    eprintln!("{}📄 {} ({} bytes)", prefix, path.file_name().unwrap().to_string_lossy(), size);
+                    eprintln!(
+                        "{}📄 {} ({} bytes)",
+                        prefix,
+                        path.file_name().unwrap().to_string_lossy(),
+                        size
+                    );
                 }
             }
         }
@@ -127,9 +133,18 @@ fn embedded_flush_persists_many_vectors() {
     }
 
     // vec_0 should be the top result with score 1.0 (exact match)
-    assert!(!results.is_empty(), "Should find at least 1 result after reopen");
-    assert_eq!(results[0].id, "vec_0", "Query vector should be the top result");
-    assert!((results[0].score - 1.0).abs() < 0.001, "Score should be ~1.0 for exact match");
+    assert!(
+        !results.is_empty(),
+        "Should find at least 1 result after reopen"
+    );
+    assert_eq!(
+        results[0].id, "vec_0",
+        "Query vector should be the top result"
+    );
+    assert!(
+        (results[0].score - 1.0).abs() < 0.001,
+        "Score should be ~1.0 for exact match"
+    );
 
     eprintln!("✅ Test passed!");
 }
@@ -176,7 +191,10 @@ fn sst_block_serialization_roundtrip() {
             .expect(&format!("insert batch {}", batch_idx));
     }
 
-    eprintln!("✅ Inserted {} vectors in {} batches", total_to_insert, num_batches);
+    eprintln!(
+        "✅ Inserted {} vectors in {} batches",
+        total_to_insert, num_batches
+    );
 
     // Flush to disk
     db.flush().expect("flush");
@@ -184,11 +202,18 @@ fn sst_block_serialization_roundtrip() {
 
     // Verify pre-reopen search works (search for first vector, should be in top-10)
     let query_vec: Vec<f32> = (0..64).map(|j| j as f32 * 0.001).collect(); // vec_0's vector
-    let pre_results = db.search("roundtrip_test", query_vec.clone(), 10, None)
+    let pre_results = db
+        .search("roundtrip_test", query_vec.clone(), 10, None)
         .expect("pre-reopen search");
     assert!(!pre_results.is_empty(), "Should find vectors before reopen");
-    assert_eq!(pre_results[0].id, "vec_0", "vec_0 should be top result before reopen");
-    eprintln!("✅ Pre-reopen: vec_0 is top result with score {}", pre_results[0].score);
+    assert_eq!(
+        pre_results[0].id, "vec_0",
+        "vec_0 should be top result before reopen"
+    );
+    eprintln!(
+        "✅ Pre-reopen: vec_0 is top result with score {}",
+        pre_results[0].score
+    );
 
     drop(db);
     eprintln!("✅ Closed database");
@@ -198,19 +223,24 @@ fn sst_block_serialization_roundtrip() {
     reopen_config.enable_wal = true;
     let reopened = EmbeddedProximaDB::new(reopen_config).expect("reopen db");
 
-    let post_results = reopened.search("roundtrip_test", query_vec, 10, None)
+    let post_results = reopened
+        .search("roundtrip_test", query_vec, 10, None)
         .expect("post-reopen search");
 
-    eprintln!("📊 Post-reopen: {} results, top result: id={}, score={}",
-              post_results.len(),
-              post_results.first().map(|r| r.id.as_str()).unwrap_or("none"),
-              post_results.first().map(|r| r.score).unwrap_or(0.0));
+    eprintln!(
+        "📊 Post-reopen: {} results, top result: id={}, score={}",
+        post_results.len(),
+        post_results
+            .first()
+            .map(|r| r.id.as_str())
+            .unwrap_or("none"),
+        post_results.first().map(|r| r.score).unwrap_or(0.0)
+    );
 
     // Verify vec_0 is still the top result after reopen (proves all blocks were read)
     assert!(!post_results.is_empty(), "Should find vectors after reopen");
     assert_eq!(
-        post_results[0].id,
-        "vec_0",
+        post_results[0].id, "vec_0",
         "SERIALIZATION BUG: vec_0 not found as top result after reopen (got {})",
         post_results[0].id
     );
@@ -247,14 +277,21 @@ fn test_large_k_search_returns_correct_count() {
 
     for i in 0..num_vectors {
         ids.push(format!("vec_{}", i));
-        let vector: Vec<f32> = (0..64).map(|j| (i as f32 * 0.01 + j as f32 * 0.001)).collect();
+        let vector: Vec<f32> = (0..64)
+            .map(|j| (i as f32 * 0.01 + j as f32 * 0.001))
+            .collect();
         vectors.push(vector);
     }
 
     db.insert("test_large_k", ids.clone(), vectors.clone(), None)
         .expect("insert");
 
-    eprintln!("Inserted {} vectors (ids from {} to {})", ids.len(), ids.first().unwrap(), ids.last().unwrap());
+    eprintln!(
+        "Inserted {} vectors (ids from {} to {})",
+        ids.len(),
+        ids.first().unwrap(),
+        ids.last().unwrap()
+    );
 
     // Check collection info to verify vector count
     let collection_info = db.get_collection("test_large_k").expect("get collection");
@@ -281,7 +318,10 @@ fn test_large_k_search_returns_correct_count() {
     let results_post_flush = db
         .search("test_large_k", vectors[0].clone(), 1000, None)
         .expect("search post-flush");
-    eprintln!("Post-flush k=1000: got {} results", results_post_flush.len());
+    eprintln!(
+        "Post-flush k=1000: got {} results",
+        results_post_flush.len()
+    );
 
     drop(db);
 
@@ -299,8 +339,14 @@ fn test_large_k_search_returns_correct_count() {
 
     // Check all three phases
     eprintln!("\nSummary:");
-    eprintln!("  Pre-flush (WAL only):     {} results", results_pre_flush.len());
-    eprintln!("  Post-flush (WAL+SST):     {} results", results_post_flush.len());
+    eprintln!(
+        "  Pre-flush (WAL only):     {} results",
+        results_pre_flush.len()
+    );
+    eprintln!(
+        "  Post-flush (WAL+SST):     {} results",
+        results_post_flush.len()
+    );
     eprintln!("  Post-reopen (SST only):   {} results", results_1000.len());
 
     assert_eq!(
@@ -308,7 +354,10 @@ fn test_large_k_search_returns_correct_count() {
         1000,
         "k=1000 should return exactly 1000 results when 5000 vectors exist"
     );
-    assert_eq!(results_1000[0].id, "vec_0", "Query vector should be top result");
+    assert_eq!(
+        results_1000[0].id, "vec_0",
+        "Query vector should be top result"
+    );
 
     eprintln!("✅ Large k test passed - no hidden limits!");
 }

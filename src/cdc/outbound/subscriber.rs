@@ -20,12 +20,12 @@
 //! with exactly-once delivery guarantees.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock as AsyncRwLock};
+use tokio::sync::{RwLock as AsyncRwLock, mpsc};
 
 // Use std::sync::RwLock for synchronous access
 use std::sync::RwLock;
@@ -35,7 +35,7 @@ use super::dedup::DeduplicationCache;
 use super::exactly_once::{ExactlyOnceConfig, ExactlyOnceManager, IdempotencyKey};
 use super::position::{Position, PositionTracker};
 use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{ChangeEvent, Operation, SourceInfo};
+use crate::cdc::event::ChangeEvent;
 
 /// Status of a subscription
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,7 +176,9 @@ impl WalSubscriber {
         let dedup_cache = Arc::new(DeduplicationCache::new(config.dedup_cache_size));
 
         let exactly_once = if config.exactly_once {
-            Some(Arc::new(ExactlyOnceManager::new(ExactlyOnceConfig::default())))
+            Some(Arc::new(ExactlyOnceManager::new(
+                ExactlyOnceConfig::default(),
+            )))
         } else {
             None
         };
@@ -260,7 +262,9 @@ impl WalSubscriber {
     }
 
     /// Start the subscriber and return a handle
-    pub async fn start(self: Arc<Self>) -> CdcResult<(SubscriberHandle, mpsc::Receiver<ChangeEvent>)> {
+    pub async fn start(
+        self: Arc<Self>,
+    ) -> CdcResult<(SubscriberHandle, mpsc::Receiver<ChangeEvent>)> {
         self.initialize().await?;
 
         let (control_tx, mut control_rx) = mpsc::channel::<ControlMessage>(32);
@@ -415,7 +419,9 @@ impl WalSubscriber {
 
     /// Checkpoint current position
     pub async fn checkpoint(&self) -> CdcResult<()> {
-        self.position_tracker.checkpoint(&self.subscription_id).await?;
+        self.position_tracker
+            .checkpoint(&self.subscription_id)
+            .await?;
         self.stats.write().unwrap().checkpoints += 1;
         *self.last_checkpoint.write().unwrap() = Instant::now();
         Ok(())
@@ -517,6 +523,7 @@ impl WalSubscriberBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cdc::event::{Operation, SourceInfo};
 
     fn create_test_events(count: usize) -> Vec<ChangeEvent> {
         (0..count)

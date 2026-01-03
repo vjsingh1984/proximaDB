@@ -41,7 +41,7 @@ async fn cleanup_dir(path: &std::path::Path) {
 
 mod catalog_manager_tests {
     use super::*;
-    use proximadb::catalog::{CatalogManager, Catalog, TableIdentifier};
+    use proximadb::catalog::{Catalog, CatalogManager, TableIdentifier};
 
     #[tokio::test]
     async fn test_create_native_catalog_factory() {
@@ -132,7 +132,12 @@ mod catalog_manager_tests {
     async fn test_polaris_catalog_requires_feature() {
         let manager = CatalogManager::new();
         let result = manager
-            .create_polaris_catalog("polaris", "https://polaris.example.com", "warehouse", "cred")
+            .create_polaris_catalog(
+                "polaris",
+                "https://polaris.example.com",
+                "warehouse",
+                "cred",
+            )
             .await;
 
         // Without polaris-catalog feature, this should fail
@@ -237,10 +242,9 @@ mod catalog_manager_tests {
 mod iceberg_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        CatalogManager, Catalog, TableIdentifier,
-        CatalogColumn, CatalogDataType, CatalogPartitionSpec, CatalogPartitionField,
-        CatalogSortOrder, CatalogSortField, CatalogTableSchema,
-        PartitionTransform, SortDirection, NullOrder,
+        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogPartitionField,
+        CatalogPartitionSpec, CatalogSortField, CatalogSortOrder, CatalogTableSchema, NullOrder,
+        PartitionTransform, SortDirection, TableIdentifier,
     };
 
     #[tokio::test]
@@ -271,10 +275,12 @@ mod iceberg_catalog_tests {
         assert_eq!(ns.properties.get("owner"), Some(&"test_user".to_string()));
 
         // Verify namespace exists
-        assert!(catalog
-            .namespace_exists(&["test_db".to_string()])
-            .await
-            .unwrap());
+        assert!(
+            catalog
+                .namespace_exists(&["test_db".to_string()])
+                .await
+                .unwrap()
+        );
 
         cleanup_dir(&temp_dir).await;
     }
@@ -360,14 +366,12 @@ mod iceberg_catalog_tests {
         // Update partition spec with proper fields
         let new_spec = CatalogPartitionSpec {
             spec_id: 1,
-            fields: vec![
-                CatalogPartitionField {
-                    source_id: 2,
-                    field_id: 1000,
-                    name: "event_date_month".to_string(),
-                    transform: PartitionTransform::Month,
-                },
-            ],
+            fields: vec![CatalogPartitionField {
+                source_id: 2,
+                field_id: 1000,
+                name: "event_date_month".to_string(),
+                transform: PartitionTransform::Month,
+            }],
         };
 
         // Update should succeed (or return appropriate error for unsupported operations)
@@ -401,7 +405,11 @@ mod iceberg_catalog_tests {
 
         let schema = CatalogTableSchema::new("sorted_data")
             .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
-            .with_column(CatalogColumn::new(2, "timestamp", CatalogDataType::Timestamp))
+            .with_column(CatalogColumn::new(
+                2,
+                "timestamp",
+                CatalogDataType::Timestamp,
+            ))
             .with_column(CatalogColumn::new(3, "value", CatalogDataType::Float64));
 
         let identifier =
@@ -415,14 +423,12 @@ mod iceberg_catalog_tests {
         // Update sort order
         let new_order = CatalogSortOrder {
             order_id: 1,
-            fields: vec![
-                CatalogSortField {
-                    source_id: 2,
-                    transform: PartitionTransform::Identity,
-                    direction: SortDirection::Descending,
-                    null_order: NullOrder::NullsLast,
-                },
-            ],
+            fields: vec![CatalogSortField {
+                source_id: 2,
+                transform: PartitionTransform::Identity,
+                direction: SortDirection::Descending,
+                null_order: NullOrder::NullsLast,
+            }],
         };
 
         let result = catalog.update_sort_order(&identifier, new_order).await;
@@ -503,8 +509,8 @@ mod iceberg_catalog_tests {
 mod delta_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        CatalogManager, Catalog, TableIdentifier,
-        CatalogColumn, CatalogDataType, CatalogTableSchema,
+        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema,
+        TableIdentifier,
     };
 
     #[tokio::test]
@@ -544,20 +550,24 @@ mod delta_catalog_tests {
         assert_eq!(ns.levels, vec!["test_delta_db"]);
 
         // Check exists
-        assert!(catalog
-            .namespace_exists(&["test_delta_db".to_string()])
-            .await
-            .unwrap());
+        assert!(
+            catalog
+                .namespace_exists(&["test_delta_db".to_string()])
+                .await
+                .unwrap()
+        );
 
         // List namespaces
         let namespaces = catalog.list_namespaces(None).await.unwrap();
         assert_eq!(namespaces.len(), 1);
 
         // Drop namespace
-        assert!(catalog
-            .drop_namespace(&["test_delta_db".to_string()], false)
-            .await
-            .unwrap());
+        assert!(
+            catalog
+                .drop_namespace(&["test_delta_db".to_string()], false)
+                .await
+                .unwrap()
+        );
 
         cleanup_dir(&temp_dir).await;
     }
@@ -583,7 +593,11 @@ mod delta_catalog_tests {
         let schema = CatalogTableSchema::new("delta_users")
             .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
             .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
-            .with_column(CatalogColumn::new(3, "created_at", CatalogDataType::Timestamp));
+            .with_column(CatalogColumn::new(
+                3,
+                "created_at",
+                CatalogDataType::Timestamp,
+            ));
 
         let identifier =
             TableIdentifier::new(vec!["deltadb".to_string()], "delta_users".to_string());
@@ -636,15 +650,18 @@ mod delta_catalog_tests {
             .with_column(CatalogColumn::new(1, "id", CatalogDataType::String))
             .with_column(vec_col);
 
-        let identifier =
-            TableIdentifier::new(vec!["vecdb".to_string()], "embeddings".to_string());
+        let identifier = TableIdentifier::new(vec!["vecdb".to_string()], "embeddings".to_string());
 
         let created = catalog.create_table(&identifier, schema).await.unwrap();
         assert_eq!(created.columns.len(), 2);
 
         // Verify vector column properties are preserved
         let retrieved = catalog.get_table(&identifier).await.unwrap();
-        let vec_column = retrieved.columns.iter().find(|c| c.name == "embedding").unwrap();
+        let vec_column = retrieved
+            .columns
+            .iter()
+            .find(|c| c.name == "embedding")
+            .unwrap();
         assert!(matches!(vec_column.data_type, CatalogDataType::Vector));
 
         cleanup_dir(&temp_dir).await;
@@ -666,11 +683,13 @@ mod delta_catalog_tests {
             .await
             .unwrap();
 
-        let schema = CatalogTableSchema::new("versioned")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64));
+        let schema = CatalogTableSchema::new("versioned").with_column(CatalogColumn::new(
+            1,
+            "id",
+            CatalogDataType::Int64,
+        ));
 
-        let identifier =
-            TableIdentifier::new(vec!["histdb".to_string()], "versioned".to_string());
+        let identifier = TableIdentifier::new(vec!["histdb".to_string()], "versioned".to_string());
         catalog.create_table(&identifier, schema).await.unwrap();
 
         // Get schema version
@@ -709,8 +728,8 @@ mod delta_catalog_tests {
 mod native_catalog_tests {
     use super::*;
     use proximadb::catalog::{
-        CatalogManager, Catalog, TableIdentifier,
-        CatalogColumn, CatalogDataType, CatalogTableSchema,
+        Catalog, CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema,
+        TableIdentifier,
     };
 
     #[tokio::test]
@@ -749,8 +768,7 @@ mod native_catalog_tests {
         assert_eq!(retrieved.columns.len(), 3);
 
         // Rename table
-        let new_identifier =
-            TableIdentifier::new(vec!["testdb".to_string()], "items".to_string());
+        let new_identifier = TableIdentifier::new(vec!["testdb".to_string()], "items".to_string());
         catalog
             .rename_table(&identifier, &new_identifier)
             .await
@@ -778,7 +796,7 @@ mod native_catalog_tests {
 
 mod hive_catalog_tests {
     use super::*;
-    use proximadb::catalog::{CatalogManager, Catalog, TableIdentifier};
+    use proximadb::catalog::{Catalog, CatalogManager, TableIdentifier};
 
     #[tokio::test]
     async fn test_hive_catalog_creation() {
@@ -816,7 +834,7 @@ mod hive_catalog_tests {
 
 mod cross_catalog_tests {
     use super::*;
-    use proximadb::catalog::{CatalogManager, Catalog, TableIdentifier};
+    use proximadb::catalog::{Catalog, CatalogManager, TableIdentifier};
 
     #[tokio::test]
     async fn test_multi_catalog_resolution() {

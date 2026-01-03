@@ -5,6 +5,7 @@ OUT_DIR=src
 PROTO_SRC= \
 	$(PROTO_DIR)/proximadb/v1/types.proto \
 	$(PROTO_DIR)/proximadb/v1/collection_types.proto \
+	$(PROTO_DIR)/proximadb/v1/vector_types.proto \
 	$(PROTO_DIR)/proximadb/v1/vector.proto \
 	$(PROTO_DIR)/proximadb/v1/sql.proto \
 	$(PROTO_DIR)/proximadb/v1/collection.proto \

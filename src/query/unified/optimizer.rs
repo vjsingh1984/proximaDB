@@ -23,8 +23,8 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -32,9 +32,8 @@ use parking_lot::RwLock;
 use tracing::{debug, info, trace};
 
 use super::ast::{
-    DataModel, DocumentQueryExpr, FilterOperator, GraphTraversalExpr,
-    LogQueryExpr, MetricQueryExpr, ModelOperation, MultiModelQuery, PathFilter,
-    QueryComponent, VectorSearchExpr,
+    DataModel, DocumentQueryExpr, FilterOperator, GraphTraversalExpr, LogQueryExpr,
+    MetricQueryExpr, ModelOperation, MultiModelQuery, PathFilter, QueryComponent, VectorSearchExpr,
 };
 
 /// Query optimizer for multi-model queries
@@ -189,7 +188,10 @@ impl QueryOptimizer {
     /// Optimize a multi-model query
     pub fn optimize(&self, query: &MultiModelQuery) -> Result<OptimizedPlan> {
         let start = Instant::now();
-        debug!("Optimizing query with {} components", query.components.len());
+        debug!(
+            "Optimizing query with {} components",
+            query.components.len()
+        );
 
         // Check plan cache first (if enabled)
         let query_hash = compute_query_hash(query);
@@ -366,17 +368,17 @@ impl QueryOptimizer {
     /// Estimate selectivity for a single filter
     fn estimate_filter_selectivity(&self, filter: &PathFilter) -> f64 {
         match filter.operator {
-            FilterOperator::Eq => 0.1,        // Equality is typically selective
-            FilterOperator::Ne => 0.9,        // Not equal is not selective
+            FilterOperator::Eq => 0.1, // Equality is typically selective
+            FilterOperator::Ne => 0.9, // Not equal is not selective
             FilterOperator::Gt | FilterOperator::Lt => 0.5, // Range filters
             FilterOperator::Gte | FilterOperator::Lte => 0.5,
-            FilterOperator::In => 0.2,        // In-list depends on list size
-            FilterOperator::NotIn => 0.8,     // Not in is less selective
-            FilterOperator::Contains => 0.3,  // Substring match
+            FilterOperator::In => 0.2,    // In-list depends on list size
+            FilterOperator::NotIn => 0.8, // Not in is less selective
+            FilterOperator::Contains => 0.3, // Substring match
             FilterOperator::StartsWith => 0.2,
             FilterOperator::EndsWith => 0.3,
-            FilterOperator::Exists => 0.8,    // Most documents have the field
-            FilterOperator::Type => 0.5,      // Type check
+            FilterOperator::Exists => 0.8, // Most documents have the field
+            FilterOperator::Type => 0.5,   // Type check
         }
     }
 
@@ -553,9 +555,8 @@ impl QueryOptimizer {
                 in_degree[dep_idx] -= 1;
                 if in_degree[dep_idx] == 0 {
                     ready.push((dep_idx, selectivity[dep_idx].selectivity));
-                    ready.sort_by(|a, b| {
-                        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                    ready
+                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 }
             }
         }
@@ -757,8 +758,10 @@ impl QueryStatistics {
     /// Get average execution time for similar queries
     pub fn get_avg_execution_time(&self, query_hash: u64) -> Option<u64> {
         let history = self.query_history.read();
-        let matching: Vec<&QueryHistoryEntry> =
-            history.iter().filter(|e| e.query_hash == query_hash).collect();
+        let matching: Vec<&QueryHistoryEntry> = history
+            .iter()
+            .filter(|e| e.query_hash == query_hash)
+            .collect();
 
         if matching.is_empty() {
             return None;
@@ -1110,12 +1113,18 @@ mod tests {
         // Use large top_k so threshold dominates selectivity
         let high_thresh = make_vector_search_component(Some(0.9), 1_000_000);
         let estimate = optimizer.estimate_selectivity(&high_thresh);
-        assert!(estimate.selectivity < 0.2, "High threshold should be selective");
+        assert!(
+            estimate.selectivity < 0.2,
+            "High threshold should be selective"
+        );
 
         // Low threshold = high selectivity (less selective)
         let low_thresh = make_vector_search_component(Some(0.3), 1_000_000);
         let estimate = optimizer.estimate_selectivity(&low_thresh);
-        assert!(estimate.selectivity > 0.5, "Low threshold should be less selective");
+        assert!(
+            estimate.selectivity > 0.5,
+            "Low threshold should be less selective"
+        );
     }
 
     #[test]
@@ -1124,7 +1133,10 @@ mod tests {
 
         let small_k = make_vector_search_component(None, 10);
         let estimate = optimizer.estimate_selectivity(&small_k);
-        assert!(estimate.selectivity < 0.001, "Small top_k should be very selective");
+        assert!(
+            estimate.selectivity < 0.001,
+            "Small top_k should be very selective"
+        );
 
         let large_k = make_vector_search_component(None, 10000);
         let estimate = optimizer.estimate_selectivity(&large_k);
@@ -1150,7 +1162,10 @@ mod tests {
             value: FilterValue::String("electronics".to_string()),
         }]);
         let estimate = optimizer.estimate_selectivity(&eq_filter);
-        assert!(estimate.selectivity < 0.5, "Equality filter should be selective");
+        assert!(
+            estimate.selectivity < 0.5,
+            "Equality filter should be selective"
+        );
 
         // Multiple filters = very selective
         let multi_filters = make_document_query_component(vec![
@@ -1232,13 +1247,11 @@ mod tests {
     fn test_filter_pushdown() {
         let optimizer = QueryOptimizer::with_defaults();
 
-        let doc_query = make_document_query_component(vec![
-            PathFilter {
-                path: "status".to_string(),
-                operator: FilterOperator::Eq,
-                value: FilterValue::String("active".to_string()),
-            },
-        ]);
+        let doc_query = make_document_query_component(vec![PathFilter {
+            path: "status".to_string(),
+            operator: FilterOperator::Eq,
+            value: FilterValue::String("active".to_string()),
+        }]);
 
         let pushed = optimizer.extract_pushable_filters(&doc_query);
         assert_eq!(pushed.len(), 1, "Should push 1 filter");
@@ -1311,7 +1324,10 @@ mod tests {
         // Vector must come before document due to dependency
         let vec_pos = plan.execution_order.iter().position(|&x| x == 0).unwrap();
         let doc_pos = plan.execution_order.iter().position(|&x| x == 1).unwrap();
-        assert!(vec_pos < doc_pos, "Vector must execute before dependent document query");
+        assert!(
+            vec_pos < doc_pos,
+            "Vector must execute before dependent document query"
+        );
     }
 
     #[test]
@@ -1339,7 +1355,9 @@ mod tests {
         // Should have optimization notes
         assert!(!plan.notes.is_empty(), "Should have optimization notes");
         assert!(
-            plan.notes.iter().any(|n| n.contains("Optimization completed")),
+            plan.notes
+                .iter()
+                .any(|n| n.contains("Optimization completed")),
             "Should have completion note"
         );
     }
@@ -1362,7 +1380,10 @@ mod tests {
 
         let plan = optimizer.optimize(&query).unwrap();
 
-        assert!(plan.estimated_cost > 0.0, "Should have positive estimated cost");
+        assert!(
+            plan.estimated_cost > 0.0,
+            "Should have positive estimated cost"
+        );
     }
 
     // ==================== Plan Caching Tests ====================
@@ -1371,11 +1392,17 @@ mod tests {
     fn test_plan_cache_creation() {
         // Default optimizer should have cache enabled
         let optimizer = QueryOptimizer::with_defaults();
-        assert!(optimizer.plan_cache().is_some(), "Default should have cache enabled");
+        assert!(
+            optimizer.plan_cache().is_some(),
+            "Default should have cache enabled"
+        );
 
         // Optimizer without cache
         let optimizer_no_cache = QueryOptimizer::without_cache();
-        assert!(optimizer_no_cache.plan_cache().is_none(), "without_cache should disable cache");
+        assert!(
+            optimizer_no_cache.plan_cache().is_none(),
+            "without_cache should disable cache"
+        );
     }
 
     #[test]
@@ -1457,7 +1484,11 @@ mod tests {
 
         // Invalidate all
         optimizer.invalidate_plan_cache();
-        assert_eq!(cache.stats().size, 0, "Cache should be empty after invalidation");
+        assert_eq!(
+            cache.stats().size,
+            0,
+            "Cache should be empty after invalidation"
+        );
 
         // Next call should be a miss
         let _plan2 = optimizer.optimize(&query).unwrap();
@@ -1492,7 +1523,10 @@ mod tests {
         let stats = cache.stats();
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 1);
-        assert!((stats.hit_rate() - 0.666).abs() < 0.01, "Hit rate should be ~66%");
+        assert!(
+            (stats.hit_rate() - 0.666).abs() < 0.01,
+            "Hit rate should be ~66%"
+        );
     }
 
     #[test]
@@ -1553,7 +1587,10 @@ mod tests {
             order_by: None,
         };
         let hash3 = compute_query_hash(&query2);
-        assert_ne!(hash1, hash3, "Different query should produce different hash");
+        assert_ne!(
+            hash1, hash3,
+            "Different query should produce different hash"
+        );
     }
 
     #[test]
@@ -1589,9 +1626,18 @@ mod tests {
         let hash_doc = compute_query_hash(&doc_query);
         let hash_graph = compute_query_hash(&graph_query);
 
-        assert_ne!(hash_vec, hash_doc, "Vector and document queries should have different hashes");
-        assert_ne!(hash_vec, hash_graph, "Vector and graph queries should have different hashes");
-        assert_ne!(hash_doc, hash_graph, "Document and graph queries should have different hashes");
+        assert_ne!(
+            hash_vec, hash_doc,
+            "Vector and document queries should have different hashes"
+        );
+        assert_ne!(
+            hash_vec, hash_graph,
+            "Vector and graph queries should have different hashes"
+        );
+        assert_ne!(
+            hash_doc, hash_graph,
+            "Document and graph queries should have different hashes"
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@
 mod common;
 use common::benchmark_utils::print_system_info;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -130,11 +130,7 @@ fn generate_query_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
 }
 
 /// Run a single benchmark configuration
-fn run_benchmark(
-    engine: &str,
-    search_mode: &str,
-    vector_count: usize,
-) -> BenchmarkResult {
+fn run_benchmark(engine: &str, search_mode: &str, vector_count: usize) -> BenchmarkResult {
     use uuid::Uuid;
 
     let collection_name = format!("bench_{}", Uuid::new_v4().to_string()[..8].to_string());
@@ -186,7 +182,13 @@ fn run_benchmark(
     for query in &queries {
         let search_start = Instant::now();
         let _results = db
-            .search_with_mode(&collection_name, query.clone(), TOP_K, None, Some(search_mode))
+            .search_with_mode(
+                &collection_name,
+                query.clone(),
+                TOP_K,
+                None,
+                Some(search_mode),
+            )
             .unwrap();
         search_latencies.push(search_start.elapsed());
     }

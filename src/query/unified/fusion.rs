@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::debug;
 
 use super::ast::DataModel;
@@ -80,9 +80,7 @@ impl ResultFuser {
             FusionStrategy::RankedFusion { weights, normalize } => {
                 self.fuse_ranked(&sub_results, weights, *normalize)?
             }
-            FusionStrategy::ReciprocalRankFusion { k } => {
-                self.fuse_rrf(&sub_results, *k)?
-            }
+            FusionStrategy::ReciprocalRankFusion { k } => self.fuse_rrf(&sub_results, *k)?,
             FusionStrategy::Custom(name) => {
                 return Err(anyhow!("Custom fusion '{}' not implemented", name));
             }
@@ -105,17 +103,15 @@ impl ResultFuser {
         }
 
         // Start with IDs from first result
-        let mut common_ids: HashSet<String> = sub_results[0].records
+        let mut common_ids: HashSet<String> = sub_results[0]
+            .records
             .iter()
             .map(|r| r.id.clone())
             .collect();
 
         // Intersect with other results
         for result in sub_results.iter().skip(1) {
-            let result_ids: HashSet<String> = result.records
-                .iter()
-                .map(|r| r.id.clone())
-                .collect();
+            let result_ids: HashSet<String> = result.records.iter().map(|r| r.id.clone()).collect();
             common_ids = common_ids.intersection(&result_ids).cloned().collect();
         }
 
@@ -127,7 +123,8 @@ impl ResultFuser {
         for result in sub_results {
             for record in &result.records {
                 if common_ids.contains(&record.id) {
-                    merged_records.entry(record.id.clone())
+                    merged_records
+                        .entry(record.id.clone())
                         .and_modify(|existing| {
                             // Merge data and metadata
                             self.merge_record_data(existing, record);
@@ -140,7 +137,8 @@ impl ResultFuser {
         // Sort by score if available
         let mut records: Vec<UnifiedRecord> = merged_records.into_values().collect();
         records.sort_by(|a, b| {
-            b.score.unwrap_or(0.0)
+            b.score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -154,7 +152,8 @@ impl ResultFuser {
 
         for result in sub_results {
             for record in &result.records {
-                all_records.entry(record.id.clone())
+                all_records
+                    .entry(record.id.clone())
                     .and_modify(|existing| {
                         self.merge_record_data(existing, record);
                         // Take higher score
@@ -174,7 +173,8 @@ impl ResultFuser {
 
         let mut records: Vec<UnifiedRecord> = all_records.into_values().collect();
         records.sort_by(|a, b| {
-            b.score.unwrap_or(0.0)
+            b.score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -195,13 +195,15 @@ impl ResultFuser {
         }
 
         // Get IDs from filter results
-        let filter_ids: HashSet<String> = sub_results.iter()
+        let filter_ids: HashSet<String> = sub_results
+            .iter()
             .skip(1)
             .flat_map(|r| r.records.iter().map(|rec| rec.id.clone()))
             .collect();
 
         // Filter first result by these IDs
-        let filtered: Vec<UnifiedRecord> = first_result.records
+        let filtered: Vec<UnifiedRecord> = first_result
+            .records
             .iter()
             .filter(|r| filter_ids.contains(&r.id))
             .cloned()
@@ -226,9 +228,7 @@ impl ResultFuser {
 
             // Normalize scores within this result if requested
             let (min_score, max_score) = if normalize {
-                let scores: Vec<f64> = result.records.iter()
-                    .filter_map(|r| r.score)
-                    .collect();
+                let scores: Vec<f64> = result.records.iter().filter_map(|r| r.score).collect();
                 if scores.is_empty() {
                     (0.0, 1.0)
                 } else {
@@ -253,7 +253,8 @@ impl ResultFuser {
                 };
                 let weighted_score = normalized_score * weight;
 
-                score_map.entry(record.id.clone())
+                score_map
+                    .entry(record.id.clone())
                     .and_modify(|(existing, total_score)| {
                         *total_score += weighted_score;
                         self.merge_record_data(existing, record);
@@ -263,7 +264,8 @@ impl ResultFuser {
         }
 
         // Update scores and sort
-        let mut records: Vec<UnifiedRecord> = score_map.into_iter()
+        let mut records: Vec<UnifiedRecord> = score_map
+            .into_iter()
             .map(|(_, (mut record, score))| {
                 record.score = Some(score);
                 record
@@ -271,7 +273,8 @@ impl ResultFuser {
             .collect();
 
         records.sort_by(|a, b| {
-            b.score.unwrap_or(0.0)
+            b.score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -289,7 +292,8 @@ impl ResultFuser {
             // Sort by score to get ranks
             let mut ranked: Vec<&UnifiedRecord> = result.records.iter().collect();
             ranked.sort_by(|a, b| {
-                b.score.unwrap_or(0.0)
+                b.score
+                    .unwrap_or(0.0)
                     .partial_cmp(&a.score.unwrap_or(0.0))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
@@ -298,7 +302,8 @@ impl ResultFuser {
                 // RRF score: 1 / (k + rank)
                 let rrf_score = 1.0 / (k as f64 + rank as f64 + 1.0);
 
-                rrf_scores.entry(record.id.clone())
+                rrf_scores
+                    .entry(record.id.clone())
                     .and_modify(|(existing, total_score)| {
                         *total_score += rrf_score;
                         self.merge_record_data(existing, record);
@@ -308,7 +313,8 @@ impl ResultFuser {
         }
 
         // Update scores and sort
-        let mut records: Vec<UnifiedRecord> = rrf_scores.into_iter()
+        let mut records: Vec<UnifiedRecord> = rrf_scores
+            .into_iter()
             .map(|(_, (mut record, score))| {
                 record.score = Some(score);
                 record
@@ -316,7 +322,8 @@ impl ResultFuser {
             .collect();
 
         records.sort_by(|a, b| {
-            b.score.unwrap_or(0.0)
+            b.score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -395,10 +402,9 @@ impl SubQueryResult {
 /// (source values are inserted only if key doesn't exist in target).
 pub fn merge_record_data(target: &mut UnifiedRecord, source: &UnifiedRecord) {
     // Merge JSON data (source values override if present)
-    if let (Some(target_obj), Some(source_obj)) = (
-        target.data.as_object_mut(),
-        source.data.as_object(),
-    ) {
+    if let (Some(target_obj), Some(source_obj)) =
+        (target.data.as_object_mut(), source.data.as_object())
+    {
         for (key, value) in source_obj {
             target_obj.insert(key.clone(), value.clone());
         }
@@ -406,7 +412,9 @@ pub fn merge_record_data(target: &mut UnifiedRecord, source: &UnifiedRecord) {
 
     // Merge metadata
     for (key, value) in &source.metadata {
-        target.metadata.entry(key.clone())
+        target
+            .metadata
+            .entry(key.clone())
             .or_insert_with(|| value.clone());
     }
 }
@@ -419,12 +427,15 @@ pub fn aggregate_metrics(sub_results: &[SubQueryResult]) -> QueryMetrics {
     let mut metrics = QueryMetrics::default();
 
     for result in sub_results {
-        metrics.sub_query_times.push((result.source_model.clone(), result.execution_time_us));
+        metrics
+            .sub_query_times
+            .push((result.source_model.clone(), result.execution_time_us));
         metrics.records_scanned += result.records_scanned;
     }
 
     // Total time is max of parallel executions
-    metrics.total_time_us = sub_results.iter()
+    metrics.total_time_us = sub_results
+        .iter()
         .map(|r| r.execution_time_us)
         .max()
         .unwrap_or(0);
@@ -444,14 +455,19 @@ pub fn aggregate_metrics(sub_results: &[SubQueryResult]) -> QueryMetrics {
 ///
 /// # Returns
 /// A vector of RRF scores corresponding to the input record_ids
-pub fn compute_rrf_scores(sub_results: &[SubQueryResult], record_ids: &[String], k: u32) -> Vec<f64> {
+pub fn compute_rrf_scores(
+    sub_results: &[SubQueryResult],
+    record_ids: &[String],
+    k: u32,
+) -> Vec<f64> {
     let mut rrf_scores: HashMap<String, f64> = HashMap::new();
 
     for result in sub_results {
         // Sort by score to get ranks
         let mut ranked: Vec<&UnifiedRecord> = result.records.iter().collect();
         ranked.sort_by(|a, b| {
-            b.score.unwrap_or(0.0)
+            b.score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -463,7 +479,8 @@ pub fn compute_rrf_scores(sub_results: &[SubQueryResult], record_ids: &[String],
         }
     }
 
-    record_ids.iter()
+    record_ids
+        .iter()
         .map(|id| *rrf_scores.get(id).unwrap_or(&0.0))
         .collect()
 }
@@ -497,19 +514,27 @@ mod tests {
     fn test_intersection_fusion() {
         let fuser = ResultFuser::new(FusionStrategy::Intersection);
 
-        let result1 = make_sub_result(DataModel::Vector, vec![
-            make_record("a", 0.9, DataModel::Vector),
-            make_record("b", 0.8, DataModel::Vector),
-            make_record("c", 0.7, DataModel::Vector),
-        ]);
+        let result1 = make_sub_result(
+            DataModel::Vector,
+            vec![
+                make_record("a", 0.9, DataModel::Vector),
+                make_record("b", 0.8, DataModel::Vector),
+                make_record("c", 0.7, DataModel::Vector),
+            ],
+        );
 
-        let result2 = make_sub_result(DataModel::Document, vec![
-            make_record("b", 0.85, DataModel::Document),
-            make_record("c", 0.75, DataModel::Document),
-            make_record("d", 0.65, DataModel::Document),
-        ]);
+        let result2 = make_sub_result(
+            DataModel::Document,
+            vec![
+                make_record("b", 0.85, DataModel::Document),
+                make_record("c", 0.75, DataModel::Document),
+                make_record("d", 0.65, DataModel::Document),
+            ],
+        );
 
-        let fused = fuser.fuse(vec![result1, result2], &FusionStrategy::Intersection).unwrap();
+        let fused = fuser
+            .fuse(vec![result1, result2], &FusionStrategy::Intersection)
+            .unwrap();
 
         assert_eq!(fused.records.len(), 2); // b and c
         assert!(fused.records.iter().any(|r| r.id == "b"));
@@ -522,17 +547,25 @@ mod tests {
     fn test_union_fusion() {
         let fuser = ResultFuser::new(FusionStrategy::Union);
 
-        let result1 = make_sub_result(DataModel::Vector, vec![
-            make_record("a", 0.9, DataModel::Vector),
-            make_record("b", 0.8, DataModel::Vector),
-        ]);
+        let result1 = make_sub_result(
+            DataModel::Vector,
+            vec![
+                make_record("a", 0.9, DataModel::Vector),
+                make_record("b", 0.8, DataModel::Vector),
+            ],
+        );
 
-        let result2 = make_sub_result(DataModel::Document, vec![
-            make_record("c", 0.85, DataModel::Document),
-            make_record("b", 0.95, DataModel::Document), // Higher score for b
-        ]);
+        let result2 = make_sub_result(
+            DataModel::Document,
+            vec![
+                make_record("c", 0.85, DataModel::Document),
+                make_record("b", 0.95, DataModel::Document), // Higher score for b
+            ],
+        );
 
-        let fused = fuser.fuse(vec![result1, result2], &FusionStrategy::Union).unwrap();
+        let fused = fuser
+            .fuse(vec![result1, result2], &FusionStrategy::Union)
+            .unwrap();
 
         assert_eq!(fused.records.len(), 3); // a, b, c
 
@@ -545,20 +578,28 @@ mod tests {
     fn test_rrf_fusion() {
         let fuser = ResultFuser::new(FusionStrategy::ReciprocalRankFusion { k: 60 });
 
-        let result1 = make_sub_result(DataModel::Vector, vec![
-            make_record("a", 0.9, DataModel::Vector),
-            make_record("b", 0.8, DataModel::Vector),
-        ]);
+        let result1 = make_sub_result(
+            DataModel::Vector,
+            vec![
+                make_record("a", 0.9, DataModel::Vector),
+                make_record("b", 0.8, DataModel::Vector),
+            ],
+        );
 
-        let result2 = make_sub_result(DataModel::Document, vec![
-            make_record("b", 0.85, DataModel::Document),
-            make_record("a", 0.75, DataModel::Document),
-        ]);
+        let result2 = make_sub_result(
+            DataModel::Document,
+            vec![
+                make_record("b", 0.85, DataModel::Document),
+                make_record("a", 0.75, DataModel::Document),
+            ],
+        );
 
-        let fused = fuser.fuse(
-            vec![result1, result2],
-            &FusionStrategy::ReciprocalRankFusion { k: 60 }
-        ).unwrap();
+        let fused = fuser
+            .fuse(
+                vec![result1, result2],
+                &FusionStrategy::ReciprocalRankFusion { k: 60 },
+            )
+            .unwrap();
 
         assert_eq!(fused.records.len(), 2);
 
@@ -583,11 +624,14 @@ mod tests {
     fn test_single_result() {
         let fuser = ResultFuser::new(FusionStrategy::Intersection);
 
-        let result = make_sub_result(DataModel::Vector, vec![
-            make_record("a", 0.9, DataModel::Vector),
-        ]);
+        let result = make_sub_result(
+            DataModel::Vector,
+            vec![make_record("a", 0.9, DataModel::Vector)],
+        );
 
-        let fused = fuser.fuse(vec![result], &FusionStrategy::Intersection).unwrap();
+        let fused = fuser
+            .fuse(vec![result], &FusionStrategy::Intersection)
+            .unwrap();
 
         assert_eq!(fused.records.len(), 1);
         assert_eq!(fused.records[0].id, "a");

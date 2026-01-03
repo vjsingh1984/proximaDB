@@ -23,8 +23,8 @@
 //! - Cleaning up stale subscriptions
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -190,13 +190,7 @@ impl SubscriptionManager {
         let (tx, rx) = mpsc::channel(self.config.update_buffer_size);
 
         // Create subscription
-        let subscription = Subscription::new(
-            collection.clone(),
-            query_vector,
-            config,
-            filter,
-            tx,
-        );
+        let subscription = Subscription::new(collection.clone(), query_vector, config, filter, tx);
         let id = subscription.id.clone();
         let fingerprint = subscription.fingerprint.clone();
 
@@ -355,8 +349,7 @@ impl SubscriptionManager {
                     let changes = sub.update_results(all_results);
 
                     if !changes.is_empty() && sub.should_send_update() {
-                        let update =
-                            QueryUpdate::incremental(&sub.id, UpdateType::Insert, changes);
+                        let update = QueryUpdate::incremental(&sub.id, UpdateType::Insert, changes);
                         if sub.update_sender.try_send(update).is_ok() {
                             sub.mark_update_sent();
                             notified += 1;
@@ -412,8 +405,7 @@ impl SubscriptionManager {
                         .collect();
 
                     if sub.should_send_update() {
-                        let update =
-                            QueryUpdate::incremental(&sub.id, UpdateType::Remove, changes);
+                        let update = QueryUpdate::incremental(&sub.id, UpdateType::Remove, changes);
                         if sub.update_sender.try_send(update).is_ok() {
                             sub.mark_update_sent();
                             notified += 1;
@@ -680,10 +672,7 @@ mod tests {
             position: 0,
         }];
 
-        manager
-            .activate(&handle.id, initial_results)
-            .await
-            .unwrap();
+        manager.activate(&handle.id, initial_results).await.unwrap();
 
         // Should receive initial update
         let update = handle.updates.try_recv().unwrap();
@@ -705,10 +694,7 @@ mod tests {
             .await
             .unwrap();
 
-        manager
-            .activate(&handle.id, vec![])
-            .await
-            .unwrap();
+        manager.activate(&handle.id, vec![]).await.unwrap();
 
         // Pause
         manager.pause(&handle.id).unwrap();

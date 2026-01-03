@@ -23,9 +23,7 @@
 //! All algorithms reuse the existing CSR storage for efficient graph traversal
 //! and the vector engine for embedding storage and similarity search.
 
-use super::traits::{
-    AlgorithmComplexity, GraphAlgorithm, NoInput, ParallelAlgorithm,
-};
+use super::traits::{AlgorithmComplexity, GraphAlgorithm, NoInput, ParallelAlgorithm};
 use crate::core::error::ProximaDBError;
 use crate::graph::engines::orion::OrionGraphEngine;
 use rand::Rng;
@@ -66,14 +64,14 @@ pub type NodeEmbeddings = HashMap<String, Vec<f32>>;
 /// ```
 pub struct Node2VecEmbeddings {
     engine: Arc<OrionGraphEngine>,
-    p: f64,              // Return parameter
-    q: f64,              // In-out parameter
-    walk_length: usize,  // Length of each walk
-    num_walks: usize,    // Number of walks per node
+    p: f64,               // Return parameter
+    q: f64,               // In-out parameter
+    walk_length: usize,   // Length of each walk
+    num_walks: usize,     // Number of walks per node
     embedding_dim: usize, // Dimensionality of embeddings
-    window_size: usize,  // Skip-Gram context window size
-    learning_rate: f32,  // Skip-Gram learning rate
-    num_epochs: usize,   // Number of training epochs
+    window_size: usize,   // Skip-Gram context window size
+    learning_rate: f32,   // Skip-Gram learning rate
+    num_epochs: usize,    // Number of training epochs
 }
 
 impl Node2VecEmbeddings {
@@ -104,9 +102,9 @@ impl Node2VecEmbeddings {
             walk_length,
             num_walks,
             embedding_dim,
-            window_size: 10,    // Standard Skip-Gram window
+            window_size: 10,      // Standard Skip-Gram window
             learning_rate: 0.025, // Standard Skip-Gram learning rate
-            num_epochs: 5,      // Standard number of epochs
+            num_epochs: 5,        // Standard number of epochs
         }
     }
 
@@ -118,11 +116,10 @@ impl Node2VecEmbeddings {
         let mut walk = Vec::with_capacity(self.walk_length);
         walk.push(start_idx);
 
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let mut rng = rand::thread_rng();
 
@@ -164,14 +161,14 @@ impl Node2VecEmbeddings {
         rng: &mut impl Rng,
     ) -> Result<usize, ProximaDBError> {
         // Get neighbors of previous node for distance calculation
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let prev_neighbors = csr_out.get_neighbors(prev_idx).unwrap_or(&[]);
-        let prev_neighbor_set: std::collections::HashSet<_> = prev_neighbors.iter().copied().collect();
+        let prev_neighbor_set: std::collections::HashSet<_> =
+            prev_neighbors.iter().copied().collect();
 
         // Calculate unnormalized probabilities
         let mut probabilities = Vec::with_capacity(neighbors.len());
@@ -213,11 +210,10 @@ impl Node2VecEmbeddings {
     ///
     /// Creates `num_walks` walks of length `walk_length` for each node.
     fn generate_walks(&self) -> Result<Vec<Vec<usize>>, ProximaDBError> {
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
         drop(csr_out); // Release lock before long computation
@@ -242,11 +238,10 @@ impl Node2VecEmbeddings {
     /// Uses hierarchical softmax with negative sampling for efficiency.
     /// Simplified implementation using gradient descent on embedding vectors.
     fn train_skipgram(&self, walks: &[Vec<usize>]) -> Result<Vec<Vec<f32>>, ProximaDBError> {
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
         drop(csr_out);
@@ -318,12 +313,13 @@ impl Node2VecEmbeddings {
     }
 
     /// Convert node indices to node IDs for output
-    fn index_to_id_mapping(&self, embeddings: Vec<Vec<f32>>) -> Result<NodeEmbeddings, ProximaDBError> {
-        let index_to_node = self
-            .engine
-            .index_to_node
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire index_to_node read lock".to_string()))?;
+    fn index_to_id_mapping(
+        &self,
+        embeddings: Vec<Vec<f32>>,
+    ) -> Result<NodeEmbeddings, ProximaDBError> {
+        let index_to_node = self.engine.index_to_node.read().map_err(|_| {
+            ProximaDBError::Internal("Failed to acquire index_to_node read lock".to_string())
+        })?;
 
         let mut result = HashMap::new();
 
@@ -377,11 +373,10 @@ impl ParallelAlgorithm for Node2VecEmbeddings {
         use rayon::prelude::*;
 
         // Step 1: Generate random walks in parallel
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
         drop(csr_out);
@@ -436,8 +431,8 @@ impl ParallelAlgorithm for Node2VecEmbeddings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::engines::GraphEngine;
+    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::{Edge, Node};
 
     #[test]
@@ -471,14 +466,7 @@ mod tests {
         };
         engine.as_ref().insert_node(node).await.unwrap();
 
-        let node2vec = Node2VecEmbeddings::new(
-            Arc::clone(&engine),
-            1.0,
-            1.0,
-            10,
-            5,
-            64,
-        );
+        let node2vec = Node2VecEmbeddings::new(Arc::clone(&engine), 1.0, 1.0, 10, 5, 64);
 
         let result = node2vec.execute(NoInput).unwrap();
 
@@ -558,14 +546,7 @@ mod tests {
     #[test]
     fn test_algorithm_complexity() {
         let engine = Arc::new(OrionGraphEngine::new());
-        let node2vec = Node2VecEmbeddings::new(
-            Arc::clone(&engine),
-            1.0,
-            1.0,
-            10,
-            5,
-            64,
-        );
+        let node2vec = Node2VecEmbeddings::new(Arc::clone(&engine), 1.0, 1.0, 10, 5, 64);
 
         let complexity = node2vec.estimated_complexity();
         match complexity {
@@ -579,14 +560,7 @@ mod tests {
     #[test]
     fn test_algorithm_name() {
         let engine = Arc::new(OrionGraphEngine::new());
-        let node2vec = Node2VecEmbeddings::new(
-            Arc::clone(&engine),
-            1.0,
-            1.0,
-            10,
-            5,
-            64,
-        );
+        let node2vec = Node2VecEmbeddings::new(Arc::clone(&engine), 1.0, 1.0, 10, 5, 64);
 
         assert_eq!(node2vec.name(), "Node2VecEmbeddings");
     }
@@ -594,14 +568,7 @@ mod tests {
     #[test]
     fn test_parallel_execution_threshold() {
         let engine = Arc::new(OrionGraphEngine::new());
-        let node2vec = Node2VecEmbeddings::new(
-            Arc::clone(&engine),
-            1.0,
-            1.0,
-            10,
-            5,
-            64,
-        );
+        let node2vec = Node2VecEmbeddings::new(Arc::clone(&engine), 1.0, 1.0, 10, 5, 64);
 
         assert_eq!(node2vec.min_graph_size_for_parallel(), 500);
 

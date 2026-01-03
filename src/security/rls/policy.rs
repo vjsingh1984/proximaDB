@@ -438,8 +438,14 @@ mod tests {
             SecurityPredicate::And(predicates) => {
                 assert_eq!(predicates.len(), 2);
                 // Verify the predicates are boxed correctly
-                assert!(matches!(predicates[0].as_ref(), SecurityPredicate::OwnerOnly { .. }));
-                assert!(matches!(predicates[1].as_ref(), SecurityPredicate::TenantIsolation { .. }));
+                assert!(matches!(
+                    predicates[0].as_ref(),
+                    SecurityPredicate::OwnerOnly { .. }
+                ));
+                assert!(matches!(
+                    predicates[1].as_ref(),
+                    SecurityPredicate::TenantIsolation { .. }
+                ));
             }
             _ => panic!("Expected And predicate"),
         }

@@ -117,13 +117,19 @@ fn map_error_to_canonical_code(error_message: &str) -> CanonicalErrorCode {
         CanonicalErrorCode::NotFound
     } else if error_lower.contains("already exists") || error_lower.contains("duplicate") {
         CanonicalErrorCode::AlreadyExists
-    } else if error_lower.contains("invalid") || error_lower.contains("required") || error_lower.contains("missing") {
+    } else if error_lower.contains("invalid")
+        || error_lower.contains("required")
+        || error_lower.contains("missing")
+    {
         CanonicalErrorCode::InvalidArgument
     } else if error_lower.contains("constraint") || error_lower.contains("unique") {
         CanonicalErrorCode::ConstraintViolation
     } else if error_lower.contains("timeout") || error_lower.contains("timed out") {
         CanonicalErrorCode::Timeout
-    } else if error_lower.contains("permission") || error_lower.contains("denied") || error_lower.contains("unauthorized") {
+    } else if error_lower.contains("permission")
+        || error_lower.contains("denied")
+        || error_lower.contains("unauthorized")
+    {
         CanonicalErrorCode::PermissionDenied
     } else {
         CanonicalErrorCode::InternalError
@@ -184,7 +190,9 @@ fn create_grpc_error(operation: &str, error: impl std::fmt::Display) -> Status {
 /// - `max_depth_reached` (same as proto)
 /// - `execution_time_ms` (converted from microseconds)
 #[allow(dead_code)]
-fn convert_traversal_stats_to_canonical(stats: &crate::proto::proximadb_v1::TraversalStats) -> CanonicalTraversalStats {
+fn convert_traversal_stats_to_canonical(
+    stats: &crate::proto::proximadb_v1::TraversalStats,
+) -> CanonicalTraversalStats {
     CanonicalTraversalStats::from_proto(stats)
 }
 
@@ -197,8 +205,16 @@ fn create_batch_response_for_nodes(
     success: bool,
     error_message: Option<String>,
 ) -> BatchResponse {
-    let created_count = if success { Some(nodes.len() as u32) } else { Some(0) };
-    let failed_count = if success { Some(0) } else { Some(nodes.len() as u32) };
+    let created_count = if success {
+        Some(nodes.len() as u32)
+    } else {
+        Some(0)
+    };
+    let failed_count = if success {
+        Some(0)
+    } else {
+        Some(nodes.len() as u32)
+    };
 
     BatchResponse {
         success,
@@ -242,9 +258,9 @@ fn create_batch_response_for_nodes_with_errors(
         created_count: Some(created_count),
         updated_count: Some(0),
         failed_count: Some(failed_count),
-        failed_ids,         // Legacy (deprecated but maintained for compatibility)
-        error_messages,     // Legacy (deprecated but maintained for compatibility)
-        errors,             // New structured error field (aligned with REST API)
+        failed_ids,     // Legacy (deprecated but maintained for compatibility)
+        error_messages, // Legacy (deprecated but maintained for compatibility)
+        errors,         // New structured error field (aligned with REST API)
     }
 }
 
@@ -256,8 +272,16 @@ fn create_batch_response_for_edges(
     success: bool,
     error_message: Option<String>,
 ) -> BatchResponse {
-    let created_count = if success { Some(edges.len() as u32) } else { Some(0) };
-    let failed_count = if success { Some(0) } else { Some(edges.len() as u32) };
+    let created_count = if success {
+        Some(edges.len() as u32)
+    } else {
+        Some(0)
+    };
+    let failed_count = if success {
+        Some(0)
+    } else {
+        Some(edges.len() as u32)
+    };
 
     BatchResponse {
         success,
@@ -301,9 +325,9 @@ fn create_batch_response_for_edges_with_errors(
         created_count: Some(created_count),
         updated_count: Some(0),
         failed_count: Some(failed_count),
-        failed_ids,         // Legacy (deprecated but maintained for compatibility)
-        error_messages,     // Legacy (deprecated but maintained for compatibility)
-        errors,             // New structured error field (aligned with REST API)
+        failed_ids,     // Legacy (deprecated but maintained for compatibility)
+        error_messages, // Legacy (deprecated but maintained for compatibility)
+        errors,         // New structured error field (aligned with REST API)
     }
 }
 
@@ -692,7 +716,8 @@ impl GraphService for GraphServiceImpl {
             Ok(nodes) => {
                 info!("Successfully queried {} nodes via gRPC", nodes.len());
                 let nodes_vec: Vec<Node> = nodes.into_iter().map(|n| (*n).clone()).collect();
-                let response = create_query_response_for_nodes(nodes_vec, query.limit, query.offset);
+                let response =
+                    create_query_response_for_nodes(nodes_vec, query.limit, query.offset);
                 Ok(Response::new(response))
             }
             Err(err) => {
@@ -728,7 +753,8 @@ impl GraphService for GraphServiceImpl {
             Ok(edges) => {
                 info!("Successfully queried {} edges via gRPC", edges.len());
                 let edges_vec: Vec<Edge> = edges.into_iter().map(|e| (*e).clone()).collect();
-                let response = create_query_response_for_edges(edges_vec, query.limit, query.offset);
+                let response =
+                    create_query_response_for_edges(edges_vec, query.limit, query.offset);
                 Ok(Response::new(response))
             }
             Err(err) => {
@@ -1142,8 +1168,7 @@ impl GraphService for GraphServiceImpl {
             req.language()
         );
 
-        // Route through unified facade when feature is enabled and adapter is available
-        #[cfg(feature = "unified-facade-routing")]
+        // Route through unified facade when adapter is available
         if let Some(ref adapter) = self.query_adapter {
             debug!("Using unified facade routing for graph query");
             let graph_name = if req.graph_id.is_empty() {
@@ -1155,8 +1180,7 @@ impl GraphService for GraphServiceImpl {
             return match adapter.graph_query(&req.query, graph_name).await {
                 Ok(result) => {
                     use crate::proto::proximadb_v1::{
-                        ResultRow, QueryValue, PropertyValue,
-                        query_value, property_value,
+                        PropertyValue, QueryValue, ResultRow, property_value, query_value,
                     };
 
                     // Helper to create a string QueryValue
@@ -1220,7 +1244,7 @@ impl GraphService for GraphServiceImpl {
         Err(Status::unimplemented(
             "Declarative query execution not yet implemented. \
              Use QueryNodes/QueryEdges for property-based queries, \
-             or TraverseGraph for graph traversal."
+             or TraverseGraph for graph traversal.",
         ))
     }
 }

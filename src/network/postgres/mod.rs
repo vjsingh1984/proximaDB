@@ -65,7 +65,8 @@ impl PostgresServer {
         let listener = TcpListener::bind(self.bind_address).await?;
         info!("PostgreSQL server listening on {}", self.bind_address);
 
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         while self.running.load(std::sync::atomic::Ordering::Relaxed) {
             match listener.accept().await {
@@ -84,7 +85,9 @@ impl PostgresServer {
                             storage,
                             collection_service,
                             vector_ops,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Connection error from {}: {}", addr, e);
                         }
                     });
@@ -100,7 +103,8 @@ impl PostgresServer {
 
     /// Stop the server
     pub fn stop(&self) {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         info!("PostgreSQL server stopped");
     }
 
@@ -118,13 +122,8 @@ impl PostgresServer {
         let session_id = session.id.clone();
 
         // Create protocol handler
-        let mut protocol = PostgresProtocol::new(
-            stream,
-            session,
-            storage,
-            collection_service,
-            vector_ops,
-        );
+        let mut protocol =
+            PostgresProtocol::new(stream, session, storage, collection_service, vector_ops);
 
         // Run protocol loop
         match protocol.run().await {
@@ -160,7 +159,9 @@ impl Default for PostgresConfig {
     fn default() -> Self {
         Self {
             bind_address: "127.0.0.1:5432".parse().unwrap_or_else(|_| {
-                "127.0.0.1:5433".parse().expect("Failed to parse default address")
+                "127.0.0.1:5433"
+                    .parse()
+                    .expect("Failed to parse default address")
             }),
             max_connections: 100,
             idle_timeout_secs: 3600,

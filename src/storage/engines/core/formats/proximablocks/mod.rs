@@ -238,16 +238,16 @@ pub mod engine_profile; // Engine-specific optimization profiles
 pub mod index_structures;
 // Quantization now handled by unified compute module
 pub mod batch_operations;
+pub mod constants;
 pub mod header_metadata;
-pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
-pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
-pub mod swift_metadata;
-pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 pub mod spatial_clustering; // PCA-based clustering and Z-Order spatial indexing
 pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddings
 pub mod spatial_pruning; // SpatialPruner for unified block selection
 pub mod spatial_traits; // SpatialCurveEncoder trait for unified block clustering
-pub mod constants;
+pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
+pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
+pub mod swift_metadata;
+pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 
 // Re-exports for common use
 pub use block_structures::{
@@ -267,11 +267,11 @@ pub use batch_operations::{
 pub use header_metadata::{
     ChecksumConfig, EngineMetadata, FileMetadata, RowBasedHeader, VersionInfo,
 };
-pub use utilities::{MemoryEstimator, PathResolver, PerformanceProfiler, RowBasedUtilities};
 pub use spatial_clustering::{
-    cluster_blocks_pca, cluster_blocks_pca_adacurves, cluster_blocks_pca_zorder, AdaCurve,
-    IncrementalPCA, ZOrderEncoder,
+    AdaCurve, IncrementalPCA, ZOrderEncoder, cluster_blocks_pca, cluster_blocks_pca_adacurves,
+    cluster_blocks_pca_zorder,
 };
+pub use utilities::{MemoryEstimator, PathResolver, PerformanceProfiler, RowBasedUtilities};
 
 // NEW: Export shared SST reader components
 pub use sst_io_layer::{
@@ -554,9 +554,9 @@ pub mod utils {
 
         // Prior defaults targeted ~3MB, with a slight tweak for very large dimensions.
         let target_block_size = match dimension {
-            0..=384 => DEFAULT_TARGET_BLOCK_SIZE_BYTES,   // Small vectors
+            0..=384 => DEFAULT_TARGET_BLOCK_SIZE_BYTES, // Small vectors
             385..=1536 => DEFAULT_TARGET_BLOCK_SIZE_BYTES, // Medium/large vectors
-            _ => (2.5 * 1024.0 * 1024.0) as usize,        // XL vectors (network-friendly)
+            _ => (2.5 * 1024.0 * 1024.0) as usize,      // XL vectors (network-friendly)
         };
 
         // Clamp to practical I/O bounds

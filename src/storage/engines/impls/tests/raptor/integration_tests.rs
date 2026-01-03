@@ -95,7 +95,11 @@ async fn test_insert_and_retrieve() -> Result<()> {
         collection_id, base_path
     );
     let retrieved = engine
-        .vector_by_id(&collection_id, &format!("file://{}", base_path), "test_vec_1")
+        .vector_by_id(
+            &collection_id,
+            &format!("file://{}", base_path),
+            "test_vec_1",
+        )
         .await?;
 
     println!("TEST: vector_by_id returned: {:?}", retrieved.is_some());

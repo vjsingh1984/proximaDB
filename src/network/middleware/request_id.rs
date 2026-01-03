@@ -29,7 +29,7 @@
 
 use axum::{
     body::Body,
-    http::{Request, HeaderValue},
+    http::{HeaderValue, Request},
     middleware::Next,
     response::Response,
 };
@@ -80,10 +80,7 @@ impl std::fmt::Display for RequestId {
 ///     .route("/api/v1/...", ...)
 ///     .layer(middleware::from_fn(request_id_middleware));
 /// ```
-pub async fn request_id_middleware(
-    mut request: Request<Body>,
-    next: Next<Body>,
-) -> Response {
+pub async fn request_id_middleware(mut request: Request<Body>, next: Next<Body>) -> Response {
     // Extract or generate request ID
     let request_id = request
         .headers()

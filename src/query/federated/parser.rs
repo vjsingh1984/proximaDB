@@ -11,8 +11,8 @@
 //! - **METRICS(namespace)**: Observability metric queries
 //! - **<->** operator: Vector distance (pgvector compatible)
 
-use std::collections::HashMap;
 use anyhow::Result;
+use std::collections::HashMap;
 
 /// Type of query being executed
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,27 +37,18 @@ pub enum QueryType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SqlExtension {
     /// VECTOR_SEARCH(collection, vector, top_k)
-    VectorSearch {
-        collection: String,
-        top_k: usize,
-    },
+    VectorSearch { collection: String, top_k: usize },
     /// GRAPH_QUERY('cypher')
-    GraphQuery {
-        cypher: String,
-    },
+    GraphQuery { cypher: String },
     /// DOCUMENT_QUERY(collection, filter)
     DocumentQuery {
         collection: String,
         filter: Option<String>,
     },
     /// LOGS(namespace)
-    Logs {
-        namespace: String,
-    },
+    Logs { namespace: String },
     /// METRICS(namespace)
-    Metrics {
-        namespace: String,
-    },
+    Metrics { namespace: String },
     /// Vector distance operator <->
     VectorDistance {
         left_column: String,
@@ -187,14 +178,15 @@ impl FederatedParser {
         targets = self.parse_from_targets(sql);
 
         // Filter out function calls (like VECTOR_SEARCH, GRAPH_QUERY) from targets
-        let real_target_count = targets.iter()
+        let real_target_count = targets
+            .iter()
             .filter(|t| {
                 let upper = t.name.to_uppercase();
-                !upper.starts_with("VECTOR_SEARCH") &&
-                !upper.starts_with("GRAPH_QUERY") &&
-                !upper.starts_with("DOCUMENT_QUERY") &&
-                !upper.starts_with("LOGS") &&
-                !upper.starts_with("METRICS")
+                !upper.starts_with("VECTOR_SEARCH")
+                    && !upper.starts_with("GRAPH_QUERY")
+                    && !upper.starts_with("DOCUMENT_QUERY")
+                    && !upper.starts_with("LOGS")
+                    && !upper.starts_with("METRICS")
             })
             .count();
 
@@ -237,9 +229,7 @@ impl FederatedParser {
                     let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
                     if parts.len() >= 2 {
                         let collection = parts[0].trim_matches('\'').trim_matches('"').to_string();
-                        let top_k = parts.get(2)
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(10);
+                        let top_k = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
                         return Some(SqlExtension::VectorSearch { collection, top_k });
                     }
                 }
@@ -301,7 +291,9 @@ impl FederatedParser {
                     let args = &sql[start + paren_start + 1..start + paren_end];
                     let parts: Vec<&str> = args.splitn(2, ',').map(|s| s.trim()).collect();
                     let collection = parts[0].trim_matches('\'').trim_matches('"').to_string();
-                    let filter = parts.get(1).map(|s| s.trim_matches('\'').trim_matches('"').to_string());
+                    let filter = parts
+                        .get(1)
+                        .map(|s| s.trim_matches('\'').trim_matches('"').to_string());
                     return Some(SqlExtension::DocumentQuery { collection, filter });
                 }
             }
@@ -364,14 +356,14 @@ impl FederatedParser {
             let after = sql[pos + 3..].trim();
 
             // Get last word before <->
-            let left_column = before.split_whitespace().last()
+            let left_column = before
+                .split_whitespace()
+                .last()
                 .unwrap_or("embedding")
                 .to_string();
 
             // Get first token after <->
-            let right_literal = after.split_whitespace().next()
-                .unwrap_or("[]")
-                .to_string();
+            let right_literal = after.split_whitespace().next().unwrap_or("[]").to_string();
 
             return Some(SqlExtension::VectorDistance {
                 left_column,
@@ -405,11 +397,11 @@ impl FederatedParser {
 
             // Check if this is a function call (contains parentheses at start)
             let from_upper = from_clause.to_uppercase();
-            let is_function_call = from_upper.starts_with("VECTOR_SEARCH") ||
-                                   from_upper.starts_with("GRAPH_QUERY") ||
-                                   from_upper.starts_with("DOCUMENT_QUERY") ||
-                                   from_upper.starts_with("LOGS(") ||
-                                   from_upper.starts_with("METRICS(");
+            let is_function_call = from_upper.starts_with("VECTOR_SEARCH")
+                || from_upper.starts_with("GRAPH_QUERY")
+                || from_upper.starts_with("DOCUMENT_QUERY")
+                || from_upper.starts_with("LOGS(")
+                || from_upper.starts_with("METRICS(");
 
             // If it's a function call, don't split by comma
             if is_function_call {
@@ -513,9 +505,9 @@ mod tests {
     #[test]
     fn test_parse_vector_search() {
         let parser = FederatedParser::new();
-        let query = parser.parse(
-            "SELECT * FROM VECTOR_SEARCH('embeddings', '[0.1,0.2]', 10)"
-        ).unwrap();
+        let query = parser
+            .parse("SELECT * FROM VECTOR_SEARCH('embeddings', '[0.1,0.2]', 10)")
+            .unwrap();
         assert_eq!(query.query_type, QueryType::VectorSearch);
         assert_eq!(query.extensions.len(), 1);
         match &query.extensions[0] {
@@ -530,9 +522,9 @@ mod tests {
     #[test]
     fn test_parse_graph_query() {
         let parser = FederatedParser::new();
-        let query = parser.parse(
-            "SELECT * FROM GRAPH_QUERY('MATCH (a)-[:KNOWS]->(b) RETURN b.name')"
-        ).unwrap();
+        let query = parser
+            .parse("SELECT * FROM GRAPH_QUERY('MATCH (a)-[:KNOWS]->(b) RETURN b.name')")
+            .unwrap();
         assert_eq!(query.query_type, QueryType::GraphQuery);
         assert_eq!(query.extensions.len(), 1);
         match &query.extensions[0] {
@@ -547,9 +539,9 @@ mod tests {
     #[test]
     fn test_parse_vector_distance() {
         let parser = FederatedParser::new();
-        let query = parser.parse(
-            "SELECT * FROM products ORDER BY embedding <-> '[0.1,0.2]'::vector LIMIT 10"
-        ).unwrap();
+        let query = parser
+            .parse("SELECT * FROM products ORDER BY embedding <-> '[0.1,0.2]'::vector LIMIT 10")
+            .unwrap();
         assert_eq!(query.query_type, QueryType::VectorSearch);
         assert_eq!(query.extensions.len(), 1);
         match &query.extensions[0] {
@@ -563,9 +555,9 @@ mod tests {
     #[test]
     fn test_parse_logs_query() {
         let parser = FederatedParser::new();
-        let query = parser.parse(
-            "SELECT * FROM LOGS('production') WHERE timestamp > now() - interval '1h'"
-        ).unwrap();
+        let query = parser
+            .parse("SELECT * FROM LOGS('production') WHERE timestamp > now() - interval '1h'")
+            .unwrap();
         assert_eq!(query.query_type, QueryType::LogQuery);
         match &query.extensions[0] {
             SqlExtension::Logs { namespace } => {

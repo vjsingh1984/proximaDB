@@ -15,9 +15,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
-};
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::Stream;
 use tracing::{debug, trace};
 
@@ -77,10 +75,7 @@ impl ProximaDBScanExec {
     ) -> DFResult<Self> {
         // Compute projected schema
         let projected_schema = if let Some(ref proj) = projection {
-            let fields: Vec<_> = proj
-                .iter()
-                .map(|&i| schema.field(i).clone())
-                .collect();
+            let fields: Vec<_> = proj.iter().map(|&i| schema.field(i).clone()).collect();
             Arc::new(arrow_schema::Schema::new(fields))
         } else {
             schema.clone()
@@ -146,7 +141,9 @@ impl Debug for ProximaDBScanExec {
 impl DisplayAs for ProximaDBScanExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
         match t {
-            DisplayFormatType::Default | DisplayFormatType::Verbose | DisplayFormatType::TreeRender => {
+            DisplayFormatType::Default
+            | DisplayFormatType::Verbose
+            | DisplayFormatType::TreeRender => {
                 write!(
                     f,
                     "ProximaDBScanExec: collection={}, projection={:?}, filters={}, limit={:?}, partitions={}",

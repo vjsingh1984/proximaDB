@@ -7,23 +7,22 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, trace, warn};
 
+use super::UnifiedRecord;
 use super::ast::{
     ComponentDependency, DataModel, DocumentQueryExpr, FilterOperator, FilterValue,
-    GraphTraversalExpr, JoinType, LogQueryExpr, MetricQueryExpr, ModelOperation,
-    MultiModelQuery, PathFilter, QueryComponent, StartNodeSpec, TraversalDirection,
-    VectorSearchExpr,
+    GraphTraversalExpr, JoinType, LogQueryExpr, MetricQueryExpr, ModelOperation, MultiModelQuery,
+    PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
 };
 use super::fusion::SubQueryResult;
-use super::UnifiedRecord;
 use crate::graph::service::GraphOperationsService;
 use crate::observability::{LogQueryParams, MetricAggParams, ObservabilityService};
 use crate::proto::proximadb_v1::{
-    sql_value::Value as SqlValueVariant, DocFilterCondition, DocFilterOperator,
-    DocumentFilter, Severity, SqlValue,
+    DocFilterCondition, DocFilterOperator, DocumentFilter, Severity, SqlValue,
+    sql_value::Value as SqlValueVariant,
 };
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentQueryParams, DocumentService};
@@ -59,7 +58,8 @@ impl ParallelExecutor {
     ) -> Result<Vec<SubQueryResult>> {
         // Without VectorOperationsService, we can only execute document queries
         // Vector searches will return empty results
-        self.execute_parallel_with_services(query, None, document_service).await
+        self.execute_parallel_with_services(query, None, document_service)
+            .await
     }
 
     /// Execute query components in parallel with explicit service references
@@ -75,14 +75,8 @@ impl ParallelExecutor {
         document_service: Arc<DocumentService>,
     ) -> Result<Vec<SubQueryResult>> {
         // Use the full version with all services (graph and observability as None)
-        self.execute_parallel_with_all_services(
-            query,
-            vector_ops,
-            document_service,
-            None,
-            None,
-        )
-        .await
+        self.execute_parallel_with_all_services(query, vector_ops, document_service, None, None)
+            .await
     }
 
     /// Execute query components in parallel with ALL services (graph + observability)
@@ -127,7 +121,10 @@ impl ParallelExecutor {
         if !parallel_components.is_empty() {
             let parallel_results = self
                 .execute_parallel_batch_full(
-                    parallel_components.iter().map(|(i, c)| (*i, (*c).clone())).collect(),
+                    parallel_components
+                        .iter()
+                        .map(|(i, c)| (*i, (*c).clone()))
+                        .collect(),
                     vector_ops.clone(),
                     document_service.clone(),
                     graph_service.clone(),
@@ -293,9 +290,7 @@ async fn execute_component_full(
 
     let result = match &component.operation {
         ModelOperation::VectorSearch(expr) => execute_vector_search(expr, vector_ops).await,
-        ModelOperation::DocumentQuery(expr) => {
-            execute_document_query(expr, document_service).await
-        }
+        ModelOperation::DocumentQuery(expr) => execute_document_query(expr, document_service).await,
         ModelOperation::GraphTraversal(expr) => {
             execute_graph_traversal_full(expr, graph_service).await
         }
@@ -354,9 +349,7 @@ async fn execute_component_with_context_full(
     // For graph traversals, pass context so StartNodeSpec::FromComponent can be resolved
     let raw_result = match &component.operation {
         ModelOperation::VectorSearch(expr) => execute_vector_search(expr, vector_ops).await,
-        ModelOperation::DocumentQuery(expr) => {
-            execute_document_query(expr, document_service).await
-        }
+        ModelOperation::DocumentQuery(expr) => execute_document_query(expr, document_service).await,
         ModelOperation::GraphTraversal(expr) => {
             // Use execute_graph_traversal_with_context to properly resolve StartNodeSpec
             // This handles StartNodeSpec::FromComponent by looking up prior results
@@ -404,13 +397,17 @@ async fn execute_vector_search(
     vector_ops: Option<Arc<VectorOperationsService>>,
 ) -> Result<SubQueryResult> {
     let Some(vector_ops) = vector_ops else {
-        debug!("Vector search on collection {} skipped - no VectorOperationsService",
-               expr.collection);
+        debug!(
+            "Vector search on collection {} skipped - no VectorOperationsService",
+            expr.collection
+        );
         return Ok(SubQueryResult::empty(DataModel::Vector));
     };
 
-    info!("Executing vector search on collection: {} (top_k={})",
-           expr.collection, expr.top_k);
+    info!(
+        "Executing vector search on collection: {} (top_k={})",
+        expr.collection, expr.top_k
+    );
 
     // Perform actual vector search using the operations service
     let search_result = vector_ops
@@ -474,7 +471,10 @@ async fn execute_document_query(
     expr: &DocumentQueryExpr,
     document_service: Arc<DocumentService>,
 ) -> Result<SubQueryResult> {
-    debug!("Executing document query on collection: {}", expr.collection);
+    debug!(
+        "Executing document query on collection: {}",
+        expr.collection
+    );
 
     // Convert PathFilters to DocumentFilter
     let filter = convert_path_filters_to_document_filter(&expr.path_filters);
@@ -547,11 +547,9 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json
         Some(Value::NullValue(_)) => serde_json::Value::Null,
         Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
-        Some(Value::NumberValue(f)) => {
-            serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
+        Some(Value::NumberValue(f)) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
         Some(Value::BytesValue(b)) => {
             // Encode bytes as hex string (simpler than base64)
@@ -559,10 +557,7 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json
             serde_json::Value::String(encoded)
         }
         Some(Value::ArrayValue(arr)) => {
-            let items: Vec<serde_json::Value> = arr.values
-                .iter()
-                .map(sql_value_to_json)
-                .collect();
+            let items: Vec<serde_json::Value> = arr.values.iter().map(sql_value_to_json).collect();
             serde_json::Value::Array(items)
         }
         Some(Value::ObjectValue(obj)) => sql_object_to_json(obj),
@@ -665,7 +660,10 @@ async fn resolve_start_nodes(
             Ok(ids.clone())
         }
         StartNodeSpec::Label(label) => {
-            debug!("StartNodeSpec::Label - querying nodes with label '{}'", label);
+            debug!(
+                "StartNodeSpec::Label - querying nodes with label '{}'",
+                label
+            );
             resolve_nodes_by_label(graph_name, label, graph_service).await
         }
         StartNodeSpec::Filter(filter) => {
@@ -811,7 +809,8 @@ async fn execute_graph_traversal_with_context(
     };
 
     // Resolve start nodes from the specification
-    let start_node_ids = resolve_start_nodes(&expr.start_nodes, &expr.graph_name, &graph_svc, context).await?;
+    let start_node_ids =
+        resolve_start_nodes(&expr.start_nodes, &expr.graph_name, &graph_svc, context).await?;
 
     if start_node_ids.is_empty() {
         debug!("No start nodes resolved for graph traversal");
@@ -852,7 +851,10 @@ async fn execute_graph_traversal_with_context(
             max_frontier: None,
         };
 
-        match graph_svc.traverse(&expr.graph_name, traversal_request).await {
+        match graph_svc
+            .traverse(&expr.graph_name, traversal_request)
+            .await
+        {
             Ok(response) => {
                 for node in response.nodes {
                     // Deduplicate nodes across multiple traversals
@@ -894,10 +896,7 @@ async fn execute_graph_traversal_with_context(
 
 /// Extract node labels from node filters
 fn extract_node_labels(filters: &[super::ast::NodeFilter]) -> Vec<String> {
-    filters
-        .iter()
-        .filter_map(|f| f.label.clone())
-        .collect()
+    filters.iter().filter_map(|f| f.label.clone()).collect()
 }
 
 /// Execute a graph traversal with input node IDs (legacy)
@@ -929,11 +928,9 @@ async fn execute_graph_traversal_with_input_full(
 
     // If we have input IDs, traverse from each of them
     // Otherwise extract from StartNodeSpec
-    let start_nodes = input_ids.unwrap_or_else(|| {
-        match &expr.start_nodes {
-            StartNodeSpec::Ids(ids) => ids.clone(),
-            _ => Vec::new(),
-        }
+    let start_nodes = input_ids.unwrap_or_else(|| match &expr.start_nodes {
+        StartNodeSpec::Ids(ids) => ids.clone(),
+        _ => Vec::new(),
     });
 
     if start_nodes.is_empty() {
@@ -956,7 +953,10 @@ async fn execute_graph_traversal_with_input_full(
             max_frontier: None,
         };
 
-        if let Ok(response) = graph_svc.traverse(&expr.graph_name, traversal_request).await {
+        if let Ok(response) = graph_svc
+            .traverse(&expr.graph_name, traversal_request)
+            .await
+        {
             for node in response.nodes {
                 all_records.push(UnifiedRecord {
                     id: node.id.clone(),
@@ -1172,7 +1172,11 @@ impl JoinResult {
     }
 
     /// Convert to SubQueryResult based on join type
-    pub fn to_subquery_result(self, source_model: DataModel, join_type: &JoinType) -> SubQueryResult {
+    pub fn to_subquery_result(
+        self,
+        source_model: DataModel,
+        join_type: &JoinType,
+    ) -> SubQueryResult {
         let records = match join_type {
             JoinType::Inner | JoinType::Semi => self.matched,
             JoinType::LeftOuter => {
@@ -1376,11 +1380,7 @@ fn extract_nested_json(data: &serde_json::Value, path_parts: &[&str]) -> Option<
 }
 
 /// Merge two records from different models into one
-fn merge_records(
-    left: &UnifiedRecord,
-    right: &UnifiedRecord,
-    join_field: &str,
-) -> UnifiedRecord {
+fn merge_records(left: &UnifiedRecord, right: &UnifiedRecord, join_field: &str) -> UnifiedRecord {
     // Create merged data object
     let mut merged_data = serde_json::Map::new();
 
@@ -1441,7 +1441,9 @@ pub fn execute_multi_join(
     for dep in dependencies {
         if let Some(prior) = prior_results.get(&dep.component_index) {
             let join_result = execute_join(&current_records, &prior.records, dep);
-            current_records = join_result.to_subquery_result(source_model.clone(), &dep.join_type).records;
+            current_records = join_result
+                .to_subquery_result(source_model.clone(), &dep.join_type)
+                .records;
         }
     }
 
@@ -1522,20 +1524,31 @@ mod tests {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
         // Test null
-        let null_val = SqlValue { value: Some(Value::NullValue(0)) };
+        let null_val = SqlValue {
+            value: Some(Value::NullValue(0)),
+        };
         assert_eq!(sql_value_to_json(&null_val), serde_json::Value::Null);
 
         // Test bool
-        let bool_val = SqlValue { value: Some(Value::BoolValue(true)) };
+        let bool_val = SqlValue {
+            value: Some(Value::BoolValue(true)),
+        };
         assert_eq!(sql_value_to_json(&bool_val), serde_json::Value::Bool(true));
 
         // Test int
-        let int_val = SqlValue { value: Some(Value::Int64Value(42)) };
+        let int_val = SqlValue {
+            value: Some(Value::Int64Value(42)),
+        };
         assert_eq!(sql_value_to_json(&int_val), serde_json::json!(42));
 
         // Test string
-        let str_val = SqlValue { value: Some(Value::StringValue("hello".to_string())) };
-        assert_eq!(sql_value_to_json(&str_val), serde_json::Value::String("hello".to_string()));
+        let str_val = SqlValue {
+            value: Some(Value::StringValue("hello".to_string())),
+        };
+        assert_eq!(
+            sql_value_to_json(&str_val),
+            serde_json::Value::String("hello".to_string())
+        );
     }
 
     // =========================================================================
@@ -1607,15 +1620,35 @@ mod tests {
     fn test_inner_join() {
         // Left: documents with user_id field
         let left = vec![
-            make_test_record("doc_1", DataModel::Document, serde_json::json!({"user_id": "u1"})),
-            make_test_record("doc_2", DataModel::Document, serde_json::json!({"user_id": "u2"})),
-            make_test_record("doc_3", DataModel::Document, serde_json::json!({"user_id": "u3"})),
+            make_test_record(
+                "doc_1",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u1"}),
+            ),
+            make_test_record(
+                "doc_2",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u2"}),
+            ),
+            make_test_record(
+                "doc_3",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u3"}),
+            ),
         ];
 
         // Right: vectors with SAME user_id field (join field must exist on both sides)
         let right = vec![
-            make_test_record("vec_1", DataModel::Vector, serde_json::json!({"user_id": "u1"})),
-            make_test_record("vec_2", DataModel::Vector, serde_json::json!({"user_id": "u2"})),
+            make_test_record(
+                "vec_1",
+                DataModel::Vector,
+                serde_json::json!({"user_id": "u1"}),
+            ),
+            make_test_record(
+                "vec_2",
+                DataModel::Vector,
+                serde_json::json!({"user_id": "u2"}),
+            ),
             // u3 is missing
         ];
 
@@ -1636,15 +1669,29 @@ mod tests {
     #[test]
     fn test_left_outer_join() {
         let left = vec![
-            make_test_record("doc_1", DataModel::Document, serde_json::json!({"user_id": "u1"})),
-            make_test_record("doc_2", DataModel::Document, serde_json::json!({"user_id": "u2"})),
-            make_test_record("doc_3", DataModel::Document, serde_json::json!({"user_id": "u3"})),
+            make_test_record(
+                "doc_1",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u1"}),
+            ),
+            make_test_record(
+                "doc_2",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u2"}),
+            ),
+            make_test_record(
+                "doc_3",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u3"}),
+            ),
         ];
 
         // Right: only has user_id=u1, so u2 and u3 will be unmatched
-        let right = vec![
-            make_test_record("vec_1", DataModel::Vector, serde_json::json!({"user_id": "u1"})),
-        ];
+        let right = vec![make_test_record(
+            "vec_1",
+            DataModel::Vector,
+            serde_json::json!({"user_id": "u1"}),
+        )];
 
         let dependency = ComponentDependency {
             component_index: 0,
@@ -1667,15 +1714,35 @@ mod tests {
     #[test]
     fn test_semi_join() {
         let left = vec![
-            make_test_record("doc_1", DataModel::Document, serde_json::json!({"user_id": "u1"})),
-            make_test_record("doc_2", DataModel::Document, serde_json::json!({"user_id": "u2"})),
-            make_test_record("doc_3", DataModel::Document, serde_json::json!({"user_id": "u1"})), // Same user_id
+            make_test_record(
+                "doc_1",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u1"}),
+            ),
+            make_test_record(
+                "doc_2",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u2"}),
+            ),
+            make_test_record(
+                "doc_3",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u1"}),
+            ), // Same user_id
         ];
 
         // Right side has user_id field matching u1
         let right = vec![
-            make_test_record("vec_1", DataModel::Vector, serde_json::json!({"user_id": "u1"})),
-            make_test_record("vec_2", DataModel::Vector, serde_json::json!({"user_id": "u1"})), // Another u1
+            make_test_record(
+                "vec_1",
+                DataModel::Vector,
+                serde_json::json!({"user_id": "u1"}),
+            ),
+            make_test_record(
+                "vec_2",
+                DataModel::Vector,
+                serde_json::json!({"user_id": "u1"}),
+            ), // Another u1
         ];
 
         let dependency = ComponentDependency {
@@ -1694,15 +1761,29 @@ mod tests {
     #[test]
     fn test_anti_join() {
         let left = vec![
-            make_test_record("doc_1", DataModel::Document, serde_json::json!({"user_id": "u1"})),
-            make_test_record("doc_2", DataModel::Document, serde_json::json!({"user_id": "u2"})),
-            make_test_record("doc_3", DataModel::Document, serde_json::json!({"user_id": "u3"})),
+            make_test_record(
+                "doc_1",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u1"}),
+            ),
+            make_test_record(
+                "doc_2",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u2"}),
+            ),
+            make_test_record(
+                "doc_3",
+                DataModel::Document,
+                serde_json::json!({"user_id": "u3"}),
+            ),
         ];
 
         // Right side has user_id=u1, so doc_1 will be excluded (matched)
-        let right = vec![
-            make_test_record("vec_1", DataModel::Vector, serde_json::json!({"user_id": "u1"})),
-        ];
+        let right = vec![make_test_record(
+            "vec_1",
+            DataModel::Vector,
+            serde_json::json!({"user_id": "u1"}),
+        )];
 
         let dependency = ComponentDependency {
             component_index: 0,
@@ -1722,13 +1803,29 @@ mod tests {
     #[test]
     fn test_join_by_id() {
         let left = vec![
-            make_test_record("shared_1", DataModel::Document, serde_json::json!({"name": "Doc1"})),
-            make_test_record("shared_2", DataModel::Document, serde_json::json!({"name": "Doc2"})),
+            make_test_record(
+                "shared_1",
+                DataModel::Document,
+                serde_json::json!({"name": "Doc1"}),
+            ),
+            make_test_record(
+                "shared_2",
+                DataModel::Document,
+                serde_json::json!({"name": "Doc2"}),
+            ),
         ];
 
         let right = vec![
-            make_test_record("shared_1", DataModel::Vector, serde_json::json!({"vec": [0.1]})),
-            make_test_record("other", DataModel::Vector, serde_json::json!({"vec": [0.2]})),
+            make_test_record(
+                "shared_1",
+                DataModel::Vector,
+                serde_json::json!({"vec": [0.1]}),
+            ),
+            make_test_record(
+                "other",
+                DataModel::Vector,
+                serde_json::json!({"vec": [0.2]}),
+            ),
         ];
 
         let dependency = ComponentDependency {
@@ -1766,7 +1863,11 @@ mod tests {
 
         // Check score is averaged (use approximate comparison for floating point)
         let score = merged.score.unwrap();
-        assert!((score - 0.85).abs() < 0.0001, "Expected score ~0.85, got {}", score);
+        assert!(
+            (score - 0.85).abs() < 0.0001,
+            "Expected score ~0.85, got {}",
+            score
+        );
 
         // Check right_id is in metadata
         assert_eq!(merged.metadata.get("right_id"), Some(&"vec_1".to_string()));
@@ -1820,8 +1921,16 @@ mod tests {
             source_model: DataModel::Vector,
             records_returned: 2,
             records: vec![
-                make_test_record("v1", DataModel::Vector, serde_json::json!({"product_id": "p1"})),
-                make_test_record("v2", DataModel::Vector, serde_json::json!({"product_id": "p2"})),
+                make_test_record(
+                    "v1",
+                    DataModel::Vector,
+                    serde_json::json!({"product_id": "p1"}),
+                ),
+                make_test_record(
+                    "v2",
+                    DataModel::Vector,
+                    serde_json::json!({"product_id": "p2"}),
+                ),
             ],
             total_count: Some(2),
             execution_time_us: 100,
@@ -1833,9 +1942,21 @@ mod tests {
             source_model: DataModel::Document,
             records_returned: 3,
             records: vec![
-                make_test_record("d1", DataModel::Document, serde_json::json!({"product_id": "p1", "name": "Product 1"})),
-                make_test_record("d2", DataModel::Document, serde_json::json!({"product_id": "p2", "name": "Product 2"})),
-                make_test_record("d3", DataModel::Document, serde_json::json!({"product_id": "p3", "name": "Product 3"})),
+                make_test_record(
+                    "d1",
+                    DataModel::Document,
+                    serde_json::json!({"product_id": "p1", "name": "Product 1"}),
+                ),
+                make_test_record(
+                    "d2",
+                    DataModel::Document,
+                    serde_json::json!({"product_id": "p2", "name": "Product 2"}),
+                ),
+                make_test_record(
+                    "d3",
+                    DataModel::Document,
+                    serde_json::json!({"product_id": "p3", "name": "Product 3"}),
+                ),
             ],
             total_count: Some(3),
             execution_time_us: 50,
@@ -1883,9 +2004,21 @@ mod tests {
             source_model: DataModel::Vector,
             records_returned: 3,
             records: vec![
-                make_test_record("node_alpha", DataModel::Vector, serde_json::json!({"similarity": 0.95})),
-                make_test_record("node_beta", DataModel::Vector, serde_json::json!({"similarity": 0.88})),
-                make_test_record("node_gamma", DataModel::Vector, serde_json::json!({"similarity": 0.75})),
+                make_test_record(
+                    "node_alpha",
+                    DataModel::Vector,
+                    serde_json::json!({"similarity": 0.95}),
+                ),
+                make_test_record(
+                    "node_beta",
+                    DataModel::Vector,
+                    serde_json::json!({"similarity": 0.88}),
+                ),
+                make_test_record(
+                    "node_gamma",
+                    DataModel::Vector,
+                    serde_json::json!({"similarity": 0.75}),
+                ),
             ],
             total_count: Some(3),
             execution_time_us: 50,
@@ -1917,14 +2050,22 @@ mod tests {
             source_model: DataModel::Vector,
             records_returned: 2,
             records: vec![
-                make_test_record("vec_product_1", DataModel::Vector, serde_json::json!({
-                    "entity_id": "prod_1",
-                    "similarity": 0.92
-                })),
-                make_test_record("vec_product_2", DataModel::Vector, serde_json::json!({
-                    "entity_id": "prod_2",
-                    "similarity": 0.85
-                })),
+                make_test_record(
+                    "vec_product_1",
+                    DataModel::Vector,
+                    serde_json::json!({
+                        "entity_id": "prod_1",
+                        "similarity": 0.92
+                    }),
+                ),
+                make_test_record(
+                    "vec_product_2",
+                    DataModel::Vector,
+                    serde_json::json!({
+                        "entity_id": "prod_2",
+                        "similarity": 0.85
+                    }),
+                ),
             ],
             total_count: Some(2),
             execution_time_us: 100,
@@ -1937,22 +2078,38 @@ mod tests {
             records_returned: 4,
             records: vec![
                 // Related entities found via graph traversal
-                make_test_record("prod_1", DataModel::Graph, serde_json::json!({
-                    "labels": ["Product"],
-                    "doc_id": "doc_product_1"
-                })),
-                make_test_record("brand_1", DataModel::Graph, serde_json::json!({
-                    "labels": ["Brand"],
-                    "doc_id": "doc_brand_1"
-                })),
-                make_test_record("prod_2", DataModel::Graph, serde_json::json!({
-                    "labels": ["Product"],
-                    "doc_id": "doc_product_2"
-                })),
-                make_test_record("category_1", DataModel::Graph, serde_json::json!({
-                    "labels": ["Category"],
-                    "doc_id": "doc_category_1"
-                })),
+                make_test_record(
+                    "prod_1",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["Product"],
+                        "doc_id": "doc_product_1"
+                    }),
+                ),
+                make_test_record(
+                    "brand_1",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["Brand"],
+                        "doc_id": "doc_brand_1"
+                    }),
+                ),
+                make_test_record(
+                    "prod_2",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["Product"],
+                        "doc_id": "doc_product_2"
+                    }),
+                ),
+                make_test_record(
+                    "category_1",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["Category"],
+                        "doc_id": "doc_category_1"
+                    }),
+                ),
             ],
             total_count: Some(4),
             execution_time_us: 50,
@@ -1964,26 +2121,42 @@ mod tests {
             source_model: DataModel::Document,
             records_returned: 4,
             records: vec![
-                make_test_record("doc_product_1", DataModel::Document, serde_json::json!({
-                    "doc_id": "doc_product_1",
-                    "name": "Wireless Headphones",
-                    "price": 149.99
-                })),
-                make_test_record("doc_brand_1", DataModel::Document, serde_json::json!({
-                    "doc_id": "doc_brand_1",
-                    "name": "TechAudio Inc.",
-                    "country": "USA"
-                })),
-                make_test_record("doc_product_2", DataModel::Document, serde_json::json!({
-                    "doc_id": "doc_product_2",
-                    "name": "Bluetooth Speaker",
-                    "price": 79.99
-                })),
-                make_test_record("doc_category_1", DataModel::Document, serde_json::json!({
-                    "doc_id": "doc_category_1",
-                    "name": "Electronics",
-                    "parent": "Home"
-                })),
+                make_test_record(
+                    "doc_product_1",
+                    DataModel::Document,
+                    serde_json::json!({
+                        "doc_id": "doc_product_1",
+                        "name": "Wireless Headphones",
+                        "price": 149.99
+                    }),
+                ),
+                make_test_record(
+                    "doc_brand_1",
+                    DataModel::Document,
+                    serde_json::json!({
+                        "doc_id": "doc_brand_1",
+                        "name": "TechAudio Inc.",
+                        "country": "USA"
+                    }),
+                ),
+                make_test_record(
+                    "doc_product_2",
+                    DataModel::Document,
+                    serde_json::json!({
+                        "doc_id": "doc_product_2",
+                        "name": "Bluetooth Speaker",
+                        "price": 79.99
+                    }),
+                ),
+                make_test_record(
+                    "doc_category_1",
+                    DataModel::Document,
+                    serde_json::json!({
+                        "doc_id": "doc_category_1",
+                        "name": "Electronics",
+                        "parent": "Home"
+                    }),
+                ),
             ],
             total_count: Some(4),
             execution_time_us: 30,
@@ -1999,7 +2172,7 @@ mod tests {
 
         let mut prior_results: HashMap<usize, &SubQueryResult> = HashMap::new();
         prior_results.insert(0, &vector_result); // Stage 0: vectors
-        prior_results.insert(1, &graph_result);  // Stage 1: graph
+        prior_results.insert(1, &graph_result); // Stage 1: graph
 
         // Join documents with graph results
         let joined = execute_multi_join(&doc_result, &dependencies, &prior_results);
@@ -2023,9 +2196,21 @@ mod tests {
             source_model: DataModel::Vector,
             records_returned: 3,
             records: vec![
-                make_test_record("v1", DataModel::Vector, serde_json::json!({"product_id": "p1"})),
-                make_test_record("v2", DataModel::Vector, serde_json::json!({"product_id": "p2"})),
-                make_test_record("v3", DataModel::Vector, serde_json::json!({"product_id": "p_unknown"})), // No match
+                make_test_record(
+                    "v1",
+                    DataModel::Vector,
+                    serde_json::json!({"product_id": "p1"}),
+                ),
+                make_test_record(
+                    "v2",
+                    DataModel::Vector,
+                    serde_json::json!({"product_id": "p2"}),
+                ),
+                make_test_record(
+                    "v3",
+                    DataModel::Vector,
+                    serde_json::json!({"product_id": "p_unknown"}),
+                ), // No match
             ],
             total_count: Some(3),
             execution_time_us: 50,
@@ -2037,8 +2222,16 @@ mod tests {
             source_model: DataModel::Document,
             records_returned: 2,
             records: vec![
-                make_test_record("d1", DataModel::Document, serde_json::json!({"product_id": "p1"})),
-                make_test_record("d2", DataModel::Document, serde_json::json!({"product_id": "p2"})),
+                make_test_record(
+                    "d1",
+                    DataModel::Document,
+                    serde_json::json!({"product_id": "p1"}),
+                ),
+                make_test_record(
+                    "d2",
+                    DataModel::Document,
+                    serde_json::json!({"product_id": "p2"}),
+                ),
                 // p_unknown doesn't exist in documents
             ],
             total_count: Some(2),
@@ -2079,18 +2272,30 @@ mod tests {
             source_model: DataModel::Graph,
             records_returned: 3,
             records: vec![
-                make_test_record("user_alice", DataModel::Graph, serde_json::json!({
-                    "labels": ["User"],
-                    "properties": {"name": "Alice"}
-                })),
-                make_test_record("user_bob", DataModel::Graph, serde_json::json!({
-                    "labels": ["User"],
-                    "properties": {"name": "Bob"}
-                })),
-                make_test_record("user_charlie", DataModel::Graph, serde_json::json!({
-                    "labels": ["User"],
-                    "properties": {"name": "Charlie"}
-                })),
+                make_test_record(
+                    "user_alice",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["User"],
+                        "properties": {"name": "Alice"}
+                    }),
+                ),
+                make_test_record(
+                    "user_bob",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["User"],
+                        "properties": {"name": "Bob"}
+                    }),
+                ),
+                make_test_record(
+                    "user_charlie",
+                    DataModel::Graph,
+                    serde_json::json!({
+                        "labels": ["User"],
+                        "properties": {"name": "Charlie"}
+                    }),
+                ),
             ],
             total_count: Some(3),
             execution_time_us: 25,

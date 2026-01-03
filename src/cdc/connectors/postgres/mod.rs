@@ -61,6 +61,6 @@ mod config;
 mod connector;
 mod decoder;
 
-pub use config::{PostgresConfig, TableConfig, SnapshotMode, ColumnMapping};
+pub use config::{ColumnMapping, PostgresConfig, SnapshotMode, TableConfig};
 pub use connector::PostgresConnector;
-pub use decoder::{PgOutputDecoder, PgOutputEvent, PgRelation, TupleData, ColumnValue};
+pub use decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, PgRelation, TupleData};

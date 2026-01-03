@@ -190,44 +190,21 @@ pub use quantization::*;
 
 // Re-export compute provider types for pluggable compute engines
 pub use provider::{
-    ComputeProvider,
-    ComputeCapabilities,
-    CostEstimate,
-    ExecutionContext,
+    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, LocalComputeProvider,
     ProviderMetrics,
-    LocalComputeProvider,
 };
 
 // Re-export compute plan types for serializable query plans
 pub use plan::{
-    ComputePlan,
-    PlanNode,
-    PlanHints,
-    Expr,
-    LiteralValue,
-    BinaryOp,
-    UnaryOp,
-    ProjectExpr,
-    AggExpr,
-    AggFunction,
-    SortExpr,
-    JoinCondition,
-    JoinType,
-    JoinStrategy,
-    Partitioning,
-    TraversalSpec,
-    TraversalDirection,
+    AggExpr, AggFunction, BinaryOp, ComputePlan, Expr, JoinCondition, JoinStrategy, JoinType,
+    LiteralValue, Partitioning, PlanHints, PlanNode, ProjectExpr, SortExpr, TraversalDirection,
+    TraversalSpec, UnaryOp,
 };
 
 // Re-export compute scheduler types for provider selection and routing
 pub use scheduler::{
-    ComputeScheduler,
-    ComputeSchedulerBuilder,
-    SchedulingPolicy,
-    SchedulerConfig,
-    SchedulerStatistics,
-    ProviderStatistics,
-    CostWeights,
+    ComputeScheduler, ComputeSchedulerBuilder, CostWeights, ProviderStatistics, SchedulerConfig,
+    SchedulerStatistics, SchedulingPolicy,
 };
 
 #[cfg(test)]

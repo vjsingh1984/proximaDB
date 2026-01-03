@@ -36,8 +36,8 @@ use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use bytes::Bytes;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::metadata::ParquetMetaData;
 use parquet::file::reader::FileReader;
 use parquet::file::serialized_reader::SerializedFileReader;
@@ -424,7 +424,9 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
             total_blocks_scanned += row_groups.len();
 
             // Read the selected row groups
-            let batches = self.read_file_row_groups(file_path, row_groups, &config).await?;
+            let batches = self
+                .read_file_row_groups(file_path, row_groups, &config)
+                .await?;
 
             for batch in batches {
                 total_bytes_read += batch.get_array_memory_size() as u64;
@@ -471,7 +473,9 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
                 self.get_all_row_group_indices(file_path).await?
             };
 
-            let batches = self.read_file_row_groups(file_path, row_groups, &config).await?;
+            let batches = self
+                .read_file_row_groups(file_path, row_groups, &config)
+                .await?;
             all_batches.extend(batches);
         }
 

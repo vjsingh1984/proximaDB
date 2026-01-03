@@ -8,7 +8,7 @@
 //! Detects REST/HTTP API requests. This is the fallback detector with lowest priority.
 
 use crate::network::multiplex::traits::{DetectedProtocol, DetectionResult, ProtocolDetector};
-use hyper::http::{header, Request, Version};
+use hyper::http::{Request, Version, header};
 
 /// Default priority for REST detector (lowest - fallback)
 pub const REST_DETECTOR_PRIORITY: u32 = 10;
@@ -320,10 +320,7 @@ mod tests {
         let detector = RestDetector::strict();
 
         // HTTP/1.1 should increase confidence
-        let request = make_request()
-            .version(Version::HTTP_11)
-            .body(())
-            .unwrap();
+        let request = make_request().version(Version::HTTP_11).body(()).unwrap();
 
         let result = detector.detect(&request);
         assert!(result.is_some());

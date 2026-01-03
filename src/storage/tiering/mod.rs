@@ -97,18 +97,17 @@
 //! engine.start().await?;
 //! ```
 
-pub mod policy;
 pub mod engine;
-pub mod tracker;
 pub mod migration;
+pub mod policy;
 pub mod retention;
+pub mod tracker;
 
-pub use policy::{TieringPolicy, TieringRule, PolicyCondition, PolicyAction, PerformanceTier};
-pub use engine::{TieringPolicyEngine, TieringEngineConfig, TieringStats};
-pub use tracker::{AccessTracker, AccessPattern, AccessEvent};
-pub use migration::{MigrationTask, MigrationStatus, MigrationResult};
+pub use engine::{TieringEngineConfig, TieringPolicyEngine, TieringStats};
+pub use migration::{MigrationResult, MigrationStatus, MigrationTask};
+pub use policy::{PerformanceTier, PolicyAction, PolicyCondition, TieringPolicy, TieringRule};
 pub use retention::{
-    RetentionPolicy, RetentionRule, RetentionCondition, RetentionAction,
-    RetentionManager, RetentionManagerConfig, RetentionStats, RetentionMetadata,
-    ArchiveConfig, ArchiveDestinationType,
+    ArchiveConfig, ArchiveDestinationType, RetentionAction, RetentionCondition, RetentionManager,
+    RetentionManagerConfig, RetentionMetadata, RetentionPolicy, RetentionRule, RetentionStats,
 };
+pub use tracker::{AccessEvent, AccessPattern, AccessTracker};

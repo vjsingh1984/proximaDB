@@ -140,12 +140,22 @@ impl MetadataBounds {
         if let Some((min, max)) = self.field_ranges.get(field) {
             // Perform range check based on value type
             match (min, max, value) {
-                (serde_json::Value::Number(min_n), serde_json::Value::Number(max_n), serde_json::Value::Number(v)) => {
-                    if let (Some(min_f), Some(max_f), Some(v_f)) = (min_n.as_f64(), max_n.as_f64(), v.as_f64()) {
+                (
+                    serde_json::Value::Number(min_n),
+                    serde_json::Value::Number(max_n),
+                    serde_json::Value::Number(v),
+                ) => {
+                    if let (Some(min_f), Some(max_f), Some(v_f)) =
+                        (min_n.as_f64(), max_n.as_f64(), v.as_f64())
+                    {
                         return v_f >= min_f && v_f <= max_f;
                     }
                 }
-                (serde_json::Value::String(min_s), serde_json::Value::String(max_s), serde_json::Value::String(v)) => {
+                (
+                    serde_json::Value::String(min_s),
+                    serde_json::Value::String(max_s),
+                    serde_json::Value::String(v),
+                ) => {
                     return v >= min_s && v <= max_s;
                 }
                 _ => {}
@@ -156,7 +166,11 @@ impl MetadataBounds {
     }
 
     /// Update bounds with a new record's metadata
-    pub fn update_with_record(&mut self, metadata: &HashMap<String, serde_json::Value>, partition_key: Option<&str>) {
+    pub fn update_with_record(
+        &mut self,
+        metadata: &HashMap<String, serde_json::Value>,
+        partition_key: Option<&str>,
+    ) {
         // Extract tenant_id if present
         if let Some(serde_json::Value::String(tid)) = metadata.get("tenant_id") {
             self.tenant_ids.insert(tid.clone());
@@ -206,7 +220,8 @@ impl MetadataBounds {
     pub fn merge(&mut self, other: &MetadataBounds) {
         self.tenant_ids.extend(other.tenant_ids.iter().cloned());
         self.domain_ids.extend(other.domain_ids.iter().cloned());
-        self.partition_values.extend(other.partition_values.iter().cloned());
+        self.partition_values
+            .extend(other.partition_values.iter().cloned());
 
         // Merge field ranges
         for (field, (other_min, other_max)) in &other.field_ranges {
@@ -292,11 +307,15 @@ pub struct PartitionConfig {
 
 impl PartitionConfig {
     /// Extract partition key from record metadata
-    pub fn extract_partition_key(&self, metadata: &HashMap<String, serde_json::Value>) -> Option<String> {
+    pub fn extract_partition_key(
+        &self,
+        metadata: &HashMap<String, serde_json::Value>,
+    ) -> Option<String> {
         match &self.strategy {
             PartitionStrategy::HashId => None,
             PartitionStrategy::HashMetadata { fields } => {
-                let key_parts: Vec<String> = fields.iter()
+                let key_parts: Vec<String> = fields
+                    .iter()
                     .filter_map(|f| {
                         metadata.get(f).map(|v| match v {
                             serde_json::Value::String(s) => s.clone(),
@@ -310,39 +329,34 @@ impl PartitionConfig {
                     Some(key_parts.join(":"))
                 }
             }
-            PartitionStrategy::Range { field, boundaries: _ } => {
-                metadata.get(field).map(|v| match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => v.to_string(),
-                })
-            }
-            PartitionStrategy::Tenant => {
-                metadata.get("tenant_id").and_then(|v| {
-                    if let serde_json::Value::String(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-            }
-            PartitionStrategy::Domain => {
-                metadata.get("domain_id").and_then(|v| {
-                    if let serde_json::Value::String(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-            }
-            PartitionStrategy::TenantHash { .. } => {
-                metadata.get("tenant_id").and_then(|v| {
-                    if let serde_json::Value::String(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-            }
+            PartitionStrategy::Range {
+                field,
+                boundaries: _,
+            } => metadata.get(field).map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                _ => v.to_string(),
+            }),
+            PartitionStrategy::Tenant => metadata.get("tenant_id").and_then(|v| {
+                if let serde_json::Value::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            }),
+            PartitionStrategy::Domain => metadata.get("domain_id").and_then(|v| {
+                if let serde_json::Value::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            }),
+            PartitionStrategy::TenantHash { .. } => metadata.get("tenant_id").and_then(|v| {
+                if let serde_json::Value::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            }),
         }
     }
 }
@@ -430,10 +444,19 @@ impl Shard {
     }
 
     /// Create a new shard with partition configuration
-    pub fn with_partition_config(collection_id: &str, shard_number: u32, config: PartitionConfig) -> Self {
+    pub fn with_partition_config(
+        collection_id: &str,
+        shard_number: u32,
+        config: PartitionConfig,
+    ) -> Self {
         let mut shard = Self::new(collection_id, shard_number);
         shard.partition_config = Some(config);
-        if shard.partition_config.as_ref().map(|c| c.track_metadata_bounds).unwrap_or(false) {
+        if shard
+            .partition_config
+            .as_ref()
+            .map(|c| c.track_metadata_bounds)
+            .unwrap_or(false)
+        {
             shard.metadata_bounds = Some(MetadataBounds::new());
         }
         shard
@@ -442,7 +465,8 @@ impl Shard {
     /// Update metadata bounds with a record's metadata
     pub fn update_metadata_bounds(&mut self, metadata: &HashMap<String, serde_json::Value>) {
         if let Some(ref mut bounds) = self.metadata_bounds {
-            let partition_key = self.partition_config
+            let partition_key = self
+                .partition_config
                 .as_ref()
                 .and_then(|c| c.extract_partition_key(metadata));
             bounds.update_with_record(metadata, partition_key.as_deref());
@@ -560,7 +584,8 @@ impl ShardManager {
         available_nodes: &[String],
     ) -> Result<Vec<Shard>> {
         let shard_count = shard_count.unwrap_or(self.config.default_shard_count);
-        let replication_factor = replication_factor.unwrap_or(self.config.default_replication_factor);
+        let replication_factor =
+            replication_factor.unwrap_or(self.config.default_replication_factor);
 
         if shard_count < self.config.min_shards || shard_count > self.config.max_shards {
             return Err(anyhow::anyhow!(
@@ -719,7 +744,8 @@ impl ShardManager {
 
             if let Some(ref mut bounds) = shard.metadata_bounds {
                 for metadata in records_metadata {
-                    let partition_key = shard.partition_config
+                    let partition_key = shard
+                        .partition_config
                         .as_ref()
                         .and_then(|c| c.extract_partition_key(metadata));
                     bounds.update_with_record(metadata, partition_key.as_deref());
@@ -1252,6 +1278,13 @@ mod tests {
         shard.update_metadata_bounds(&metadata);
 
         shard.enable_metadata_bounds();
-        assert!(shard.metadata_bounds.as_ref().unwrap().tenant_ids.contains("test"));
+        assert!(
+            shard
+                .metadata_bounds
+                .as_ref()
+                .unwrap()
+                .tenant_ids
+                .contains("test")
+        );
     }
 }

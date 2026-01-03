@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -233,10 +233,7 @@ impl CollectionRLS {
                 }
                 Err(e) => {
                     if self.config.debug_logging {
-                        warn!(
-                            "Failed to build filter for policy '{}': {}",
-                            policy.name, e
-                        );
+                        warn!("Failed to build filter for policy '{}': {}", policy.name, e);
                     }
                     // Deny access if we can't build the filter (fail-secure)
                     return Ok(Arc::new(RLSFilterResult::denied(format!(
@@ -292,7 +289,9 @@ impl CollectionRLS {
                 }))
             }
 
-            SecurityPredicate::TenantIsolation { record_tenant_field } => {
+            SecurityPredicate::TenantIsolation {
+                record_tenant_field,
+            } => {
                 match &user_context.tenant_id {
                     Some(tenant_id) => Ok(Some(FilterExpression::Comparison {
                         field: record_tenant_field.clone(),
@@ -311,7 +310,9 @@ impl CollectionRLS {
                 allowed_values,
             } => {
                 // Check if user has any of the allowed roles
-                let has_access = allowed_values.iter().any(|v| user_context.roles.contains(v));
+                let has_access = allowed_values
+                    .iter()
+                    .any(|v| user_context.roles.contains(v));
 
                 if has_access {
                     // User has required role - no additional filter needed
@@ -322,9 +323,7 @@ impl CollectionRLS {
                     Ok(Some(FilterExpression::Comparison {
                         field: metadata_field.clone(),
                         operator: ComparisonOperator::Equals,
-                        value: serde_json::Value::String(
-                            "__rls_access_denied__".to_string(),
-                        ),
+                        value: serde_json::Value::String("__rls_access_denied__".to_string()),
                     }))
                 }
             }
@@ -334,10 +333,9 @@ impl CollectionRLS {
                 record_dept_field,
             } => {
                 // Get user's department from their metadata
-                let user_dept = user_context
-                    .metadata
-                    .get(user_dept_field)
-                    .ok_or_else(|| anyhow!("User department attribute '{}' not found", user_dept_field))?;
+                let user_dept = user_context.metadata.get(user_dept_field).ok_or_else(|| {
+                    anyhow!("User department attribute '{}' not found", user_dept_field)
+                })?;
 
                 Ok(Some(FilterExpression::Comparison {
                     field: record_dept_field.clone(),
@@ -441,9 +439,7 @@ impl CollectionRLS {
 
             SecurityPredicate::AlwaysAllow => Ok(None),
 
-            SecurityPredicate::AlwaysDeny => {
-                Err(anyhow!("Access denied by security policy"))
-            }
+            SecurityPredicate::AlwaysDeny => Err(anyhow!("Access denied by security policy")),
         }
     }
 
@@ -543,7 +539,11 @@ mod tests {
     use crate::security::rls::policy::RLSPolicy;
     use std::collections::HashSet;
 
-    fn create_test_user(user_id: &str, tenant_id: Option<&str>, roles: Vec<&str>) -> UnifiedUserContext {
+    fn create_test_user(
+        user_id: &str,
+        tenant_id: Option<&str>,
+        roles: Vec<&str>,
+    ) -> UnifiedUserContext {
         UnifiedUserContext {
             user_id: user_id.to_string(),
             tenant_id: tenant_id.map(|s| s.to_string()),
@@ -559,7 +559,8 @@ mod tests {
 
     fn create_user_with_dept(user_id: &str, dept: &str) -> UnifiedUserContext {
         let mut user = create_test_user(user_id, None, vec![]);
-        user.metadata.insert("department".to_string(), dept.to_string());
+        user.metadata
+            .insert("department".to_string(), dept.to_string());
         user
     }
 

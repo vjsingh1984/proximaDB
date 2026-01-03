@@ -16,10 +16,15 @@ use std::sync::Arc;
 mod schema_tests {
     use super::*;
     use proximadb::storage::schema::{
-        ProximaSchema, ProximaColumn, ProximaDataType, VectorElementType,
+        ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType,
     };
 
-    fn make_column(id: i32, name: &str, data_type: ProximaDataType, nullable: bool) -> ProximaColumn {
+    fn make_column(
+        id: i32,
+        name: &str,
+        data_type: ProximaDataType,
+        nullable: bool,
+    ) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -39,10 +44,15 @@ mod schema_tests {
             "test_schema".to_string(),
             vec![
                 make_column(0, "id", ProximaDataType::String, false),
-                make_column(1, "embedding", ProximaDataType::Vector {
-                    dimension: 128,
-                    element_type: VectorElementType::Float32,
-                }, false),
+                make_column(
+                    1,
+                    "embedding",
+                    ProximaDataType::Vector {
+                        dimension: 128,
+                        element_type: VectorElementType::Float32,
+                    },
+                    false,
+                ),
                 make_column(2, "metadata", ProximaDataType::Json, true),
             ],
             vec![0],
@@ -105,23 +115,21 @@ mod schema_tests {
 mod file_split_tests {
     use super::*;
     use proximadb::storage::formats::{
-        FileSplit, SplitType, SplitStatistics, SplitLocality, SplitPlanner,
-        ColumnBounds, SpatialBounds, StorageTier, CacheStatus,
+        CacheStatus, ColumnBounds, FileSplit, SpatialBounds, SplitLocality, SplitPlanner,
+        SplitStatistics, SplitType, StorageTier,
     };
 
     #[test]
     fn test_block_split_creation() {
-        let split = FileSplit::new_block(
-            "/data/collection/file.sst".to_string(),
-            0,
-            0,
-            65536,
-            1000,
-        );
+        let split =
+            FileSplit::new_block("/data/collection/file.sst".to_string(), 0, 0, 65536, 1000);
 
         assert_eq!(split.split_id, "/data/collection/file.sst:block:0");
         assert_eq!(split.statistics.row_count, Some(1000));
-        assert!(matches!(split.split_type, SplitType::Block { block_id: 0, .. }));
+        assert!(matches!(
+            split.split_type,
+            SplitType::Block { block_id: 0, .. }
+        ));
     }
 
     #[test]
@@ -155,7 +163,12 @@ mod file_split_tests {
 
         // Should have spatial bounds
         assert!(split.statistics.spatial_bounds.is_some());
-        if let Some(SpatialBounds::Hilbert { min_code, max_code, order }) = split.statistics.spatial_bounds {
+        if let Some(SpatialBounds::Hilbert {
+            min_code,
+            max_code,
+            order,
+        }) = split.statistics.spatial_bounds
+        {
             assert_eq!(min_code, 0);
             assert_eq!(max_code, 1000);
             assert_eq!(order, 8);
@@ -173,7 +186,12 @@ mod file_split_tests {
         );
 
         assert!(split.split_id.contains(":superblock:"));
-        if let SplitType::SuperBlock { block_count, block_ids, .. } = &split.split_type {
+        if let SplitType::SuperBlock {
+            block_count,
+            block_ids,
+            ..
+        } = &split.split_type
+        {
             assert_eq!(*block_count, 4);
             assert_eq!(block_ids.len(), 4);
         } else {
@@ -218,7 +236,10 @@ mod file_split_tests {
         let cost3 = split.estimated_cost();
 
         assert!(cost2 < cost1, "Cached should be cheaper than unknown");
-        assert!(cost3 > cost1, "Remote should be more expensive than unknown");
+        assert!(
+            cost3 > cost1,
+            "Remote should be more expensive than unknown"
+        );
     }
 
     #[test]
@@ -245,11 +266,11 @@ mod file_split_tests {
 mod spark_tests {
     use super::*;
     use proximadb::connectors::{
-        SparkConnectorConfig, SparkInputPartition, SparkScanBuilder, SparkTable,
-        SparkFilter, SparkFilterType, SparkWriteBuilder, SparkWriteMode,
+        SparkConnectorConfig, SparkFilter, SparkFilterType, SparkInputPartition, SparkScanBuilder,
+        SparkTable, SparkWriteBuilder, SparkWriteMode,
     };
-    use proximadb::storage::schema::{ProximaSchema, ProximaColumn, ProximaDataType};
     use proximadb::storage::formats::FileSplit;
+    use proximadb::storage::schema::{ProximaColumn, ProximaDataType, ProximaSchema};
 
     fn make_column(id: i32, name: &str, data_type: ProximaDataType) -> ProximaColumn {
         ProximaColumn {
@@ -359,7 +380,7 @@ mod spark_tests {
 
     #[test]
     fn test_spark_write_builder() {
-        use arrow::datatypes::{Schema as ArrowSchema, Field, DataType};
+        use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
 
         let schema = Arc::new(ArrowSchema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -385,10 +406,10 @@ mod spark_tests {
 mod trino_tests {
     use super::*;
     use proximadb::connectors::{
-        TrinoConnectorConfig, TrinoTupleDomain, TrinoDomain, TrinoRange,
-        TrinoSplit, TrinoHostAddress, TrinoSplitManager,
+        TrinoConnectorConfig, TrinoDomain, TrinoHostAddress, TrinoRange, TrinoSplit,
+        TrinoSplitManager, TrinoTupleDomain,
     };
-    use proximadb::storage::formats::{FileSplit, SplitStatistics, SplitLocality};
+    use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics};
 
     #[test]
     fn test_trino_config_default() {
@@ -451,12 +472,8 @@ mod trino_tests {
         assert!(lte.low.is_none());
 
         // Between
-        let between = TrinoRange::between(
-            serde_json::json!(10),
-            true,
-            serde_json::json!(100),
-            false,
-        );
+        let between =
+            TrinoRange::between(serde_json::json!(10), true, serde_json::json!(100), false);
         assert!(between.low_inclusive);
         assert!(!between.high_inclusive);
     }
@@ -500,13 +517,13 @@ mod trino_tests {
 
 mod duckdb_tests {
     use super::*;
-    use proximadb::connectors::{
-        DuckDBConnectorConfig, DuckDBTableScan, DuckDBVectorSearchParams,
-        DuckDBDistanceMetric, DuckDBFilter, DuckDBFilterType, DuckDBColumnRef,
-        DuckDBInitData, DuckDBGlobalState, DuckDBLocalState,
-    };
-    use proximadb::storage::formats::{FileSplit, SplitType, SplitStatistics, SplitLocality};
     use arrow::datatypes::Schema as ArrowSchema;
+    use proximadb::connectors::{
+        DuckDBColumnRef, DuckDBConnectorConfig, DuckDBDistanceMetric, DuckDBFilter,
+        DuckDBFilterType, DuckDBGlobalState, DuckDBInitData, DuckDBLocalState, DuckDBTableScan,
+        DuckDBVectorSearchParams,
+    };
+    use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics, SplitType};
 
     #[test]
     fn test_duckdb_config_default() {
@@ -575,7 +592,10 @@ mod duckdb_tests {
 
     #[test]
     fn test_duckdb_distance_metrics() {
-        assert_eq!(DuckDBDistanceMetric::default(), DuckDBDistanceMetric::Cosine);
+        assert_eq!(
+            DuckDBDistanceMetric::default(),
+            DuckDBDistanceMetric::Cosine
+        );
 
         // Test all variants exist
         let _l2 = DuckDBDistanceMetric::L2;
@@ -586,17 +606,18 @@ mod duckdb_tests {
 
     #[test]
     fn test_duckdb_init_data() {
-        let splits = vec![
-            FileSplit {
-                split_id: "s0".to_string(),
-                file_path: "/data/0.sst".to_string(),
-                offset: 0,
-                length: 1024,
-                split_type: SplitType::Block { block_id: 0, record_count: 100 },
-                statistics: SplitStatistics::default(),
-                locality: SplitLocality::default(),
+        let splits = vec![FileSplit {
+            split_id: "s0".to_string(),
+            file_path: "/data/0.sst".to_string(),
+            offset: 0,
+            length: 1024,
+            split_type: SplitType::Block {
+                block_id: 0,
+                record_count: 100,
             },
-        ];
+            statistics: SplitStatistics::default(),
+            locality: SplitLocality::default(),
+        }];
 
         let init_data = DuckDBInitData::new(splits);
         assert_eq!(init_data.current_split, 0);
@@ -613,7 +634,9 @@ mod duckdb_tests {
                 file_path: String::new(),
                 offset: 0,
                 length: 0,
-                split_type: SplitType::ByteRange { estimated_records: 0 },
+                split_type: SplitType::ByteRange {
+                    estimated_records: 0,
+                },
                 statistics: SplitStatistics::default(),
                 locality: SplitLocality::default(),
             },
@@ -622,7 +645,9 @@ mod duckdb_tests {
                 file_path: String::new(),
                 offset: 0,
                 length: 0,
-                split_type: SplitType::ByteRange { estimated_records: 0 },
+                split_type: SplitType::ByteRange {
+                    estimated_records: 0,
+                },
                 statistics: SplitStatistics::default(),
                 locality: SplitLocality::default(),
             },
@@ -655,10 +680,10 @@ mod duckdb_tests {
 mod hadoop_tests {
     use super::*;
     use proximadb::connectors::{
-        HadoopShimConfig, HadoopInputSplit, ProximaInputFormat, ProximaOutputFormat,
-        HadoopWritable, ProximaSerDe,
+        HadoopInputSplit, HadoopShimConfig, HadoopWritable, ProximaInputFormat,
+        ProximaOutputFormat, ProximaSerDe,
     };
-    use proximadb::storage::formats::{FileSplit, SplitType, SplitStatistics, SplitLocality};
+    use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics, SplitType};
 
     #[test]
     fn test_hadoop_config_default() {
@@ -676,7 +701,10 @@ mod hadoop_tests {
             file_path: "/data/file.sst".to_string(),
             offset: 0,
             length: 65536,
-            split_type: SplitType::Block { block_id: 0, record_count: 1000 },
+            split_type: SplitType::Block {
+                block_id: 0,
+                record_count: 1000,
+            },
             statistics: SplitStatistics::default(),
             locality: SplitLocality {
                 preferred_hosts: vec!["node1.cluster".to_string()],
@@ -742,7 +770,10 @@ mod hadoop_tests {
         // Map
         let mut map = HashMap::new();
         map.insert("key1".to_string(), HadoopWritable::IntWritable(1));
-        map.insert("key2".to_string(), HadoopWritable::Text("value".to_string()));
+        map.insert(
+            "key2".to_string(),
+            HadoopWritable::Text("value".to_string()),
+        );
 
         let map_w = HadoopWritable::MapWritable(map);
         let json = map_w.to_json();
@@ -806,7 +837,10 @@ mod hadoop_tests {
 
         let mut props = HashMap::new();
         props.insert("columns".to_string(), "id,name,score".to_string());
-        props.insert("columns.types".to_string(), "string:string:double".to_string());
+        props.insert(
+            "columns.types".to_string(),
+            "string:string:double".to_string(),
+        );
 
         let result = serde.initialize(&props);
         assert!(result.is_ok());

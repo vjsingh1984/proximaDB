@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::unified::{
-    InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata,
-    QuantizedVector, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+    InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata, QuantizedVector,
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 // Note: create_distance_calculator is available but not currently used

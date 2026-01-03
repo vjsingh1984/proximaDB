@@ -12,9 +12,9 @@
 use std::sync::Arc;
 
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::storage::traits::UnifiedStorageEngine;
-use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use crate::index::axis::AxisManager;
+use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+use crate::storage::traits::UnifiedStorageEngine;
 
 use super::super::traits::{ModelType, StoreCapabilities};
 
@@ -154,7 +154,8 @@ impl VectorStore {
             supports_acid: false,
             supports_streaming: true,
             max_recommended_records: Some(100_000_000), // 100M vectors
-            description: "Vector embeddings storage with HELIX (high-dim) + SST (real-time)".to_string(),
+            description: "Vector embeddings storage with HELIX (high-dim) + SST (real-time)"
+                .to_string(),
         }
     }
 

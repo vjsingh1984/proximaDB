@@ -3,7 +3,7 @@
 //! Parses unified queries and decomposes them into model-specific sub-queries
 //! that can be executed independently or with dependencies.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use std::collections::HashMap;
 use tracing::debug;
@@ -109,7 +109,10 @@ impl QueryDecomposer {
         multi_query.order_by = self.extract_order_by(query);
 
         if multi_query.components.is_empty() {
-            return Err(anyhow!("No recognizable query components found in: {}", query));
+            return Err(anyhow!(
+                "No recognizable query components found in: {}",
+                query
+            ));
         }
 
         debug!(
@@ -125,12 +128,16 @@ impl QueryDecomposer {
     fn extract_vector_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for VECTOR_SIMILAR
         if let Some(caps) = self.patterns.vector_similar.captures(query) {
-            let field = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("embedding");
-            let threshold = caps.get(3)
-                .and_then(|m| m.as_str().parse::<f32>().ok());
+            let field = caps
+                .get(1)
+                .map(|m| m.as_str().trim())
+                .unwrap_or("embedding");
+            let threshold = caps.get(3).and_then(|m| m.as_str().parse::<f32>().ok());
 
             // Extract collection from FROM clause
-            let collection = self.extract_collection(query).unwrap_or("default".to_string());
+            let collection = self
+                .extract_collection(query)
+                .unwrap_or("default".to_string());
 
             // Extract top_k from LIMIT
             let top_k = self.extract_limit(query).unwrap_or(10);
@@ -152,7 +159,9 @@ impl QueryDecomposer {
 
         // Check for ORDER BY VECTOR_DISTANCE
         if self.patterns.vector_distance.is_match(query) {
-            let collection = self.extract_collection(query).unwrap_or("default".to_string());
+            let collection = self
+                .extract_collection(query)
+                .unwrap_or("default".to_string());
             let top_k = self.extract_limit(query).unwrap_or(10);
 
             return Ok(Some(QueryComponent {
@@ -182,7 +191,9 @@ impl QueryDecomposer {
             return Ok(None);
         }
 
-        let collection = self.extract_collection(query).unwrap_or("documents".to_string());
+        let collection = self
+            .extract_collection(query)
+            .unwrap_or("documents".to_string());
 
         Ok(Some(QueryComponent {
             model: DataModel::Document,
@@ -200,14 +211,23 @@ impl QueryDecomposer {
     }
 
     /// Extract graph traversal component from query
-    fn extract_graph_component(&self, query: &str, prev_component_count: usize) -> Result<Option<QueryComponent>> {
+    fn extract_graph_component(
+        &self,
+        query: &str,
+        prev_component_count: usize,
+    ) -> Result<Option<QueryComponent>> {
         // Check for GRAPH_TRAVERSE
         if let Some(caps) = self.patterns.graph_traverse.captures(query) {
-            let graph_name = caps.get(1).map(|m| m.as_str().trim().to_string())
+            let graph_name = caps
+                .get(1)
+                .map(|m| m.as_str().trim().to_string())
                 .unwrap_or("default".to_string());
-            let edge_type = caps.get(2).map(|m| m.as_str().to_string())
+            let edge_type = caps
+                .get(2)
+                .map(|m| m.as_str().to_string())
                 .unwrap_or("*".to_string());
-            let max_depth = caps.get(3)
+            let max_depth = caps
+                .get(3)
                 .and_then(|m| m.as_str().parse::<u32>().ok())
                 .unwrap_or(2);
 
@@ -243,7 +263,9 @@ impl QueryDecomposer {
         // Check for GRAPH_CONNECTED
         if let Some(caps) = self.patterns.graph_connected.captures(query) {
             let graph_name = "default".to_string(); // Would need to infer from context
-            let edge_type = caps.get(2).map(|m| m.as_str().to_string())
+            let edge_type = caps
+                .get(2)
+                .map(|m| m.as_str().to_string())
                 .unwrap_or("*".to_string());
 
             return Ok(Some(QueryComponent {
@@ -271,7 +293,9 @@ impl QueryDecomposer {
     fn extract_observability_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for LOG_QUERY
         if let Some(caps) = self.patterns.log_query.captures(query) {
-            let namespace = caps.get(1).map(|m| m.as_str().to_string())
+            let namespace = caps
+                .get(1)
+                .map(|m| m.as_str().to_string())
                 .unwrap_or("default".to_string());
 
             let now = std::time::SystemTime::now()
@@ -298,11 +322,17 @@ impl QueryDecomposer {
 
         // Check for METRIC_AGG
         if let Some(caps) = self.patterns.metric_query.captures(query) {
-            let namespace = caps.get(1).map(|m| m.as_str().to_string())
+            let namespace = caps
+                .get(1)
+                .map(|m| m.as_str().to_string())
                 .unwrap_or("default".to_string());
-            let metric_name = caps.get(2).map(|m| m.as_str().to_string())
+            let metric_name = caps
+                .get(2)
+                .map(|m| m.as_str().to_string())
                 .unwrap_or("*".to_string());
-            let agg_type = caps.get(3).map(|m| m.as_str().to_uppercase())
+            let agg_type = caps
+                .get(3)
+                .map(|m| m.as_str().to_uppercase())
                 .unwrap_or("AVG".to_string());
 
             let now = std::time::SystemTime::now()
@@ -347,7 +377,8 @@ impl QueryDecomposer {
     /// Extract collection name from FROM clause
     fn extract_collection(&self, query: &str) -> Option<String> {
         let from_pattern = Regex::new(r"(?i)FROM\s+(\w+(?:\.\w+)?)").ok()?;
-        from_pattern.captures(query)
+        from_pattern
+            .captures(query)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
     }
@@ -363,7 +394,10 @@ impl QueryDecomposer {
 
         for caps in path_filter_pattern.captures_iter(query) {
             let path = format!("$.{}", caps.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let op_str = caps.get(2).map(|m| m.as_str().to_uppercase()).unwrap_or_default();
+            let op_str = caps
+                .get(2)
+                .map(|m| m.as_str().to_uppercase())
+                .unwrap_or_default();
             let value_str = caps.get(3).map(|m| m.as_str()).unwrap_or("");
 
             let operator = match op_str.as_str() {
@@ -380,7 +414,7 @@ impl QueryDecomposer {
             };
 
             let value = if value_str.starts_with('\'') && value_str.ends_with('\'') {
-                FilterValue::String(value_str[1..value_str.len()-1].to_string())
+                FilterValue::String(value_str[1..value_str.len() - 1].to_string())
             } else if value_str == "true" {
                 FilterValue::Bool(true)
             } else if value_str == "false" {
@@ -393,7 +427,11 @@ impl QueryDecomposer {
                 FilterValue::String(value_str.to_string())
             };
 
-            filters.push(PathFilter { path, operator, value });
+            filters.push(PathFilter {
+                path,
+                operator,
+                value,
+            });
         }
 
         filters
@@ -402,7 +440,8 @@ impl QueryDecomposer {
     /// Extract text search from query
     fn extract_text_search(&self, query: &str) -> Option<String> {
         let text_pattern = Regex::new(r"(?i)TEXT_SEARCH\s*\(\s*'([^']+)'\s*\)").ok()?;
-        text_pattern.captures(query)
+        text_pattern
+            .captures(query)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
     }
@@ -417,7 +456,8 @@ impl QueryDecomposer {
                     if fields_str == "*" {
                         return vec![];
                     }
-                    return fields_str.split(',')
+                    return fields_str
+                        .split(',')
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
@@ -429,10 +469,12 @@ impl QueryDecomposer {
 
     /// Extract document sort from ORDER BY clause
     fn extract_document_sort(&self, query: &str) -> Option<DocumentSort> {
-        let order_pattern = Regex::new(r"(?i)ORDER\s+BY\s+\$\.(\w+(?:\.\w+)*)\s*(ASC|DESC)?").ok()?;
+        let order_pattern =
+            Regex::new(r"(?i)ORDER\s+BY\s+\$\.(\w+(?:\.\w+)*)\s*(ASC|DESC)?").ok()?;
         order_pattern.captures(query).map(|caps| {
             let path = format!("$.{}", caps.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let ascending = caps.get(2)
+            let ascending = caps
+                .get(2)
                 .map(|m| m.as_str().to_uppercase() != "DESC")
                 .unwrap_or(true);
             DocumentSort { path, ascending }
@@ -442,7 +484,8 @@ impl QueryDecomposer {
     /// Extract LIMIT value
     fn extract_limit(&self, query: &str) -> Option<u32> {
         let limit_pattern = Regex::new(r"(?i)LIMIT\s+(\d+)").ok()?;
-        limit_pattern.captures(query)
+        limit_pattern
+            .captures(query)
             .and_then(|caps| caps.get(1))
             .and_then(|m| m.as_str().parse::<u32>().ok())
     }
@@ -451,8 +494,12 @@ impl QueryDecomposer {
     fn extract_order_by(&self, query: &str) -> Option<OrderBy> {
         let order_pattern = Regex::new(r"(?i)ORDER\s+BY\s+(\w+)\s*(ASC|DESC)?").ok()?;
         order_pattern.captures(query).map(|caps| {
-            let field = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let ascending = caps.get(2)
+            let field = caps
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let ascending = caps
+                .get(2)
                 .map(|m| m.as_str().to_uppercase() != "DESC")
                 .unwrap_or(true);
             OrderBy { field, ascending }
@@ -508,10 +555,16 @@ mod tests {
         let decomposer = QueryDecomposer::new();
 
         let query = "SELECT * FROM products WHERE $.category = 'electronics'";
-        assert_eq!(decomposer.extract_collection(query), Some("products".to_string()));
+        assert_eq!(
+            decomposer.extract_collection(query),
+            Some("products".to_string())
+        );
 
         let query = "SELECT * FROM documents.users LIMIT 10";
-        assert_eq!(decomposer.extract_collection(query), Some("documents.users".to_string()));
+        assert_eq!(
+            decomposer.extract_collection(query),
+            Some("documents.users".to_string())
+        );
     }
 
     #[test]
@@ -562,9 +615,15 @@ mod tests {
         let decomposer = QueryDecomposer::new();
 
         let and_query = "SELECT * WHERE $.a = 1 AND $.b = 2";
-        assert!(matches!(decomposer.infer_fusion_strategy(and_query), FusionStrategy::Intersection));
+        assert!(matches!(
+            decomposer.infer_fusion_strategy(and_query),
+            FusionStrategy::Intersection
+        ));
 
         let or_query = "SELECT * WHERE $.a = 1 OR $.b = 2";
-        assert!(matches!(decomposer.infer_fusion_strategy(or_query), FusionStrategy::Union));
+        assert!(matches!(
+            decomposer.infer_fusion_strategy(or_query),
+            FusionStrategy::Union
+        ));
     }
 }

@@ -322,11 +322,18 @@ impl AxisHnswIndex {
                                     );
 
                                     if dynamic_candidates.len() < ef {
-                                        candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                                        candidates.push(std::cmp::Reverse((
+                                            OrderedFloat(dist),
+                                            neighbor,
+                                        )));
                                         dynamic_candidates.push((OrderedFloat(dist), neighbor));
-                                    } else if let Some((worst_dist, _)) = dynamic_candidates.peek() {
+                                    } else if let Some((worst_dist, _)) = dynamic_candidates.peek()
+                                    {
                                         if dist < worst_dist.0 {
-                                            candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                                            candidates.push(std::cmp::Reverse((
+                                                OrderedFloat(dist),
+                                                neighbor,
+                                            )));
                                             dynamic_candidates.push((OrderedFloat(dist), neighbor));
 
                                             if dynamic_candidates.len() > ef {
@@ -427,7 +434,8 @@ impl AxisHnswIndex {
             .collect();
 
         // Sort by distance and keep only the closest max_m
-        neighbor_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        neighbor_distances
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         let new_connections: Vec<usize> = neighbor_distances
             .into_iter()
             .take(max_m)
@@ -683,13 +691,16 @@ impl AxisHnswIndex {
         // This ensures 50K vectors get ef≈223 instead of just 50
         let collection_size = self.vectors.read().unwrap().len();
         let size_aware_ef = ((collection_size as f64).sqrt() as usize)
-            .max(50)   // Minimum ef for small collections
+            .max(50) // Minimum ef for small collections
             .min(500); // Cap to avoid excessive search time
         let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
 
         tracing::debug!(
             "HNSW search: collection_size={}, size_aware_ef={}, config_ef={}, final_ef={}",
-            collection_size, size_aware_ef, self.config.ef, search_ef
+            collection_size,
+            size_aware_ef,
+            self.config.ef,
+            search_ef
         );
 
         let candidates = self.search_layer(query, &curr_nearest, search_ef, 0);
@@ -975,13 +986,14 @@ impl AxisHnswIndex {
     }
 
     /// Serialize ID mapping to portable format
-    pub fn serialize_id_mapping(&self) -> crate::index::axis::storage::serialization::SerializableIdMapping {
+    pub fn serialize_id_mapping(
+        &self,
+    ) -> crate::index::axis::storage::serialization::SerializableIdMapping {
         use crate::index::axis::storage::serialization::SerializableIdMapping;
 
         // Collect all external->internal mappings
-        let external_to_internal: Vec<(String, usize)> = self.id_mapping
-            .iter_external_to_internal()
-            .collect();
+        let external_to_internal: Vec<(String, usize)> =
+            self.id_mapping.iter_external_to_internal().collect();
 
         SerializableIdMapping {
             external_to_internal,
@@ -1008,7 +1020,9 @@ impl AxisHnswIndex {
     }
 
     /// Serialize vectors to portable format
-    pub fn serialize_vectors(&self) -> Vec<crate::index::axis::storage::serialization::SerializableVector> {
+    pub fn serialize_vectors(
+        &self,
+    ) -> Vec<crate::index::axis::storage::serialization::SerializableVector> {
         use crate::index::axis::storage::serialization::SerializableVector;
 
         let vectors = self.vectors.read().unwrap();
@@ -1042,8 +1056,12 @@ impl AxisHnswIndex {
     ) -> Result<()> {
         use crate::index::axis::zero_overhead_vector::ZeroOverheadVector;
 
-        info!("Restoring HNSW state: {} vectors, {} layers, {} quantized vectors",
-              vectors.len(), layers.len(), quantized_vectors.len());
+        info!(
+            "Restoring HNSW state: {} vectors, {} layers, {} quantized vectors",
+            vectors.len(),
+            layers.len(),
+            quantized_vectors.len()
+        );
 
         // 1. Restore ID mapping
         for (external_id, internal_id) in id_mapping.external_to_internal {
@@ -1365,7 +1383,10 @@ mod tests {
 
         // Serialize
         let serialized = IndexSerializer::serialize_hnsw(&index, "test_collection").unwrap();
-        assert!(!serialized.is_empty(), "Serialized data should not be empty");
+        assert!(
+            !serialized.is_empty(),
+            "Serialized data should not be empty"
+        );
 
         // Deserialize
         let (restored_index, metadata) =
@@ -1379,7 +1400,10 @@ mod tests {
         assert_eq!(restored_index.stats().vector_count, 4);
 
         // Verify search works on restored index
-        let restored_results = restored_index.search(&[1.0, 0.0, 0.0, 0.0], 2, None).await.unwrap();
+        let restored_results = restored_index
+            .search(&[1.0, 0.0, 0.0, 0.0], 2, None)
+            .await
+            .unwrap();
         assert!(!restored_results.is_empty());
 
         // The top result should be the same (v1 is closest to query)

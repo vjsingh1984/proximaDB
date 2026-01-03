@@ -18,8 +18,8 @@
 //!
 //! This module defines types for parsing MongoDB change stream events.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// MongoDB change stream event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +48,10 @@ pub struct MongoChangeEvent {
     pub full_document: Option<serde_json::Value>,
 
     /// Full document before change (MongoDB 6.0+)
-    #[serde(rename = "fullDocumentBeforeChange", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "fullDocumentBeforeChange",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub full_document_before_change: Option<serde_json::Value>,
 
     /// Update description (for update operations)
@@ -313,7 +316,10 @@ mod tests {
 
         assert!(desc.has_updates());
         assert!(desc.has_removals());
-        assert_eq!(desc.get_updated("name"), Some(&serde_json::json!("new_name")));
+        assert_eq!(
+            desc.get_updated("name"),
+            Some(&serde_json::json!("new_name"))
+        );
         assert!(desc.get_updated("missing").is_none());
     }
 

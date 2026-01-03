@@ -8,8 +8,6 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 use crate::observability::storage::traces::TraceSpan;
 
 /// Trace query builder
@@ -256,10 +254,7 @@ impl TraceAnalyzer {
         let duration_ns = root_span.end_time_ns - root_span.start_time_ns;
 
         // Collect services
-        let mut services: Vec<String> = spans
-            .iter()
-            .map(|s| s.service_name.clone())
-            .collect();
+        let mut services: Vec<String> = spans.iter().map(|s| s.service_name.clone()).collect();
         services.sort();
         services.dedup();
 

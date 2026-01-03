@@ -16,11 +16,11 @@
 
 //! Transaction Context for Multi-Model Operations
 
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 
 use super::isolation::{IsolationLevel, Lock, LockMode};
 use super::operations::{MultiModelOperation, OperationRollback};
@@ -147,7 +147,8 @@ impl ReadSet {
             .entry(container.to_string())
             .or_default()
             .insert(id.to_string());
-        self.versions.insert(format!("{}:{}", container, id), version);
+        self.versions
+            .insert(format!("{}:{}", container, id), version);
     }
 
     /// Check if a read conflicts with a write
@@ -327,11 +328,15 @@ impl TransactionContext {
     /// Extract IDs affected by an operation
     fn extract_ids(operation: &MultiModelOperation) -> Vec<String> {
         match operation {
-            MultiModelOperation::Vector(op) => op.affected_ids().iter().map(|s| s.clone()).collect(),
-            MultiModelOperation::Document(_) => vec!["*".to_string()], // Filter-based
-            MultiModelOperation::Graph(op) => {
-                op.affected_node_ids().iter().map(|s| s.to_string()).collect()
+            MultiModelOperation::Vector(op) => {
+                op.affected_ids().iter().map(|s| s.clone()).collect()
             }
+            MultiModelOperation::Document(_) => vec!["*".to_string()], // Filter-based
+            MultiModelOperation::Graph(op) => op
+                .affected_node_ids()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             MultiModelOperation::Observability(_) => vec!["*".to_string()], // Batch
         }
     }
@@ -349,7 +354,9 @@ impl TransactionContext {
     /// Create a savepoint
     pub fn savepoint(&self, name: &str) {
         let current_seq = *self.sequence_counter.read();
-        self.savepoints.write().insert(name.to_string(), current_seq);
+        self.savepoints
+            .write()
+            .insert(name.to_string(), current_seq);
     }
 
     /// Rollback to a savepoint

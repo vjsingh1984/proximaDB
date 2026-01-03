@@ -190,7 +190,11 @@ impl fmt::Debug for QueryValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             QueryValue::Node(node) => write!(f, "Node(id={})", node.id),
-            QueryValue::Edge(edge) => write!(f, "Edge(id={}, {} → {})", edge.id, edge.from_node_id, edge.to_node_id),
+            QueryValue::Edge(edge) => write!(
+                f,
+                "Edge(id={}, {} → {})",
+                edge.id, edge.from_node_id, edge.to_node_id
+            ),
             QueryValue::Path(path) => write!(f, "Path(len={})", path.len()),
             QueryValue::Property(prop) => write!(f, "Property({:?})", prop),
             QueryValue::List(list) => write!(f, "List(len={})", list.len()),

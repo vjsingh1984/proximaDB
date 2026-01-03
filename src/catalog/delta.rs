@@ -51,12 +51,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
@@ -64,7 +65,6 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
     CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// Delta Lake catalog configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -336,7 +336,12 @@ impl DeltaCatalog {
     }
 
     /// Write Delta log entry
-    async fn write_delta_log(&self, identifier: &TableIdentifier, version: i64, actions: Vec<DeltaAction>) -> Result<()> {
+    async fn write_delta_log(
+        &self,
+        identifier: &TableIdentifier,
+        version: i64,
+        actions: Vec<DeltaAction>,
+    ) -> Result<()> {
         let log_path = self.delta_log_path(identifier);
         fs::create_dir_all(&log_path).await?;
 
@@ -634,7 +639,10 @@ impl Catalog for DeltaCatalog {
         }
 
         let now = Self::now_ms();
-        let location = self.table_data_path(identifier).to_string_lossy().to_string();
+        let location = self
+            .table_data_path(identifier)
+            .to_string_lossy()
+            .to_string();
 
         // Convert schema to Delta format
         let fields: Vec<DeltaField> = schema
@@ -932,9 +940,10 @@ impl Catalog for DeltaCatalog {
             DeltaAction::CommitInfo {
                 timestamp: now,
                 operation: "CHANGE SCHEMA".to_string(),
-                operation_parameters: Some(HashMap::from([
-                    ("newSchema".to_string(), "true".to_string()),
-                ])),
+                operation_parameters: Some(HashMap::from([(
+                    "newSchema".to_string(),
+                    "true".to_string(),
+                )])),
             },
         ];
 
@@ -1449,20 +1458,24 @@ mod tests {
         assert_eq!(ns.levels, vec!["test_db"]);
 
         // Check exists
-        assert!(catalog
-            .namespace_exists(&["test_db".to_string()])
-            .await
-            .unwrap());
+        assert!(
+            catalog
+                .namespace_exists(&["test_db".to_string()])
+                .await
+                .unwrap()
+        );
 
         // List namespaces
         let namespaces = catalog.list_namespaces(None).await.unwrap();
         assert_eq!(namespaces.len(), 1);
 
         // Drop namespace
-        assert!(catalog
-            .drop_namespace(&["test_db".to_string()], false)
-            .await
-            .unwrap());
+        assert!(
+            catalog
+                .drop_namespace(&["test_db".to_string()], false)
+                .await
+                .unwrap()
+        );
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir).await;
@@ -1491,12 +1504,8 @@ mod tests {
 
         // Create table
         let schema = CatalogTableSchema::new("users")
-            .with_column(
-                CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false),
-            )
-            .with_column(
-                CatalogColumn::new(2, "name", CatalogDataType::String),
-            );
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String));
 
         let identifier = TableIdentifier::new(vec!["mydb".to_string()], "users".to_string());
 

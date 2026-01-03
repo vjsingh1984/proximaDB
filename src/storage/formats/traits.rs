@@ -328,7 +328,10 @@ pub enum FilterExpression {
     /// Column is not null
     IsNotNull { column: String },
     /// Column in list
-    In { column: String, values: Vec<serde_json::Value> },
+    In {
+        column: String,
+        values: Vec<serde_json::Value>,
+    },
 }
 
 /// Comparison operators
@@ -428,7 +431,11 @@ pub trait InternalFormat: StorageFormat {
     async fn write_batch(&self, batch: &RecordBatch, ctx: &WriteContext) -> Result<WriteResult>;
 
     /// Write vector data specifically
-    async fn write_vectors(&self, vectors: &VectorBatch, ctx: &VectorWriteContext) -> Result<WriteResult>;
+    async fn write_vectors(
+        &self,
+        vectors: &VectorBatch,
+        ctx: &VectorWriteContext,
+    ) -> Result<WriteResult>;
 
     // ========================================================================
     // Compaction (internal formats manage their own compaction)
@@ -484,11 +491,19 @@ pub trait OpenTableFormat: StorageFormat {
     // ========================================================================
 
     /// Read from a specific snapshot
-    async fn read_snapshot(&self, snapshot: &Snapshot, ctx: &ReadContext) -> Result<RecordBatchStream>;
+    async fn read_snapshot(
+        &self,
+        snapshot: &Snapshot,
+        ctx: &ReadContext,
+    ) -> Result<RecordBatchStream>;
 
     /// Read vectors from a snapshot (if format supports vectors)
     #[allow(unused_variables)]
-    async fn read_snapshot_vectors(&self, snapshot: &Snapshot, ctx: &VectorReadContext) -> Result<Option<VectorBatchStream>> {
+    async fn read_snapshot_vectors(
+        &self,
+        snapshot: &Snapshot,
+        ctx: &VectorReadContext,
+    ) -> Result<Option<VectorBatchStream>> {
         // Default implementation returns None (format doesn't support vectors)
         Ok(None)
     }
@@ -498,7 +513,12 @@ pub trait OpenTableFormat: StorageFormat {
     // ========================================================================
 
     /// Write atomically, creating a new snapshot
-    async fn write_atomic(&self, table_path: &str, batches: Vec<RecordBatch>, ctx: &WriteContext) -> Result<Snapshot>;
+    async fn write_atomic(
+        &self,
+        table_path: &str,
+        batches: Vec<RecordBatch>,
+        ctx: &WriteContext,
+    ) -> Result<Snapshot>;
 
     /// Merge into existing data (upsert/update/delete)
     async fn merge_into(
@@ -545,7 +565,9 @@ pub trait OpenTableFormat: StorageFormat {
 #[derive(Debug, Clone)]
 pub enum MergeAction {
     /// Update matched rows
-    Update { assignments: HashMap<String, String> },
+    Update {
+        assignments: HashMap<String, String>,
+    },
     /// Delete matched rows
     Delete,
     /// Insert new rows

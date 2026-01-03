@@ -144,38 +144,80 @@ impl OcsfAdapter {
         let service = event.metadata.product.name.clone();
 
         let mut fields: HashMap<String, SqlValue> = HashMap::new();
-        fields.insert("activity_id".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(event.activity_id as i64))
-        });
-        fields.insert("category_uid".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(event.category_uid as i64))
-        });
-        fields.insert("class_uid".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(event.class_uid as i64))
-        });
-        fields.insert("type_uid".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(event.type_uid as i64))
-        });
-        fields.insert("status".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(event.status.clone()))
-        });
-        fields.insert("status_id".to_string(), SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(event.status_id as i64))
-        });
+        fields.insert(
+            "activity_id".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                    event.activity_id as i64,
+                )),
+            },
+        );
+        fields.insert(
+            "category_uid".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                    event.category_uid as i64,
+                )),
+            },
+        );
+        fields.insert(
+            "class_uid".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                    event.class_uid as i64,
+                )),
+            },
+        );
+        fields.insert(
+            "type_uid".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                    event.type_uid as i64,
+                )),
+            },
+        );
+        fields.insert(
+            "status".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    event.status.clone(),
+                )),
+            },
+        );
+        fields.insert(
+            "status_id".to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                    event.status_id as i64,
+                )),
+            },
+        );
 
         // Add observables as fields
         for (i, obs) in event.observables.iter().enumerate() {
             fields.insert(
                 format!("observable_{}_name", i),
-                SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(obs.name.clone())) },
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        obs.name.clone(),
+                    )),
+                },
             );
             fields.insert(
                 format!("observable_{}_type", i),
-                SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(obs.r#type.clone())) },
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        obs.r#type.clone(),
+                    )),
+                },
             );
             fields.insert(
                 format!("observable_{}_value", i),
-                SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(obs.value.clone())) },
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        obs.value.clone(),
+                    )),
+                },
             );
         }
 
@@ -193,13 +235,13 @@ impl OcsfAdapter {
     fn convert_severity(&self, severity_id: i32) -> Severity {
         // OCSF severity: 0=Unknown, 1=Info, 2=Low, 3=Medium, 4=High, 5=Critical, 6=Fatal
         match severity_id {
-            0 => Severity::Info,     // Unknown
-            1 => Severity::Info,     // Informational
-            2 => Severity::Info,     // Low
-            3 => Severity::Warn,     // Medium
-            4 => Severity::Error,    // High
-            5 => Severity::Fatal,    // Critical
-            6 => Severity::Fatal,    // Fatal
+            0 => Severity::Info,  // Unknown
+            1 => Severity::Info,  // Informational
+            2 => Severity::Info,  // Low
+            3 => Severity::Warn,  // Medium
+            4 => Severity::Error, // High
+            5 => Severity::Fatal, // Critical
+            6 => Severity::Fatal, // Fatal
             _ => Severity::Info,
         }
     }
@@ -264,10 +306,7 @@ impl InputAdapter for OcsfAdapter {
         self.running.store(true, Ordering::SeqCst);
         // OCSF events are typically received via HTTP webhook
         // The actual HTTP server is handled by the http adapter
-        tracing::info!(
-            "OCSF adapter would listen on {}",
-            self.config.bind_address
-        );
+        tracing::info!("OCSF adapter would listen on {}", self.config.bind_address);
         Ok(())
     }
 
@@ -333,7 +372,12 @@ mod tests {
         let entry = adapter.parse_event(json).unwrap();
         assert_eq!(entry.message, "Network connection detected");
         assert_eq!(entry.severity, Severity::Error as i32);
-        assert!(entry.source.as_ref().map_or(false, |s| s.contains("TestVendor")));
+        assert!(
+            entry
+                .source
+                .as_ref()
+                .map_or(false, |s| s.contains("TestVendor"))
+        );
     }
 
     #[test]

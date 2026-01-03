@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -21,8 +21,8 @@ use tracing::{debug, info, warn};
 use super::session::Session;
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
-use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::catalog::CatalogManager;
+use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
@@ -232,7 +232,8 @@ impl PostgresProtocol {
                 b'C' => self.handle_close(&body).await?,
                 _ => {
                     warn!("Unknown message type: {}", msg_type as char);
-                    self.send_error("ERROR", "XX000", "Unknown message type").await?;
+                    self.send_error("ERROR", "XX000", "Unknown message type")
+                        .await?;
                 }
             }
         }
@@ -290,10 +291,13 @@ impl PostgresProtocol {
 
         // Send parameter status messages
         self.send_parameter_status("server_version", "16.0").await?;
-        self.send_parameter_status("server_encoding", "UTF8").await?;
-        self.send_parameter_status("client_encoding", "UTF8").await?;
+        self.send_parameter_status("server_encoding", "UTF8")
+            .await?;
+        self.send_parameter_status("client_encoding", "UTF8")
+            .await?;
         self.send_parameter_status("DateStyle", "ISO, MDY").await?;
-        self.send_parameter_status("integer_datetimes", "on").await?;
+        self.send_parameter_status("integer_datetimes", "on")
+            .await?;
 
         // Send backend key data
         self.send_backend_key_data().await?;
@@ -335,7 +339,8 @@ impl PostgresProtocol {
                 self.execute_query(&result).await?;
             }
             Err(e) => {
-                self.send_error("ERROR", "42601", &format!("Syntax error: {}", e)).await?;
+                self.send_error("ERROR", "42601", &format!("Syntax error: {}", e))
+                    .await?;
             }
         }
 
@@ -351,7 +356,12 @@ impl PostgresProtocol {
 
         // Handle SHOW commands converted to SELECT
         if upper.contains("AS SERVER_VERSION") {
-            return self.send_single_value_result("server_version", "ProximaDB 0.2.0 (PostgreSQL 16.0 compatible)").await;
+            return self
+                .send_single_value_result(
+                    "server_version",
+                    "ProximaDB 0.2.0 (PostgreSQL 16.0 compatible)",
+                )
+                .await;
         }
         if upper.contains("AS SERVER_ENCODING") || upper.contains("AS CLIENT_ENCODING") {
             return self.send_single_value_result("encoding", "UTF8").await;
@@ -381,7 +391,9 @@ impl PostgresProtocol {
                 let store_type = self.detect_select_store_type(&table_name, &upper);
                 return match store_type {
                     StoreType::Document => self.execute_document_query(&table_name, query).await,
-                    StoreType::Observability => self.execute_observability_query(&table_name, query).await,
+                    StoreType::Observability => {
+                        self.execute_observability_query(&table_name, query).await
+                    }
                     StoreType::Graph => self.execute_graph_query(&table_name, query).await,
                     StoreType::Vector => self.execute_collection_query(&table_name, query).await,
                 };
@@ -444,33 +456,46 @@ impl PostgresProtocol {
         // Simple extraction: look for FROM <table>
         let from_pos = query.find("FROM ")?;
         let after_from = &query[from_pos + 5..];
-        let table_end = after_from.find(|c: char| c.is_whitespace() || c == ';')
+        let table_end = after_from
+            .find(|c: char| c.is_whitespace() || c == ';')
             .unwrap_or(after_from.len());
         let table = after_from[..table_end].trim();
-        if table.is_empty() { None } else { Some(table.to_lowercase()) }
+        if table.is_empty() {
+            None
+        } else {
+            Some(table.to_lowercase())
+        }
     }
 
     /// Execute a vector search query
     async fn execute_vector_search(&mut self, query: &str) -> Result<()> {
         // Parse vector from query: look for '[...]'
         let query_vector = self.extract_vector_from_query(query);
-        let table_name = self.extract_table_name(&query.to_uppercase())
+        let table_name = self
+            .extract_table_name(&query.to_uppercase())
             .unwrap_or_else(|| "default".to_string());
 
         // Get top_k from LIMIT clause, default to 10
         let top_k = self.extract_limit(query).unwrap_or(10);
 
-        debug!("Executing vector search on {} with top_k={}", table_name, top_k);
+        debug!(
+            "Executing vector search on {} with top_k={}",
+            table_name, top_k
+        );
 
         if let Some(ref vector) = query_vector {
             // Execute actual vector search
-            match self.vector_ops.unified_search_native(
-                &table_name,
-                vector.clone(),
-                top_k,
-                None, // No metadata filter
-                None, // Default config
-            ).await {
+            match self
+                .vector_ops
+                .unified_search_native(
+                    &table_name,
+                    vector.clone(),
+                    top_k,
+                    None, // No metadata filter
+                    None, // Default config
+                )
+                .await
+            {
                 Ok(results) => {
                     // Define result columns
                     let fields = vec![
@@ -492,7 +517,8 @@ impl PostgresProtocol {
                         count += 1;
                     }
 
-                    self.send_command_complete(&format!("SELECT {}", count)).await
+                    self.send_command_complete(&format!("SELECT {}", count))
+                        .await
                 }
                 Err(e) => {
                     warn!("Vector search error: {}", e);
@@ -510,13 +536,12 @@ impl PostgresProtocol {
     fn extract_vector_from_query(&self, query: &str) -> Option<Vec<f32>> {
         let start = query.find('[')?;
         let end = query.find(']')?;
-        if end <= start { return None; }
+        if end <= start {
+            return None;
+        }
 
         let vector_str = &query[start + 1..end];
-        let values: Result<Vec<f32>, _> = vector_str
-            .split(',')
-            .map(|s| s.trim().parse())
-            .collect();
+        let values: Result<Vec<f32>, _> = vector_str.split(',').map(|s| s.trim().parse()).collect();
         values.ok()
     }
 
@@ -525,7 +550,8 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
         let limit_pos = upper.find("LIMIT ")?;
         let after_limit = &query[limit_pos + 6..];
-        let limit_end = after_limit.find(|c: char| !c.is_ascii_digit())
+        let limit_end = after_limit
+            .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(after_limit.len());
         after_limit[..limit_end].trim().parse().ok()
     }
@@ -537,13 +563,19 @@ impl PostgresProtocol {
         if lower_table.starts_with("doc_") || lower_table.starts_with("documents.") {
             return StoreType::Document;
         }
-        if lower_table.starts_with("log_") || lower_table == "logs" || lower_table.starts_with("observability.") {
+        if lower_table.starts_with("log_")
+            || lower_table == "logs"
+            || lower_table.starts_with("observability.")
+        {
             return StoreType::Observability;
         }
         if lower_table.starts_with("metrics") || lower_table.starts_with("metric_") {
             return StoreType::Observability;
         }
-        if lower_table.starts_with("graph_") || lower_table.starts_with("nodes") || lower_table.starts_with("edges") {
+        if lower_table.starts_with("graph_")
+            || lower_table.starts_with("nodes")
+            || lower_table.starts_with("edges")
+        {
             return StoreType::Graph;
         }
 
@@ -553,7 +585,10 @@ impl PostgresProtocol {
         }
 
         // Check for observability-specific keywords
-        if query.contains("SEVERITY") || query.contains("SERVICE =") || query.contains("BUCKET_TIME") {
+        if query.contains("SEVERITY")
+            || query.contains("SERVICE =")
+            || query.contains("BUCKET_TIME")
+        {
             return StoreType::Observability;
         }
 
@@ -562,7 +597,11 @@ impl PostgresProtocol {
     }
 
     /// Execute a query against a vector collection
-    async fn execute_collection_query(&mut self, collection_name: &str, _query: &str) -> Result<()> {
+    async fn execute_collection_query(
+        &mut self,
+        collection_name: &str,
+        _query: &str,
+    ) -> Result<()> {
         // Check if collection exists
         match self.collection_service.collection(collection_name).await {
             Ok(Some(collection)) => {
@@ -575,15 +614,18 @@ impl PostgresProtocol {
                 self.send_row_description(&fields).await?;
 
                 // Get name and dimension from config
-                let name = collection.config
+                let name = collection
+                    .config
                     .as_ref()
                     .map(|c| c.name.clone())
                     .unwrap_or_else(|| collection.id.clone());
-                let dim = collection.config
+                let dim = collection
+                    .config
                     .as_ref()
                     .map(|c| c.dimension.to_string())
                     .unwrap_or_else(|| "0".to_string());
-                let count = collection.stats
+                let count = collection
+                    .stats
                     .as_ref()
                     .map(|s| s.vector_count.to_string())
                     .unwrap_or_else(|| "0".to_string());
@@ -614,7 +656,8 @@ impl PostgresProtocol {
         let doc_service = DocumentService::new(engine);
 
         // Extract collection name (remove doc_ prefix if present)
-        let collection_name = table_name.trim_start_matches("doc_")
+        let collection_name = table_name
+            .trim_start_matches("doc_")
             .trim_start_matches("documents.");
 
         // Parse WHERE clause for JSON path filters
@@ -631,7 +674,10 @@ impl PostgresProtocol {
             include_count: false,
         };
 
-        match doc_service.query_documents(collection_name, query_params).await {
+        match doc_service
+            .query_documents(collection_name, query_params)
+            .await
+        {
             Ok(result) => {
                 // Define result columns
                 let fields = vec![
@@ -651,7 +697,8 @@ impl PostgresProtocol {
                     count += 1;
                 }
 
-                self.send_command_complete(&format!("SELECT {}", count)).await
+                self.send_command_complete(&format!("SELECT {}", count))
+                    .await
             }
             Err(e) => {
                 warn!("Document query error: {}", e);
@@ -661,7 +708,10 @@ impl PostgresProtocol {
     }
 
     /// Parse document WHERE clause for JSON path filters
-    fn parse_document_where_clause(&self, query: &str) -> Option<crate::proto::proximadb_v1::DocumentFilter> {
+    fn parse_document_where_clause(
+        &self,
+        query: &str,
+    ) -> Option<crate::proto::proximadb_v1::DocumentFilter> {
         use crate::proto::proximadb_v1::DocumentFilter;
 
         let upper = query.to_uppercase();
@@ -695,7 +745,10 @@ impl PostgresProtocol {
     }
 
     /// Parse a single JSON path condition
-    fn parse_json_path_condition(&self, condition: &str) -> Option<crate::proto::proximadb_v1::DocFilterCondition> {
+    fn parse_json_path_condition(
+        &self,
+        condition: &str,
+    ) -> Option<crate::proto::proximadb_v1::DocFilterCondition> {
         use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator};
 
         // Patterns: $.field = value, $.field > value, $.field < value, etc.
@@ -741,35 +794,49 @@ impl PostgresProtocol {
 
         // String literal
         if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
-            let inner = &trimmed[1..trimmed.len()-1];
-            return SqlValue { value: Some(SqlVal::StringValue(inner.to_string())) };
+            let inner = &trimmed[1..trimmed.len() - 1];
+            return SqlValue {
+                value: Some(SqlVal::StringValue(inner.to_string())),
+            };
         }
 
         // Boolean
         if trimmed.eq_ignore_ascii_case("true") {
-            return SqlValue { value: Some(SqlVal::BoolValue(true)) };
+            return SqlValue {
+                value: Some(SqlVal::BoolValue(true)),
+            };
         }
         if trimmed.eq_ignore_ascii_case("false") {
-            return SqlValue { value: Some(SqlVal::BoolValue(false)) };
+            return SqlValue {
+                value: Some(SqlVal::BoolValue(false)),
+            };
         }
 
         // NULL
         if trimmed.eq_ignore_ascii_case("null") {
-            return SqlValue { value: Some(SqlVal::NullValue(0)) };
+            return SqlValue {
+                value: Some(SqlVal::NullValue(0)),
+            };
         }
 
         // Integer
         if let Ok(i) = trimmed.parse::<i64>() {
-            return SqlValue { value: Some(SqlVal::Int64Value(i)) };
+            return SqlValue {
+                value: Some(SqlVal::Int64Value(i)),
+            };
         }
 
         // Float
         if let Ok(f) = trimmed.parse::<f64>() {
-            return SqlValue { value: Some(SqlVal::NumberValue(f)) };
+            return SqlValue {
+                value: Some(SqlVal::NumberValue(f)),
+            };
         }
 
         // Default to string
-        SqlValue { value: Some(SqlVal::StringValue(trimmed.to_string())) }
+        SqlValue {
+            value: Some(SqlVal::StringValue(trimmed.to_string())),
+        }
     }
 
     /// Convert SqlObject to JSON string
@@ -793,7 +860,7 @@ impl PostgresProtocol {
 
     /// Execute an observability store query (logs, metrics)
     async fn execute_observability_query(&mut self, table_name: &str, query: &str) -> Result<()> {
-        use crate::observability::{ObservabilityService, ObservabilityStorage, LogQueryParams};
+        use crate::observability::{LogQueryParams, ObservabilityService, ObservabilityStorage};
 
         debug!("Executing observability query on table: {}", table_name);
 
@@ -818,10 +885,15 @@ impl PostgresProtocol {
         };
 
         // Parse query parameters
-        let namespace = table_name.trim_start_matches("log_")
+        let namespace = table_name
+            .trim_start_matches("log_")
             .trim_start_matches("logs.")
             .trim_start_matches("observability.");
-        let namespace = if namespace.is_empty() { "default" } else { namespace };
+        let namespace = if namespace.is_empty() {
+            "default"
+        } else {
+            namespace
+        };
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let one_hour_ns = 3600_000_000_000i64;
@@ -868,11 +940,13 @@ impl PostgresProtocol {
                     let service = log.service.unwrap_or_default();
                     let source = log.source.unwrap_or_default();
 
-                    self.send_data_row(&[&ts, &severity, &message, &service, &source]).await?;
+                    self.send_data_row(&[&ts, &severity, &message, &service, &source])
+                        .await?;
                     count += 1;
                 }
 
-                self.send_command_complete(&format!("SELECT {}", count)).await
+                self.send_command_complete(&format!("SELECT {}", count))
+                    .await
             }
             Err(e) => {
                 warn!("Log query error: {}", e);
@@ -883,7 +957,7 @@ impl PostgresProtocol {
 
     /// Execute a metric query with aggregation
     async fn execute_metric_query(&mut self, table_name: &str, query: &str) -> Result<()> {
-        use crate::observability::{ObservabilityService, ObservabilityStorage, MetricAggParams};
+        use crate::observability::{MetricAggParams, ObservabilityService, ObservabilityStorage};
 
         debug!("Executing metric query on table: {}", table_name);
 
@@ -899,9 +973,14 @@ impl PostgresProtocol {
             }
         };
 
-        let namespace = table_name.trim_start_matches("metric_")
+        let namespace = table_name
+            .trim_start_matches("metric_")
             .trim_start_matches("metrics.");
-        let namespace = if namespace.is_empty() { "default" } else { namespace };
+        let namespace = if namespace.is_empty() {
+            "default"
+        } else {
+            namespace
+        };
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let one_hour_ns = 3600_000_000_000i64;
@@ -909,7 +988,9 @@ impl PostgresProtocol {
         let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
 
         // Extract metric name from WHERE clause
-        let metric_name = self.extract_metric_name(query).unwrap_or_else(|| "*".to_string());
+        let metric_name = self
+            .extract_metric_name(query)
+            .unwrap_or_else(|| "*".to_string());
 
         // Detect aggregation function
         let aggregation = self.detect_aggregation(query);
@@ -935,7 +1016,8 @@ impl PostgresProtocol {
 
                 let mut count = 0;
                 for series in result.series {
-                    let labels = serde_json::to_string(&series.labels).unwrap_or_else(|_| "{}".to_string());
+                    let labels =
+                        serde_json::to_string(&series.labels).unwrap_or_else(|_| "{}".to_string());
                     for point in series.points {
                         let ts = chrono::DateTime::from_timestamp_nanos(point.timestamp_ns)
                             .format("%Y-%m-%d %H:%M:%S%.6f")
@@ -947,7 +1029,8 @@ impl PostgresProtocol {
                     }
                 }
 
-                self.send_command_complete(&format!("SELECT {}", count)).await
+                self.send_command_complete(&format!("SELECT {}", count))
+                    .await
             }
             Err(e) => {
                 warn!("Metric query error: {}", e);
@@ -976,7 +1059,12 @@ impl PostgresProtocol {
     }
 
     /// Extract time range from WHERE clause
-    fn extract_time_range(&self, query: &str, default_start: i64, default_range: i64) -> (i64, i64) {
+    fn extract_time_range(
+        &self,
+        query: &str,
+        default_start: i64,
+        default_range: i64,
+    ) -> (i64, i64) {
         let upper = query.to_uppercase();
 
         // Look for BETWEEN ... AND ...
@@ -1075,7 +1163,10 @@ impl PostgresProtocol {
             MetricAggregation::P95
         } else if upper.contains("P90(") || upper.contains("PERCENTILE_90(") {
             MetricAggregation::P90
-        } else if upper.contains("P50(") || upper.contains("PERCENTILE_50(") || upper.contains("MEDIAN(") {
+        } else if upper.contains("P50(")
+            || upper.contains("PERCENTILE_50(")
+            || upper.contains("MEDIAN(")
+        {
             MetricAggregation::P50
         } else {
             MetricAggregation::Avg
@@ -1117,7 +1208,8 @@ impl PostgresProtocol {
         };
 
         let after_table = query[start..].trim();
-        let table_end = after_table.find(|c: char| c.is_whitespace() || c == '(')
+        let table_end = after_table
+            .find(|c: char| c.is_whitespace() || c == '(')
             .unwrap_or(after_table.len());
         let table_name = after_table[..table_end].trim().to_lowercase();
 
@@ -1132,7 +1224,10 @@ impl PostgresProtocol {
             StoreType::Vector => self.create_vector_collection(&table_name, &upper).await,
             StoreType::Document => self.create_document_collection(&table_name, &upper).await,
             StoreType::Graph => self.create_graph_collection(&table_name, &upper).await,
-            StoreType::Observability => self.create_observability_namespace(&table_name, &upper).await,
+            StoreType::Observability => {
+                self.create_observability_namespace(&table_name, &upper)
+                    .await
+            }
         }
     }
 
@@ -1156,10 +1251,14 @@ impl PostgresProtocol {
         if query.contains("JSONB") || query.contains("JSON ") {
             return StoreType::Document;
         }
-        if query.contains("LABELS TEXT[]") || query.contains("SOURCE_ID") && query.contains("TARGET_ID") {
+        if query.contains("LABELS TEXT[]")
+            || query.contains("SOURCE_ID") && query.contains("TARGET_ID")
+        {
             return StoreType::Graph;
         }
-        if query.contains("TIMESTAMPTZ") && (query.contains("SEVERITY") || query.contains("MESSAGE")) {
+        if query.contains("TIMESTAMPTZ")
+            && (query.contains("SEVERITY") || query.contains("MESSAGE"))
+        {
             return StoreType::Observability;
         }
 
@@ -1172,9 +1271,12 @@ impl PostgresProtocol {
         // Extract dimension from vector(N) type
         let dimension = self.extract_vector_dimension(query).unwrap_or(128);
 
-        debug!("Creating vector collection '{}' with dimension {}", table_name, dimension);
+        debug!(
+            "Creating vector collection '{}' with dimension {}",
+            table_name, dimension
+        );
 
-        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine, DistanceMetric};
+        use crate::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 
         let config = CollectionConfig {
             name: table_name.to_string(),
@@ -1194,7 +1296,8 @@ impl PostgresProtocol {
                     self.send_command_complete("CREATE TABLE").await
                 } else {
                     warn!("Failed to create collection '{}': {}", table_name, e);
-                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e)).await
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await
                 }
             }
         }
@@ -1224,17 +1327,28 @@ impl PostgresProtocol {
             ..Default::default()
         };
 
-        match self.collection_service.create_collection(&vector_config).await {
+        match self
+            .collection_service
+            .create_collection(&vector_config)
+            .await
+        {
             Ok(_) => {
-                info!("Created document collection '{}' via PostgreSQL", table_name);
+                info!(
+                    "Created document collection '{}' via PostgreSQL",
+                    table_name
+                );
                 self.send_command_complete("CREATE TABLE").await
             }
             Err(e) => {
                 if e.to_string().contains("already exists") {
                     self.send_command_complete("CREATE TABLE").await
                 } else {
-                    warn!("Failed to create document collection '{}': {}", table_name, e);
-                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e)).await
+                    warn!(
+                        "Failed to create document collection '{}': {}",
+                        table_name, e
+                    );
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await
                 }
             }
         }
@@ -1246,17 +1360,27 @@ impl PostgresProtocol {
 
         // Use graph service to create graph
         // For now, acknowledge creation (graph service integration pending)
-        info!("Created graph '{}' via PostgreSQL (graph engine: ORION)", table_name);
+        info!(
+            "Created graph '{}' via PostgreSQL (graph engine: ORION)",
+            table_name
+        );
         self.send_command_complete("CREATE TABLE").await
     }
 
     /// Create an observability namespace (logs/metrics/traces)
-    async fn create_observability_namespace(&mut self, table_name: &str, _query: &str) -> Result<()> {
+    async fn create_observability_namespace(
+        &mut self,
+        table_name: &str,
+        _query: &str,
+    ) -> Result<()> {
         debug!("Creating observability namespace '{}'", table_name);
 
         // Use observability service to create namespace
         // For now, acknowledge creation (observability service integration pending)
-        info!("Created observability namespace '{}' via PostgreSQL", table_name);
+        info!(
+            "Created observability namespace '{}' via PostgreSQL",
+            table_name
+        );
         self.send_command_complete("CREATE TABLE").await
     }
 
@@ -1276,9 +1400,12 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
 
         // Extract table name: INSERT INTO table
-        let into_pos = upper.find("INTO ").ok_or_else(|| anyhow::anyhow!("Missing INTO clause"))?;
+        let into_pos = upper
+            .find("INTO ")
+            .ok_or_else(|| anyhow::anyhow!("Missing INTO clause"))?;
         let after_into = query[into_pos + 5..].trim();
-        let table_end = after_into.find(|c: char| c.is_whitespace() || c == '(')
+        let table_end = after_into
+            .find(|c: char| c.is_whitespace() || c == '(')
             .unwrap_or(after_into.len());
         let table_name = after_into[..table_end].trim().to_lowercase();
 
@@ -1293,7 +1420,9 @@ impl PostgresProtocol {
             StoreType::Vector => {
                 // Use DmlService for proper SQL DML execution if available
                 if let Some(dml_service) = self.dml_service.clone() {
-                    return self.execute_insert_via_dml_service(query, &dml_service).await;
+                    return self
+                        .execute_insert_via_dml_service(query, &dml_service)
+                        .await;
                 }
                 // Fall back to string parsing
                 self.insert_vector(&table_name, query).await
@@ -1305,32 +1434,38 @@ impl PostgresProtocol {
     }
 
     /// Execute INSERT using the proper SQL parser and DmlService
-    async fn execute_insert_via_dml_service(&mut self, query: &str, dml_service: &Arc<DmlService>) -> Result<()> {
+    async fn execute_insert_via_dml_service(
+        &mut self,
+        query: &str,
+        dml_service: &Arc<DmlService>,
+    ) -> Result<()> {
         let parser = SqlFrontendParser::new();
 
         match parser.parse_dml(query) {
-            Ok(Some(statement)) => {
-                match dml_service.execute(statement).await {
-                    Ok(result) => {
-                        info!(
-                            rows_affected = result.rows_affected,
-                            "INSERT executed via DmlService"
-                        );
-                        self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected)).await
-                    }
-                    Err(e) => {
-                        warn!("DmlService INSERT failed: {}", e);
-                        self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e)).await
-                    }
+            Ok(Some(statement)) => match dml_service.execute(statement).await {
+                Ok(result) => {
+                    info!(
+                        rows_affected = result.rows_affected,
+                        "INSERT executed via DmlService"
+                    );
+                    self.send_command_complete(&format!("INSERT 0 {}", result.rows_affected))
+                        .await
                 }
-            }
+                Err(e) => {
+                    warn!("DmlService INSERT failed: {}", e);
+                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                        .await
+                }
+            },
             Ok(None) => {
                 // Not a DML statement (shouldn't happen for INSERT)
-                self.send_error("ERROR", "42601", "Invalid INSERT statement").await
+                self.send_error("ERROR", "42601", "Invalid INSERT statement")
+                    .await
             }
             Err(e) => {
                 warn!("Failed to parse INSERT: {}", e);
-                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                    .await
             }
         }
     }
@@ -1341,10 +1476,16 @@ impl PostgresProtocol {
         if table_name.starts_with("doc_") || table_name.contains("document") {
             return StoreType::Document;
         }
-        if table_name.starts_with("log_") || table_name.contains("logs") || table_name.contains("metrics") {
+        if table_name.starts_with("log_")
+            || table_name.contains("logs")
+            || table_name.contains("metrics")
+        {
             return StoreType::Observability;
         }
-        if table_name.starts_with("node_") || table_name.starts_with("edge_") || table_name.contains("graph") {
+        if table_name.starts_with("node_")
+            || table_name.starts_with("edge_")
+            || table_name.contains("graph")
+        {
             return StoreType::Graph;
         }
 
@@ -1365,7 +1506,9 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
 
         // Extract id and vector from VALUES clause
-        let values_pos = upper.find("VALUES").ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
+        let values_pos = upper
+            .find("VALUES")
+            .ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
         let values_str = &query[values_pos + 6..];
 
         // Parse VALUES (...) - simplified parser
@@ -1380,7 +1523,12 @@ impl PostgresProtocol {
         let id = id.unwrap();
         let vector = vector.unwrap();
 
-        debug!("Inserting vector '{}' into collection '{}' (dim={})", id, table_name, vector.len());
+        debug!(
+            "Inserting vector '{}' into collection '{}' (dim={})",
+            id,
+            table_name,
+            vector.len()
+        );
 
         // Insert via vector operations service
         use crate::proto::proximadb_v1::VectorRecord;
@@ -1398,12 +1546,16 @@ impl PostgresProtocol {
 
         match self.vector_ops.insert_batch(table_name, vec![record]).await {
             Ok(_) => {
-                info!("Inserted vector '{}' into '{}' via PostgreSQL", id, table_name);
+                info!(
+                    "Inserted vector '{}' into '{}' via PostgreSQL",
+                    id, table_name
+                );
                 self.send_command_complete("INSERT 0 1").await
             }
             Err(e) => {
                 warn!("Failed to insert vector: {}", e);
-                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e)).await
+                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                    .await
             }
         }
     }
@@ -1413,7 +1565,9 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
 
         // Extract id and JSON from VALUES clause
-        let values_pos = upper.find("VALUES").ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
+        let values_pos = upper
+            .find("VALUES")
+            .ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
         let values_str = &query[values_pos + 6..];
 
         let id = self.extract_string_value(values_str);
@@ -1427,15 +1581,21 @@ impl PostgresProtocol {
         let id = id.unwrap();
         let json_data = json_str.unwrap_or_else(|| "{}".to_string());
 
-        debug!("Inserting document '{}' into collection '{}'", id, table_name);
+        debug!(
+            "Inserting document '{}' into collection '{}'",
+            id, table_name
+        );
 
         // For now, store documents as vectors with empty vector and JSON metadata
-        use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+        use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("__document__".to_string(), SqlValue {
-            value: Some(sql_value::Value::StringValue(json_data.clone())),
-        });
+        metadata.insert(
+            "__document__".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(json_data.clone())),
+            },
+        );
 
         let record = VectorRecord {
             id: id.clone(),
@@ -1455,14 +1615,22 @@ impl PostgresProtocol {
             format!("doc_{}", table_name)
         };
 
-        match self.vector_ops.insert_batch(&collection_name, vec![record]).await {
+        match self
+            .vector_ops
+            .insert_batch(&collection_name, vec![record])
+            .await
+        {
             Ok(_) => {
-                info!("Inserted document '{}' into '{}' via PostgreSQL", id, table_name);
+                info!(
+                    "Inserted document '{}' into '{}' via PostgreSQL",
+                    id, table_name
+                );
                 self.send_command_complete("INSERT 0 1").await
             }
             Err(e) => {
                 warn!("Failed to insert document: {}", e);
-                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e)).await
+                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                    .await
             }
         }
     }
@@ -1471,7 +1639,10 @@ impl PostgresProtocol {
     async fn insert_graph_data(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Inserting graph data into '{}'", table_name);
         // TODO: Integrate with graph service
-        info!("Graph INSERT acknowledged for '{}' (graph service integration pending)", table_name);
+        info!(
+            "Graph INSERT acknowledged for '{}' (graph service integration pending)",
+            table_name
+        );
         self.send_command_complete("INSERT 0 1").await
     }
 
@@ -1480,7 +1651,9 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
 
         // Extract values from VALUES clause
-        let values_pos = upper.find("VALUES").ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
+        let values_pos = upper
+            .find("VALUES")
+            .ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
         let values_str = &query[values_pos + 6..];
 
         let message = self.extract_string_value(values_str);
@@ -1488,7 +1661,10 @@ impl PostgresProtocol {
         debug!("Inserting log into namespace '{}'", table_name);
 
         // TODO: Integrate with observability service
-        info!("Log INSERT acknowledged for '{}': {:?}", table_name, message);
+        info!(
+            "Log INSERT acknowledged for '{}': {:?}",
+            table_name, message
+        );
         self.send_command_complete("INSERT 0 1").await
     }
 
@@ -1524,16 +1700,21 @@ impl PostgresProtocol {
     async fn execute_delete(&mut self, query: &str) -> Result<()> {
         // Use DmlService for proper SQL DML execution if available
         if let Some(dml_service) = self.dml_service.clone() {
-            return self.execute_delete_via_dml_service(query, &dml_service).await;
+            return self
+                .execute_delete_via_dml_service(query, &dml_service)
+                .await;
         }
 
         // Fall back to string parsing
         let upper = query.to_uppercase();
 
         // Extract table name: DELETE FROM table
-        let from_pos = upper.find("FROM ").ok_or_else(|| anyhow::anyhow!("Missing FROM clause"))?;
+        let from_pos = upper
+            .find("FROM ")
+            .ok_or_else(|| anyhow::anyhow!("Missing FROM clause"))?;
         let after_from = query[from_pos + 5..].trim();
-        let table_end = after_from.find(|c: char| c.is_whitespace() || c == ';')
+        let table_end = after_from
+            .find(|c: char| c.is_whitespace() || c == ';')
             .unwrap_or(after_from.len());
         let table_name = after_from[..table_end].trim().to_lowercase();
 
@@ -1555,7 +1736,10 @@ impl PostgresProtocol {
 
             // TODO: Implement proper vector deletion via tombstone/WAL
             // For now, acknowledge the delete request
-            info!("DELETE acknowledged for vector '{}' in '{}' (tombstone write pending)", id, table_name);
+            info!(
+                "DELETE acknowledged for vector '{}' in '{}' (tombstone write pending)",
+                id, table_name
+            );
             self.send_command_complete("DELETE 1").await
         } else {
             // No WHERE clause or couldn't parse id - return 0 deleted
@@ -1564,31 +1748,37 @@ impl PostgresProtocol {
     }
 
     /// Execute DELETE using the proper SQL parser and DmlService
-    async fn execute_delete_via_dml_service(&mut self, query: &str, dml_service: &Arc<DmlService>) -> Result<()> {
+    async fn execute_delete_via_dml_service(
+        &mut self,
+        query: &str,
+        dml_service: &Arc<DmlService>,
+    ) -> Result<()> {
         let parser = SqlFrontendParser::new();
 
         match parser.parse_dml(query) {
-            Ok(Some(statement)) => {
-                match dml_service.execute(statement).await {
-                    Ok(result) => {
-                        info!(
-                            rows_affected = result.rows_affected,
-                            "DELETE executed via DmlService"
-                        );
-                        self.send_command_complete(&format!("DELETE {}", result.rows_affected)).await
-                    }
-                    Err(e) => {
-                        warn!("DmlService DELETE failed: {}", e);
-                        self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e)).await
-                    }
+            Ok(Some(statement)) => match dml_service.execute(statement).await {
+                Ok(result) => {
+                    info!(
+                        rows_affected = result.rows_affected,
+                        "DELETE executed via DmlService"
+                    );
+                    self.send_command_complete(&format!("DELETE {}", result.rows_affected))
+                        .await
                 }
-            }
+                Err(e) => {
+                    warn!("DmlService DELETE failed: {}", e);
+                    self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e))
+                        .await
+                }
+            },
             Ok(None) => {
-                self.send_error("ERROR", "42601", "Invalid DELETE statement").await
+                self.send_error("ERROR", "42601", "Invalid DELETE statement")
+                    .await
             }
             Err(e) => {
                 warn!("Failed to parse DELETE: {}", e);
-                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                    .await
             }
         }
     }
@@ -1598,14 +1788,18 @@ impl PostgresProtocol {
     async fn execute_update(&mut self, query: &str) -> Result<()> {
         // Use DmlService for proper SQL DML execution if available
         if let Some(dml_service) = self.dml_service.clone() {
-            return self.execute_update_via_dml_service(query, &dml_service).await;
+            return self
+                .execute_update_via_dml_service(query, &dml_service)
+                .await;
         }
 
         // Fall back to string parsing
         let upper = query.to_uppercase();
 
         // Extract table name: UPDATE table SET
-        let set_pos = upper.find(" SET ").ok_or_else(|| anyhow::anyhow!("Missing SET clause"))?;
+        let set_pos = upper
+            .find(" SET ")
+            .ok_or_else(|| anyhow::anyhow!("Missing SET clause"))?;
         let table_name = query[6..set_pos].trim().to_lowercase();
 
         if table_name.is_empty() {
@@ -1624,7 +1818,10 @@ impl PostgresProtocol {
         // For now, just acknowledge the update - full metadata update would require
         // fetching the record, updating it, and re-inserting
         if id.is_some() {
-            info!("UPDATE acknowledged for '{}' (metadata update not yet implemented)", table_name);
+            info!(
+                "UPDATE acknowledged for '{}' (metadata update not yet implemented)",
+                table_name
+            );
             self.send_command_complete("UPDATE 1").await
         } else {
             self.send_command_complete("UPDATE 0").await
@@ -1632,7 +1829,11 @@ impl PostgresProtocol {
     }
 
     /// Execute UPDATE using the proper SQL parser and DmlService
-    async fn execute_update_via_dml_service(&mut self, query: &str, dml_service: &Arc<DmlService>) -> Result<()> {
+    async fn execute_update_via_dml_service(
+        &mut self,
+        query: &str,
+        dml_service: &Arc<DmlService>,
+    ) -> Result<()> {
         let parser = SqlFrontendParser::new();
 
         match parser.parse_dml(query) {
@@ -1643,7 +1844,8 @@ impl PostgresProtocol {
                             rows_affected = result.rows_affected,
                             "UPDATE executed via DmlService"
                         );
-                        self.send_command_complete(&format!("UPDATE {}", result.rows_affected)).await
+                        self.send_command_complete(&format!("UPDATE {}", result.rows_affected))
+                            .await
                     }
                     Err(e) => {
                         // DmlService UPDATE returns error for not-implemented
@@ -1654,11 +1856,13 @@ impl PostgresProtocol {
                 }
             }
             Ok(None) => {
-                self.send_error("ERROR", "42601", "Invalid UPDATE statement").await
+                self.send_error("ERROR", "42601", "Invalid UPDATE statement")
+                    .await
             }
             Err(e) => {
                 warn!("Failed to parse UPDATE: {}", e);
-                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                    .await
             }
         }
     }
@@ -1680,7 +1884,8 @@ impl PostgresProtocol {
         };
 
         let after_table = query[start..].trim();
-        let table_end = after_table.find(|c: char| c.is_whitespace() || c == ';')
+        let table_end = after_table
+            .find(|c: char| c.is_whitespace() || c == ';')
             .unwrap_or(after_table.len());
         let table_name = after_table[..table_end].trim().to_lowercase();
 
@@ -1701,7 +1906,12 @@ impl PostgresProtocol {
                     self.send_command_complete("DROP TABLE").await
                 } else {
                     warn!("Failed to drop collection '{}': {}", table_name, e);
-                    self.send_error("ERROR", "42P01", &format!("Table does not exist: {}", table_name)).await
+                    self.send_error(
+                        "ERROR",
+                        "42P01",
+                        &format!("Table does not exist: {}", table_name),
+                    )
+                    .await
                 }
             }
         }
@@ -1724,7 +1934,8 @@ impl PostgresProtocol {
             Some(after_eq[1..end + 1].to_string())
         } else {
             // Unquoted value - take until whitespace or semicolon
-            let end = after_eq.find(|c: char| c.is_whitespace() || c == ';')
+            let end = after_eq
+                .find(|c: char| c.is_whitespace() || c == ';')
                 .unwrap_or(after_eq.len());
             Some(after_eq[..end].to_string())
         }
@@ -1746,18 +1957,29 @@ impl PostgresProtocol {
         // Parse COPY command: COPY table FROM STDIN [WITH (...)]
         if !upper.contains("FROM STDIN") {
             // COPY TO is not supported (export)
-            return self.send_error("ERROR", "0A000", "COPY TO is not supported; use SELECT queries").await;
+            return self
+                .send_error(
+                    "ERROR",
+                    "0A000",
+                    "COPY TO is not supported; use SELECT queries",
+                )
+                .await;
         }
 
         // Extract table name
-        let copy_pos = upper.find("COPY ").ok_or_else(|| anyhow::anyhow!("Invalid COPY syntax"))?;
+        let copy_pos = upper
+            .find("COPY ")
+            .ok_or_else(|| anyhow::anyhow!("Invalid COPY syntax"))?;
         let after_copy = query[copy_pos + 5..].trim();
-        let table_end = after_copy.find(|c: char| c.is_whitespace() || c == '(')
+        let table_end = after_copy
+            .find(|c: char| c.is_whitespace() || c == '(')
             .unwrap_or(after_copy.len());
         let table_name = after_copy[..table_end].trim().to_lowercase();
 
         if table_name.is_empty() {
-            return self.send_error("ERROR", "42601", "Table name required for COPY").await;
+            return self
+                .send_error("ERROR", "42601", "Table name required for COPY")
+                .await;
         }
 
         // Detect format from WITH clause
@@ -1772,10 +1994,13 @@ impl PostgresProtocol {
         self.send_copy_in_response(&format).await?;
 
         // Receive and process COPY data
-        let row_count = self.receive_copy_data(&table_name, store_type, &format).await?;
+        let row_count = self
+            .receive_copy_data(&table_name, store_type, &format)
+            .await?;
 
         // Send command complete
-        self.send_command_complete(&format!("COPY {}", row_count)).await
+        self.send_command_complete(&format!("COPY {}", row_count))
+            .await
     }
 
     /// Detect COPY format from WITH clause
@@ -1800,7 +2025,7 @@ impl PostgresProtocol {
 
         let overall_format: i8 = match format {
             CopyFormat::Binary | CopyFormat::Arrow => 1, // Binary
-            _ => 0, // Text
+            _ => 0,                                      // Text
         };
 
         // For simplicity, use 2 columns (id, vector) with matching format
@@ -1865,13 +2090,28 @@ impl PostgresProtocol {
 
         // Process the collected data based on format
         row_count = match format {
-            CopyFormat::Arrow => self.process_arrow_copy_data(table_name, store_type, &all_data).await?,
-            CopyFormat::Csv => self.process_csv_copy_data(table_name, store_type, &all_data).await?,
-            CopyFormat::Text => self.process_text_copy_data(table_name, store_type, &all_data).await?,
-            CopyFormat::Binary => self.process_binary_copy_data(table_name, store_type, &all_data).await?,
+            CopyFormat::Arrow => {
+                self.process_arrow_copy_data(table_name, store_type, &all_data)
+                    .await?
+            }
+            CopyFormat::Csv => {
+                self.process_csv_copy_data(table_name, store_type, &all_data)
+                    .await?
+            }
+            CopyFormat::Text => {
+                self.process_text_copy_data(table_name, store_type, &all_data)
+                    .await?
+            }
+            CopyFormat::Binary => {
+                self.process_binary_copy_data(table_name, store_type, &all_data)
+                    .await?
+            }
         };
 
-        info!("COPY completed: {} rows inserted into '{}'", row_count, table_name);
+        info!(
+            "COPY completed: {} rows inserted into '{}'",
+            row_count, table_name
+        );
         Ok(row_count)
     }
 
@@ -1892,15 +2132,15 @@ impl PostgresProtocol {
             Ok(r) => r,
             Err(e) => {
                 warn!("Failed to parse Arrow IPC stream: {}", e);
-                return self.send_error("ERROR", "22P02", &format!("Invalid Arrow IPC data: {}", e)).await
+                return self
+                    .send_error("ERROR", "22P02", &format!("Invalid Arrow IPC data: {}", e))
+                    .await
                     .map(|_| 0);
             }
         };
 
         // Collect all record batches
-        let batches: Vec<arrow_array::RecordBatch> = reader
-            .filter_map(|r| r.ok())
-            .collect();
+        let batches: Vec<arrow_array::RecordBatch> = reader.filter_map(|r| r.ok()).collect();
 
         if batches.is_empty() {
             return Ok(0);
@@ -1916,12 +2156,18 @@ impl PostgresProtocol {
         };
 
         let count = vectors.len();
-        debug!("Decoded {} vectors from Arrow IPC for COPY into '{}'", count, table_name);
+        debug!(
+            "Decoded {} vectors from Arrow IPC for COPY into '{}'",
+            count, table_name
+        );
 
         // Bulk insert via vector operations service (bypasses per-row overhead)
         match self.vector_ops.insert_batch(table_name, vectors).await {
             Ok(_) => {
-                info!("Arrow COPY inserted {} vectors into '{}'", count, table_name);
+                info!(
+                    "Arrow COPY inserted {} vectors into '{}'",
+                    count, table_name
+                );
                 Ok(count)
             }
             Err(e) => {
@@ -2109,9 +2355,7 @@ impl PostgresProtocol {
 
             // Parse vector as array of float4
             let num_floats = vec_len / 4;
-            let vector: Vec<f32> = (0..num_floats)
-                .map(|_| cursor.get_f32())
-                .collect();
+            let vector: Vec<f32> = (0..num_floats).map(|_| cursor.get_f32()).collect();
 
             use crate::proto::proximadb_v1::VectorRecord;
             records.push(VectorRecord {
@@ -2200,7 +2444,8 @@ impl PostgresProtocol {
                 self.send_parse_complete().await?;
             }
             Err(e) => {
-                self.send_error("ERROR", "42601", &format!("Parse error: {}", e)).await?;
+                self.send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                    .await?;
             }
         }
 
@@ -2246,9 +2491,10 @@ impl PostgresProtocol {
         }
 
         // Get the prepared statement data (extract to avoid borrow conflicts)
-        let stmt_data = self.prepared_statements.get(&statement_name).map(|s| {
-            (s.query.clone(), s.translated.clone())
-        });
+        let stmt_data = self
+            .prepared_statements
+            .get(&statement_name)
+            .map(|s| (s.query.clone(), s.translated.clone()));
 
         let (stmt_query, stmt_translated) = match stmt_data {
             Some(data) => data,
@@ -2257,7 +2503,13 @@ impl PostgresProtocol {
                 if statement_name.is_empty() {
                     return self.send_bind_complete().await;
                 }
-                return self.send_error("ERROR", "26000", &format!("prepared statement \"{}\" does not exist", statement_name)).await;
+                return self
+                    .send_error(
+                        "ERROR",
+                        "26000",
+                        &format!("prepared statement \"{}\" does not exist", statement_name),
+                    )
+                    .await;
             }
         };
 
@@ -2316,12 +2568,21 @@ impl PostgresProtocol {
                 if portal_name.is_empty() {
                     return self.send_command_complete("SELECT 0").await;
                 }
-                return self.send_error("ERROR", "34000", &format!("portal \"{}\" does not exist", portal_name)).await;
+                return self
+                    .send_error(
+                        "ERROR",
+                        "34000",
+                        &format!("portal \"{}\" does not exist", portal_name),
+                    )
+                    .await;
             }
         };
 
         // Execute the bound query
-        debug!("Executing portal '{}' with query: {}", portal_name, portal.bound_query);
+        debug!(
+            "Executing portal '{}' with query: {}",
+            portal_name, portal.bound_query
+        );
 
         // Use the same query execution path as simple query
         self.execute_query(&portal.bound_query).await
@@ -2339,13 +2600,18 @@ impl PostgresProtocol {
         match describe_type {
             'S' => {
                 // Describe statement - clone param_types to avoid borrow conflict
-                if let Some(param_types) = self.prepared_statements.get(&name).map(|s| s.param_types.clone()) {
+                if let Some(param_types) = self
+                    .prepared_statements
+                    .get(&name)
+                    .map(|s| s.param_types.clone())
+                {
                     // Send parameter description
                     self.send_parameter_description(&param_types).await?;
                     // Send row description (empty for now)
                     self.send_row_description(&[]).await?;
                 } else {
-                    self.send_error("ERROR", "26000", "Prepared statement does not exist").await?;
+                    self.send_error("ERROR", "26000", "Prepared statement does not exist")
+                        .await?;
                 }
             }
             'P' => {
@@ -2353,7 +2619,8 @@ impl PostgresProtocol {
                 self.send_row_description(&[]).await?;
             }
             _ => {
-                self.send_error("ERROR", "XX000", "Invalid describe type").await?;
+                self.send_error("ERROR", "XX000", "Invalid describe type")
+                    .await?;
             }
         }
 

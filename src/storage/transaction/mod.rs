@@ -54,14 +54,12 @@
 //! tx.commit().await?;
 //! ```
 
-pub mod manager;
 pub mod context;
-pub mod operations;
 pub mod isolation;
+pub mod manager;
+pub mod operations;
 
+pub use context::{OperationType, TransactionContext, TransactionOperation};
+pub use isolation::{ConflictResolution, IsolationLevel};
 pub use manager::{MultiModelTransactionManager, TransactionConfig};
-pub use context::{TransactionContext, TransactionOperation, OperationType};
-pub use operations::{
-    VectorOperation, DocumentOperation, GraphOperation, ObservabilityOperation,
-};
-pub use isolation::{IsolationLevel, ConflictResolution};
+pub use operations::{DocumentOperation, GraphOperation, ObservabilityOperation, VectorOperation};

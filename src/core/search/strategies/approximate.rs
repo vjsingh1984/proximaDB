@@ -6,7 +6,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::{CandidateProvider, ScoredCandidate, SearchCostEstimate, SearchContext, SearchStrategy};
+use super::{
+    CandidateProvider, ScoredCandidate, SearchContext, SearchCostEstimate, SearchStrategy,
+};
 use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::search::SearchMode;
 
@@ -91,7 +93,8 @@ impl ApproximateSearchStrategy {
             }
             SearchMode::Approximate { nprobe: None } => {
                 // Auto-calculate: sqrt(n) * multiplier
-                let auto_nprobe = ((num_partitions as f32).sqrt() * self.nprobe_multiplier).ceil() as usize;
+                let auto_nprobe =
+                    ((num_partitions as f32).sqrt() * self.nprobe_multiplier).ceil() as usize;
                 self.apply_bounds(auto_nprobe, num_partitions)
             }
             _ => num_partitions, // Fallback to exact
@@ -131,9 +134,8 @@ impl ApproximateSearchStrategy {
             .collect();
 
         // Sort by distance
-        centroid_distances.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        centroid_distances
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return top nprobe partition indices
         centroid_distances
@@ -162,7 +164,11 @@ impl ApproximateSearchStrategy {
             .collect();
 
         // Sort by score
-        scored.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Return top-k
         scored.truncate(top_k);
@@ -207,7 +213,9 @@ impl SearchStrategy for ApproximateSearchStrategy {
         let centroids = candidates.get_partition_centroids().await?;
 
         // Find closest partitions
-        let partition_ids = self.find_closest_partitions(query, &centroids, nprobe, metric).await;
+        let partition_ids = self
+            .find_closest_partitions(query, &centroids, nprobe, metric)
+            .await;
 
         if partition_ids.is_empty() {
             // No partitions selected, use full scan
@@ -279,15 +287,18 @@ impl SearchStrategy for ApproximateSearchStrategy {
         vec![
             format!("nprobe_multiplier: {}", self.nprobe_multiplier),
             format!("min_nprobe: {}", self.min_nprobe),
-            format!("rerank: {} ({}x)", self.enable_rerank, self.rerank_multiplier),
+            format!(
+                "rerank: {} ({}x)",
+                self.enable_rerank, self.rerank_multiplier
+            ),
         ]
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::context::SearchContextImpl;
+    use super::*;
 
     struct MockPartitionedProvider {
         partitions: Vec<Vec<(String, Vec<f32>)>>,
@@ -304,7 +315,10 @@ mod tests {
             Ok(self.partitions.iter().flatten().cloned().collect())
         }
 
-        async fn get_partition_candidates(&self, partition_ids: &[usize]) -> Result<Vec<(String, Vec<f32>)>> {
+        async fn get_partition_candidates(
+            &self,
+            partition_ids: &[usize],
+        ) -> Result<Vec<(String, Vec<f32>)>> {
             Ok(partition_ids
                 .iter()
                 .filter_map(|&id| self.partitions.get(id))
@@ -340,11 +354,8 @@ mod tests {
             ],
         };
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            1,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::Approximate { nprobe: Some(1) });
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 1, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Approximate { nprobe: Some(1) });
 
         let results = strategy.execute(&ctx, &provider).await.unwrap();
 
@@ -357,22 +368,16 @@ mod tests {
     fn test_nprobe_calculation() {
         let strategy = ApproximateSearchStrategy::new();
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::Approximate { nprobe: None });
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Approximate { nprobe: None });
 
         // sqrt(100) = 10 partitions
         let nprobe = strategy.calculate_nprobe(&ctx, 100);
         assert_eq!(nprobe, 10);
 
         // With explicit nprobe
-        let ctx_explicit = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::Approximate { nprobe: Some(5) });
+        let ctx_explicit = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::Approximate { nprobe: Some(5) });
 
         let nprobe = strategy.calculate_nprobe(&ctx_explicit, 100);
         assert_eq!(nprobe, 5);
@@ -382,19 +387,12 @@ mod tests {
     fn test_applies_to() {
         let strategy = ApproximateSearchStrategy::new();
 
-        let approx_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::approximate());
+        let approx_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::approximate());
 
         assert!(strategy.applies_to(&approx_ctx));
 
-        let exact_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let exact_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine);
 
         assert!(!strategy.applies_to(&exact_ctx));
     }

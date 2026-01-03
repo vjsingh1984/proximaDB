@@ -13,14 +13,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentFilter,
-    DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
+    DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
 };
 use crate::storage::persistence::write_ahead_log::unified_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
@@ -28,8 +27,8 @@ use crate::storage::persistence::write_ahead_log::unified_operations::{
 use crate::storage::traits::UnifiedStorageEngine;
 
 use super::indexes::IndexManager;
-use super::query::path_parser::JsonPath;
 use super::query::QueryExecutor;
+use super::query::path_parser::JsonPath;
 use super::{
     DocumentCollection, DocumentIngestResult, DocumentQueryParams, DocumentQueryResult,
     DocumentRecord, FlushToStorageResult,
@@ -176,9 +175,8 @@ impl DocumentService {
                         } => {
                             // Replay insert
                             let mut documents = self.documents.write().await;
-                            let collection_docs = documents
-                                .entry(collection_id)
-                                .or_insert_with(HashMap::new);
+                            let collection_docs =
+                                documents.entry(collection_id).or_insert_with(HashMap::new);
                             collection_docs.insert(document.id.clone(), document);
                             recovered_docs += 1;
                         }
@@ -212,9 +210,8 @@ impl DocumentService {
                         } => {
                             // Replay batch insert
                             let mut doc_store = self.documents.write().await;
-                            let collection_docs = doc_store
-                                .entry(collection_id)
-                                .or_insert_with(HashMap::new);
+                            let collection_docs =
+                                doc_store.entry(collection_id).or_insert_with(HashMap::new);
                             for doc in docs {
                                 collection_docs.insert(doc.id.clone(), doc);
                                 recovered_docs += 1;
@@ -286,7 +283,10 @@ impl DocumentService {
         use crate::proto::proximadb_v1::VectorRecord;
         use crate::storage::traits::FlushParameters;
 
-        info!("Flushing documents from collection '{}' to storage engine", collection);
+        info!(
+            "Flushing documents from collection '{}' to storage engine",
+            collection
+        );
         let start = std::time::Instant::now();
 
         // Get documents for this collection
@@ -295,7 +295,10 @@ impl DocumentService {
             match documents.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => {
-                    warn!("No documents found in collection '{}' for flush", collection);
+                    warn!(
+                        "No documents found in collection '{}' for flush",
+                        collection
+                    );
                     return Ok(FlushToStorageResult {
                         documents_flushed: 0,
                         bytes_written: 0,
@@ -356,9 +359,13 @@ impl DocumentService {
     }
 
     /// Convert a DocumentRecord to VectorRecord for storage engine persistence
-    fn document_to_vector_record(&self, doc: &DocumentRecord, collection: &str) -> Option<crate::proto::proximadb_v1::VectorRecord> {
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
+    fn document_to_vector_record(
+        &self,
+        doc: &DocumentRecord,
+        collection: &str,
+    ) -> Option<crate::proto::proximadb_v1::VectorRecord> {
         use crate::proto::proximadb_v1::sql_value::Value;
+        use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
 
         // Serialize the document to JSON string
         let doc_json = match serde_json::to_string(&doc.document) {
@@ -424,7 +431,11 @@ impl DocumentService {
     /// Note: Currently returns empty results as cold tier reading requires
     /// storage engine search with metadata filtering. This is a Phase 9 optimization.
     #[allow(dead_code)]
-    pub async fn read_from_storage(&self, _collection: &str, _ids: &[&str]) -> Result<Vec<DocumentRecord>> {
+    pub async fn read_from_storage(
+        &self,
+        _collection: &str,
+        _ids: &[&str],
+    ) -> Result<Vec<DocumentRecord>> {
         // TODO: Implement cold tier reading by searching storage engine with metadata filter
         // The storage engine doesn't have a simple get-by-id method, so we would need to
         // use search with filter: {"_type": "document", "_collection": collection, "id": ...}
@@ -435,7 +446,10 @@ impl DocumentService {
 
     /// Convert a VectorRecord back to DocumentRecord
     #[allow(dead_code)]
-    fn vector_record_to_document(&self, record: &crate::proto::proximadb_v1::VectorRecord) -> Option<DocumentRecord> {
+    fn vector_record_to_document(
+        &self,
+        record: &crate::proto::proximadb_v1::VectorRecord,
+    ) -> Option<DocumentRecord> {
         use crate::proto::proximadb_v1::sql_value::Value;
 
         // Check if this is a document record
@@ -474,13 +488,16 @@ impl DocumentService {
         };
 
         // Extract original ID (remove collection prefix)
-        let original_id = record.id
+        let original_id = record
+            .id
             .strip_prefix(&format!("{}::", collection_name))
             .unwrap_or(&record.id)
             .to_string();
 
         // Get version
-        let version = record.metadata.get("_version")
+        let version = record
+            .metadata
+            .get("_version")
             .and_then(|v| {
                 if let Some(Value::Int64Value(i)) = &v.value {
                     Some(*i as u64)
@@ -545,8 +562,8 @@ impl DocumentService {
         }
 
         // Write to WAL first (durability before in-memory update)
-        let config_json = serde_json::to_string(&config)
-            .context("Failed to serialize collection config")?;
+        let config_json =
+            serde_json::to_string(&config).context("Failed to serialize collection config")?;
         self.write_to_wal(DocumentOperation::CreateCollection {
             collection_id: name.to_string(),
             config_json,
@@ -656,21 +673,19 @@ impl DocumentService {
         let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
-        if let Err(e) = self.write_to_wal(DocumentOperation::InsertDocument {
-            collection_id: collection.to_string(),
-            document: record.clone(),
-        })
-        .await
+        if let Err(e) = self
+            .write_to_wal(DocumentOperation::InsertDocument {
+                collection_id: collection.to_string(),
+                document: record.clone(),
+            })
+            .await
         {
             self.record_insert_metrics(start, true).await;
             return Err(e);
         }
 
         // Update indexes
-        if let Err(e) = self.index_manager
-            .index_document(collection, &record)
-            .await
-        {
+        if let Err(e) = self.index_manager.index_document(collection, &record).await {
             self.record_insert_metrics(start, true).await;
             return Err(e);
         }
@@ -830,18 +845,20 @@ impl DocumentService {
 
         // Write to WAL first (durability before in-memory update)
         // Store full updated document for proper recovery replay
-        if let Err(e) = self.write_to_wal(DocumentOperation::InsertDocument {
-            collection_id: collection.to_string(),
-            document: record.clone(),
-        })
-        .await
+        if let Err(e) = self
+            .write_to_wal(DocumentOperation::InsertDocument {
+                collection_id: collection.to_string(),
+                document: record.clone(),
+            })
+            .await
         {
             self.record_update_metrics(start, true).await;
             return Err(e);
         }
 
         // Update indexes
-        if let Err(e) = self.index_manager
+        if let Err(e) = self
+            .index_manager
             .reindex_document(collection, &record)
             .await
         {
@@ -929,18 +946,22 @@ impl DocumentService {
                 current.fields.insert(part.to_string(), value.clone());
             } else {
                 // Navigate to nested object, creating if needed
-                let entry = current.fields.entry(part.to_string()).or_insert_with(|| {
-                    SqlValue {
+                let entry = current
+                    .fields
+                    .entry(part.to_string())
+                    .or_insert_with(|| SqlValue {
                         value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
                             SqlObject {
                                 fields: HashMap::new(),
                             },
                         )),
-                    }
-                });
+                    });
 
                 // Get mutable reference to nested object
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                    ref mut obj,
+                )) = entry.value
+                {
                     current = obj;
                 } else {
                     return Err(anyhow!("Path {} is not an object", part));
@@ -969,7 +990,10 @@ impl DocumentService {
             } else {
                 // Navigate to nested object
                 if let Some(entry) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                        ref mut obj,
+                    )) = entry.value
+                    {
                         current = obj;
                     } else {
                         return Err(anyhow!("Path {} is not an object", part));
@@ -1018,13 +1042,18 @@ impl DocumentService {
                     current.fields.insert(
                         part.to_string(),
                         SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(inc)),
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                inc,
+                            )),
                         },
                     );
                 }
                 return Ok(());
             } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                    ref mut obj,
+                )) = entry.value
+                {
                     current = obj;
                 } else {
                     return Err(anyhow!("Path {} is not an object", part));
@@ -1051,7 +1080,10 @@ impl DocumentService {
             if i == parts.len() - 1 {
                 // Last segment - push to array
                 if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(ref mut arr)) = field.value {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
+                        ref mut arr,
+                    )) = field.value
+                    {
                         arr.values.push(value);
                         return Ok(());
                     } else {
@@ -1072,7 +1104,10 @@ impl DocumentService {
                     return Ok(());
                 }
             } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                    ref mut obj,
+                )) = entry.value
+                {
                     current = obj;
                 } else {
                     return Err(anyhow!("Path {} is not an object", part));
@@ -1098,7 +1133,10 @@ impl DocumentService {
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
                 if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(ref mut arr)) = field.value {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
+                        ref mut arr,
+                    )) = field.value
+                    {
                         arr.values.retain(|v| v != value);
                         return Ok(());
                     } else {
@@ -1107,7 +1145,10 @@ impl DocumentService {
                 }
                 return Ok(()); // Field doesn't exist
             } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                    ref mut obj,
+                )) = entry.value
+                {
                     current = obj;
                 } else {
                     return Err(anyhow!("Path {} is not an object", part));
@@ -1133,7 +1174,10 @@ impl DocumentService {
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
                 if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(ref mut arr)) = field.value {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
+                        ref mut arr,
+                    )) = field.value
+                    {
                         // Only add if not already present
                         if !arr.values.contains(&value) {
                             arr.values.push(value);
@@ -1157,7 +1201,10 @@ impl DocumentService {
                     return Ok(());
                 }
             } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                    ref mut obj,
+                )) = entry.value
+                {
                     current = obj;
                 } else {
                     return Err(anyhow!("Path {} is not an object", part));
@@ -1194,7 +1241,10 @@ impl DocumentService {
                 }
                 return Ok(());
             } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(ref mut obj)) = entry.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
+                    ref mut obj,
+                )) = entry.value
+                {
                     current = obj;
                 } else {
                     return Err(anyhow!("Path {} is not an object", part));
@@ -1213,7 +1263,8 @@ impl DocumentService {
         debug!("Deleting document {} from {}", id, collection);
 
         // Verify collection exists
-        if let Err(e) = self.get_collection(collection)
+        if let Err(e) = self
+            .get_collection(collection)
             .await?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection))
         {
@@ -1236,21 +1287,19 @@ impl DocumentService {
         }
 
         // Write to WAL first (durability before in-memory update)
-        if let Err(e) = self.write_to_wal(DocumentOperation::DeleteDocument {
-            collection_id: collection.to_string(),
-            document_id: id.to_string(),
-        })
-        .await
+        if let Err(e) = self
+            .write_to_wal(DocumentOperation::DeleteDocument {
+                collection_id: collection.to_string(),
+                document_id: id.to_string(),
+            })
+            .await
         {
             self.record_delete_metrics(start, true).await;
             return Err(e);
         }
 
         // Remove from indexes
-        if let Err(e) = self.index_manager
-            .remove_document(collection, id)
-            .await
-        {
+        if let Err(e) = self.index_manager.remove_document(collection, id).await {
             self.record_delete_metrics(start, true).await;
             return Err(e);
         }
@@ -1336,8 +1385,7 @@ impl DocumentService {
 // bridging the existing DocumentService to the new multi-model storage traits.
 
 use crate::storage::traits::{
-    DocumentCollectionInfo as TraitDocCollectionInfo,
-    DocumentRecord as TraitDocRecord,
+    DocumentCollectionInfo as TraitDocCollectionInfo, DocumentRecord as TraitDocRecord,
     DocumentStorageOperations,
 };
 use async_trait::async_trait;
@@ -1367,26 +1415,26 @@ impl DocumentStorageOperations for DocumentService {
         let doc_record = DocumentService::insert_document(
             self,
             collection,
-            Some(id),  // Already &str, no conversion needed
+            Some(id), // Already &str, no conversion needed
             document,
-        ).await?;
+        )
+        .await?;
 
         // Note: index_document indexes all configured paths for the document
         // The indexed_paths parameter specifies which paths to index from config
         // The actual indexing is done during insert_document call above
         // We log if additional path-specific indexing is requested but not yet supported
         if !indexed_paths.is_empty() {
-            debug!("Additional indexed_paths specified: {:?} (already indexed via collection config)", indexed_paths);
+            debug!(
+                "Additional indexed_paths specified: {:?} (already indexed via collection config)",
+                indexed_paths
+            );
         }
 
         Ok(to_trait_doc_record(&doc_record))
     }
 
-    async fn get_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<Option<TraitDocRecord>> {
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<TraitDocRecord>> {
         // Use existing get_document method with projection=None
         match DocumentService::get_document(self, collection, id, None).await? {
             Some(doc) => Ok(Some(to_trait_doc_record(&doc))),
@@ -1422,28 +1470,18 @@ impl DocumentStorageOperations for DocumentService {
         updates: Vec<DocumentUpdate>,
     ) -> Result<TraitDocRecord> {
         let doc = DocumentService::update_document(
-            self,
-            collection,
-            id,
-            updates,
-            None, // expected_version
-        ).await?;
+            self, collection, id, updates, None, // expected_version
+        )
+        .await?;
 
         Ok(to_trait_doc_record(&doc))
     }
 
-    async fn delete_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<bool> {
+    async fn delete_document(&self, collection: &str, id: &str) -> Result<bool> {
         DocumentService::delete_document(self, collection, id).await
     }
 
-    async fn create_document_collection(
-        &self,
-        config: DocumentCollectionConfig,
-    ) -> Result<String> {
+    async fn create_document_collection(&self, config: DocumentCollectionConfig) -> Result<String> {
         // Internal create_collection takes (name, config) - clone name first to avoid borrow
         let name = config.name.clone();
         self.create_collection(&name, config).await
@@ -1452,14 +1490,15 @@ impl DocumentStorageOperations for DocumentService {
     async fn list_document_collections(&self) -> Result<Vec<TraitDocCollectionInfo>> {
         let collections = self.list_collections().await?;
 
-        Ok(collections.into_iter().map(|coll| {
-            TraitDocCollectionInfo {
+        Ok(collections
+            .into_iter()
+            .map(|coll| TraitDocCollectionInfo {
                 name: coll.name,
                 document_count: coll.document_count,
                 storage_size_bytes: coll.storage_size_bytes,
                 indexes: coll.indexes,
-            }
-        }).collect())
+            })
+            .collect())
     }
 }
 

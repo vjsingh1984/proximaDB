@@ -1289,7 +1289,11 @@ pub async fn traverse_graph(
                     response
                         .paths
                         .iter()
-                        .map(|p| CanonicalPath::from_node_ids(p.entities.iter().map(|e| e.id.clone()).collect()))
+                        .map(|p| {
+                            CanonicalPath::from_node_ids(
+                                p.entities.iter().map(|e| e.id.clone()).collect(),
+                            )
+                        })
                         .collect(),
                 )
             };
@@ -1364,7 +1368,9 @@ pub async fn query_nodes(
             let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<QueryResults<CanonicalNode>>::error(graph_error)),
+                Json(GraphResponse::<QueryResults<CanonicalNode>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1415,7 +1421,9 @@ pub async fn query_edges(
             let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<QueryResults<CanonicalEdge>>::error(graph_error)),
+                Json(GraphResponse::<QueryResults<CanonicalEdge>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1458,7 +1466,9 @@ pub async fn batch_create_nodes(
             let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<BatchResults<CanonicalNode>>::error(graph_error)),
+                Json(GraphResponse::<BatchResults<CanonicalNode>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1501,7 +1511,9 @@ pub async fn batch_create_edges(
             let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<BatchResults<CanonicalEdge>>::error(graph_error)),
+                Json(GraphResponse::<BatchResults<CanonicalEdge>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1643,11 +1655,7 @@ pub async fn create_graph_collection(
                 created_at: format_timestamp(&collection.created_at),
                 updated_at: format_timestamp(&collection.updated_at),
             };
-            (
-                StatusCode::CREATED,
-                Json(GraphResponse::success(data)),
-            )
-                .into_response()
+            (StatusCode::CREATED, Json(GraphResponse::success(data))).into_response()
         }
         Err(err) => {
             error!("Failed to create graph collection: {}", err);
@@ -1687,7 +1695,9 @@ pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl I
             let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<Vec<GraphCollectionData>>::error(graph_error)),
+                Json(GraphResponse::<Vec<GraphCollectionData>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1845,8 +1855,7 @@ pub async fn execute_graph_query(
 
     let start = std::time::Instant::now();
 
-    // Route through unified facade when feature is enabled and adapter is available
-    #[cfg(feature = "unified-facade-routing")]
+    // Route through unified facade when adapter is available
     if let Some(ref adapter) = app_state.query_adapter {
         debug!("Using unified facade routing for graph query");
         let graph_name = if graph_id.is_empty() || graph_id == "default" {
@@ -1880,7 +1889,9 @@ pub async fn execute_graph_query(
                 let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(GraphResponse::<GraphQueryResultResponse>::error(graph_error)),
+                    Json(GraphResponse::<GraphQueryResultResponse>::error(
+                        graph_error,
+                    )),
                 )
                     .into_response()
             }
@@ -1896,30 +1907,29 @@ pub async fn execute_graph_query(
     );
     (
         StatusCode::NOT_IMPLEMENTED,
-        Json(GraphResponse::<GraphQueryResultResponse>::error(graph_error)),
+        Json(GraphResponse::<GraphQueryResultResponse>::error(
+            graph_error,
+        )),
     )
         .into_response()
 }
 
 /// Convert QueryResult from the unified facade to JSON rows
-#[cfg(feature = "unified-facade-routing")]
 fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde_json::Value> {
     use crate::query::QueryResultData;
 
     match &result.data {
         QueryResultData::Rows(rows) => rows.clone(),
-        QueryResultData::VectorResults(matches) => {
-            matches
-                .iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "id": m.id,
-                        "score": m.score,
-                        "metadata": m.metadata
-                    })
+        QueryResultData::VectorResults(matches) => matches
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "score": m.score,
+                    "metadata": m.metadata
                 })
-                .collect()
-        }
+            })
+            .collect(),
         QueryResultData::Graph(graph_result) => {
             // Convert graph nodes to JSON rows
             graph_result.nodes.clone()

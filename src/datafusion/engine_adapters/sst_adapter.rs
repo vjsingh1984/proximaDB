@@ -61,12 +61,12 @@ use datafusion::physical_plan::ExecutionPlan;
 use futures::Stream;
 use tracing::{debug, trace};
 
+use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::storage::formats::{
-    FileSplit, SplitStatistics, SplitType, ColumnBounds, CacheStatus, StorageTier,
+    CacheStatus, ColumnBounds, FileSplit, SplitStatistics, SplitType, StorageTier,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -400,10 +400,7 @@ impl SplitReader for SstSplitReader {
     ) -> DFResult<SendableRecordBatchStream> {
         debug!(
             "SST: Reading split {} (offset={}, length={}, records={:?})",
-            split.split_id,
-            split.offset,
-            split.length,
-            split.statistics.row_count
+            split.split_id, split.offset, split.length, split.statistics.row_count
         );
 
         // Create stream that will read from the SST file
@@ -517,8 +514,7 @@ impl Stream for SstBlockStream {
 
         trace!(
             "SST: Stream finished for split {} (yielded {} records)",
-            self.split.split_id,
-            self.records_yielded
+            self.split.split_id, self.records_yielded
         );
 
         Poll::Ready(None)

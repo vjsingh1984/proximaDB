@@ -652,10 +652,8 @@ fn json_to_property_value(v: &serde_json::Value) -> Option<proximadb_v1::Propert
                     .collect();
                 Value::VectorValue(proximadb_v1::VectorData { values: floats })
             } else {
-                let values: Vec<proximadb_v1::PropertyValue> = arr
-                    .iter()
-                    .filter_map(json_to_property_value)
-                    .collect();
+                let values: Vec<proximadb_v1::PropertyValue> =
+                    arr.iter().filter_map(json_to_property_value).collect();
                 Value::ArrayValue(proximadb_v1::PropertyArray { values })
             }
         }
@@ -781,8 +779,8 @@ mod tests {
 
     #[test]
     fn test_batch_results() {
-        let results: BatchResults<String> = BatchResults::new(vec!["a".to_string()])
-            .with_errors(vec![BatchError {
+        let results: BatchResults<String> =
+            BatchResults::new(vec!["a".to_string()]).with_errors(vec![BatchError {
                 id: "b".to_string(),
                 error: "Failed".to_string(),
                 code: ErrorCode::InvalidArgument,

@@ -72,7 +72,9 @@ impl ObservabilityService for ObservabilityServiceImpl {
         _request: Request<proximadb_v1::DeleteNamespaceRequest>,
     ) -> Result<Response<proximadb_v1::DeleteNamespaceResponse>, Status> {
         // TODO: Implement when delete_namespace is available on ObservabilityService
-        Err(Status::unimplemented("Delete namespace not yet implemented"))
+        Err(Status::unimplemented(
+            "Delete namespace not yet implemented",
+        ))
     }
 
     async fn ingest_logs(
@@ -113,7 +115,11 @@ impl ObservabilityService for ObservabilityServiceImpl {
             cursor: req.cursor,
         };
 
-        match self.observability_service.query_logs(&req.namespace, params).await {
+        match self
+            .observability_service
+            .query_logs(&req.namespace, params)
+            .await
+        {
             Ok(result) => Ok(Response::new(proximadb_v1::QueryLogsResponse {
                 logs: result.logs,
                 next_cursor: result.next_cursor,
@@ -172,12 +178,16 @@ impl ObservabilityService for ObservabilityServiceImpl {
             start_time_ns: req.start_time_ns,
             end_time_ns: req.end_time_ns,
             aggregation: crate::observability::MetricAggregation::Avg, // TODO: Convert from proto
-            step_seconds: 60, // Default 1 minute
+            step_seconds: 60,                                          // Default 1 minute
             label_filters: std::collections::HashMap::new(),
             group_by: req.group_by,
         };
 
-        match self.observability_service.aggregate_metrics(&req.namespace, params).await {
+        match self
+            .observability_service
+            .aggregate_metrics(&req.namespace, params)
+            .await
+        {
             Ok(result) => {
                 // Convert internal types to proto types
                 let series: Vec<proximadb_v1::TimeSeriesResult> = result
@@ -185,10 +195,14 @@ impl ObservabilityService for ObservabilityServiceImpl {
                     .into_iter()
                     .map(|s| proximadb_v1::TimeSeriesResult {
                         labels: s.labels,
-                        points: s.points.into_iter().map(|p| proximadb_v1::DataPoint {
-                            timestamp_ns: p.timestamp_ns,
-                            value: p.value,
-                        }).collect(),
+                        points: s
+                            .points
+                            .into_iter()
+                            .map(|p| proximadb_v1::DataPoint {
+                                timestamp_ns: p.timestamp_ns,
+                                value: p.value,
+                            })
+                            .collect(),
                     })
                     .collect();
 

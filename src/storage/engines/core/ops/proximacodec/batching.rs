@@ -542,10 +542,7 @@ mod tests {
         );
         println!("   Batch size: {} vectors", batch_size);
         println!("   Row groups per batch: {}", batch_size / 1024);
-        println!(
-            "   Batches needed: {}",
-            total_vectors.div_ceil(batch_size)
-        );
+        println!("   Batches needed: {}", total_vectors.div_ceil(batch_size));
 
         // Verify batch size is power of 2
         assert_eq!(

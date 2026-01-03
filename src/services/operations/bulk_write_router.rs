@@ -41,7 +41,6 @@
 //! 500 vectors @ 512D = ~2MB → Direct write (at threshold)
 //! ```
 
-
 use crate::proto::proximadb_v1::VectorRecord;
 
 /// Result of bulk write route decision

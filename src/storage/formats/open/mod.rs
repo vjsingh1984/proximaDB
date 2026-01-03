@@ -72,15 +72,15 @@ pub mod delta;
 pub mod iceberg;
 
 // Re-exports
-pub use delta::{DeltaLakeFormat, DeltaLakeConfig};
-pub use iceberg::{IcebergFormat, IcebergConfig};
+pub use delta::{DeltaLakeConfig, DeltaLakeFormat};
+pub use iceberg::{IcebergConfig, IcebergFormat};
 
 // ============================================================================
 // Common Types
 // ============================================================================
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for object storage access
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,8 +245,7 @@ mod tests {
 
     #[test]
     fn test_storage_options_with_credentials() {
-        let opts = StorageOptions::s3("bucket", "us-east-1")
-            .with_aws_credentials("AKID", "SECRET");
+        let opts = StorageOptions::s3("bucket", "us-east-1").with_aws_credentials("AKID", "SECRET");
         assert_eq!(opts.access_key_id, Some("AKID".to_string()));
         assert_eq!(opts.secret_access_key, Some("SECRET".to_string()));
     }

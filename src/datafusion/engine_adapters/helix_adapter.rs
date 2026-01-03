@@ -69,12 +69,12 @@ use datafusion::physical_plan::ExecutionPlan;
 use futures::Stream;
 use tracing::{debug, trace};
 
+use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::storage::formats::{
-    FileSplit, SplitStatistics, SplitType, SpatialBounds, ColumnBounds, CacheStatus, StorageTier,
+    CacheStatus, ColumnBounds, FileSplit, SpatialBounds, SplitStatistics, SplitType, StorageTier,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -486,7 +486,11 @@ impl SplitReader for HelixSplitReader {
             "HELIX: Reading split {} (Hilbert range: {:?}, records={:?})",
             split.split_id,
             match &split.split_type {
-                SplitType::HilbertRange { start_code, end_code, .. } => Some((*start_code, *end_code)),
+                SplitType::HilbertRange {
+                    start_code,
+                    end_code,
+                    ..
+                } => Some((*start_code, *end_code)),
                 _ => None,
             },
             split.statistics.row_count
@@ -603,8 +607,7 @@ impl Stream for HelixBlockStream {
 
         trace!(
             "HELIX: Stream finished for split {} (yielded {} records)",
-            self.split.split_id,
-            self.records_yielded
+            self.split.split_id, self.records_yielded
         );
 
         Poll::Ready(None)
@@ -642,10 +645,22 @@ mod tests {
 
     #[test]
     fn test_parse_level_from_filename() {
-        assert_eq!(HelixTableProvider::parse_level_from_filename("L0_12345_abc.helix"), 0);
-        assert_eq!(HelixTableProvider::parse_level_from_filename("L1_67890_def.helix"), 1);
-        assert_eq!(HelixTableProvider::parse_level_from_filename("L5_99999_ghi.helix"), 5);
-        assert_eq!(HelixTableProvider::parse_level_from_filename("unknown.helix"), 0);
+        assert_eq!(
+            HelixTableProvider::parse_level_from_filename("L0_12345_abc.helix"),
+            0
+        );
+        assert_eq!(
+            HelixTableProvider::parse_level_from_filename("L1_67890_def.helix"),
+            1
+        );
+        assert_eq!(
+            HelixTableProvider::parse_level_from_filename("L5_99999_ghi.helix"),
+            5
+        );
+        assert_eq!(
+            HelixTableProvider::parse_level_from_filename("unknown.helix"),
+            0
+        );
     }
 
     #[test]
@@ -681,19 +696,18 @@ mod tests {
 
     #[test]
     fn test_hilbert_split_creation() {
-        let split = FileSplit::new_hilbert_range(
-            "/data/file.helix".to_string(),
-            1000,
-            2000,
-            16,
-            0,
-            65536,
-        );
+        let split =
+            FileSplit::new_hilbert_range("/data/file.helix".to_string(), 1000, 2000, 16, 0, 65536);
 
         assert!(matches!(split.split_type, SplitType::HilbertRange { .. }));
         assert!(split.statistics.spatial_bounds.is_some());
 
-        if let SplitType::HilbertRange { start_code, end_code, hilbert_order } = split.split_type {
+        if let SplitType::HilbertRange {
+            start_code,
+            end_code,
+            hilbert_order,
+        } = split.split_type
+        {
             assert_eq!(start_code, 1000);
             assert_eq!(end_code, 2000);
             assert_eq!(hilbert_order, 16);
@@ -708,7 +722,12 @@ mod tests {
             order: 16,
         };
 
-        if let SpatialBounds::Hilbert { min_code, max_code, order } = bounds {
+        if let SpatialBounds::Hilbert {
+            min_code,
+            max_code,
+            order,
+        } = bounds
+        {
             assert_eq!(min_code, 1000);
             assert_eq!(max_code, 2000);
             assert_eq!(order, 16);

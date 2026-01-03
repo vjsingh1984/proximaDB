@@ -62,9 +62,11 @@ impl super::GraphOperationsService {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals.into(),
                 value: Some(PropertyValue {
-                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(
-                        value.clone(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::property_value::Value::StringValue(
+                            value.clone(),
+                        ),
+                    ),
                 }),
             })
             .collect();
@@ -150,7 +152,10 @@ impl super::GraphOperationsService {
                     {
                         // Handle poisoned lock gracefully
                         let Ok(map) = map_lock.read() else {
-                            tracing::warn!("Poisoned lock in node_property_str_ordered for key {}", filter.key);
+                            tracing::warn!(
+                                "Poisoned lock in node_property_str_ordered for key {}",
+                                filter.key
+                            );
                             continue;
                         };
                         let mut matched = HashSet::new();
@@ -178,7 +183,10 @@ impl super::GraphOperationsService {
                     {
                         // Handle poisoned lock gracefully
                         let Ok(map) = map_lock.read() else {
-                            tracing::warn!("Poisoned lock in node_property_num_indexes for key {}", filter.key);
+                            tracing::warn!(
+                                "Poisoned lock in node_property_num_indexes for key {}",
+                                filter.key
+                            );
                             continue;
                         };
                         let mut matched = HashSet::new();
@@ -222,13 +230,15 @@ impl super::GraphOperationsService {
                     {
                         // Handle poisoned lock gracefully
                         let Ok(map) = map_lock.read() else {
-                            tracing::warn!("Poisoned lock in node_property_str_ordered for key {} (string fallback)", filter.key);
+                            tracing::warn!(
+                                "Poisoned lock in node_property_str_ordered for key {} (string fallback)",
+                                filter.key
+                            );
                             continue;
                         };
                         let mut matched = HashSet::new();
                         // filter_val was already validated at the start of this Op branch
-                        let s = super::extract_string_from_value(filter_val)
-                            .unwrap_or("");
+                        let s = super::extract_string_from_value(filter_val).unwrap_or("");
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
                                 for (_k, ids) in map.range((
@@ -300,25 +310,12 @@ impl super::GraphOperationsService {
                                 Some(v) => v.value != filter_val.value,
                                 None => true,
                             },
-                            Op::GreaterThan => {
-                                super::cmp_prop_gt(prop_val_opt, filter_val)
-                            }
-                            Op::GreaterEqual => {
-                                super::cmp_prop_ge(prop_val_opt, filter_val)
-                            }
-                            Op::LessThan => {
-                                super::cmp_prop_lt(prop_val_opt, filter_val)
-                            }
-                            Op::LessEqual => {
-                                super::cmp_prop_le(prop_val_opt, filter_val)
-                            }
-                            Op::StartsWith => super::prop_starts_with(
-                                prop_val_opt,
-                                filter_val,
-                            ),
-                            Op::Contains => {
-                                super::prop_contains(prop_val_opt, filter_val)
-                            }
+                            Op::GreaterThan => super::cmp_prop_gt(prop_val_opt, filter_val),
+                            Op::GreaterEqual => super::cmp_prop_ge(prop_val_opt, filter_val),
+                            Op::LessThan => super::cmp_prop_lt(prop_val_opt, filter_val),
+                            Op::LessEqual => super::cmp_prop_le(prop_val_opt, filter_val),
+                            Op::StartsWith => super::prop_starts_with(prop_val_opt, filter_val),
+                            Op::Contains => super::prop_contains(prop_val_opt, filter_val),
                             _ => false,
                         };
                         if !pass {
@@ -345,7 +342,11 @@ impl super::GraphOperationsService {
     }
     /// Create a new node
     pub async fn create_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
-        tracing::debug!("GraphOperationsService::create_node called for graph: {}, node: {}", graph_id, node.id);
+        tracing::debug!(
+            "GraphOperationsService::create_node called for graph: {}, node: {}",
+            graph_id,
+            node.id
+        );
 
         if !self.graph_enabled() {
             return Err(crate::core::error::ProximaDBError::InvalidInput(
@@ -430,7 +431,9 @@ impl super::GraphOperationsService {
             edge_ids.insert(e.id.clone());
         }
         for eid in edge_ids.into_iter() {
-            if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await? {
+            if let Some(edge) =
+                crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await?
+            {
                 self.stats_edges
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {

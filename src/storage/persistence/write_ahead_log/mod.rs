@@ -92,6 +92,7 @@ use std::collections::HashMap;
 // Sub-modules
 pub mod avro_serialization_strategy; // Clean architecture avro implementation
 pub mod background_manager;
+pub mod backup; // Incremental backup coordinator
 pub mod batch_factory;
 pub mod batch_strategy;
 pub mod batch_sync_coordinator;
@@ -111,7 +112,6 @@ pub mod memtable_manager; // New centralized memtable operations
 pub mod optimized_write_buffer_writer;
 pub mod parallel_search;
 pub mod pitr; // Point-in-Time Recovery manager
-pub mod backup; // Incremental backup coordinator
 pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
@@ -402,7 +402,9 @@ pub struct WriteAheadLogManagerRegistry {
     /// Next manager ID for creating new instances
     next_manager_id: Arc<tokio::sync::Mutex<u64>>,
     /// Metadata provider shared across all pool instances
-    metadata_provider: Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>,
+    metadata_provider: Arc<
+        tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>,
+    >,
 }
 
 /// WriteAheadLogManager pool entry with workload metrics
@@ -625,9 +627,7 @@ impl WriteAheadLogManagerRegistry {
             pool.values().map(|entry| entry.manager.clone()).collect()
         };
         for manager in managers {
-            manager
-                .set_metadata_provider(provider.clone())
-                .await;
+            manager.set_metadata_provider(provider.clone()).await;
         }
     }
 
@@ -1022,9 +1022,8 @@ static WAL_MANAGER_REGISTRY: ResettableOnceLock<WriteAheadLogManagerRegistry> =
 /// Global metadata provider singleton - shared across ALL WriteAheadLogManager instances
 /// This ensures that pool instances created after set_metadata_provider() can still access
 /// the provider. Without this, pool instances would have their own empty Arc<RwLock<None>>.
-type GlobalMetadataValue = Arc<
-    tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>,
->;
+type GlobalMetadataValue =
+    Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>;
 
 static GLOBAL_METADATA_PROVIDER: ResettableOnceLock<GlobalMetadataValue> =
     ResettableOnceLock::new();
@@ -1039,10 +1038,12 @@ pub(crate) unsafe fn reset_global_wal_state_for_tests() {
 }
 
 /// Get or initialize the global metadata provider
-fn get_global_metadata_provider() -> Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>> {
-    GLOBAL_METADATA_PROVIDER.get().get_or_init(|| {
-        Arc::new(tokio::sync::RwLock::new(None))
-    }).clone()
+fn get_global_metadata_provider()
+-> Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>> {
+    GLOBAL_METADATA_PROVIDER
+        .get()
+        .get_or_init(|| Arc::new(tokio::sync::RwLock::new(None)))
+        .clone()
 }
 
 /// Set the global metadata provider - MUST be called before any WAL writes
@@ -1057,7 +1058,9 @@ fn get_global_metadata_provider() -> Arc<tokio::sync::RwLock<Option<Arc<dyn crat
 ///     // Now WAL writes will correctly resolve storage paths
 /// }
 /// ```
-pub async fn set_global_metadata_provider(provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>) {
+pub async fn set_global_metadata_provider(
+    provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
+) {
     let global = get_global_metadata_provider();
     let mut lock = global.write().await;
     *lock = Some(provider);
@@ -1091,8 +1094,13 @@ pub async fn wait_for_global_metadata_provider(timeout: std::time::Duration) -> 
 ///
 /// This is used during graceful shutdown to access unflushed data and flush
 /// all collections to their respective storage engines.
-pub fn get_global_write_buffer_behavior() -> Option<Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>> {
-    GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.get().get().cloned()
+pub fn get_global_write_buffer_behavior()
+-> Option<Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>> {
+    GLOBAL_WRITE_BUFFER_BEHAVIOR
+        .wal_behavior
+        .get()
+        .get()
+        .cloned()
 }
 
 /// Get the global WriteAheadLogManager registry
@@ -1386,7 +1394,13 @@ impl WriteAheadLogManager {
         _strategy: Box<dyn WALBatchStrategy>,
         config: WALConfig,
         manager_id: String,
-        parent_metadata_provider: Option<Arc<tokio::sync::RwLock<Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>>>>,
+        parent_metadata_provider: Option<
+            Arc<
+                tokio::sync::RwLock<
+                    Option<Arc<dyn crate::storage::traits::InternalCollectionProvider>>,
+                >,
+            >,
+        >,
     ) -> Result<Self> {
         tracing::debug!(
             "🏊 Creating pool WriteAheadLogManager {} (shared global memtable)",
@@ -1443,7 +1457,8 @@ impl WriteAheadLogManager {
             recovery_manager_cache: Arc::new(tokio::sync::RwLock::new(None)),
             // CRITICAL FIX: Use global metadata provider instead of creating new empty one
             // This ensures ALL pool instances share the same metadata provider
-            metadata_provider: parent_metadata_provider.unwrap_or_else(get_global_metadata_provider),
+            metadata_provider: parent_metadata_provider
+                .unwrap_or_else(get_global_metadata_provider),
             // DIP: No path resolver by default, falls back to metadata_provider
             path_resolver: None,
         })
@@ -1665,7 +1680,9 @@ impl WriteAheadLogManager {
                     eprintln!("✅ DEBUG: recovery_manager_cache has cached manager");
                     cache.as_ref().map(|rm| Arc::new(rm.clone()))
                 } else {
-                    eprintln!("⚠️ DEBUG: recovery_manager_cache is None - caller should use get_recovery_manager()");
+                    eprintln!(
+                        "⚠️ DEBUG: recovery_manager_cache is None - caller should use get_recovery_manager()"
+                    );
                     None
                 }
             }
@@ -2149,7 +2166,10 @@ impl WriteAheadLogManager {
             let base_location = self.resolve_collection_base_location(collection_id).await?;
 
             // Create disk manager and write batch
-            trace!("WAL: Creating FilesystemFactory (base_location={})", base_location);
+            trace!(
+                "WAL: Creating FilesystemFactory (base_location={})",
+                base_location
+            );
             let filesystem_factory = match FilesystemFactory::create_default().await {
                 Ok(factory) => {
                     trace!("WAL: FilesystemFactory created successfully");
@@ -2296,24 +2316,36 @@ impl WriteAheadLogManager {
                     match provider.get_collection(&collection_id).await {
                         Ok(Some(collection)) => {
                             if let Some(assignment) = collection.storage_assignment {
-                                eprintln!("✅ DEBUG: Found storage assignment: {}", assignment.base_location);
+                                eprintln!(
+                                    "✅ DEBUG: Found storage assignment: {}",
+                                    assignment.base_location
+                                );
                                 assignment.base_location.clone()
                             } else {
                                 eprintln!("⚠️ DEBUG: No storage_assignment in collection");
-                                self.config.multi_disk.data_directories.get(0)
+                                self.config
+                                    .multi_disk
+                                    .data_directories
+                                    .get(0)
                                     .cloned()
                                     .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                             }
                         }
                         _ => {
                             eprintln!("⚠️ DEBUG: Collection lookup failed, using fallback");
-                            self.config.multi_disk.data_directories.get(0)
+                            self.config
+                                .multi_disk
+                                .data_directories
+                                .get(0)
                                 .cloned()
                                 .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                         }
                     }
                 } else {
-                    self.config.multi_disk.data_directories.get(0)
+                    self.config
+                        .multi_disk
+                        .data_directories
+                        .get(0)
                         .cloned()
                         .unwrap_or_else(|| "/tmp/proximadb/d1".to_string())
                 }
@@ -2480,7 +2512,9 @@ impl WriteAheadLogManager {
                 // IMPORTANT: Tombstones MUST be returned to the merge phase so they can
                 // override storage results. The merge phase filters them out after deduplication.
                 let is_tombstone = vector_record.vector.is_empty()
-                    && vector_record.expires_at.map_or(false, |e| e <= current_time_secs);
+                    && vector_record
+                        .expires_at
+                        .map_or(false, |e| e <= current_time_secs);
 
                 if is_tombstone {
                     // Return tombstone as a special marker for the merge phase

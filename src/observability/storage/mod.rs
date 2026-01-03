@@ -21,13 +21,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, info};
+use tracing::info;
 
+use self::traces::TraceSpan;
 use crate::proto::proximadb_v1::{LogEntry, MetricSample, ObservabilityNamespaceConfig};
 use crate::storage::persistence::write_ahead_log::unified_operations::{
     ObservabilityOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
 };
-use self::traces::TraceSpan;
 
 /// Observability storage service
 pub struct ObservabilityStorage {
@@ -326,11 +326,7 @@ impl ObservabilityStorage {
     }
 
     /// Query trace by ID
-    pub async fn query_trace(
-        &self,
-        namespace: &str,
-        trace_id: &str,
-    ) -> Result<Vec<TraceSpan>> {
+    pub async fn query_trace(&self, namespace: &str, trace_id: &str) -> Result<Vec<TraceSpan>> {
         let namespaces = self.namespaces.read().await;
         let ns = namespaces
             .get(namespace)

@@ -94,7 +94,9 @@ use crate::storage::persistence::filesystem::{FileSystem, FsResult};
 pub use metrics::{IoMetrics, IoMetricsSnapshot};
 pub use parallel_reader::{AdaptiveReader, ParallelReader, ParallelReaderConfig, SequentialReader};
 pub use range_coalescer::{AdaptiveRangeCoalescer, DefaultRangeCoalescer};
-pub use traits::{ByteRange, IoCostEstimate, IoStrategy, RangeMapping, RangeOptimizer, RangeOptimizerWithMapping};
+pub use traits::{
+    ByteRange, IoCostEstimate, IoStrategy, RangeMapping, RangeOptimizer, RangeOptimizerWithMapping,
+};
 
 /// Smart I/O Layer configuration
 #[derive(Debug, Clone)]
@@ -115,7 +117,7 @@ impl Default for SmartIoConfig {
     fn default() -> Self {
         Self {
             coalesce_threshold: 64 * 1024, // 64KB
-            min_parallel_bytes: 4096,       // 4KB
+            min_parallel_bytes: 4096,      // 4KB
             max_concurrent_reads: 8,
             target_chunk_size: 1024 * 1024, // 1MB
             adaptive_optimization: true,
@@ -139,7 +141,7 @@ impl SmartIoConfig {
     pub fn for_cloud() -> Self {
         Self {
             coalesce_threshold: 256 * 1024, // 256KB - larger threshold for high latency
-            min_parallel_bytes: 4096,        // 4KB
+            min_parallel_bytes: 4096,       // 4KB
             max_concurrent_reads: 16,
             target_chunk_size: 4 * 1024 * 1024, // 4MB
             adaptive_optimization: true,
@@ -190,7 +192,9 @@ impl SmartIoLayer {
                 config.target_chunk_size,
             ))
         } else {
-            Arc::new(DefaultRangeCoalescer::with_threshold(config.coalesce_threshold))
+            Arc::new(DefaultRangeCoalescer::with_threshold(
+                config.coalesce_threshold,
+            ))
         };
 
         // Create I/O strategy
@@ -261,7 +265,8 @@ impl SmartIoLayer {
 
         // Record the original request
         let total_requested: u64 = ranges.iter().map(|r| r.len()).sum();
-        self.metrics.record_request(total_requested, ranges.len() as u64);
+        self.metrics
+            .record_request(total_requested, ranges.len() as u64);
 
         trace!(
             "SmartIO: Reading {} ranges, {} bytes from {}",
@@ -279,11 +284,8 @@ impl SmartIoLayer {
         let total_coalesced: u64 = coalesced_ranges.iter().map(|r| r.len()).sum();
         let bytes_in_gaps = total_coalesced.saturating_sub(total_requested);
 
-        self.metrics.record_coalescing(
-            ranges.len(),
-            coalesced_ranges.len(),
-            bytes_in_gaps,
-        );
+        self.metrics
+            .record_coalescing(ranges.len(), coalesced_ranges.len(), bytes_in_gaps);
 
         debug!(
             "SmartIO: Coalesced {} ranges to {} ranges ({}% reduction, {} bytes in gaps)",
@@ -298,7 +300,10 @@ impl SmartIoLayer {
         );
 
         // Step 2: Execute reads
-        let coalesced_data = self.io_strategy.execute_read(file, &coalesced_ranges).await?;
+        let coalesced_data = self
+            .io_strategy
+            .execute_read(file, &coalesced_ranges)
+            .await?;
 
         // Step 3: Extract original ranges from coalesced data
         let result = self.extract_ranges(&coalesced_data, &mappings)?;
@@ -321,14 +326,16 @@ impl SmartIoLayer {
 
             // Bounds check
             if end > coalesced_buffer.len() {
-                return Err(crate::storage::persistence::filesystem::FilesystemError::InvalidOperation(
-                    format!(
-                        "Range extraction out of bounds: buffer len {}, range [{}, {})",
-                        coalesced_buffer.len(),
-                        start,
-                        end
+                return Err(
+                    crate::storage::persistence::filesystem::FilesystemError::InvalidOperation(
+                        format!(
+                            "Range extraction out of bounds: buffer len {}, range [{}, {})",
+                            coalesced_buffer.len(),
+                            start,
+                            end
+                        ),
                     ),
-                ));
+                );
             }
 
             results.push(coalesced_buffer[start..end].to_vec());
@@ -360,7 +367,9 @@ impl SmartIoLayer {
     /// Estimate the cost of reading the given ranges
     pub fn estimate_cost(&self, ranges: &[ByteRange]) -> IoCostEstimate {
         // First coalesce to get realistic I/O count
-        let coalesced = self.range_optimizer.coalesce(ranges.to_vec(), self.config.coalesce_threshold);
+        let coalesced = self
+            .range_optimizer
+            .coalesce(ranges.to_vec(), self.config.coalesce_threshold);
         self.io_strategy.estimate_cost(&coalesced)
     }
 
@@ -567,10 +576,7 @@ mod tests {
         let path = format!("file://{}", test_file.path().display());
 
         // Perform some reads
-        let ranges = vec![
-            ByteRange::new(0, 1000),
-            ByteRange::new(2000, 3000),
-        ];
+        let ranges = vec![ByteRange::new(0, 1000), ByteRange::new(2000, 3000)];
         smart_io.read_ranges(&path, ranges).await.unwrap();
 
         let metrics = smart_io.metrics();

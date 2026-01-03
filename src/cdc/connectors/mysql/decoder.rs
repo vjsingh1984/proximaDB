@@ -199,7 +199,8 @@ impl BinlogDecoder {
         match header.event_type {
             EventType::TableMapEvent => {
                 let table_map = self.decode_table_map(data)?;
-                self.table_maps.insert(table_map.table_id, table_map.clone());
+                self.table_maps
+                    .insert(table_map.table_id, table_map.clone());
                 Ok(Some(BinlogEvent::TableMap(table_map)))
             }
             EventType::WriteRowsEvent | EventType::WriteRowsEventV1 => {
@@ -331,10 +332,22 @@ impl BinlogDecoder {
         // Format UUID
         let uuid_str = format!(
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            uuid[0], uuid[1], uuid[2], uuid[3],
-            uuid[4], uuid[5], uuid[6], uuid[7],
-            uuid[8], uuid[9], uuid[10], uuid[11],
-            uuid[12], uuid[13], uuid[14], uuid[15]
+            uuid[0],
+            uuid[1],
+            uuid[2],
+            uuid[3],
+            uuid[4],
+            uuid[5],
+            uuid[6],
+            uuid[7],
+            uuid[8],
+            uuid[9],
+            uuid[10],
+            uuid[11],
+            uuid[12],
+            uuid[13],
+            uuid[14],
+            uuid[15]
         );
 
         Ok(format!("{}:{}", uuid_str, gno))
@@ -375,7 +388,9 @@ impl BinlogDecoder {
 
         let position = cursor.read_u64_le()?;
         let pos = cursor.position() as usize;
-        let filename = String::from_utf8_lossy(&data[pos..]).trim_end_matches('\0').to_string();
+        let filename = String::from_utf8_lossy(&data[pos..])
+            .trim_end_matches('\0')
+            .to_string();
 
         Ok((filename, position))
     }

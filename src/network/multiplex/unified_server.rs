@@ -9,10 +9,10 @@
 //! unified port architecture.
 
 use super::service::MultiplexService;
+use hyper::Body;
 use hyper::http::{Request, Response};
 use hyper::server::conn::Http;
 use hyper::service::Service;
-use hyper::Body;
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -345,7 +345,9 @@ mod tests {
 
         assert_eq!(
             server.bind_address(),
-            "127.0.0.1:9999".parse::<SocketAddr>().expect("valid address")
+            "127.0.0.1:9999"
+                .parse::<SocketAddr>()
+                .expect("valid address")
         );
     }
 }

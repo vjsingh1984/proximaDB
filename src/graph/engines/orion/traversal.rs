@@ -196,7 +196,10 @@ pub async fn breadth_first_search(
             break;
         }
         // Check depth limit
-        if config.max_depth.is_some_and(|max_depth| current_depth > max_depth) {
+        if config
+            .max_depth
+            .is_some_and(|max_depth| current_depth > max_depth)
+        {
             break;
         }
 
@@ -234,7 +237,11 @@ pub async fn breadth_first_search(
             };
 
             // Apply node filter
-            if config.node_filter.as_ref().is_some_and(|f| !f(&current_node)) {
+            if config
+                .node_filter
+                .as_ref()
+                .is_some_and(|f| !f(&current_node))
+            {
                 continue;
             }
 
@@ -420,7 +427,11 @@ pub async fn depth_first_search(
         };
 
         // Apply node filter
-        if config.node_filter.as_ref().is_some_and(|f| !f(&current_node)) {
+        if config
+            .node_filter
+            .as_ref()
+            .is_some_and(|f| !f(&current_node))
+        {
             continue;
         }
 
@@ -592,10 +603,16 @@ pub async fn parallel_breadth_first_search(
             .par_iter()
             .flat_map(|node_id| {
                 // Get neighbors for this node
-                let outgoing_edges = match engine.get_outgoing_edges(node_id,
+                let outgoing_edges = match engine.get_outgoing_edges(
+                    node_id,
                     config.edge_types.as_ref().and_then(|types| {
-                        if types.is_empty() { None } else { Some(types[0].as_str()) }
-                    })) {
+                        if types.is_empty() {
+                            None
+                        } else {
+                            Some(types[0].as_str())
+                        }
+                    }),
+                ) {
                     Ok(edges) => edges,
                     Err(_) => return Vec::new(),
                 };
@@ -693,7 +710,10 @@ pub async fn parallel_breadth_first_search(
 
     // Unwrap Arc<Mutex<>> collections
     let final_nodes = Arc::try_unwrap(result_nodes).unwrap().into_inner().unwrap();
-    let final_node_ids = Arc::try_unwrap(result_node_ids).unwrap().into_inner().unwrap();
+    let final_node_ids = Arc::try_unwrap(result_node_ids)
+        .unwrap()
+        .into_inner()
+        .unwrap();
     let final_paths = Arc::try_unwrap(result_paths).unwrap().into_inner().unwrap();
 
     Ok(TraversalResult {
@@ -1229,19 +1249,18 @@ pub async fn vector_guided_astar(
         };
 
         // Compute graph-based distance estimate (using target embedding if available)
-        let graph_distance = if let (Some(node_emb), Some(target_emb)) =
-            (&node.embedding, &target_embedding)
-        {
-            // L2 distance as graph estimate
-            let mut sum = 0.0_f64;
-            for (a, b) in node_emb.vector.iter().zip(target_emb.vector.iter()) {
-                let diff = (*a as f64) - (*b as f64);
-                sum += diff * diff;
-            }
-            sum.sqrt()
-        } else {
-            0.0 // Fallback to zero if embeddings missing
-        };
+        let graph_distance =
+            if let (Some(node_emb), Some(target_emb)) = (&node.embedding, &target_embedding) {
+                // L2 distance as graph estimate
+                let mut sum = 0.0_f64;
+                for (a, b) in node_emb.vector.iter().zip(target_emb.vector.iter()) {
+                    let diff = (*a as f64) - (*b as f64);
+                    sum += diff * diff;
+                }
+                sum.sqrt()
+            } else {
+                0.0 // Fallback to zero if embeddings missing
+            };
 
         // Hybrid heuristic: blend graph and semantic distances
         // h(n) = (1 - α) * graph_distance + α * semantic_distance
@@ -1943,11 +1962,7 @@ mod tests {
         }
 
         // Create edges: A->B, B->C, B->A
-        let edges = vec![
-            ("A", "B", "e1"),
-            ("B", "C", "e2"),
-            ("B", "A", "e3"),
-        ];
+        let edges = vec![("A", "B", "e1"), ("B", "C", "e2"), ("B", "A", "e3")];
 
         for (from, to, id) in edges {
             let edge = Edge {
@@ -1988,8 +2003,18 @@ mod tests {
         let norm_b = score_b / total;
         let norm_c = score_c / total;
 
-        assert!(norm_b > norm_a, "B should have higher normalized score than A: B={}, A={}", norm_b, norm_a);
-        assert!(norm_b > norm_c, "B should have higher normalized score than C: B={}, C={}", norm_b, norm_c);
+        assert!(
+            norm_b > norm_a,
+            "B should have higher normalized score than A: B={}, A={}",
+            norm_b,
+            norm_a
+        );
+        assert!(
+            norm_b > norm_c,
+            "B should have higher normalized score than C: B={}, C={}",
+            norm_b,
+            norm_c
+        );
     }
 
     #[tokio::test]
@@ -2034,11 +2059,23 @@ mod tests {
             .unwrap();
 
         // Verify we found all reachable nodes (may not include start node in some implementations)
-        assert!(result.nodes.len() >= 9, "Should find at least 9 nodes, found {}", result.nodes.len());
-        assert!(result.node_ids.len() >= 9, "Should have at least 9 node IDs, found {}", result.node_ids.len());
+        assert!(
+            result.nodes.len() >= 9,
+            "Should find at least 9 nodes, found {}",
+            result.nodes.len()
+        );
+        assert!(
+            result.node_ids.len() >= 9,
+            "Should have at least 9 node IDs, found {}",
+            result.node_ids.len()
+        );
 
         // Verify traversal stats
-        assert!(result.stats.nodes_visited >= 9, "Should visit at least 9 nodes, visited {}", result.stats.nodes_visited);
+        assert!(
+            result.stats.nodes_visited >= 9,
+            "Should visit at least 9 nodes, visited {}",
+            result.stats.nodes_visited
+        );
         assert!(result.stats.execution_time_microseconds > 0);
     }
 
@@ -2215,27 +2252,37 @@ mod tests {
         GraphEngine::insert_node(&engine, node_c).await.unwrap();
 
         // Create edges
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e1".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "B".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e2".to_string(),
-            from_node_id: "B".to_string(),
-            to_node_id: "C".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e2".to_string(),
+                from_node_id: "B".to_string(),
+                to_node_id: "C".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let guide_embedding = vec![0.5, 0.5, 0.5];
@@ -2346,49 +2393,69 @@ mod tests {
         GraphEngine::insert_node(&engine, node_d).await.unwrap();
 
         // Create diamond topology
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e1".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "B".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e2".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "C".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e2".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "C".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e3".to_string(),
-            from_node_id: "B".to_string(),
-            to_node_id: "D".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e3".to_string(),
+                from_node_id: "B".to_string(),
+                to_node_id: "D".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e4".to_string(),
-            from_node_id: "C".to_string(),
-            to_node_id: "D".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e4".to_string(),
+                from_node_id: "C".to_string(),
+                to_node_id: "D".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
@@ -2457,16 +2524,21 @@ mod tests {
         GraphEngine::insert_node(&engine, node_a).await.unwrap();
         GraphEngine::insert_node(&engine, node_b).await.unwrap();
 
-        GraphEngine::insert_edge(&engine, Edge {
-            id: "e1".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "CONNECTS".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        }).await.unwrap();
+        GraphEngine::insert_edge(
+            &engine,
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "A".to_string(),
+                to_node_id: "B".to_string(),
+                edge_type: "CONNECTS".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(1.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let guide_embedding = vec![1.5];
@@ -2485,7 +2557,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.is_some(), "Should find a path even with out-of-range alpha");
+        assert!(
+            result.is_some(),
+            "Should find a path even with out-of-range alpha"
+        );
 
         // Test with alpha < 0.0 (should be clamped to 0.0)
         let result = vector_guided_astar(
@@ -2501,7 +2576,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.is_some(), "Should find a path even with negative alpha");
+        assert!(
+            result.is_some(),
+            "Should find a path even with negative alpha"
+        );
     }
 
     #[tokio::test]
@@ -2568,6 +2646,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.is_none(), "Should return None for disconnected graph");
+        assert!(
+            result.is_none(),
+            "Should return None for disconnected graph"
+        );
     }
 }

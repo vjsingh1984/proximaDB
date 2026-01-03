@@ -542,7 +542,10 @@ impl QueryCoordinator {
         // Execute each plan step sequentially
         for step in &plan.steps {
             match &step.step_type {
-                PlanStepType::NodeScan { labels, property_filters } => {
+                PlanStepType::NodeScan {
+                    labels,
+                    property_filters,
+                } => {
                     // Execute node scan across all shards
                     for shard_entry in self.shards.iter() {
                         let shard_id = *shard_entry.key();
@@ -565,7 +568,11 @@ impl QueryCoordinator {
                         }
                     }
                 }
-                PlanStepType::Traverse { algorithm, max_depth, edge_filters } => {
+                PlanStepType::Traverse {
+                    algorithm,
+                    max_depth,
+                    edge_filters,
+                } => {
                     // Execute traversal using existing distributed BFS/DFS
                     // This is a simplified implementation
                     let _depth = max_depth.unwrap_or(3);
@@ -577,12 +584,19 @@ impl QueryCoordinator {
                         shards_involved.insert(shard_id);
                     }
                 }
-                PlanStepType::IndexSeek { index_name, key_value } => {
+                PlanStepType::IndexSeek {
+                    index_name,
+                    key_value,
+                } => {
                     // Index seek operation (would route to appropriate shard in full impl)
                     // For now, just track stats
                     let _ = (index_name, key_value);
                 }
-                PlanStepType::IndexScan { index_name, start_key, end_key } => {
+                PlanStepType::IndexScan {
+                    index_name,
+                    start_key,
+                    end_key,
+                } => {
                     // Index scan operation
                     // For now, just track stats
                     let _ = (index_name, start_key, end_key);
@@ -600,8 +614,11 @@ impl QueryCoordinator {
             let mut stats = self.stats.write().await;
             stats.cross_shard_queries += 1;
             stats.total_query_time_ms += duration_ms;
-            stats.average_query_time_ms = stats.total_query_time_ms as f64 / stats.cross_shard_queries as f64;
-            stats.shard_hits_per_query.insert(query_id, shards_involved.into_iter().collect());
+            stats.average_query_time_ms =
+                stats.total_query_time_ms as f64 / stats.cross_shard_queries as f64;
+            stats
+                .shard_hits_per_query
+                .insert(query_id, shards_involved.into_iter().collect());
         }
 
         Ok(all_results)

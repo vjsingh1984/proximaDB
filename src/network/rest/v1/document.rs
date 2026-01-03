@@ -6,10 +6,10 @@
 // - Index management
 
 use axum::{
+    Router,
     extract::{Json, Path, Query, State},
     response::Json as JsonResponse,
     routing::{delete, get, post},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,8 +17,12 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::proto::proximadb_v1::{SqlObject, SqlValue, IndexDefinition, DocIndexType, DocumentCollectionConfig};
-use crate::storage::document::{DocumentService, DocumentRecord, DocumentQueryParams as ServiceQueryParams};
+use crate::proto::proximadb_v1::{
+    DocIndexType, DocumentCollectionConfig, IndexDefinition, SqlObject, SqlValue,
+};
+use crate::storage::document::{
+    DocumentQueryParams as ServiceQueryParams, DocumentRecord, DocumentService,
+};
 
 /// Document API state
 #[derive(Clone)]
@@ -119,7 +123,10 @@ pub fn create_document_router() -> Router<DocumentApiState> {
         .route("/collections/:collection/documents", post(insert_document))
         .route("/collections/:collection/documents", get(query_documents))
         .route("/collections/:collection/documents/:id", get(get_document))
-        .route("/collections/:collection/documents/:id", delete(delete_document))
+        .route(
+            "/collections/:collection/documents/:id",
+            delete(delete_document),
+        )
         // Index operations
         .route("/collections/:collection/indexes", post(create_index))
         .route("/collections/:collection/indexes", get(list_indexes))
@@ -188,11 +195,13 @@ async fn list_collections(
     // Convert to serializable format
     let collection_info: Vec<serde_json::Value> = collections
         .iter()
-        .map(|c| serde_json::json!({
-            "name": c.name,
-            "document_count": c.document_count,
-            "storage_size_bytes": c.storage_size_bytes
-        }))
+        .map(|c| {
+            serde_json::json!({
+                "name": c.name,
+                "document_count": c.document_count,
+                "storage_size_bytes": c.storage_size_bytes
+            })
+        })
         .collect();
 
     Ok(JsonResponse(serde_json::json!({
@@ -273,7 +282,9 @@ async fn get_document(
     debug!("Getting document: {}/{}", collection, id);
 
     let projection = params.projection.map(|p| {
-        p.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>()
+        p.split(',')
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<_>>()
     });
 
     let record = state
@@ -314,9 +325,14 @@ async fn query_documents(
     debug!("Querying documents in collection: {}", collection);
 
     // Build service query params
-    let projection = params.projection.map(|p| {
-        p.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>()
-    }).unwrap_or_default();
+    let projection = params
+        .projection
+        .map(|p| {
+            p.split(',')
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     let query_params = ServiceQueryParams {
         filter: None,
@@ -406,8 +422,8 @@ fn json_to_sql_object(value: &serde_json::Value) -> ApiResult<SqlObject> {
 
 /// Convert JSON Value to SqlValue
 fn json_to_sql_value(value: &serde_json::Value) -> SqlValue {
-    use crate::proto::proximadb_v1::sql_value::Value;
     use crate::proto::proximadb_v1::SqlArray;
+    use crate::proto::proximadb_v1::sql_value::Value;
 
     let inner = match value {
         serde_json::Value::Null => Some(Value::NullValue(0)),

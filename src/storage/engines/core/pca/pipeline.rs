@@ -253,8 +253,12 @@ impl SpatialClusteringPipeline {
                 enable_incremental: false,
             };
 
-            let manager =
-                PCAModelManager::new(collection_id.clone(), pca_config, filesystem, collection_dir)?;
+            let manager = PCAModelManager::new(
+                collection_id.clone(),
+                pca_config,
+                filesystem,
+                collection_dir,
+            )?;
             manager.initialize().await?;
             Some(manager)
         } else {
@@ -385,10 +389,7 @@ impl SpatialClusteringPipeline {
             block.compute_centroid();
         }
 
-        let centroids: Vec<Vec<f32>> = blocks
-            .iter()
-            .filter_map(|b| b.centroid.clone())
-            .collect();
+        let centroids: Vec<Vec<f32>> = blocks.iter().filter_map(|b| b.centroid.clone()).collect();
 
         if centroids.is_empty() {
             return Ok(ClusteringResult::passthrough(blocks.len()));

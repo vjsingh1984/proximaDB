@@ -47,7 +47,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -56,14 +56,14 @@ use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::NativeCatalogConfig;
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth};
 use super::types::{
-    CatalogIndex, CatalogNamespace, CatalogPartitionSpec, CatalogSchemaEvolution,
-    CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
+    CatalogIndex, CatalogNamespace, CatalogPartitionSpec, CatalogSchemaEvolution, CatalogSortOrder,
+    CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// Native ProximaDB catalog
 ///
@@ -151,8 +151,7 @@ impl NativeCatalog {
         // Support file:// URLs and plain paths
         if let Some(path) = url.strip_prefix("file://") {
             Ok(PathBuf::from(path))
-        } else if url.starts_with("s3://") || url.starts_with("gs://") || url.starts_with("az://")
-        {
+        } else if url.starts_with("s3://") || url.starts_with("gs://") || url.starts_with("az://") {
             // Cloud storage - use local cache path
             // In a real implementation, we'd use an object store client
             let cache_dir = std::env::temp_dir().join("proximadb_catalog_cache");
@@ -456,7 +455,10 @@ impl Catalog for NativeCatalog {
             sort_order: None,
             created_at: now,
             updated_at: now,
-            data_location: self.table_data_path(identifier).to_string_lossy().to_string(),
+            data_location: self
+                .table_data_path(identifier)
+                .to_string_lossy()
+                .to_string(),
         };
 
         self.save_table(&meta).await?;
@@ -752,7 +754,10 @@ impl Catalog for NativeCatalog {
     // Partitioning
     // ========================
 
-    async fn get_partition_spec(&self, identifier: &TableIdentifier) -> Result<Option<CatalogPartitionSpec>> {
+    async fn get_partition_spec(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> Result<Option<CatalogPartitionSpec>> {
         let meta = self.load_table(identifier).await?;
         Ok(meta.partition_spec)
     }
@@ -780,7 +785,10 @@ impl Catalog for NativeCatalog {
     // Sort Order
     // ========================
 
-    async fn get_sort_order(&self, identifier: &TableIdentifier) -> Result<Option<CatalogSortOrder>> {
+    async fn get_sort_order(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> Result<Option<CatalogSortOrder>> {
         let meta = self.load_table(identifier).await?;
         Ok(meta.sort_order)
     }

@@ -944,22 +944,27 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
                     let vector_count = result.entries_flushed.unwrap_or(0) as usize;
                     // Use file_paths from FlushResult for AXIS index building
-                    if let Err(e) = event_log.notify_flush(
-                        collection_id,
-                        result.file_paths.clone(),
-                        vector_count,
-                        false, // has_quantized - TODO: pass from params
-                        true,  // has_fp32
-                        storage_engine_type,
-                    ).await {
+                    if let Err(e) = event_log
+                        .notify_flush(
+                            collection_id,
+                            result.file_paths.clone(),
+                            vector_count,
+                            false, // has_quantized - TODO: pass from params
+                            true,  // has_fp32
+                            storage_engine_type,
+                        )
+                        .await
+                    {
                         tracing::warn!(
                             "⚠️ Failed to notify EventLog about flush for '{}': {}",
-                            collection_id, e
+                            collection_id,
+                            e
                         );
                     } else {
                         tracing::info!(
                             "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
-                            collection_id, vector_count
+                            collection_id,
+                            vector_count
                         );
                     }
                 } else {
@@ -2009,11 +2014,7 @@ pub trait DocumentStorageOperations: Send + Sync {
     ) -> Result<DocumentRecord>;
 
     /// Get a document by ID
-    async fn get_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<Option<DocumentRecord>>;
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>>;
 
     /// Query documents with filter
     async fn query_documents(
@@ -2033,11 +2034,7 @@ pub trait DocumentStorageOperations: Send + Sync {
     ) -> Result<DocumentRecord>;
 
     /// Delete a document
-    async fn delete_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<bool>;
+    async fn delete_document(&self, collection: &str, id: &str) -> Result<bool>;
 
     /// Create a document collection with indexes
     async fn create_document_collection(
@@ -2209,12 +2206,14 @@ pub struct NamespaceInfo {
 /// Engines can implement this trait to provide multi-model storage capabilities
 /// on top of their vector storage foundation.
 #[async_trait]
-pub trait MultiModelStorage: UnifiedStorageEngine + DocumentStorageOperations + ObservabilityStorageOperations {
+pub trait MultiModelStorage:
+    UnifiedStorageEngine + DocumentStorageOperations + ObservabilityStorageOperations
+{
     /// Check which data models are supported by this engine
     fn supported_models(&self) -> Vec<DataModel> {
         vec![
-            DataModel::Vector,     // Always supported via UnifiedStorageEngine
-            DataModel::Document,   // Via DocumentStorageOperations
+            DataModel::Vector,        // Always supported via UnifiedStorageEngine
+            DataModel::Document,      // Via DocumentStorageOperations
             DataModel::Observability, // Via ObservabilityStorageOperations
         ]
     }

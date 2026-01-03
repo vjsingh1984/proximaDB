@@ -113,7 +113,7 @@ impl RDBMSStore {
     pub fn capabilities(&self) -> StoreCapabilities {
         StoreCapabilities {
             model_type: ModelType::Relational,
-            supports_transactions: true, // SST supports transactions
+            supports_transactions: true,      // SST supports transactions
             supports_secondary_indexes: true, // B-tree indexes
             supports_acid: true,
             supports_streaming: true,
@@ -161,9 +161,7 @@ impl RDBMSStore {
     /// Route to appropriate engine based on query type
     pub fn route_engine(&self, query_type: QueryType) -> Option<&Arc<dyn UnifiedStorageEngine>> {
         match query_type {
-            QueryType::OLTP => {
-                self.row_store.as_ref().or(self.column_store.as_ref())
-            }
+            QueryType::OLTP => self.row_store.as_ref().or(self.column_store.as_ref()),
             QueryType::OLAP => {
                 if self.is_olap_fresh() {
                     self.column_store.as_ref().or(self.row_store.as_ref())

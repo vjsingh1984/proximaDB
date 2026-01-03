@@ -29,7 +29,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::traits::{CpuFeatures, SimdDecoder};
 
@@ -120,7 +120,10 @@ impl SimdDecoder for Avx2Decoder {
             bail!("bits_per_value must be > 0");
         }
         if bits_per_value > 32 {
-            bail!("bits_per_value must be <= 32 for i32 output, got {}", bits_per_value);
+            bail!(
+                "bits_per_value must be <= 32 for i32 output, got {}",
+                bits_per_value
+            );
         }
 
         #[cfg(target_arch = "x86_64")]
@@ -333,10 +336,30 @@ fn decode_32bit_to_i64_avx2(input: &[u8], output: &mut [i64]) -> Result<usize> {
             let out_base = i * 4;
 
             // Load 16 bytes (4 x 32-bit values)
-            let v0 = u32::from_le_bytes([input[base], input[base + 1], input[base + 2], input[base + 3]]);
-            let v1 = u32::from_le_bytes([input[base + 4], input[base + 5], input[base + 6], input[base + 7]]);
-            let v2 = u32::from_le_bytes([input[base + 8], input[base + 9], input[base + 10], input[base + 11]]);
-            let v3 = u32::from_le_bytes([input[base + 12], input[base + 13], input[base + 14], input[base + 15]]);
+            let v0 = u32::from_le_bytes([
+                input[base],
+                input[base + 1],
+                input[base + 2],
+                input[base + 3],
+            ]);
+            let v1 = u32::from_le_bytes([
+                input[base + 4],
+                input[base + 5],
+                input[base + 6],
+                input[base + 7],
+            ]);
+            let v2 = u32::from_le_bytes([
+                input[base + 8],
+                input[base + 9],
+                input[base + 10],
+                input[base + 11],
+            ]);
+            let v3 = u32::from_le_bytes([
+                input[base + 12],
+                input[base + 13],
+                input[base + 14],
+                input[base + 15],
+            ]);
 
             // Use AVX2 to zero-extend to i64
             let vals = _mm_set_epi32(v3 as i32, v2 as i32, v1 as i32, v0 as i32);
@@ -705,7 +728,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 8);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 8, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 8, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -724,7 +749,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 16);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 16, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 16, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -743,7 +770,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 32);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 32, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 32, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -762,7 +791,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 16);
 
         let mut output = vec![0i32; values.len()];
-        let count = decoder.decode_bitpacked_i32(&packed, 16, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i32(&packed, 16, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -789,11 +820,19 @@ mod tests {
             let mut avx2_output = vec![0i64; values.len()];
             let mut scalar_output = vec![0i64; values.len()];
 
-            let avx2_count = avx2_decoder.decode_bitpacked_i64(&packed, bits, &mut avx2_output).unwrap();
-            let scalar_count = scalar_decoder.decode_bitpacked_i64(&packed, bits, &mut scalar_output).unwrap();
+            let avx2_count = avx2_decoder
+                .decode_bitpacked_i64(&packed, bits, &mut avx2_output)
+                .unwrap();
+            let scalar_count = scalar_decoder
+                .decode_bitpacked_i64(&packed, bits, &mut scalar_output)
+                .unwrap();
 
             assert_eq!(avx2_count, scalar_count, "Count mismatch for {} bits", bits);
-            assert_eq!(avx2_output, scalar_output, "Output mismatch for {} bits", bits);
+            assert_eq!(
+                avx2_output, scalar_output,
+                "Output mismatch for {} bits",
+                bits
+            );
         }
     }
 

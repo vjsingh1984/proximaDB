@@ -211,9 +211,9 @@ use crate::metrics::query_service::{MetricsQueryOptions, MetricsQueryService};
 use crate::proto::proximadb_v1::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorRecord,
 };
+use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;
-use crate::query::QueryFacadeAdapter;
 
 /// Unified handlers that implement all business logic for API operations
 ///
@@ -310,7 +310,10 @@ impl UnifiedHandlers {
 
     /// Get the query facade adapter if set
     pub fn get_query_adapter(&self) -> Option<Arc<QueryFacadeAdapter>> {
-        self.query_adapter.read().ok().and_then(|guard| guard.clone())
+        self.query_adapter
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)

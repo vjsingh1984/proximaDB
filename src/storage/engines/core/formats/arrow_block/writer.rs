@@ -13,12 +13,12 @@ use arrow_schema::Schema as ArrowSchema;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 use crate::storage::schema::proxima_schema::ProximaSchema;
+use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 
 use super::config::{ArrowBlockConfig, ArrowBlockMetadata};
 use super::index::{ArrowBlockIndex, ArrowIndexEntry};
-use super::{ArrowBlockError, ArrowBlockResult, ARROW_BLOCK_MAGIC, ARROW_BLOCK_VERSION};
+use super::{ARROW_BLOCK_MAGIC, ARROW_BLOCK_VERSION, ArrowBlockError, ArrowBlockResult};
 
 /// Writer for Arrow block files
 pub struct ArrowBlockWriter {
@@ -229,7 +229,8 @@ impl ArrowBlockWriter {
             (Some(min), Some(max)) => Some((min.clone(), max.clone())),
             _ => None,
         };
-        self.metadata.timestamp_range = match (self.global_min_timestamp, self.global_max_timestamp) {
+        self.metadata.timestamp_range = match (self.global_min_timestamp, self.global_max_timestamp)
+        {
             (Some(min), Some(max)) => Some((min, max)),
             _ => None,
         };
@@ -347,7 +348,9 @@ mod tests {
         let config = ArrowBlockConfig::new(128);
         let mut writer = ArrowBlockWriter::new(&path, config).unwrap();
 
-        let records: Vec<_> = (0..100).map(|i| create_test_record(&format!("vec_{:05}", i), 128)).collect();
+        let records: Vec<_> = (0..100)
+            .map(|i| create_test_record(&format!("vec_{:05}", i), 128))
+            .collect();
 
         writer.write_block(&records).unwrap();
         let metadata = writer.finalize().unwrap();
@@ -371,7 +374,9 @@ mod tests {
 
         // Add 200 records (should create 4 blocks)
         for i in 0..200 {
-            writer.add_record(create_test_record(&format!("vec_{:05}", i), 64)).unwrap();
+            writer
+                .add_record(create_test_record(&format!("vec_{:05}", i), 64))
+                .unwrap();
         }
 
         let metadata = writer.finalize().unwrap();
@@ -397,6 +402,9 @@ mod tests {
         writer.write_block(&records).unwrap();
         let metadata = writer.finalize().unwrap();
 
-        assert_eq!(metadata.id_range, Some(("aaa".to_string(), "zzz".to_string())));
+        assert_eq!(
+            metadata.id_range,
+            Some(("aaa".to_string(), "zzz".to_string()))
+        );
     }
 }

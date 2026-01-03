@@ -130,9 +130,7 @@ fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
-        Some(V::BytesValue(b)) => {
-            serde_json::Value::Array(b.iter().map(|x| json!(*x)).collect())
-        }
+        Some(V::BytesValue(b)) => serde_json::Value::Array(b.iter().map(|x| json!(*x)).collect()),
         None => serde_json::Value::Null,
     }
 }
@@ -324,9 +322,7 @@ impl QueryStrategy for MockSqlStrategy {
             .results
             .iter()
             .map(|row| {
-                serde_json::Value::Object(
-                    row.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                )
+                serde_json::Value::Object(row.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             })
             .collect();
 
@@ -486,10 +482,7 @@ mod tests {
 
         // Execute through adapter (same path for both REST and gRPC when facade routing is enabled)
         let rest_result = adapter.sql_query(sql).await.expect("REST SQL query failed");
-        let grpc_result = adapter
-            .sql_query(sql)
-            .await
-            .expect("gRPC SQL query failed");
+        let grpc_result = adapter.sql_query(sql).await.expect("gRPC SQL query failed");
 
         // Compare QueryResult data
         match (&rest_result.data, &grpc_result.data) {
@@ -549,9 +542,7 @@ mod tests {
                 );
 
                 // Compare node data
-                for (rest_node, grpc_node) in
-                    rest_graph.nodes.iter().zip(grpc_graph.nodes.iter())
-                {
+                for (rest_node, grpc_node) in rest_graph.nodes.iter().zip(grpc_graph.nodes.iter()) {
                     assert!(
                         json_values_equal(rest_node, grpc_node),
                         "Graph node data should match\nREST: {:?}\ngRPC: {:?}",
@@ -605,10 +596,7 @@ mod tests {
         for result in &results.results {
             assert!(!result.id.is_empty(), "Result ID should not be empty");
             // Score should be a valid number
-            assert!(
-                result.score.is_finite(),
-                "Score should be a finite number"
-            );
+            assert!(result.score.is_finite(), "Score should be a finite number");
         }
     }
 

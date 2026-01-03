@@ -21,7 +21,6 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tracing::{debug, error, info, trace, warn};
@@ -245,9 +244,9 @@ async fn handle_connection(
     };
 
     // Connect to backend
-    let backend_stream = TcpStream::connect(backend_addr)
-        .await
-        .map_err(|e| TcpMultiplexError::Backend(format!("Failed to connect to {}: {}", backend_addr, e)))?;
+    let backend_stream = TcpStream::connect(backend_addr).await.map_err(|e| {
+        TcpMultiplexError::Backend(format!("Failed to connect to {}: {}", backend_addr, e))
+    })?;
 
     // Proxy the connection bidirectionally
     proxy_connection(client_stream, backend_stream, config.proxy_buffer_size).await
@@ -293,13 +292,11 @@ async fn proxy_connection(
     let (mut backend_read, mut backend_write) = backend.into_split();
 
     // Spawn tasks for bidirectional copying
-    let client_to_backend = tokio::spawn(async move {
-        tokio::io::copy(&mut client_read, &mut backend_write).await
-    });
+    let client_to_backend =
+        tokio::spawn(async move { tokio::io::copy(&mut client_read, &mut backend_write).await });
 
-    let backend_to_client = tokio::spawn(async move {
-        tokio::io::copy(&mut backend_read, &mut client_write).await
-    });
+    let backend_to_client =
+        tokio::spawn(async move { tokio::io::copy(&mut backend_read, &mut client_write).await });
 
     // Wait for either direction to complete
     tokio::select! {

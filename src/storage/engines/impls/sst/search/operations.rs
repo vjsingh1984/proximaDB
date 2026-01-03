@@ -214,10 +214,17 @@ impl SearchOperations {
             }
             Ok(None) => {
                 debug!("❌ Vector {} not found in {}", vector_id, file_path);
-                Err(anyhow::anyhow!("Vector {} not found in {}", vector_id, file_path))
+                Err(anyhow::anyhow!(
+                    "Vector {} not found in {}",
+                    vector_id,
+                    file_path
+                ))
             }
             Err(e) => {
-                warn!("⚠️ Error looking up vector {} in {}: {}", vector_id, file_path, e);
+                warn!(
+                    "⚠️ Error looking up vector {} in {}: {}",
+                    vector_id, file_path, e
+                );
                 Err(e)
             }
         }

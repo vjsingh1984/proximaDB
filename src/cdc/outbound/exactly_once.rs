@@ -345,9 +345,7 @@ impl ExactlyOnceManager {
             .ok_or_else(|| CdcError::NotFound(format!("Transaction {} not found", txn_id)))?;
 
         // Allow commit from Pending (1PC) or Prepared (2PC)
-        if record.state != TransactionState::Pending
-            && record.state != TransactionState::Prepared
-        {
+        if record.state != TransactionState::Pending && record.state != TransactionState::Prepared {
             return Err(CdcError::InvalidState(format!(
                 "Transaction {} cannot be committed from state {:?}",
                 txn_id, record.state

@@ -151,10 +151,10 @@ impl PositionTracker {
             positions.retain(|p| p.lsn > lsn);
 
             // Update committed position
-            self.positions.write().unwrap().insert(
-                subscription_id.to_string(),
-                Position::from_lsn(lsn),
-            );
+            self.positions
+                .write()
+                .unwrap()
+                .insert(subscription_id.to_string(), Position::from_lsn(lsn));
         }
 
         Ok(())
@@ -257,8 +257,8 @@ impl PositionStore for FilePositionStore {
         }
 
         let content = tokio::fs::read_to_string(&path).await?;
-        let position: Position = serde_json::from_str(&content)
-            .map_err(|e| CdcError::Serialization(e.to_string()))?;
+        let position: Position =
+            serde_json::from_str(&content).map_err(|e| CdcError::Serialization(e.to_string()))?;
         Ok(Some(position))
     }
 

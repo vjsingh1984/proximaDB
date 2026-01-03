@@ -91,7 +91,10 @@ async fn test_backpressure_signaling() {
         })
         .collect();
 
-    let result = coordinator.push_records(&session_id, records).await.unwrap();
+    let result = coordinator
+        .push_records(&session_id, records)
+        .await
+        .unwrap();
 
     // Should have critical backpressure
     assert!(result.backpressure >= BackpressureLevel::High);
@@ -165,7 +168,10 @@ async fn test_session_stats() {
         })
         .collect();
 
-    coordinator.push_records(&session_id, records).await.unwrap();
+    coordinator
+        .push_records(&session_id, records)
+        .await
+        .unwrap();
 
     // Drain some
     coordinator.drain_records(&session_id, 30).unwrap();

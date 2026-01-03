@@ -6,16 +6,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::{
     CatalogObject, ConstraintEnforcer, ObjectSchema, ObjectType, SchemaEnforcementMode,
     TableConstraint,
 };
-use crate::catalog::types::CatalogTableSchema;
 use crate::catalog::TableIdentifier;
+use crate::catalog::types::CatalogTableSchema;
 
 /// Internal schema registry for multi-model objects
 pub struct InternalSchemaRegistry {
@@ -82,7 +82,10 @@ impl InternalSchemaRegistry {
             objects_by_id.insert(id, arc_object.clone());
         }
 
-        info!("Registered object: {} (type: {})", fqn, arc_object.object_type);
+        info!(
+            "Registered object: {} (type: {})",
+            fqn, arc_object.object_type
+        );
         Ok(arc_object)
     }
 
@@ -101,8 +104,9 @@ impl InternalSchemaRegistry {
 
         let object_schema = ObjectSchema::from_table_schema(&schema);
 
-        let object = CatalogObject::new(catalog, namespace, &identifier.name, ObjectType::RdbmsTable)
-            .with_schema(object_schema, SchemaEnforcementMode::Strict);
+        let object =
+            CatalogObject::new(catalog, namespace, &identifier.name, ObjectType::RdbmsTable)
+                .with_schema(object_schema, SchemaEnforcementMode::Strict);
 
         self.register(object).await
     }
@@ -274,7 +278,10 @@ impl InternalSchemaRegistry {
     }
 
     /// Get object by identifier (resolves namespace)
-    pub async fn get_by_identifier(&self, identifier: &TableIdentifier) -> Result<Arc<CatalogObject>> {
+    pub async fn get_by_identifier(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> Result<Arc<CatalogObject>> {
         let fqn = self.resolve_fqn(identifier);
         self.get(&fqn).await
     }
@@ -354,7 +361,10 @@ impl InternalSchemaRegistry {
         objects.insert(fqn.to_string(), arc_updated.clone());
         objects_by_id.insert(arc_updated.object_id.clone(), arc_updated.clone());
 
-        debug!("Updated schema for object: {} (version: {})", fqn, arc_updated.schema_version);
+        debug!(
+            "Updated schema for object: {} (version: {})",
+            fqn, arc_updated.schema_version
+        );
         Ok(arc_updated)
     }
 

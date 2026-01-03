@@ -3,10 +3,8 @@
 //! Orchestrates one-click enterprise deployment across different platforms
 //! with automatic configuration generation and validation.
 
-use crate::deployment::discovery::{
-    DetectedEnvironment, PlatformType,
-};
-use anyhow::{anyhow, Result};
+use crate::deployment::discovery::{DetectedEnvironment, PlatformType};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -966,10 +964,9 @@ pub struct TroubleshootingInfo {
 mod tests {
     use super::*;
     use crate::deployment::discovery::{
-        ResourceAvailability, CapacityEstimate, NetworkConfig, SecurityConstraints,
-        EncryptionRequirements, OptimalConfig, DeploymentRecommendation,
-        DeploymentStrategy, ScalingConfig, BackupStrategy, PerformanceProfile,
-        ComplianceFramework, MonitoringConfig,
+        BackupStrategy, CapacityEstimate, ComplianceFramework, DeploymentRecommendation,
+        DeploymentStrategy, EncryptionRequirements, MonitoringConfig, NetworkConfig, OptimalConfig,
+        PerformanceProfile, ResourceAvailability, ScalingConfig, SecurityConstraints,
     };
 
     #[tokio::test]

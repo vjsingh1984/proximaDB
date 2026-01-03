@@ -160,9 +160,10 @@ impl ColumnarStrategy {
             "Registered Arrow in-memory provider"
         );
 
-        self.providers
-            .write()
-            .insert(collection_id, Arc::new(provider) as Arc<dyn ColumnarReadProvider>);
+        self.providers.write().insert(
+            collection_id,
+            Arc::new(provider) as Arc<dyn ColumnarReadProvider>,
+        );
         Ok(())
     }
 
@@ -203,7 +204,10 @@ impl ColumnarStrategy {
     }
 
     /// Remove a provider for a collection
-    pub fn unregister_provider(&self, collection_id: &str) -> Option<Arc<dyn ColumnarReadProvider>> {
+    pub fn unregister_provider(
+        &self,
+        collection_id: &str,
+    ) -> Option<Arc<dyn ColumnarReadProvider>> {
         self.providers.write().remove(collection_id)
     }
 
@@ -878,8 +882,12 @@ mod tests {
         let strategy = ColumnarStrategy::new();
 
         // GROUP BY queries should be columnar
-        assert!(strategy.is_columnar_query("SELECT category, COUNT(*) FROM products GROUP BY category"));
-        assert!(strategy.is_columnar_query("SELECT status, SUM(amount) FROM orders GROUP BY status"));
+        assert!(
+            strategy.is_columnar_query("SELECT category, COUNT(*) FROM products GROUP BY category")
+        );
+        assert!(
+            strategy.is_columnar_query("SELECT status, SUM(amount) FROM orders GROUP BY status")
+        );
     }
 
     #[test]
@@ -895,9 +903,15 @@ mod tests {
         let strategy = ColumnarStrategy::new();
 
         // Vector queries should NOT be columnar
-        assert!(!strategy.is_columnar_query("SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 10)"));
-        assert!(!strategy.is_columnar_query("SELECT * FROM products ORDER BY embedding <-> '[0.1]'"));
-        assert!(!strategy.is_columnar_query("SELECT COSINE_DISTANCE(embedding, '[0.1]') FROM products"));
+        assert!(
+            !strategy.is_columnar_query("SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 10)")
+        );
+        assert!(
+            !strategy.is_columnar_query("SELECT * FROM products ORDER BY embedding <-> '[0.1]'")
+        );
+        assert!(
+            !strategy.is_columnar_query("SELECT COSINE_DISTANCE(embedding, '[0.1]') FROM products")
+        );
     }
 
     #[test]
@@ -918,7 +932,9 @@ mod tests {
             Some("products".to_string())
         );
         assert_eq!(
-            strategy.extract_collection_from_sql("SELECT COUNT(*) FROM orders WHERE status = 'pending'"),
+            strategy.extract_collection_from_sql(
+                "SELECT COUNT(*) FROM orders WHERE status = 'pending'"
+            ),
             Some("orders".to_string())
         );
         assert_eq!(
@@ -932,7 +948,9 @@ mod tests {
         let strategy = ColumnarStrategy::new();
         let batch = create_test_batch();
 
-        strategy.register_arrow_provider("test_collection", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("test_collection", vec![batch])
+            .unwrap();
 
         assert!(strategy.get_provider("test_collection").is_some());
         assert!(strategy.get_provider("nonexistent").is_none());
@@ -950,7 +968,9 @@ mod tests {
         let strategy = ColumnarStrategy::new();
         let batch = create_test_batch();
 
-        strategy.register_arrow_provider("products", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("products", vec![batch])
+            .unwrap();
 
         // Should handle aggregation query with registered provider
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products");
@@ -970,11 +990,12 @@ mod tests {
         let strategy = ColumnarStrategy::new();
         let batch = create_test_batch();
 
-        strategy.register_arrow_provider("products", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("products", vec![batch])
+            .unwrap();
 
         // Should handle with explicit target
-        let request = QueryRequest::sql("SELECT COUNT(*) FROM products")
-            .with_target("products");
+        let request = QueryRequest::sql("SELECT COUNT(*) FROM products").with_target("products");
         assert!(strategy.can_handle(&request));
     }
 
@@ -1014,7 +1035,9 @@ mod tests {
         let strategy = ColumnarStrategy::new();
         let batch = create_test_batch();
 
-        strategy.register_arrow_provider("products", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("products", vec![batch])
+            .unwrap();
 
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products")
             .with_target("products")
@@ -1040,14 +1063,18 @@ mod tests {
     async fn test_execute_without_provider_fails() {
         let strategy = ColumnarStrategy::new();
 
-        let request = QueryRequest::sql("SELECT COUNT(*) FROM unknown")
-            .with_target("unknown");
+        let request = QueryRequest::sql("SELECT COUNT(*) FROM unknown").with_target("unknown");
 
         let ctx = QueryContext::new(30000);
         let result = strategy.execute(request, &ctx).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No columnar provider"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No columnar provider")
+        );
     }
 
     #[test]
@@ -1068,7 +1095,12 @@ mod tests {
         let filter = strategy.parse_where_clause(sql);
         assert!(filter.is_some());
 
-        if let Some(FilterExpression::Comparison { field, operator, value }) = filter {
+        if let Some(FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        }) = filter
+        {
             assert_eq!(field, "status");
             assert_eq!(operator, ComparisonOperator::Equals);
             assert_eq!(value, serde_json::json!("active"));
@@ -1085,7 +1117,12 @@ mod tests {
         let filter = strategy.parse_where_clause(sql);
         assert!(filter.is_some());
 
-        if let Some(FilterExpression::Comparison { field, operator, value }) = filter {
+        if let Some(FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        }) = filter
+        {
             assert_eq!(field, "value");
             assert_eq!(operator, ComparisonOperator::GreaterThanOrEqual);
             assert_eq!(value, serde_json::json!(100));
@@ -1132,7 +1169,12 @@ mod tests {
         let filter = strategy.parse_where_clause(sql);
         assert!(filter.is_some());
 
-        if let Some(FilterExpression::Comparison { field, operator, value }) = filter {
+        if let Some(FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        }) = filter
+        {
             assert_eq!(field, "active");
             assert_eq!(operator, ComparisonOperator::Equals);
             assert_eq!(value, serde_json::json!(true));
@@ -1249,8 +1291,14 @@ mod tests {
     fn test_extract_limit() {
         let strategy = ColumnarStrategy::new();
 
-        assert_eq!(strategy.extract_limit("SELECT * FROM products LIMIT 10"), Some(10));
-        assert_eq!(strategy.extract_limit("SELECT * FROM products LIMIT 100"), Some(100));
+        assert_eq!(
+            strategy.extract_limit("SELECT * FROM products LIMIT 10"),
+            Some(10)
+        );
+        assert_eq!(
+            strategy.extract_limit("SELECT * FROM products LIMIT 100"),
+            Some(100)
+        );
         assert_eq!(strategy.extract_limit("SELECT * FROM products"), None);
     }
 
@@ -1258,8 +1306,14 @@ mod tests {
     fn test_extract_offset() {
         let strategy = ColumnarStrategy::new();
 
-        assert_eq!(strategy.extract_offset("SELECT * FROM products LIMIT 10 OFFSET 20"), Some(20));
-        assert_eq!(strategy.extract_offset("SELECT * FROM products OFFSET 5"), Some(5));
+        assert_eq!(
+            strategy.extract_offset("SELECT * FROM products LIMIT 10 OFFSET 20"),
+            Some(20)
+        );
+        assert_eq!(
+            strategy.extract_offset("SELECT * FROM products OFFSET 5"),
+            Some(5)
+        );
         assert_eq!(strategy.extract_offset("SELECT * FROM products"), None);
     }
 
@@ -1303,7 +1357,9 @@ mod tests {
         let strategy = ColumnarStrategy::new();
         let batch = create_test_batch();
 
-        strategy.register_arrow_provider("test", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("test", vec![batch])
+            .unwrap();
         assert!(strategy.has_provider("test"));
 
         let removed = strategy.unregister_provider("test");
@@ -1316,8 +1372,12 @@ mod tests {
         let strategy = ColumnarStrategy::new();
         let batch = create_test_batch();
 
-        strategy.register_arrow_provider("collection_a", vec![batch.clone()]).unwrap();
-        strategy.register_arrow_provider("collection_b", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("collection_a", vec![batch.clone()])
+            .unwrap();
+        strategy
+            .register_arrow_provider("collection_b", vec![batch])
+            .unwrap();
 
         let collections = strategy.registered_collections();
         assert_eq!(collections.len(), 2);
@@ -1367,7 +1427,9 @@ mod tests {
         )
         .unwrap();
 
-        strategy.register_arrow_provider("products", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("products", vec![batch])
+            .unwrap();
 
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products WHERE value > 15")
             .with_target("products")
@@ -1390,19 +1452,15 @@ mod tests {
         let strategy = ColumnarStrategy::new();
 
         // Create batch with many rows
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
 
         let id_array = Int64Array::from((0..100).collect::<Vec<i64>>());
 
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![Arc::new(id_array)],
-        )
-        .unwrap();
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(id_array)]).unwrap();
 
-        strategy.register_arrow_provider("numbers", vec![batch]).unwrap();
+        strategy
+            .register_arrow_provider("numbers", vec![batch])
+            .unwrap();
 
         let request = QueryRequest::sql("SELECT COUNT(*) FROM numbers LIMIT 10")
             .with_target("numbers")
@@ -1424,21 +1482,45 @@ mod tests {
         let strategy = ColumnarStrategy::new();
 
         // String values
-        assert_eq!(strategy.parse_sql_value("'hello'"), Some(serde_json::json!("hello")));
-        assert_eq!(strategy.parse_sql_value("\"world\""), Some(serde_json::json!("world")));
+        assert_eq!(
+            strategy.parse_sql_value("'hello'"),
+            Some(serde_json::json!("hello"))
+        );
+        assert_eq!(
+            strategy.parse_sql_value("\"world\""),
+            Some(serde_json::json!("world"))
+        );
 
         // Boolean values
-        assert_eq!(strategy.parse_sql_value("true"), Some(serde_json::json!(true)));
-        assert_eq!(strategy.parse_sql_value("TRUE"), Some(serde_json::json!(true)));
-        assert_eq!(strategy.parse_sql_value("false"), Some(serde_json::json!(false)));
-        assert_eq!(strategy.parse_sql_value("FALSE"), Some(serde_json::json!(false)));
+        assert_eq!(
+            strategy.parse_sql_value("true"),
+            Some(serde_json::json!(true))
+        );
+        assert_eq!(
+            strategy.parse_sql_value("TRUE"),
+            Some(serde_json::json!(true))
+        );
+        assert_eq!(
+            strategy.parse_sql_value("false"),
+            Some(serde_json::json!(false))
+        );
+        assert_eq!(
+            strategy.parse_sql_value("FALSE"),
+            Some(serde_json::json!(false))
+        );
 
         // Null value
-        assert_eq!(strategy.parse_sql_value("NULL"), Some(serde_json::Value::Null));
+        assert_eq!(
+            strategy.parse_sql_value("NULL"),
+            Some(serde_json::Value::Null)
+        );
 
         // Integer values
         assert_eq!(strategy.parse_sql_value("42"), Some(serde_json::json!(42)));
-        assert_eq!(strategy.parse_sql_value("-100"), Some(serde_json::json!(-100)));
+        assert_eq!(
+            strategy.parse_sql_value("-100"),
+            Some(serde_json::json!(-100))
+        );
 
         // Float values
         let float_val = strategy.parse_sql_value("3.14");

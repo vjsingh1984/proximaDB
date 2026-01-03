@@ -110,7 +110,9 @@ impl QueryLowering {
         // 4. Process ORDER BY with vector function recognition
         let order_by = if let Some(order_by_clause) = &query.order_by {
             match &order_by_clause.kind {
-                sqlparser::ast::OrderByKind::Expressions(exprs) => self.lower_order_by(exprs).await?,
+                sqlparser::ast::OrderByKind::Expressions(exprs) => {
+                    self.lower_order_by(exprs).await?
+                }
                 sqlparser::ast::OrderByKind::All(_) => vec![],
             }
         } else {
@@ -121,13 +123,22 @@ impl QueryLowering {
         // In sqlparser 0.59, LimitClause is an enum
         let (limit, offset) = if let Some(lc) = &query.limit_clause {
             match lc {
-                sqlparser::ast::LimitClause::LimitOffset { limit: lim, offset: off, .. } => {
+                sqlparser::ast::LimitClause::LimitOffset {
+                    limit: lim,
+                    offset: off,
+                    ..
+                } => {
                     let limit_val = lim.as_ref().and_then(|expr| self.extract_limit(expr));
                     // In sqlparser 0.59, offset is Option<Offset>
-                    let offset_val = off.as_ref().and_then(|off_struct| self.extract_offset(off_struct));
+                    let offset_val = off
+                        .as_ref()
+                        .and_then(|off_struct| self.extract_offset(off_struct));
                     (limit_val, offset_val)
                 }
-                sqlparser::ast::LimitClause::OffsetCommaLimit { offset: off, limit: lim } => {
+                sqlparser::ast::LimitClause::OffsetCommaLimit {
+                    offset: off,
+                    limit: lim,
+                } => {
                     let limit_val = self.extract_limit(lim);
                     // In OffsetCommaLimit, offset is an Expr, not an Offset struct
                     let offset_val = if let SqlExpr::Value(value_with_span) = off {

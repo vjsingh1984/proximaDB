@@ -178,11 +178,13 @@ impl OrionPersistence {
 
             // Initialize WAL writer with path (not URL)
             tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
-            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone()).await.map_err(|e| {
-                ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
-                    e.to_string(),
-                ))
-            })?;
+            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
             tracing::debug!("WAL writer created successfully");
 
             (
@@ -576,7 +578,9 @@ impl OrionPersistence {
 
             tracing::debug!("Update node WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - update node operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - update node operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -609,7 +613,9 @@ impl OrionPersistence {
 
             tracing::debug!("Delete node WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - delete node operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - delete node operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -644,7 +650,9 @@ impl OrionPersistence {
 
             tracing::debug!("Update edge WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - update edge operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - update edge operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -677,7 +685,9 @@ impl OrionPersistence {
 
             tracing::debug!("Delete edge WAL write completed");
         } else {
-            tracing::warn!("No WAL writer available - delete edge operation will not be persisted!");
+            tracing::warn!(
+                "No WAL writer available - delete edge operation will not be persisted!"
+            );
         }
 
         Ok(())

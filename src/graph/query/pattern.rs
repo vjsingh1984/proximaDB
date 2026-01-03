@@ -577,13 +577,15 @@ impl PatternMatcher {
             PropertyConstraint::GreaterThan(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp > 0),
-            PropertyConstraint::GreaterThanOrEqual(expected) | PropertyConstraint::GreaterOrEqual(expected) => self
+            PropertyConstraint::GreaterThanOrEqual(expected)
+            | PropertyConstraint::GreaterOrEqual(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp >= 0),
             PropertyConstraint::LessThan(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp < 0),
-            PropertyConstraint::LessThanOrEqual(expected) | PropertyConstraint::LessOrEqual(expected) => self
+            PropertyConstraint::LessThanOrEqual(expected)
+            | PropertyConstraint::LessOrEqual(expected) => self
                 .compare_values(&json_value, expected)
                 .map(|cmp| cmp <= 0),
             PropertyConstraint::In(values) => Ok(values.contains(&json_value)),
@@ -721,7 +723,11 @@ impl PatternMatcher {
         bindings: &HashMap<String, VariableBinding>,
     ) -> QueryResult<bool> {
         match clause {
-            WhereClause::Property { variable, property, constraint } => {
+            WhereClause::Property {
+                variable,
+                property,
+                constraint,
+            } => {
                 if let Some(VariableBinding::Node(node)) = bindings.get(variable) {
                     if let Some(prop_value) = node.properties.get(property) {
                         return self.evaluate_property_constraint(prop_value, constraint);
@@ -996,7 +1002,8 @@ impl PatternCompiler {
             } else {
                 // Variable like "n"
                 spec.variables.push(item.to_string());
-                spec.projections.push(PropertyProjection::Variable(item.to_string()));
+                spec.projections
+                    .push(PropertyProjection::Variable(item.to_string()));
             }
         }
 

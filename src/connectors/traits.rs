@@ -133,7 +133,11 @@ impl ReadContext {
     }
 
     /// Add a partition filter.
-    pub fn with_partition_filter(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_partition_filter(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
         self.partition_filters.insert(key.into(), value.into());
         self
     }

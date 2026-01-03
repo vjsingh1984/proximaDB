@@ -37,7 +37,7 @@ use std::arch::x86_64::*;
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 /// Quantization parameters for dequantization
 #[derive(Debug, Clone, Copy)]
@@ -749,7 +749,13 @@ mod tests {
         assert_eq!(count, 8);
         let expected = [-1.0f32, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
         for (i, (&e, &a)) in expected.iter().zip(output.iter()).enumerate() {
-            assert!((e - a).abs() < 1e-6, "Mismatch at {}: expected {}, got {}", i, e, a);
+            assert!(
+                (e - a).abs() < 1e-6,
+                "Mismatch at {}: expected {}, got {}",
+                i,
+                e,
+                a
+            );
         }
     }
 
@@ -764,7 +770,13 @@ mod tests {
         assert_eq!(count, 8);
         let expected = [0.0f32, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
         for (i, (&e, &a)) in expected.iter().zip(output.iter()).enumerate() {
-            assert!((e - a).abs() < 1e-6, "Mismatch at {}: expected {}, got {}", i, e, a);
+            assert!(
+                (e - a).abs() < 1e-6,
+                "Mismatch at {}: expected {}, got {}",
+                i,
+                e,
+                a
+            );
         }
     }
 
@@ -780,7 +792,13 @@ mod tests {
         assert_eq!(count, 4);
         let expected = [0.1f32, 0.2, 0.3, 0.4];
         for (i, (&e, &a)) in expected.iter().zip(output.iter()).enumerate() {
-            assert!((e - a).abs() < 1e-5, "Mismatch at {}: expected {}, got {}", i, e, a);
+            assert!(
+                (e - a).abs() < 1e-5,
+                "Mismatch at {}: expected {}, got {}",
+                i,
+                e,
+                a
+            );
         }
     }
 
@@ -797,7 +815,13 @@ mod tests {
         // Values: 0, 127, -128, -1
         let expected = [0.0f32, 1.27, -1.28, -0.01];
         for (i, (&e, &a)) in expected.iter().zip(output.iter()).enumerate() {
-            assert!((e - a).abs() < 1e-4, "Mismatch at {}: expected {}, got {}", i, e, a);
+            assert!(
+                (e - a).abs() < 1e-4,
+                "Mismatch at {}: expected {}, got {}",
+                i,
+                e,
+                a
+            );
         }
     }
 
@@ -817,7 +841,13 @@ mod tests {
         //          (-1 - 128) * 0.1 = -12.9
         let expected = [-25.6f32, -12.8, -12.9];
         for (i, (&e, &a)) in expected.iter().zip(output.iter()).enumerate() {
-            assert!((e - a).abs() < 1e-4, "Mismatch at {}: expected {}, got {}", i, e, a);
+            assert!(
+                (e - a).abs() < 1e-4,
+                "Mismatch at {}: expected {}, got {}",
+                i,
+                e,
+                a
+            );
         }
     }
 
@@ -850,10 +880,12 @@ mod tests {
         let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
         assert_eq!(count, 0);
 
-        let count = fused_decode_int4_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
+        let count =
+            fused_decode_int4_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
         assert_eq!(count, 0);
 
-        let count = fused_decode_int8_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
+        let count =
+            fused_decode_int8_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
         assert_eq!(count, 0);
     }
 

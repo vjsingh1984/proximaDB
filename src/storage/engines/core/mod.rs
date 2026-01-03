@@ -27,9 +27,9 @@ pub use formats::{
 pub use io::zero_copy::ZeroCopyIOSystem;
 pub use pca::{EnhancedPCAModel, PCAConfig, PCAManagerConfig, PCAModelManager};
 pub use progressive::{
-    ProgressiveSearchCoordinator, ProgressiveSearchStage, ScoredCandidate,
-    BinaryStage, Int8Stage, PqStage, Fp32Stage, CoordinatorConfig, StageStats,
-    QuantizationLevel as ProgressiveQuantizationLevel,
+    BinaryStage, CoordinatorConfig, Fp32Stage, Int8Stage, PqStage, ProgressiveSearchCoordinator,
+    ProgressiveSearchStage, QuantizationLevel as ProgressiveQuantizationLevel, ScoredCandidate,
+    StageStats,
 };
 pub use search::{ProgressiveSearchEngine, SearchContext};
 // Common operations exports available from ops module directly

@@ -5,13 +5,17 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit};
+use datafusion::arrow::datatypes::{
+    DataType as ArrowDataType, Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit,
+};
 use datafusion::common::{ColumnStatistics, Statistics};
 use datafusion::error::Result as DFResult;
 use tracing::warn;
 
 use crate::storage::formats::FormatStatistics;
-use crate::storage::schema::{ProximaColumn, ProximaDataType, ProximaSchema, TimeUnit, VectorElementType};
+use crate::storage::schema::{
+    ProximaColumn, ProximaDataType, ProximaSchema, TimeUnit, VectorElementType,
+};
 
 /// Infer Arrow schema from a ProximaDB collection.
 ///
@@ -22,10 +26,7 @@ pub fn infer_schema_from_collection(proxima_schema: &ProximaSchema) -> DFResult<
 }
 
 /// Extract DataFusion Statistics from ProximaDB format statistics.
-pub fn extract_statistics(
-    format_stats: &FormatStatistics,
-    schema: &ArrowSchema,
-) -> Statistics {
+pub fn extract_statistics(format_stats: &FormatStatistics, schema: &ArrowSchema) -> Statistics {
     let num_rows = if format_stats.row_count > 0 {
         datafusion_common::stats::Precision::Exact(format_stats.row_count as usize)
     } else {
@@ -48,10 +49,12 @@ pub fn extract_statistics(
                 // Build column statistics from stored values
                 let mut cs = ColumnStatistics::new_unknown();
                 // null_count is u64 (not Option)
-                cs.null_count = datafusion_common::stats::Precision::Exact(col_stats.null_count as usize);
+                cs.null_count =
+                    datafusion_common::stats::Precision::Exact(col_stats.null_count as usize);
                 // distinct_count is Option<u64>
                 if let Some(distinct) = col_stats.distinct_count {
-                    cs.distinct_count = datafusion_common::stats::Precision::Exact(distinct as usize);
+                    cs.distinct_count =
+                        datafusion_common::stats::Precision::Exact(distinct as usize);
                 }
                 cs
             } else {
@@ -114,15 +117,16 @@ pub fn proxima_to_arrow_type(proxima_type: &ProximaDataType) -> ArrowDataType {
             ArrowDataType::Map(Arc::new(Field::new("entries", struct_field, false)), false)
         }
         ProximaDataType::Struct { fields } => {
-            let arrow_fields: Vec<Field> = fields
-                .iter()
-                .map(proxima_column_to_arrow_field)
-                .collect();
+            let arrow_fields: Vec<Field> =
+                fields.iter().map(proxima_column_to_arrow_field).collect();
             ArrowDataType::Struct(arrow_fields.into())
         }
 
         // Vector types
-        ProximaDataType::Vector { dimension, element_type } => {
+        ProximaDataType::Vector {
+            dimension,
+            element_type,
+        } => {
             let elem_arrow = match element_type {
                 VectorElementType::Float32 => ArrowDataType::Float32,
                 VectorElementType::Float64 => ArrowDataType::Float64,
@@ -140,12 +144,20 @@ pub fn proxima_to_arrow_type(proxima_type: &ProximaDataType) -> ArrowDataType {
                 vec![
                     Field::new(
                         "indices",
-                        ArrowDataType::List(Arc::new(Field::new("item", ArrowDataType::UInt32, false))),
+                        ArrowDataType::List(Arc::new(Field::new(
+                            "item",
+                            ArrowDataType::UInt32,
+                            false,
+                        ))),
                         false,
                     ),
                     Field::new(
                         "values",
-                        ArrowDataType::List(Arc::new(Field::new("item", ArrowDataType::Float32, false))),
+                        ArrowDataType::List(Arc::new(Field::new(
+                            "item",
+                            ArrowDataType::Float32,
+                            false,
+                        ))),
                         false,
                     ),
                 ]
@@ -157,12 +169,10 @@ pub fn proxima_to_arrow_type(proxima_type: &ProximaDataType) -> ArrowDataType {
             let bytes = (*dimension + 7) / 8;
             ArrowDataType::FixedSizeBinary(bytes as i32)
         }
-        ProximaDataType::QuantizedInt8Vector { dimension, .. } => {
-            ArrowDataType::FixedSizeList(
-                Arc::new(Field::new("value", ArrowDataType::Int8, true)),
-                *dimension as i32,
-            )
-        }
+        ProximaDataType::QuantizedInt8Vector { dimension, .. } => ArrowDataType::FixedSizeList(
+            Arc::new(Field::new("value", ArrowDataType::Int8, true)),
+            *dimension as i32,
+        ),
         ProximaDataType::QuantizedPQVector { segments, .. } => {
             // PQ codes as fixed-size list of uint8
             ArrowDataType::FixedSizeList(
@@ -259,9 +269,18 @@ mod tests {
 
     #[test]
     fn test_proxima_to_arrow_type() {
-        assert_eq!(proxima_to_arrow_type(&ProximaDataType::Int64), ArrowDataType::Int64);
-        assert_eq!(proxima_to_arrow_type(&ProximaDataType::String), ArrowDataType::Utf8);
-        assert_eq!(proxima_to_arrow_type(&ProximaDataType::Boolean), ArrowDataType::Boolean);
+        assert_eq!(
+            proxima_to_arrow_type(&ProximaDataType::Int64),
+            ArrowDataType::Int64
+        );
+        assert_eq!(
+            proxima_to_arrow_type(&ProximaDataType::String),
+            ArrowDataType::Utf8
+        );
+        assert_eq!(
+            proxima_to_arrow_type(&ProximaDataType::Boolean),
+            ArrowDataType::Boolean
+        );
     }
 
     #[test]

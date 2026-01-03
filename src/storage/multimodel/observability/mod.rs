@@ -33,11 +33,15 @@
 //! └───────────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod cardinality;
 pub mod partitioning;
 pub mod rollups;
-pub mod cardinality;
 
 // Re-exports
-pub use partitioning::{TimePartitioner, PartitionConfig, Partition, PartitionRange, PartitionGranularity};
-pub use rollups::{RollupManager, RollupConfig, RollupInterval, RollupView, AggregationFunction};
-pub use cardinality::{CardinalityLimiter, CardinalityConfig, LabelStats, CheckResult, LimitAction};
+pub use cardinality::{
+    CardinalityConfig, CardinalityLimiter, CheckResult, LabelStats, LimitAction,
+};
+pub use partitioning::{
+    Partition, PartitionConfig, PartitionGranularity, PartitionRange, TimePartitioner,
+};
+pub use rollups::{AggregationFunction, RollupConfig, RollupInterval, RollupManager, RollupView};

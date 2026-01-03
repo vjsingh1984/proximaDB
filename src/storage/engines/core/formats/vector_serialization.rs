@@ -130,8 +130,7 @@ impl VectorSerializer {
                     ));
                 }
 
-                let stored_len =
-                    u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+                let stored_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
                 if stored_len != dim {
                     return Err(anyhow::anyhow!(
                         "Dimension mismatch: expected {}, got {} in header",
@@ -160,8 +159,7 @@ impl VectorSerializer {
                         u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
                     let expected_bytes = potential_len * 4 + 4;
 
-                    if data.len() == expected_bytes && potential_len > 0 && potential_len < 100000
-                    {
+                    if data.len() == expected_bytes && potential_len > 0 && potential_len < 100000 {
                         // Looks like length-prefixed format
                         let float_slice: &[f32] = bytemuck::cast_slice(&data[4..]);
                         return Ok(float_slice.to_vec());

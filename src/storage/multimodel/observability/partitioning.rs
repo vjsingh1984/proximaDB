@@ -199,7 +199,10 @@ impl TimePartitioner {
 
         // Create new partition
         let range = PartitionRange::new(partition_start_ns, partition_end_ns);
-        let suffix = self.config.granularity.format_suffix(partition_start_ns / 1_000_000_000);
+        let suffix = self
+            .config
+            .granularity
+            .format_suffix(partition_start_ns / 1_000_000_000);
         let name = format!("{}_{}", self.namespace, suffix);
         let path = format!("/data/{}/{}", self.namespace, suffix);
 
@@ -221,7 +224,10 @@ impl TimePartitioner {
             partitions.insert(partition_start_ns, partition.clone());
         }
 
-        info!("Created partition {} for namespace {}", name, self.namespace);
+        info!(
+            "Created partition {} for namespace {}",
+            name, self.namespace
+        );
         Ok(partition)
     }
 
@@ -277,7 +283,8 @@ impl TimePartitioner {
         if let Some(partition) = partitions.get_mut(&partition_start_ns) {
             partition.record_count += added_records;
             partition.size_bytes += added_bytes;
-            self.total_records.fetch_add(added_records, std::sync::atomic::Ordering::Relaxed);
+            self.total_records
+                .fetch_add(added_records, std::sync::atomic::Ordering::Relaxed);
         }
 
         Ok(())
@@ -285,7 +292,8 @@ impl TimePartitioner {
 
     /// Get total record count
     pub fn total_records(&self) -> u64 {
-        self.total_records.load(std::sync::atomic::Ordering::Relaxed)
+        self.total_records
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get configuration
@@ -385,7 +393,10 @@ mod tests {
             .as_nanos() as i64;
 
         for i in 0..3 {
-            partitioner.get_or_create_partition(now_ns - i * day_ns).await.unwrap();
+            partitioner
+                .get_or_create_partition(now_ns - i * day_ns)
+                .await
+                .unwrap();
         }
 
         // Query spanning 2 days
@@ -408,7 +419,10 @@ mod tests {
         let now_ns = 1704067200_000_000_000i64; // Fixed timestamp
 
         for i in 0..5 {
-            partitioner.get_or_create_partition(now_ns + i * day_ns).await.unwrap();
+            partitioner
+                .get_or_create_partition(now_ns + i * day_ns)
+                .await
+                .unwrap();
         }
 
         let partitions = partitioner.list_partitions().await;

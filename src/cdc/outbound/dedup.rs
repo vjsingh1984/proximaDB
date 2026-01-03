@@ -166,10 +166,7 @@ impl DeduplicationCache {
                 // Simple hash of event content
                 let content = format!(
                     "{}-{}-{}-{}",
-                    event.collection,
-                    event.key,
-                    event.operation,
-                    event.lsn
+                    event.collection, event.key, event.operation, event.lsn
                 );
                 format!("hash:{:x}", simple_hash(&content))
             }
@@ -266,8 +263,7 @@ mod tests {
 
     #[test]
     fn test_dedup_no_strategy() {
-        let cache = DeduplicationCache::new(100)
-            .with_strategy(DeduplicationStrategy::None);
+        let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::None);
 
         let event = create_test_event(1);
 
@@ -278,8 +274,7 @@ mod tests {
 
     #[test]
     fn test_dedup_by_event_id() {
-        let cache = DeduplicationCache::new(100)
-            .with_strategy(DeduplicationStrategy::ByEventId);
+        let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::ByEventId);
 
         let event1 = create_test_event(1);
         let event2 = create_test_event(2);
@@ -295,8 +290,7 @@ mod tests {
 
     #[test]
     fn test_dedup_by_lsn() {
-        let cache = DeduplicationCache::new(100)
-            .with_strategy(DeduplicationStrategy::ByLsn);
+        let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::ByLsn);
 
         let event1 = create_test_event(100);
         let mut event2 = create_test_event(100);
@@ -309,8 +303,7 @@ mod tests {
 
     #[test]
     fn test_dedup_by_key() {
-        let cache = DeduplicationCache::new(100)
-            .with_strategy(DeduplicationStrategy::ByKey);
+        let cache = DeduplicationCache::new(100).with_strategy(DeduplicationStrategy::ByKey);
 
         let event1 = create_test_event(1);
         let mut event2 = create_test_event(2);

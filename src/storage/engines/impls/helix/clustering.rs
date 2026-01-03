@@ -51,14 +51,17 @@ impl PCAModel {
         if n_samples < n_components * 2 {
             tracing::warn!(
                 "[HELIX PCA] Too few samples ({}) for {} components, using fallback",
-                n_samples, n_components
+                n_samples,
+                n_components
             );
             return Self::train_randomized_fallback(records, n_components);
         }
 
         tracing::info!(
             "[HELIX PCA] Training real SVD-based PCA: {} samples, {} dims -> {} components",
-            n_samples, original_dim, n_components
+            n_samples,
+            original_dim,
+            n_components
         );
 
         // Step 1: Calculate mean
@@ -115,7 +118,9 @@ impl PCAModel {
         // The right singular vectors V are the principal components
         let svd = data.svd(false, true);
 
-        let v_t = svd.v_t.ok_or_else(|| anyhow::anyhow!("SVD failed to compute V^T"))?;
+        let v_t = svd
+            .v_t
+            .ok_or_else(|| anyhow::anyhow!("SVD failed to compute V^T"))?;
         let singular_values = svd.singular_values;
 
         // Extract top n_components from V^T (V^T is original_dim x original_dim)
@@ -124,13 +129,12 @@ impl PCAModel {
         let mut explained_variance = Vec::with_capacity(n_components);
 
         // Total variance for normalization
-        let total_variance: f64 = singular_values.iter().map(|s| s * s).sum::<f64>() / (n_samples - 1) as f64;
+        let total_variance: f64 =
+            singular_values.iter().map(|s| s * s).sum::<f64>() / (n_samples - 1) as f64;
 
         for i in 0..n_components.min(v_t.nrows()) {
             // Extract i-th row of V^T as the i-th principal component
-            let component: Vec<f32> = (0..original_dim)
-                .map(|j| v_t[(i, j)] as f32)
-                .collect();
+            let component: Vec<f32> = (0..original_dim).map(|j| v_t[(i, j)] as f32).collect();
             components.push(component);
 
             // Explained variance = singular_value^2 / (n-1)
@@ -161,7 +165,13 @@ impl PCAModel {
         // Deflation-based power iteration for multiple components
         let mut deflated_records: Vec<Vec<f32>> = records
             .iter()
-            .map(|r| r.vector.iter().zip(mean.iter()).map(|(v, m)| v - m).collect())
+            .map(|r| {
+                r.vector
+                    .iter()
+                    .zip(mean.iter())
+                    .map(|(v, m)| v - m)
+                    .collect()
+            })
             .collect();
 
         for _comp_idx in 0..n_components {
@@ -179,7 +189,12 @@ impl PCAModel {
                 // Compute X * v (project onto v)
                 let xv: Vec<f64> = deflated_records
                     .iter()
-                    .map(|row| row.iter().zip(&v).map(|(&r, &vi)| r as f64 * vi).sum::<f64>())
+                    .map(|row| {
+                        row.iter()
+                            .zip(&v)
+                            .map(|(&r, &vi)| r as f64 * vi)
+                            .sum::<f64>()
+                    })
                     .collect();
 
                 // Compute X^T * (X * v)
@@ -198,7 +213,12 @@ impl PCAModel {
             // Compute eigenvalue (variance explained)
             let xv: Vec<f64> = deflated_records
                 .iter()
-                .map(|row| row.iter().zip(&v).map(|(&r, &vi)| r as f64 * vi).sum::<f64>())
+                .map(|row| {
+                    row.iter()
+                        .zip(&v)
+                        .map(|(&r, &vi)| r as f64 * vi)
+                        .sum::<f64>()
+                })
                 .collect();
             let eigenvalue: f64 = xv.iter().map(|x| x * x).sum::<f64>() / (n_samples - 1) as f64;
 

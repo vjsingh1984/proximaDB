@@ -335,22 +335,20 @@ impl MessageFormat {
     /// Serialize an event to bytes
     pub fn serialize(&self, event: &ChangeEvent) -> SinkResult<Vec<u8>> {
         match self {
-            Self::Json => serde_json::to_vec(event)
-                .map_err(|e| SinkError::Serialization(e.to_string())),
+            Self::Json => {
+                serde_json::to_vec(event).map_err(|e| SinkError::Serialization(e.to_string()))
+            }
             Self::Avro => {
                 // Placeholder - would use apache-avro in production
-                serde_json::to_vec(event)
-                    .map_err(|e| SinkError::Serialization(e.to_string()))
+                serde_json::to_vec(event).map_err(|e| SinkError::Serialization(e.to_string()))
             }
             Self::Protobuf => {
                 // Placeholder - would use prost in production
-                serde_json::to_vec(event)
-                    .map_err(|e| SinkError::Serialization(e.to_string()))
+                serde_json::to_vec(event).map_err(|e| SinkError::Serialization(e.to_string()))
             }
             Self::MessagePack => {
                 // Placeholder - would use rmp-serde in production
-                serde_json::to_vec(event)
-                    .map_err(|e| SinkError::Serialization(e.to_string()))
+                serde_json::to_vec(event).map_err(|e| SinkError::Serialization(e.to_string()))
             }
         }
     }
@@ -365,7 +363,9 @@ mod tests {
         let err = SinkError::Connection("Failed to connect".to_string());
         assert!(err.to_string().contains("Connection error"));
 
-        let err = SinkError::RateLimit { retry_after: Some(60) };
+        let err = SinkError::RateLimit {
+            retry_after: Some(60),
+        };
         assert!(err.to_string().contains("60 seconds"));
     }
 

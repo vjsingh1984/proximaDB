@@ -99,7 +99,7 @@ impl TimeoutConfig {
     pub fn batch_operations() -> Self {
         Self {
             enabled: true,
-            request_timeout_secs: 300, // 5 minutes
+            request_timeout_secs: 300,   // 5 minutes
             streaming_timeout_secs: 600, // 10 minutes
             health_timeout_secs: 5,
         }
@@ -134,7 +134,10 @@ pub fn create_timeout_layer(config: &TimeoutConfig) -> Option<TimeoutLayer> {
     }
 
     let timeout = Duration::from_secs(config.request_timeout_secs);
-    tracing::info!("Request timeout configured: {} seconds", config.request_timeout_secs);
+    tracing::info!(
+        "Request timeout configured: {} seconds",
+        config.request_timeout_secs
+    );
 
     Some(TimeoutLayer::new(timeout))
 }

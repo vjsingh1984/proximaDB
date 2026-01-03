@@ -7,15 +7,15 @@
 // - Automatic partition rollover
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-use crate::proto::proximadb_v1::{LogEntry, VectorRecord, SqlValue};
 use crate::proto::proximadb_v1::sql_value::Value;
+use crate::proto::proximadb_v1::{LogEntry, SqlValue, VectorRecord};
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
 /// Time-partitioned storage for logs
@@ -84,7 +84,10 @@ impl PartitionedStorage {
     }
 
     /// Create a new partitioned storage with storage engine for tier transitions
-    pub fn new_with_engine(base_path: &str, storage_engine: Arc<dyn UnifiedStorageEngine>) -> Result<Self> {
+    pub fn new_with_engine(
+        base_path: &str,
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+    ) -> Result<Self> {
         // Default to hourly partitions
         let partition_duration_ns = 3600 * 1_000_000_000i64;
 
@@ -145,12 +148,7 @@ impl PartitionedStorage {
     }
 
     /// Query logs in a time range
-    pub async fn query(
-        &self,
-        start_ns: i64,
-        end_ns: i64,
-        limit: usize,
-    ) -> Result<Vec<LogEntry>> {
+    pub async fn query(&self, start_ns: i64, end_ns: i64, limit: usize) -> Result<Vec<LogEntry>> {
         let partitions = self.partitions.read().await;
 
         let mut results = Vec::new();
@@ -291,7 +289,12 @@ impl PartitionedStorage {
     }
 
     /// Convert a LogEntry to VectorRecord for SST storage
-    fn log_entry_to_vector_record(&self, log: &LogEntry, partition_key: i64, seq: usize) -> VectorRecord {
+    fn log_entry_to_vector_record(
+        &self,
+        log: &LogEntry,
+        partition_key: i64,
+        seq: usize,
+    ) -> VectorRecord {
         let mut metadata = HashMap::new();
 
         // Store log type marker
@@ -374,7 +377,9 @@ impl PartitionedStorage {
     /// Force flush all hot partitions to SST
     pub async fn flush_all_hot_partitions(&self) -> Result<TierFlushResult> {
         let Some(ref engine) = self.storage_engine else {
-            return Err(anyhow::anyhow!("No storage engine configured for tier transitions"));
+            return Err(anyhow::anyhow!(
+                "No storage engine configured for tier transitions"
+            ));
         };
 
         let partitions = self.partitions.read().await;
@@ -419,7 +424,8 @@ impl PartitionedStorage {
         for key in to_remove {
             if let Some(partition) = partitions.remove(&key) {
                 let entries = partition.entries.read().await;
-                self.entry_count.fetch_sub(entries.len() as u64, Ordering::Relaxed);
+                self.entry_count
+                    .fetch_sub(entries.len() as u64, Ordering::Relaxed);
             }
         }
 
@@ -466,8 +472,14 @@ mod tests {
 
         // Write to different hours
         storage.write(&make_log(now, "Log 1")).await.unwrap();
-        storage.write(&make_log(now + hour_ns, "Log 2")).await.unwrap();
-        storage.write(&make_log(now + 2 * hour_ns, "Log 3")).await.unwrap();
+        storage
+            .write(&make_log(now + hour_ns, "Log 2"))
+            .await
+            .unwrap();
+        storage
+            .write(&make_log(now + 2 * hour_ns, "Log 3"))
+            .await
+            .unwrap();
 
         assert_eq!(storage.partition_count().await, 3);
     }

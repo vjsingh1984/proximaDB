@@ -1,6 +1,6 @@
 //! Domain separation layer - clean business context implementation
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;

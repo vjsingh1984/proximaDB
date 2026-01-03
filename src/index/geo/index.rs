@@ -12,7 +12,7 @@ use std::sync::RwLock;
 
 use super::geohash::{encode_geohash, geohash_neighbors, geohashes_in_bbox};
 use super::queries::{GeoQuery, GeoQueryResult};
-use super::types::{GeoPoint, GeoBoundingBox, GeoDistanceUnit};
+use super::types::{GeoBoundingBox, GeoDistanceUnit, GeoPoint};
 
 /// Configuration for the geo index
 #[derive(Debug, Clone)]
@@ -84,10 +84,7 @@ impl GeoIndex {
         // Insert into hash index
         {
             let mut hash_index = self.hash_index.write().unwrap();
-            hash_index
-                .entry(geohash)
-                .or_default()
-                .push(id);
+            hash_index.entry(geohash).or_default().push(id);
         }
     }
 
@@ -142,18 +139,14 @@ impl GeoIndex {
     /// Search the index with a query
     pub fn search(&self, query: &GeoQuery) -> Vec<GeoQueryResult> {
         match query {
-            GeoQuery::WithinDistance { center, radius, unit } => {
-                self.search_within_distance(center, *radius, *unit)
-            }
-            GeoQuery::WithinBox { bbox } => {
-                self.search_within_box(bbox)
-            }
-            GeoQuery::WithinPolygon { polygon } => {
-                self.search_within_polygon(polygon)
-            }
-            GeoQuery::NearestK { center, k } => {
-                self.search_nearest_k(center, *k)
-            }
+            GeoQuery::WithinDistance {
+                center,
+                radius,
+                unit,
+            } => self.search_within_distance(center, *radius, *unit),
+            GeoQuery::WithinBox { bbox } => self.search_within_box(bbox),
+            GeoQuery::WithinPolygon { polygon } => self.search_within_polygon(polygon),
+            GeoQuery::NearestK { center, k } => self.search_nearest_k(center, *k),
         }
     }
 
@@ -250,10 +243,7 @@ impl GeoIndex {
     }
 
     /// Find all points within a polygon
-    fn search_within_polygon(
-        &self,
-        polygon: &super::types::GeoPolygon,
-    ) -> Vec<GeoQueryResult> {
+    fn search_within_polygon(&self, polygon: &super::types::GeoPolygon) -> Vec<GeoQueryResult> {
         // Use polygon's bounding box for initial filtering
         let bbox = polygon.bounding_box();
         let candidates = self.search_within_box(&bbox);
@@ -272,11 +262,7 @@ impl GeoIndex {
         let mut results: Vec<GeoQueryResult>;
 
         loop {
-            results = self.search_within_distance(
-                center,
-                radius_km,
-                GeoDistanceUnit::Kilometers,
-            );
+            results = self.search_within_distance(center, radius_km, GeoDistanceUnit::Kilometers);
 
             if results.len() >= k || radius_km > 20000.0 {
                 break;
@@ -483,10 +469,7 @@ mod tests {
     fn test_knn_search() {
         let index = create_test_index();
 
-        let query = GeoQuery::nearest_k(
-            GeoPoint::new(37.7749, -122.4194),
-            2,
-        );
+        let query = GeoQuery::nearest_k(GeoPoint::new(37.7749, -122.4194), 2);
 
         let results = index.search(&query);
 

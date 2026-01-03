@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::storage::engines::core::formats::columnar::constants::*;
-use crate::storage::engines::core::formats::common_quantization::QuantizationLevel;
 use crate::storage::engines::core::formats::common_quantization::QuantizationFileConfig;
+use crate::storage::engines::core::formats::common_quantization::QuantizationLevel;
 
 /// Schema definition for quantized vector storage
 ///
@@ -499,8 +499,7 @@ impl QuantizedVectorSchemaBuilder {
             }
         };
 
-        let num_subquantizers =
-            (self.dimension.div_ceil(target_dims_per_subq)).max(1);
+        let num_subquantizers = (self.dimension.div_ceil(target_dims_per_subq)).max(1);
         Ok(num_subquantizers)
     }
 

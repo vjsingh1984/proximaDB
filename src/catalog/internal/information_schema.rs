@@ -68,7 +68,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CatalogObject, ConstraintType, ForeignKeyReference, InternalSchemaRegistry, ModelProperties,
-    ObjectType, ReferentialAction, SchemaEnforcementMode,
+    ObjectType, ReferentialAction,
 };
 
 /// View types available in INFORMATION_SCHEMA
@@ -155,9 +155,7 @@ impl TableRow {
             ObjectType::VectorCollection => "VECTOR COLLECTION",
             ObjectType::DocumentCollection => "DOCUMENT COLLECTION",
             ObjectType::Graph => "GRAPH",
-            ObjectType::LogStream | ObjectType::MetricStream | ObjectType::TraceStream => {
-                "STREAM"
-            }
+            ObjectType::LogStream | ObjectType::MetricStream | ObjectType::TraceStream => "STREAM",
             _ => "OTHER",
         };
 
@@ -231,10 +229,7 @@ pub struct ColumnRow {
 
 impl ColumnRow {
     /// Create from a catalog object and column
-    pub fn from_column(
-        obj: &CatalogObject,
-        col: &crate::catalog::types::CatalogColumn,
-    ) -> Self {
+    pub fn from_column(obj: &CatalogObject, col: &crate::catalog::types::CatalogColumn) -> Self {
         use crate::catalog::types::CatalogDataType;
 
         let data_type = match col.data_type {
@@ -325,10 +320,7 @@ pub struct TableConstraintRow {
 
 impl TableConstraintRow {
     /// Create from a catalog object and constraint
-    pub fn from_constraint(
-        obj: &CatalogObject,
-        constraint: &super::TableConstraint,
-    ) -> Self {
+    pub fn from_constraint(obj: &CatalogObject, constraint: &super::TableConstraint) -> Self {
         let constraint_type = match &constraint.constraint_type {
             ConstraintType::PrimaryKey { .. } => "PRIMARY KEY",
             ConstraintType::ForeignKey { .. } => "FOREIGN KEY",
@@ -346,7 +338,12 @@ impl TableConstraintRow {
             table_schema: obj.namespace.join("."),
             table_name: obj.name.clone(),
             constraint_type: constraint_type.to_string(),
-            is_deferrable: if constraint.is_deferrable { "YES" } else { "NO" }.to_string(),
+            is_deferrable: if constraint.is_deferrable {
+                "YES"
+            } else {
+                "NO"
+            }
+            .to_string(),
             initially_deferred: if constraint.is_deferred { "YES" } else { "NO" }.to_string(),
             enforced: "YES".to_string(),
         }
@@ -730,9 +727,7 @@ impl InformationSchema {
     /// Query a specific view
     pub async fn query(&self, view: InformationSchemaView) -> InformationSchemaResult {
         match view {
-            InformationSchemaView::Tables => {
-                InformationSchemaResult::Tables(self.tables().await)
-            }
+            InformationSchemaView::Tables => InformationSchemaResult::Tables(self.tables().await),
             InformationSchemaView::Columns => {
                 InformationSchemaResult::Columns(self.columns().await)
             }
@@ -743,7 +738,9 @@ impl InformationSchema {
                 InformationSchemaResult::KeyColumnUsage(self.key_column_usage().await)
             }
             InformationSchemaView::ReferentialConstraints => {
-                InformationSchemaResult::ReferentialConstraints(self.referential_constraints().await)
+                InformationSchemaResult::ReferentialConstraints(
+                    self.referential_constraints().await,
+                )
             }
             InformationSchemaView::Schemata => {
                 // Return unique schemas from all objects
@@ -771,9 +768,7 @@ impl InformationSchema {
             InformationSchemaView::VectorCollections => {
                 InformationSchemaResult::VectorCollections(self.vector_collections().await)
             }
-            InformationSchemaView::Graphs => {
-                InformationSchemaResult::Graphs(self.graphs().await)
-            }
+            InformationSchemaView::Graphs => InformationSchemaResult::Graphs(self.graphs().await),
             InformationSchemaView::DocumentCollections => {
                 InformationSchemaResult::DocumentCollections(self.document_collections().await)
             }
@@ -853,7 +848,10 @@ mod tests {
 
         assert_eq!(tables.len(), 3);
 
-        let vec_table = tables.iter().find(|t| t.table_name == "embeddings").unwrap();
+        let vec_table = tables
+            .iter()
+            .find(|t| t.table_name == "embeddings")
+            .unwrap();
         assert_eq!(vec_table.table_type, "VECTOR COLLECTION");
         assert_eq!(vec_table.model_type, Some("VECTOR COLLECTION".to_string()));
 
@@ -959,7 +957,10 @@ mod tests {
     #[test]
     fn test_view_names() {
         assert_eq!(InformationSchemaView::Tables.name(), "tables");
-        assert_eq!(InformationSchemaView::VectorCollections.name(), "vector_collections");
+        assert_eq!(
+            InformationSchemaView::VectorCollections.name(),
+            "vector_collections"
+        );
         assert!(InformationSchemaView::VectorCollections.is_extension());
         assert!(!InformationSchemaView::Tables.is_extension());
     }

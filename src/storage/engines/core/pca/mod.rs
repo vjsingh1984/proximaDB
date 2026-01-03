@@ -111,6 +111,6 @@ pub use config::{PCAConfig, PCAManagerConfig};
 pub use manager::{DriftMetrics, InMemoryPCAManager, ModelVersion, PCAModelManager};
 pub use model::{EnhancedPCAModel, ModelQuality};
 pub use pipeline::{
-    cluster_blocks_sync, BlockInfo, ClusteringConfig, ClusteringResult,
-    SpatialClusteringPipeline, SyncClusteringResult,
+    BlockInfo, ClusteringConfig, ClusteringResult, SpatialClusteringPipeline, SyncClusteringResult,
+    cluster_blocks_sync,
 };

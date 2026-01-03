@@ -20,18 +20,11 @@ pub enum GeoQuery {
         unit: GeoDistanceUnit,
     },
     /// Find all points within a bounding box
-    WithinBox {
-        bbox: GeoBoundingBox,
-    },
+    WithinBox { bbox: GeoBoundingBox },
     /// Find all points within a polygon
-    WithinPolygon {
-        polygon: GeoPolygon,
-    },
+    WithinPolygon { polygon: GeoPolygon },
     /// Find the K nearest points to a center
-    NearestK {
-        center: GeoPoint,
-        k: usize,
-    },
+    NearestK { center: GeoPoint, k: usize },
 }
 
 impl GeoQuery {
@@ -140,12 +133,7 @@ impl GeoQueryBuilder {
     }
 
     /// Find points within a distance
-    pub fn within_distance(
-        mut self,
-        center: GeoPoint,
-        radius: f64,
-        unit: GeoDistanceUnit,
-    ) -> Self {
+    pub fn within_distance(mut self, center: GeoPoint, radius: f64, unit: GeoDistanceUnit) -> Self {
         self.query = Some(GeoQuery::within_distance(center, radius, unit));
         self
     }
@@ -286,10 +274,7 @@ mod tests {
 
     #[test]
     fn test_within_box_query() {
-        let bbox = GeoBoundingBox::new(
-            GeoPoint::new(37.0, -123.0),
-            GeoPoint::new(38.0, -122.0),
-        );
+        let bbox = GeoBoundingBox::new(GeoPoint::new(37.0, -123.0), GeoPoint::new(38.0, -122.0));
         let query = GeoQuery::within_box(bbox);
 
         match query {

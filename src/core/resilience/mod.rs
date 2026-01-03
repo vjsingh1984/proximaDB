@@ -32,14 +32,16 @@
 //! ```
 
 mod circuit_breaker;
-mod retry;
 mod health_aggregator;
+mod retry;
 
-pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitState};
-pub use retry::{RetryPolicy, RetryConfig, RetryError};
-pub use health_aggregator::{
-    HealthAggregator, HealthAggregatorConfig, DependencyHealth, DependencyInfo, HealthSummary,
+pub use circuit_breaker::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitState,
 };
+pub use health_aggregator::{
+    DependencyHealth, DependencyInfo, HealthAggregator, HealthAggregatorConfig, HealthSummary,
+};
+pub use retry::{RetryConfig, RetryError, RetryPolicy};
 
 #[cfg(test)]
 mod tests;

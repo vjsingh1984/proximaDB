@@ -36,8 +36,8 @@ use tracing::{debug, info, instrument};
 
 use crate::observability::query::ObservabilityQueryEngine;
 use crate::query::facade::{
-    ExecutionMetrics, QueryContent, QueryContext,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy, QueryType,
 };
 
 /// Observability Strategy - Real implementation wrapping ObservabilityQueryEngine
@@ -164,8 +164,8 @@ impl ObservabilityStrategy {
         content: &str,
         start_time: Instant,
     ) -> Result<QueryResult> {
-        use crate::observability::query::LogSearchOptions;
         use crate::observability::LogQueryParams;
+        use crate::observability::query::LogSearchOptions;
 
         let search_query = self.extract_search_query(content);
 
@@ -188,7 +188,10 @@ impl ObservabilityStrategy {
                 fuzzy: false,
             };
 
-            let results = self.query_engine.search_logs_fulltext(namespace, &query, &options).await?;
+            let results = self
+                .query_engine
+                .search_logs_fulltext(namespace, &query, &options)
+                .await?;
 
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
             let results_count = results.len();
@@ -236,13 +239,17 @@ impl ObservabilityStrategy {
             cursor: None,
         };
 
-        let result = self.query_engine.query_logs_with_fulltext(namespace, params, false).await?;
+        let result = self
+            .query_engine
+            .query_logs_with_fulltext(namespace, params, false)
+            .await?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
         let logs_count = result.logs.len();
 
         // Convert to JSON rows
-        let rows: Vec<serde_json::Value> = result.logs
+        let rows: Vec<serde_json::Value> = result
+            .logs
             .into_iter()
             .map(|log| {
                 serde_json::json!({
@@ -364,7 +371,11 @@ impl QueryStrategy for ObservabilityStrategy {
         let content = match &request.content {
             QueryContent::Sql(sql) => sql.clone(),
             QueryContent::Document(filter) => filter.clone(),
-            _ => return Err(anyhow!("ObservabilityStrategy requires SQL or Document content")),
+            _ => {
+                return Err(anyhow!(
+                    "ObservabilityStrategy requires SQL or Document content"
+                ));
+            }
         };
 
         // Detect query type and namespace
@@ -383,10 +394,12 @@ impl QueryStrategy for ObservabilityStrategy {
                 self.execute_log_query(&namespace, &content, start).await?
             }
             ObservabilityQueryType::Metrics => {
-                self.execute_metrics_query(&namespace, &content, start).await?
+                self.execute_metrics_query(&namespace, &content, start)
+                    .await?
             }
             ObservabilityQueryType::Traces => {
-                self.execute_traces_query(&namespace, &content, start).await?
+                self.execute_traces_query(&namespace, &content, start)
+                    .await?
             }
         };
 

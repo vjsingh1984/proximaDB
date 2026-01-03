@@ -68,12 +68,12 @@ use datafusion::physical_plan::ExecutionPlan;
 use futures::Stream;
 use tracing::{debug, trace};
 
+use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::storage::formats::{
-    FileSplit, SplitStatistics, SplitType, ColumnBounds, CacheStatus, StorageTier,
+    CacheStatus, ColumnBounds, FileSplit, SplitStatistics, SplitType, StorageTier,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -448,7 +448,9 @@ impl SplitReader for ViperSplitReader {
             "VIPER: Reading split {} (row_group={:?}, rows={:?}, bytes={:?})",
             split.split_id,
             match &split.split_type {
-                SplitType::RowGroup { row_group_index, .. } => Some(*row_group_index),
+                SplitType::RowGroup {
+                    row_group_index, ..
+                } => Some(*row_group_index),
                 _ => None,
             },
             split.statistics.row_count,
@@ -567,8 +569,7 @@ impl Stream for ViperRowGroupStream {
 
         trace!(
             "VIPER: Stream finished for split {} (yielded {} records)",
-            self.split.split_id,
-            self.records_yielded
+            self.split.split_id, self.records_yielded
         );
 
         Poll::Ready(None)
@@ -639,18 +640,16 @@ mod tests {
 
     #[test]
     fn test_row_group_split_creation() {
-        let split = FileSplit::new_row_group(
-            "/data/file.parquet".to_string(),
-            0,
-            0,
-            65536,
-            10000,
-        );
+        let split = FileSplit::new_row_group("/data/file.parquet".to_string(), 0, 0, 65536, 10000);
 
         assert!(matches!(split.split_type, SplitType::RowGroup { .. }));
         assert_eq!(split.statistics.row_count, Some(10000));
 
-        if let SplitType::RowGroup { row_group_index, row_count } = split.split_type {
+        if let SplitType::RowGroup {
+            row_group_index,
+            row_count,
+        } = split.split_type
+        {
             assert_eq!(row_group_index, 0);
             assert_eq!(row_count, 10000);
         }

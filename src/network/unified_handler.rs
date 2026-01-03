@@ -68,7 +68,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
@@ -271,15 +271,25 @@ pub enum ResponseData {
     /// Vector search results
     SearchResults(Vec<SearchResult>),
     /// Batch operation result
-    BatchResult { inserted: u32, updated: u32, deleted: u32 },
+    BatchResult {
+        inserted: u32,
+        updated: u32,
+        deleted: u32,
+    },
     /// SQL query results
-    SqlResults { columns: Vec<String>, rows: Vec<Vec<serde_json::Value>> },
+    SqlResults {
+        columns: Vec<String>,
+        rows: Vec<Vec<serde_json::Value>>,
+    },
     /// Collection info
     CollectionInfo(CollectionInfo),
     /// Collection list
     CollectionList(Vec<CollectionInfo>),
     /// Graph traversal results
-    GraphResults { nodes: Vec<GraphNode>, edges: Vec<GraphEdge> },
+    GraphResults {
+        nodes: Vec<GraphNode>,
+        edges: Vec<GraphEdge>,
+    },
     /// Health check result
     HealthStatus { status: String, version: String },
     /// Empty response
@@ -338,14 +348,9 @@ pub struct ResponseMetadata {
 
 impl UnifiedQueryRequest {
     /// Convert from REST VectorSearchRequest proto
-    pub fn from_rest_search(
-        request: &proximadb_v1::VectorSearchRequest,
-    ) -> Result<Self> {
-        let query_vectors: Vec<Vec<f32>> = request
-            .queries
-            .iter()
-            .map(|q| q.vector.clone())
-            .collect();
+    pub fn from_rest_search(request: &proximadb_v1::VectorSearchRequest) -> Result<Self> {
+        let query_vectors: Vec<Vec<f32>> =
+            request.queries.iter().map(|q| q.vector.clone()).collect();
 
         // Extract simple string filters from the first query
         let filters = Self::extract_filters_from_proto(&request.queries);
@@ -367,9 +372,7 @@ impl UnifiedQueryRequest {
     }
 
     /// Convert from REST VectorBatchRequest proto
-    pub fn from_rest_batch(
-        request: &proximadb_v1::VectorBatchRequest,
-    ) -> Result<Self> {
+    pub fn from_rest_batch(request: &proximadb_v1::VectorBatchRequest) -> Result<Self> {
         let vectors = request
             .vectors
             .iter()
@@ -392,7 +395,10 @@ impl UnifiedQueryRequest {
     }
 
     /// Convert from REST SQL query
-    pub fn from_rest_sql(query: String, params: Option<Vec<proximadb_v1::SqlValue>>) -> Result<Self> {
+    pub fn from_rest_sql(
+        query: String,
+        params: Option<Vec<proximadb_v1::SqlValue>>,
+    ) -> Result<Self> {
         let parameters = params
             .unwrap_or_default()
             .into_iter()
@@ -431,7 +437,10 @@ impl UnifiedQueryRequest {
             Some(Value::BytesValue(b)) => SqlParameter::Bytes(b),
             Some(Value::NullValue(_)) => SqlParameter::Null,
             Some(Value::ArrayValue(arr)) => SqlParameter::Array(
-                arr.values.into_iter().map(Self::convert_sql_value).collect(),
+                arr.values
+                    .into_iter()
+                    .map(Self::convert_sql_value)
+                    .collect(),
             ),
             Some(Value::ObjectValue(_)) => SqlParameter::Null,
             None => SqlParameter::Null,
@@ -444,14 +453,16 @@ fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
     use proximadb_v1::sql_value::Value;
     match v.value.as_ref() {
         Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(Value::NumberValue(n)) => {
-            serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)))
-        }
+        Some(Value::NumberValue(n)) => serde_json::Value::Number(
+            serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
+        ),
         Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
         Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-        Some(Value::BytesValue(b)) => {
-            serde_json::Value::Array(b.iter().map(|x| serde_json::Value::Number((*x as u64).into())).collect())
-        }
+        Some(Value::BytesValue(b)) => serde_json::Value::Array(
+            b.iter()
+                .map(|x| serde_json::Value::Number((*x as u64).into()))
+                .collect(),
+        ),
         Some(Value::NullValue(_)) => serde_json::Value::Null,
         Some(Value::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
@@ -504,7 +515,10 @@ fn json_to_sql_value(v: &serde_json::Value) -> proximadb_v1::SqlValue {
                 values: arr.iter().map(json_to_sql_value).collect(),
             }),
             serde_json::Value::Object(obj) => Value::ObjectValue(proximadb_v1::SqlObject {
-                fields: obj.iter().map(|(k, v)| (k.clone(), json_to_sql_value(v))).collect(),
+                fields: obj
+                    .iter()
+                    .map(|(k, v)| (k.clone(), json_to_sql_value(v)))
+                    .collect(),
             }),
         }),
     }
@@ -516,29 +530,23 @@ fn json_to_sql_value(v: &serde_json::Value) -> proximadb_v1::SqlValue {
 
 impl UnifiedQueryRequest {
     /// Convert from gRPC VectorSearchRequest
-    pub fn from_grpc_search(
-        request: proximadb_v1::VectorSearchRequest,
-    ) -> Result<Self> {
-        Self::from_rest_search(&request)
-            .map(|mut r| {
-                if let UnifiedQueryRequest::VectorSearch(ref mut q) = r {
-                    q.source = RequestProtocol::Grpc;
-                }
-                r
-            })
+    pub fn from_grpc_search(request: proximadb_v1::VectorSearchRequest) -> Result<Self> {
+        Self::from_rest_search(&request).map(|mut r| {
+            if let UnifiedQueryRequest::VectorSearch(ref mut q) = r {
+                q.source = RequestProtocol::Grpc;
+            }
+            r
+        })
     }
 
     /// Convert from gRPC VectorBatchRequest
-    pub fn from_grpc_batch(
-        request: proximadb_v1::VectorBatchRequest,
-    ) -> Result<Self> {
-        Self::from_rest_batch(&request)
-            .map(|mut r| {
-                if let UnifiedQueryRequest::VectorBatch(ref mut op) = r {
-                    op.source = RequestProtocol::Grpc;
-                }
-                r
-            })
+    pub fn from_grpc_batch(request: proximadb_v1::VectorBatchRequest) -> Result<Self> {
+        Self::from_rest_batch(&request).map(|mut r| {
+            if let UnifiedQueryRequest::VectorBatch(ref mut op) = r {
+                op.source = RequestProtocol::Grpc;
+            }
+            r
+        })
     }
 }
 
@@ -653,25 +661,27 @@ impl UnifiedQueryResponse {
                     error_code: None,
                 })
             }
-            ResponseData::BatchResult { inserted, updated, deleted } => {
-                Ok(proximadb_v1::VectorOperationResponse {
-                    success: true,
-                    operation: proximadb_v1::VectorOperation::VectorBatch as i32,
-                    metrics: Some(proximadb_v1::OperationMetrics {
-                        total_processed: (inserted + updated + deleted) as i64,
-                        successful_count: (inserted + updated) as i64,
-                        failed_count: 0,
-                        updated_count: updated as i64,
-                        processing_time_us: (self.metadata.execution_time_ms * 1000) as i64,
-                        wal_write_time_us: 0,
-                        index_update_time_us: 0,
-                    }),
-                    results: None,
-                    vector_ids: vec![],
-                    error_message: None,
-                    error_code: None,
-                })
-            }
+            ResponseData::BatchResult {
+                inserted,
+                updated,
+                deleted,
+            } => Ok(proximadb_v1::VectorOperationResponse {
+                success: true,
+                operation: proximadb_v1::VectorOperation::VectorBatch as i32,
+                metrics: Some(proximadb_v1::OperationMetrics {
+                    total_processed: (inserted + updated + deleted) as i64,
+                    successful_count: (inserted + updated) as i64,
+                    failed_count: 0,
+                    updated_count: updated as i64,
+                    processing_time_us: (self.metadata.execution_time_ms * 1000) as i64,
+                    wal_write_time_us: 0,
+                    index_update_time_us: 0,
+                }),
+                results: None,
+                vector_ids: vec![],
+                error_message: None,
+                error_code: None,
+            }),
             _ => Ok(proximadb_v1::VectorOperationResponse {
                 success: true,
                 operation: 0,
@@ -717,7 +727,9 @@ impl UnifiedQueryResponse {
                         vec![
                             PostgresValue::Text(r.id),
                             PostgresValue::Float8(r.score),
-                            PostgresValue::Jsonb(serde_json::to_string(&r.metadata).unwrap_or_default()),
+                            PostgresValue::Jsonb(
+                                serde_json::to_string(&r.metadata).unwrap_or_default(),
+                            ),
                         ]
                     })
                     .collect();
@@ -878,24 +890,12 @@ impl UnifiedQueryHandler {
         let start = std::time::Instant::now();
 
         let result = match &request {
-            UnifiedQueryRequest::VectorSearch(query) => {
-                self.execute_vector_search(query).await
-            }
-            UnifiedQueryRequest::VectorBatch(batch) => {
-                self.execute_vector_batch(batch).await
-            }
-            UnifiedQueryRequest::SqlQuery(_sql) => {
-                self.execute_sql_query().await
-            }
-            UnifiedQueryRequest::Collection(op) => {
-                self.execute_collection_op(op).await
-            }
-            UnifiedQueryRequest::Graph(op) => {
-                self.execute_graph_op(op).await
-            }
-            UnifiedQueryRequest::HealthCheck => {
-                self.execute_health_check().await
-            }
+            UnifiedQueryRequest::VectorSearch(query) => self.execute_vector_search(query).await,
+            UnifiedQueryRequest::VectorBatch(batch) => self.execute_vector_batch(batch).await,
+            UnifiedQueryRequest::SqlQuery(_sql) => self.execute_sql_query().await,
+            UnifiedQueryRequest::Collection(op) => self.execute_collection_op(op).await,
+            UnifiedQueryRequest::Graph(op) => self.execute_graph_op(op).await,
+            UnifiedQueryRequest::HealthCheck => self.execute_health_check().await,
         };
 
         let elapsed = start.elapsed().as_millis() as u64;
@@ -918,7 +918,10 @@ impl UnifiedQueryHandler {
     }
 
     /// Execute vector search
-    async fn execute_vector_search(&self, query: &VectorSearchQuery) -> Result<UnifiedQueryResponse> {
+    async fn execute_vector_search(
+        &self,
+        query: &VectorSearchQuery,
+    ) -> Result<UnifiedQueryResponse> {
         debug!(
             collection = %query.collection_id,
             top_k = query.top_k,
@@ -933,7 +936,10 @@ impl UnifiedQueryHandler {
 
         // Direct execution via VectorOperationsService
         let search_request = self.build_search_request(query)?;
-        let response = self.vector_ops.search_v1(search_request).await
+        let response = self
+            .vector_ops
+            .search_v1(search_request)
+            .await
             .map_err(|e| anyhow!("Vector search failed: {}", e))?;
 
         // Convert to unified response
@@ -945,7 +951,11 @@ impl UnifiedQueryHandler {
                     .map(|sr| SearchResult {
                         id: sr.id,
                         score: sr.score,
-                        vector: if sr.vector.is_empty() { None } else { Some(sr.vector) },
+                        vector: if sr.vector.is_empty() {
+                            None
+                        } else {
+                            Some(sr.vector)
+                        },
                         metadata: sr
                             .metadata
                             .into_iter()
@@ -979,7 +989,10 @@ impl UnifiedQueryHandler {
         // For now, fall back to direct execution
         // TODO: Process stream and collect results
         let search_request = self.build_search_request(query)?;
-        let response = self.vector_ops.search_v1(search_request).await
+        let response = self
+            .vector_ops
+            .search_v1(search_request)
+            .await
             .map_err(|e| anyhow!("Vector search failed: {}", e))?;
 
         let results = response
@@ -990,7 +1003,11 @@ impl UnifiedQueryHandler {
                     .map(|sr| SearchResult {
                         id: sr.id,
                         score: sr.score,
-                        vector: if sr.vector.is_empty() { None } else { Some(sr.vector) },
+                        vector: if sr.vector.is_empty() {
+                            None
+                        } else {
+                            Some(sr.vector)
+                        },
                         metadata: sr
                             .metadata
                             .into_iter()
@@ -1011,20 +1028,29 @@ impl UnifiedQueryHandler {
 
     /// Build a compute plan for vector search
     fn build_search_plan(&self, query: &VectorSearchQuery) -> Result<ComputePlan> {
-        let query_vector = query.query_vectors.first()
+        let query_vector = query
+            .query_vectors
+            .first()
             .cloned()
             .ok_or_else(|| anyhow!("At least one query vector required"))?;
 
         let node = PlanNode::vector_scan(&query.collection_id, query_vector, query.top_k);
 
         Ok(ComputePlan::new(
-            query.request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            query
+                .request_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             node,
-        ).with_hints(PlanHints::default().with_timeout(30000)))
+        )
+        .with_hints(PlanHints::default().with_timeout(30000)))
     }
 
     /// Build a VectorSearchRequest from unified query
-    fn build_search_request(&self, query: &VectorSearchQuery) -> Result<proximadb_v1::VectorSearchRequest> {
+    fn build_search_request(
+        &self,
+        query: &VectorSearchQuery,
+    ) -> Result<proximadb_v1::VectorSearchRequest> {
         let queries: Vec<proximadb_v1::SearchQuery> = query
             .query_vectors
             .iter()
@@ -1049,23 +1075,29 @@ impl UnifiedQueryHandler {
             queries,
             top_k: query.top_k,
             include_fields: None,
-            search_params: query.search_params.as_ref().map(|p| proximadb_v1::SearchParams {
-                top_k: p.top_k,
-                accuracy_threshold: p.accuracy_threshold,
-                include_expired: None,
-                timeout_ms: p.timeout_ms,
-                enable_two_stage: None,
-                enable_clustering_hint: None,
-                enable_metadata_filtering_hint: None,
-                custom_hints: std::collections::HashMap::new(),
-            }),
+            search_params: query
+                .search_params
+                .as_ref()
+                .map(|p| proximadb_v1::SearchParams {
+                    top_k: p.top_k,
+                    accuracy_threshold: p.accuracy_threshold,
+                    include_expired: None,
+                    timeout_ms: p.timeout_ms,
+                    enable_two_stage: None,
+                    enable_clustering_hint: None,
+                    enable_metadata_filtering_hint: None,
+                    custom_hints: std::collections::HashMap::new(),
+                }),
             distance_metric_override: None,
             search_optimization: None,
         })
     }
 
     /// Execute vector batch operation
-    async fn execute_vector_batch(&self, batch: &VectorBatchOperation) -> Result<UnifiedQueryResponse> {
+    async fn execute_vector_batch(
+        &self,
+        batch: &VectorBatchOperation,
+    ) -> Result<UnifiedQueryResponse> {
         debug!(
             collection = %batch.collection_id,
             count = batch.vectors.len(),
@@ -1096,7 +1128,10 @@ impl UnifiedQueryHandler {
             vectors,
         };
 
-        let response = self.vector_ops.vector_batch_v1(request).await
+        let response = self
+            .vector_ops
+            .vector_batch_v1(request)
+            .await
             .map_err(|e| anyhow!("Vector batch failed: {}", e))?;
 
         let metrics = response.metrics.as_ref();
@@ -1123,32 +1158,41 @@ impl UnifiedQueryHandler {
             error: None,
             data: ResponseData::SqlResults {
                 columns: vec!["result".to_string()],
-                rows: vec![vec![serde_json::Value::String("SQL execution not yet integrated".to_string())]],
+                rows: vec![vec![serde_json::Value::String(
+                    "SQL execution not yet integrated".to_string(),
+                )]],
             },
             metadata: ResponseMetadata::default(),
         })
     }
 
     /// Execute collection operation
-    async fn execute_collection_op(&self, op: &CollectionOperation) -> Result<UnifiedQueryResponse> {
+    async fn execute_collection_op(
+        &self,
+        op: &CollectionOperation,
+    ) -> Result<UnifiedQueryResponse> {
         match &op.operation {
             CollectionOperationType::List => {
-                let collections = self.collection_service.list_collections().await
+                let collections = self
+                    .collection_service
+                    .list_collections()
+                    .await
                     .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
 
                 let collection_info: Vec<CollectionInfo> = collections
                     .into_iter()
                     .map(|c| {
-                        let dimension = c.config.as_ref()
-                            .map(|cfg| cfg.dimension)
-                            .unwrap_or(0);
-                        let vector_count = c.stats.as_ref()
-                            .map(|s| s.vector_count as u64)
-                            .unwrap_or(0);
-                        let storage_engine = c.storage_assignment.as_ref()
-                            .map(|sa| proximadb_v1::StorageEngine::try_from(sa.engine)
-                                .map(|e| format!("{:?}", e).to_lowercase())
-                                .unwrap_or_else(|_| "sst".to_string()))
+                        let dimension = c.config.as_ref().map(|cfg| cfg.dimension).unwrap_or(0);
+                        let vector_count =
+                            c.stats.as_ref().map(|s| s.vector_count as u64).unwrap_or(0);
+                        let storage_engine = c
+                            .storage_assignment
+                            .as_ref()
+                            .map(|sa| {
+                                proximadb_v1::StorageEngine::try_from(sa.engine)
+                                    .map(|e| format!("{:?}", e).to_lowercase())
+                                    .unwrap_or_else(|_| "sst".to_string())
+                            })
                             .unwrap_or_else(|| "sst".to_string());
 
                         CollectionInfo {
@@ -1169,23 +1213,36 @@ impl UnifiedQueryHandler {
                 })
             }
             CollectionOperationType::Get => {
-                let name = op.collection_id.as_ref()
+                let name = op
+                    .collection_id
+                    .as_ref()
                     .ok_or_else(|| anyhow!("Collection ID required for GET"))?;
 
-                let collection = self.collection_service.collection(name).await
+                let collection = self
+                    .collection_service
+                    .collection(name)
+                    .await
                     .map_err(|e| anyhow!("Failed to get collection: {}", e))?
                     .ok_or_else(|| anyhow!("Collection not found: {}", name))?;
 
-                let dimension = collection.config.as_ref()
+                let dimension = collection
+                    .config
+                    .as_ref()
                     .map(|cfg| cfg.dimension)
                     .unwrap_or(0);
-                let vector_count = collection.stats.as_ref()
+                let vector_count = collection
+                    .stats
+                    .as_ref()
                     .map(|s| s.vector_count as u64)
                     .unwrap_or(0);
-                let storage_engine = collection.storage_assignment.as_ref()
-                    .map(|sa| proximadb_v1::StorageEngine::try_from(sa.engine)
-                        .map(|e| format!("{:?}", e).to_lowercase())
-                        .unwrap_or_else(|_| "sst".to_string()))
+                let storage_engine = collection
+                    .storage_assignment
+                    .as_ref()
+                    .map(|sa| {
+                        proximadb_v1::StorageEngine::try_from(sa.engine)
+                            .map(|e| format!("{:?}", e).to_lowercase())
+                            .unwrap_or_else(|_| "sst".to_string())
+                    })
                     .unwrap_or_else(|| "sst".to_string());
 
                 Ok(UnifiedQueryResponse {
@@ -1212,11 +1269,17 @@ impl UnifiedQueryHandler {
 
     /// Execute graph operation
     async fn execute_graph_op(&self, op: &GraphOperation) -> Result<UnifiedQueryResponse> {
-        let _graph_service = self.graph_service.as_ref()
+        let _graph_service = self
+            .graph_service
+            .as_ref()
             .ok_or_else(|| anyhow!("Graph service not available"))?;
 
         match &op.operation {
-            GraphOperationType::Traverse { start_nodes, edge_types: _, max_depth } => {
+            GraphOperationType::Traverse {
+                start_nodes,
+                edge_types: _,
+                max_depth,
+            } => {
                 debug!(
                     graph = %op.graph_name,
                     start_nodes = ?start_nodes,

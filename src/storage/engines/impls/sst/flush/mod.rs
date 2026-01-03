@@ -125,7 +125,11 @@ impl SstEngine {
         let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
         debug!(
             "🔧 SST: Creating {} file: {} for collection: {}",
-            if block_format == BlockFormat::ArrowBlock { "Arrow" } else { "SSTable" },
+            if block_format == BlockFormat::ArrowBlock {
+                "Arrow"
+            } else {
+                "SSTable"
+            },
             sst_filename,
             collection_id
         );
@@ -155,7 +159,10 @@ impl SstEngine {
             {
                 Ok(()) => {
                     // Also update the global cache for search access
-                    if let Some(model) = self.get_pca_model(collection_id, &collection_storage_url).await {
+                    if let Some(model) = self
+                        .get_pca_model(collection_id, &collection_storage_url)
+                        .await
+                    {
                         super::core::set_collection_pca_model(collection_id, model);
                     }
                 }
@@ -269,20 +276,16 @@ impl SstEngine {
                     .map(|cfg| cfg.dimension)
                     .or_else(|| {
                         // Fallback: infer from first vector
-                        sorted_vectors.first().map(|(_, rec)| rec.vector.len() as u32)
+                        sorted_vectors
+                            .first()
+                            .map(|(_, rec)| rec.vector.len() as u32)
                     })
                     .unwrap_or(128); // Default dimension if not available
 
-                tracing::debug!(
-                    entries_written,
-                    dimension,
-                    "Writing vectors to Arrow block"
-                );
+                tracing::debug!(entries_written, dimension, "Writing vectors to Arrow block");
 
                 // Convert staging URL to local path for ArrowBlockWriter
-                let staging_path = staging_url
-                    .strip_prefix("file://")
-                    .unwrap_or(&staging_url);
+                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
 
                 // Ensure parent directory exists
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
@@ -348,7 +351,10 @@ impl SstEngine {
                 }
 
                 writer
-                    .write_sorted_vector_records(sorted_vectors.into_iter(), entries_written as usize)
+                    .write_sorted_vector_records(
+                        sorted_vectors.into_iter(),
+                        entries_written as usize,
+                    )
                     .await
                     .context("Failed to write vectors to SSTable")?;
 

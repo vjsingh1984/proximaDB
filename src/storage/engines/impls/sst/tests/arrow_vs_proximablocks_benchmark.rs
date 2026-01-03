@@ -24,8 +24,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::core::search::SearchParams;
     use crate::core::SstConfig;
+    use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, SqlValue, StorageAssignment, StorageConfig, VectorRecord,
     };
@@ -36,7 +36,8 @@ mod tests {
     };
 
     // Separator line constants for output formatting
-    const SEPARATOR_DOUBLE: &str = "======================================================================";
+    const SEPARATOR_DOUBLE: &str =
+        "======================================================================";
     const SEPARATOR_SINGLE: &str = "--------------------------------------------------------------";
 
     /// Benchmark results for a single format
@@ -152,7 +153,11 @@ mod tests {
         let flush_result = engine.do_flush(&flush_params).await?;
         let flush_time_ms = flush_start.elapsed().as_secs_f64() * 1000.0;
 
-        assert!(flush_result.success, "Flush should succeed for {}", format_name);
+        assert!(
+            flush_result.success,
+            "Flush should succeed for {}",
+            format_name
+        );
 
         // Calculate total file size on disk
         let data_path = format!("{}/{}/data", base_path, collection_id);
@@ -278,7 +283,10 @@ mod tests {
         println!("{}", SEPARATOR_DOUBLE);
         println!();
 
-        println!("{:<20} {:>20} {:>20}", "Metric", "ProximaBlocks", "ArrowBlock");
+        println!(
+            "{:<20} {:>20} {:>20}",
+            "Metric", "ProximaBlocks", "ArrowBlock"
+        );
         println!("{}", SEPARATOR_SINGLE);
 
         // Flush time comparison
@@ -358,13 +366,13 @@ mod tests {
                 "ArrowBlock"
             };
 
-        let size_winner =
-            if proximablocks_result.total_file_size_bytes <= arrowblock_result.total_file_size_bytes
-            {
-                "ProximaBlocks"
-            } else {
-                "ArrowBlock"
-            };
+        let size_winner = if proximablocks_result.total_file_size_bytes
+            <= arrowblock_result.total_file_size_bytes
+        {
+            "ProximaBlocks"
+        } else {
+            "ArrowBlock"
+        };
 
         println!();
         println!("  Faster Flush:    {}", flush_winner);

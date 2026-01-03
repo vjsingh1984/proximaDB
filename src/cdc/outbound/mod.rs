@@ -81,12 +81,12 @@ mod position;
 mod router;
 mod subscriber;
 
-pub use config::{OutboundConfig, SubscriptionConfig, RouteConfig};
+pub use config::{OutboundConfig, RouteConfig, SubscriptionConfig};
 pub use dedup::{DeduplicationCache, DeduplicationStrategy};
-pub use exactly_once::{ExactlyOnceManager, TransactionState, IdempotencyKey};
-pub use position::{PositionTracker, Position, PositionStore};
+pub use exactly_once::{ExactlyOnceManager, IdempotencyKey, TransactionState};
+pub use position::{Position, PositionStore, PositionTracker};
 pub use router::{EventRouter, RouteRule, RoutingDecision};
-pub use subscriber::{WalSubscriber, SubscriberHandle, SubscriptionStatus};
+pub use subscriber::{SubscriberHandle, SubscriptionStatus, WalSubscriber};
 
 #[cfg(test)]
 mod tests {

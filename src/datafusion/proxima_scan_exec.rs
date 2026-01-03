@@ -54,18 +54,16 @@ use std::task::{Context, Poll};
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
+use datafusion::common::Statistics;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
-};
-use datafusion::common::Statistics;
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::Stream;
 use tracing::{debug, trace, warn};
 
-use crate::storage::formats::FileSplit;
 use super::proxima_table_provider::EngineType;
+use crate::storage::formats::FileSplit;
 
 // ============================================================================
 // Split Reader Trait
@@ -150,11 +148,7 @@ impl ProximaScanExec {
     }
 
     /// Create a simple scan exec with minimal configuration.
-    pub fn new(
-        schema: SchemaRef,
-        splits: Vec<FileSplit>,
-        reader: Arc<dyn SplitReader>,
-    ) -> Self {
+    pub fn new(schema: SchemaRef, splits: Vec<FileSplit>, reader: Arc<dyn SplitReader>) -> Self {
         Self::builder()
             .schema(schema)
             .splits(splits)
@@ -234,7 +228,9 @@ impl Debug for ProximaScanExec {
 impl DisplayAs for ProximaScanExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
         match t {
-            DisplayFormatType::Default | DisplayFormatType::Verbose | DisplayFormatType::TreeRender => {
+            DisplayFormatType::Default
+            | DisplayFormatType::Verbose
+            | DisplayFormatType::TreeRender => {
                 write!(
                     f,
                     "ProximaScanExec: collection={}, engine={}, partitions={}, splits={}, projection={:?}, filters={}, limit={:?}",
@@ -412,7 +408,11 @@ impl ProximaScanExecBuilder {
         })?;
 
         let splits = self.splits.unwrap_or_default();
-        let batch_size = if self.batch_size > 0 { self.batch_size } else { 8192 };
+        let batch_size = if self.batch_size > 0 {
+            self.batch_size
+        } else {
+            8192
+        };
         let target_partitions = if self.target_partitions > 0 {
             self.target_partitions
         } else {
@@ -664,7 +664,10 @@ pub struct NullSplitReader {
 impl NullSplitReader {
     /// Create a new null reader for testing.
     pub fn new(schema: SchemaRef, engine_type: EngineType) -> Self {
-        Self { schema, engine_type }
+        Self {
+            schema,
+            engine_type,
+        }
     }
 }
 
@@ -786,7 +789,13 @@ mod tests {
     fn test_proxima_scan_exec_new() {
         let schema = test_schema();
         let reader = Arc::new(NullSplitReader::new(schema.clone(), EngineType::Viper));
-        let splits = vec![FileSplit::new_row_group("/f1.parquet".to_string(), 0, 0, 65536, 10000)];
+        let splits = vec![FileSplit::new_row_group(
+            "/f1.parquet".to_string(),
+            0,
+            0,
+            65536,
+            10000,
+        )];
 
         let exec = ProximaScanExec::new(schema, splits, reader);
 

@@ -7,9 +7,8 @@
 //! - Check: Expression-based validation
 //! - Not Null: Null value prevention
 
-use std::collections::{HashMap, HashSet};
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -111,7 +110,11 @@ impl ConstraintViolation {
     }
 
     /// Unique constraint violation
-    pub fn unique(constraint_name: impl Into<String>, columns: Vec<String>, values: Vec<String>) -> Self {
+    pub fn unique(
+        constraint_name: impl Into<String>,
+        columns: Vec<String>,
+        values: Vec<String>,
+    ) -> Self {
         Self::new(
             constraint_name,
             format!(
@@ -298,7 +301,8 @@ impl ConstraintEnforcer {
 
         // Check all table constraints
         for constraint in &object.schema.constraints {
-            self.check_constraint(object, constraint, row, &mut result).await;
+            self.check_constraint(object, constraint, row, &mut result)
+                .await;
         }
 
         result
@@ -343,7 +347,8 @@ impl ConstraintEnforcer {
             };
 
             if columns_affected {
-                self.check_constraint(object, constraint, new_row, &mut result).await;
+                self.check_constraint(object, constraint, new_row, &mut result)
+                    .await;
             }
         }
 
@@ -370,12 +375,8 @@ impl ConstraintEnforcer {
                 {
                     // Check if this FK references our object
                     let references_us = match reference {
-                        ForeignKeyReference::Table { table, .. } => {
-                            table == &object.name
-                        }
-                        ForeignKeyReference::GraphNode { graph_id, .. } => {
-                            graph_id == &object.name
-                        }
+                        ForeignKeyReference::Table { table, .. } => table == &object.name,
+                        ForeignKeyReference::GraphNode { graph_id, .. } => graph_id == &object.name,
                         ForeignKeyReference::Document { collection, .. } => {
                             collection == &object.name
                         }
@@ -413,7 +414,12 @@ impl ConstraintEnforcer {
     }
 
     /// Check not-null constraints
-    fn check_not_null(&self, schema: &ObjectSchema, row: &RowValue, result: &mut EnforcementResult) {
+    fn check_not_null(
+        &self,
+        schema: &ObjectSchema,
+        row: &RowValue,
+        result: &mut EnforcementResult,
+    ) {
         for column in &schema.columns {
             if !column.nullable {
                 if row.is_null(&column.name) && row.values.contains_key(&column.name) {
@@ -446,9 +452,7 @@ impl ConstraintEnforcer {
                     .await;
             }
             ConstraintType::ForeignKey {
-                columns,
-                reference,
-                ..
+                columns, reference, ..
             } => {
                 self.check_foreign_key(&constraint.name, columns, reference, row, result)
                     .await;
@@ -468,7 +472,10 @@ impl ConstraintEnforcer {
             ConstraintType::Exclusion { .. } => {
                 // Exclusion constraints require more complex validation
                 // For now, just log a warning
-                debug!("Exclusion constraint {} not fully validated", constraint.name);
+                debug!(
+                    "Exclusion constraint {} not fully validated",
+                    constraint.name
+                );
             }
         }
     }
@@ -583,12 +590,7 @@ impl ConstraintEnforcer {
     }
 
     /// Register existing value for uniqueness tracking
-    pub async fn register_value(
-        &self,
-        fqn: &str,
-        constraint_name: &str,
-        value_key: String,
-    ) {
+    pub async fn register_value(&self, fqn: &str, constraint_name: &str, value_key: String) {
         let mut indexes = self.unique_indexes.write().await;
         let obj_indexes = indexes.entry(fqn.to_string()).or_default();
         let index = obj_indexes.entry(constraint_name.to_string()).or_default();
@@ -596,12 +598,7 @@ impl ConstraintEnforcer {
     }
 
     /// Remove value from uniqueness tracking
-    pub async fn unregister_value(
-        &self,
-        fqn: &str,
-        constraint_name: &str,
-        value_key: &str,
-    ) {
+    pub async fn unregister_value(&self, fqn: &str, constraint_name: &str, value_key: &str) {
         let mut indexes = self.unique_indexes.write().await;
         if let Some(obj_indexes) = indexes.get_mut(fqn) {
             if let Some(index) = obj_indexes.get_mut(constraint_name) {
@@ -687,7 +684,12 @@ mod tests {
         let result = enforcer.validate_insert(&object, &row).await;
 
         assert!(!result.is_valid);
-        assert!(result.violations.iter().any(|v| v.constraint_name.contains("ck_age")));
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.constraint_name.contains("ck_age"))
+        );
     }
 
     #[tokio::test]
@@ -728,7 +730,11 @@ mod tests {
 
         // Register an existing email
         enforcer
-            .register_value("default.public.users", "uq_email", "existing@test.com".to_string())
+            .register_value(
+                "default.public.users",
+                "uq_email",
+                "existing@test.com".to_string(),
+            )
             .await;
 
         let mut row = RowValue::new();
@@ -739,7 +745,12 @@ mod tests {
         let result = enforcer.validate_insert(&object, &row).await;
 
         assert!(!result.is_valid);
-        assert!(result.violations.iter().any(|v| v.constraint_name.contains("uq_email")));
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.constraint_name.contains("uq_email"))
+        );
     }
 
     #[tokio::test]

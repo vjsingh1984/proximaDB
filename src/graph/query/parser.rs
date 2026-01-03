@@ -174,25 +174,34 @@ fn parse_node_pattern(input: &str) -> IResult<&str, NodePattern> {
 // Parse edge direction arrows
 fn parse_edge_direction_left(input: &str) -> IResult<&str, bool> {
     alt((
-        map(tag("<-"), |_| true),  // Incoming
-        map(tag("-"), |_| false),  // Outgoing or bidirectional
+        map(tag("<-"), |_| true), // Incoming
+        map(tag("-"), |_| false), // Outgoing or bidirectional
     ))(input)
 }
 
 fn parse_edge_direction_right(input: &str) -> IResult<&str, bool> {
     alt((
-        map(tag("->"), |_| true),  // Outgoing
-        map(tag("-"), |_| false),  // Incoming or bidirectional
+        map(tag("->"), |_| true), // Outgoing
+        map(tag("-"), |_| false), // Incoming or bidirectional
     ))(input)
 }
 
 // Parse edge specification inside brackets [r:TYPE {prop: val}]
-fn parse_edge_spec(input: &str) -> IResult<&str, (Option<String>, Vec<String>, HashMap<String, PropertyConstraint>)> {
+fn parse_edge_spec(
+    input: &str,
+) -> IResult<
+    &str,
+    (
+        Option<String>,
+        Vec<String>,
+        HashMap<String, PropertyConstraint>,
+    ),
+> {
     map(
         tuple((
-            opt(identifier),                               // Optional variable
-            opt(preceded(char(':'), identifier)),          // Optional edge type
-            opt(preceded(multispace0, property_map)),      // Optional properties
+            opt(identifier),                          // Optional variable
+            opt(preceded(char(':'), identifier)),     // Optional edge type
+            opt(preceded(multispace0, property_map)), // Optional properties
         )),
         |(variable_opt, edge_type_opt, properties_opt)| {
             let edge_types = edge_type_opt.map(|t| vec![t]).unwrap_or_default();
@@ -227,16 +236,23 @@ fn parse_variable_length(input: &str) -> IResult<&str, (u32, u32)> {
 // Parse edge pattern (e.g., -[r:KNOWS]-> or <-[r:KNOWS]- or -[r:KNOWS]-)
 fn parse_edge_pattern(
     input: &str,
-) -> IResult<&str, (bool, Option<String>, Vec<String>, HashMap<String, PropertyConstraint>, bool, Option<(u32, u32)>)> {
+) -> IResult<
+    &str,
+    (
+        bool,
+        Option<String>,
+        Vec<String>,
+        HashMap<String, PropertyConstraint>,
+        bool,
+        Option<(u32, u32)>,
+    ),
+> {
     map(
         tuple((
             parse_edge_direction_left,
             delimited(
                 char('['),
-                tuple((
-                    parse_edge_spec,
-                    opt(parse_variable_length),
-                )),
+                tuple((parse_edge_spec, opt(parse_variable_length))),
                 char(']'),
             ),
             parse_edge_direction_right,
@@ -246,7 +262,14 @@ fn parse_edge_pattern(
             let is_outgoing = right_arrow;
             let is_incoming = left_arrow;
 
-            (is_incoming, variable, edge_types, properties, is_outgoing, var_length_opt)
+            (
+                is_incoming,
+                variable,
+                edge_types,
+                properties,
+                is_outgoing,
+                var_length_opt,
+            )
         },
     )(input)
 }
@@ -259,12 +282,16 @@ fn parse_path_segment(input: &str) -> IResult<&str, (NodePattern, EdgePattern, N
             preceded(multispace0, parse_edge_pattern),
             preceded(multispace0, parse_node_pattern),
         )),
-        |(from_node, (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length), to_node)| {
+        |(
+            from_node,
+            (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_length),
+            to_node,
+        )| {
             let direction = match (is_incoming, is_outgoing) {
-                (false, true) => EdgeDirection::Outgoing,  // -[]->
-                (true, false) => EdgeDirection::Incoming,  // <-[]-
+                (false, true) => EdgeDirection::Outgoing,       // -[]->
+                (true, false) => EdgeDirection::Incoming,       // <-[]-
                 (false, false) => EdgeDirection::Bidirectional, // -[]-
-                (true, true) => EdgeDirection::Bidirectional, // Invalid, treat as bidirectional
+                (true, true) => EdgeDirection::Bidirectional,   // Invalid, treat as bidirectional
             };
 
             let edge_pattern = EdgePattern {
@@ -316,10 +343,7 @@ fn parse_where_primary(input: &str) -> IResult<&str, WhereClause> {
     alt((
         // NOT condition
         map(
-            preceded(
-                tuple((tag("NOT"), multispace1)),
-                parse_where_primary,
-            ),
+            preceded(tuple((tag("NOT"), multispace1)), parse_where_primary),
             |cond| WhereClause::Not(Box::new(cond)),
         ),
         // Parenthesized condition
@@ -336,11 +360,11 @@ fn parse_where_primary(input: &str) -> IResult<&str, WhereClause> {
 fn parse_where_property_condition(input: &str) -> IResult<&str, WhereClause> {
     map(
         tuple((
-            identifier,                                        // variable
+            identifier, // variable
             char('.'),
-            identifier,                                        // property
+            identifier, // property
             delimited(multispace0, parse_comparison_op, multispace0),
-            property_value,                                    // value
+            property_value, // value
         )),
         |(variable, _, property, operator, value)| WhereClause::Property {
             variable,
@@ -371,10 +395,7 @@ fn parse_comparison_op(input: &str) -> IResult<&str, &str> {
 
 // Parse WHERE clause
 fn parse_where_clause(input: &str) -> IResult<&str, WhereClause> {
-    preceded(
-        tag("WHERE"),
-        preceded(multispace1, parse_where_condition),
-    )(input)
+    preceded(tag("WHERE"), preceded(multispace1, parse_where_condition))(input)
 }
 
 // Parse aggregation functions
@@ -400,17 +421,16 @@ fn parse_aggregation(input: &str) -> IResult<&str, PropertyProjection> {
                     char('('),
                     delimited(
                         multispace0,
-                        separated_pair(
-                            identifier,
-                            char('.'),
-                            identifier,
-                        ),
+                        separated_pair(identifier, char('.'), identifier),
                         multispace0,
                     ),
                     char(')'),
                 ),
             )),
-            |(_, (var, prop))| PropertyProjection::Sum { variable: var, property: prop },
+            |(_, (var, prop))| PropertyProjection::Sum {
+                variable: var,
+                property: prop,
+            },
         ),
         // AVG(variable.property)
         map(
@@ -420,17 +440,16 @@ fn parse_aggregation(input: &str) -> IResult<&str, PropertyProjection> {
                     char('('),
                     delimited(
                         multispace0,
-                        separated_pair(
-                            identifier,
-                            char('.'),
-                            identifier,
-                        ),
+                        separated_pair(identifier, char('.'), identifier),
                         multispace0,
                     ),
                     char(')'),
                 ),
             )),
-            |(_, (var, prop))| PropertyProjection::Avg { variable: var, property: prop },
+            |(_, (var, prop))| PropertyProjection::Avg {
+                variable: var,
+                property: prop,
+            },
         ),
         // MIN(variable.property)
         map(
@@ -440,17 +459,16 @@ fn parse_aggregation(input: &str) -> IResult<&str, PropertyProjection> {
                     char('('),
                     delimited(
                         multispace0,
-                        separated_pair(
-                            identifier,
-                            char('.'),
-                            identifier,
-                        ),
+                        separated_pair(identifier, char('.'), identifier),
                         multispace0,
                     ),
                     char(')'),
                 ),
             )),
-            |(_, (var, prop))| PropertyProjection::Min { variable: var, property: prop },
+            |(_, (var, prop))| PropertyProjection::Min {
+                variable: var,
+                property: prop,
+            },
         ),
         // MAX(variable.property)
         map(
@@ -460,17 +478,16 @@ fn parse_aggregation(input: &str) -> IResult<&str, PropertyProjection> {
                     char('('),
                     delimited(
                         multispace0,
-                        separated_pair(
-                            identifier,
-                            char('.'),
-                            identifier,
-                        ),
+                        separated_pair(identifier, char('.'), identifier),
                         multispace0,
                     ),
                     char(')'),
                 ),
             )),
-            |(_, (var, prop))| PropertyProjection::Max { variable: var, property: prop },
+            |(_, (var, prop))| PropertyProjection::Max {
+                variable: var,
+                property: prop,
+            },
         ),
     ))(input)
 }
@@ -486,7 +503,9 @@ fn parse_match_clause(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgeP
                     delimited(multispace0, char(','), multispace0),
                     alt((
                         // Path segment: (a)-[r]->(b)
-                        map(parse_path_segment, |(from, edge, to)| (vec![from, to], vec![edge])),
+                        map(parse_path_segment, |(from, edge, to)| {
+                            (vec![from, to], vec![edge])
+                        }),
                         // Simple node: (n:Label)
                         map(parse_node_pattern, |node| (vec![node], vec![])),
                     )),
@@ -542,10 +561,13 @@ fn parse_return_item(input: &str) -> IResult<&str, (String, PropertyProjection)>
             )),
             |(var, _, prop, alias_opt)| {
                 let name = alias_opt.unwrap_or_else(|| format!("{}.{}", var, prop));
-                (name, PropertyProjection::Property {
-                    variable: var,
-                    property: prop,
-                })
+                (
+                    name,
+                    PropertyProjection::Property {
+                        variable: var,
+                        property: prop,
+                    },
+                )
             },
         ),
         // Simple variable
@@ -575,10 +597,7 @@ fn parse_order_by(input: &str) -> IResult<&str, Vec<(String, bool)>> {
                             identifier,
                             opt(preceded(
                                 multispace1,
-                                alt((
-                                    map(tag("ASC"), |_| true),
-                                    map(tag("DESC"), |_| false),
-                                )),
+                                alt((map(tag("ASC"), |_| true), map(tag("DESC"), |_| false))),
                             )),
                         )),
                         |(var, asc_opt)| (var, asc_opt.unwrap_or(true)),
@@ -665,8 +684,8 @@ fn parse_create_node_spec(input: &str) -> IResult<&str, CreateNodeSpec> {
         delimited(
             char('('),
             tuple((
-                opt(identifier),                               // Optional variable
-                opt(preceded(char(':'), identifier)),          // Optional label
+                opt(identifier),                                      // Optional variable
+                opt(preceded(char(':'), identifier)),                 // Optional label
                 opt(preceded(multispace0, parse_property_value_map)), // Optional properties
             )),
             char(')'),
@@ -690,8 +709,14 @@ fn parse_create_edge_pattern(
             preceded(multispace0, parse_create_node_spec),
         )),
         |(from_node, (edge_var, edge_type, edge_props, _direction), to_node)| {
-            let from_var = from_node.variable.clone().unwrap_or_else(|| "_from".to_string());
-            let to_var = to_node.variable.clone().unwrap_or_else(|| "_to".to_string());
+            let from_var = from_node
+                .variable
+                .clone()
+                .unwrap_or_else(|| "_from".to_string());
+            let to_var = to_node
+                .variable
+                .clone()
+                .unwrap_or_else(|| "_to".to_string());
 
             let edge = CreateEdgeSpec {
                 variable: edge_var,
@@ -709,15 +734,23 @@ fn parse_create_edge_pattern(
 // Parse edge spec for CREATE: -[r:TYPE {props}]->
 fn parse_create_edge_spec(
     input: &str,
-) -> IResult<&str, (Option<String>, Option<String>, HashMap<String, serde_json::Value>, EdgeDirection)> {
+) -> IResult<
+    &str,
+    (
+        Option<String>,
+        Option<String>,
+        HashMap<String, serde_json::Value>,
+        EdgeDirection,
+    ),
+> {
     map(
         tuple((
             parse_edge_direction_left,
             delimited(
                 char('['),
                 tuple((
-                    opt(identifier),                                    // Variable
-                    opt(preceded(char(':'), identifier)),               // Edge type
+                    opt(identifier),                                      // Variable
+                    opt(preceded(char(':'), identifier)),                 // Edge type
                     opt(preceded(multispace0, parse_property_value_map)), // Properties
                 )),
                 char(']'),
@@ -730,7 +763,12 @@ fn parse_create_edge_spec(
                 (true, false) => EdgeDirection::Incoming,
                 _ => EdgeDirection::Bidirectional,
             };
-            (variable, edge_type, properties_opt.unwrap_or_default(), direction)
+            (
+                variable,
+                edge_type,
+                properties_opt.unwrap_or_default(),
+                direction,
+            )
         },
     )(input)
 }
@@ -776,10 +814,7 @@ fn parse_delete_clause(input: &str) -> IResult<&str, DeleteClause> {
                 tag("DELETE"),
                 preceded(
                     multispace1,
-                    separated_list1(
-                        delimited(multispace0, char(','), multispace0),
-                        identifier,
-                    ),
+                    separated_list1(delimited(multispace0, char(','), multispace0), identifier),
                 ),
             ),
         )),
@@ -810,11 +845,7 @@ fn parse_set_item(input: &str) -> IResult<&str, SetItem> {
         ),
         // Add label: n:Label
         map(
-            tuple((
-                identifier,
-                char(':'),
-                identifier,
-            )),
+            tuple((identifier, char(':'), identifier)),
             |(variable, _, label)| SetItem::AddLabel { variable, label },
         ),
         // Merge properties: n += {props}
@@ -824,7 +855,10 @@ fn parse_set_item(input: &str) -> IResult<&str, SetItem> {
                 delimited(multispace0, tag("+="), multispace0),
                 parse_property_value_map,
             )),
-            |(variable, _, properties)| SetItem::MergeProperties { variable, properties },
+            |(variable, _, properties)| SetItem::MergeProperties {
+                variable,
+                properties,
+            },
         ),
         // Replace all properties: n = {props}
         map(
@@ -833,7 +867,10 @@ fn parse_set_item(input: &str) -> IResult<&str, SetItem> {
                 delimited(multispace0, char('='), multispace0),
                 parse_property_value_map,
             )),
-            |(variable, _, properties)| SetItem::AllProperties { variable, properties },
+            |(variable, _, properties)| SetItem::AllProperties {
+                variable,
+                properties,
+            },
         ),
     ))(input)
 }
@@ -860,20 +897,12 @@ fn parse_remove_item(input: &str) -> IResult<&str, RemoveItem> {
     alt((
         // Remove property: n.prop
         map(
-            tuple((
-                identifier,
-                char('.'),
-                identifier,
-            )),
+            tuple((identifier, char('.'), identifier)),
             |(variable, _, property)| RemoveItem::Property { variable, property },
         ),
         // Remove label: n:Label
         map(
-            tuple((
-                identifier,
-                char(':'),
-                identifier,
-            )),
+            tuple((identifier, char(':'), identifier)),
             |(variable, _, label)| RemoveItem::Label { variable, label },
         ),
     ))(input)
@@ -908,7 +937,9 @@ fn parse_merge_clause(input: &str) -> IResult<&str, MergeClause> {
                         separated_list1(
                             delimited(multispace0, char(','), multispace0),
                             alt((
-                                map(parse_path_segment, |(from, edge, to)| (vec![from, to], vec![edge])),
+                                map(parse_path_segment, |(from, edge, to)| {
+                                    (vec![from, to], vec![edge])
+                                }),
                                 map(parse_node_pattern, |node| (vec![node], vec![])),
                             )),
                         ),
@@ -949,13 +980,7 @@ fn parse_merge_clause(input: &str) -> IResult<&str, MergeClause> {
 // Parse OPTIONAL MATCH clause
 fn parse_optional_match_clause(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePattern>)> {
     map(
-        preceded(
-            tag("OPTIONAL"),
-            preceded(
-                multispace1,
-                parse_match_clause,
-            ),
-        ),
+        preceded(tag("OPTIONAL"), preceded(multispace1, parse_match_clause)),
         |(nodes, edges)| {
             // Mark all nodes and edges as optional
             let optional_nodes = nodes
@@ -996,15 +1021,13 @@ fn parse_with_clause(input: &str) -> IResult<&str, WithClause> {
                 opt(parse_limit),
                 opt(preceded(multispace1, parse_where_clause)),
             )),
-            |(distinct, items, order_by_opt, skip_opt, limit_opt, where_opt)| {
-                WithClause {
-                    projections: items,
-                    distinct,
-                    order_by: order_by_opt.unwrap_or_default(),
-                    limit: limit_opt,
-                    skip: skip_opt,
-                    where_clause: where_opt,
-                }
+            |(distinct, items, order_by_opt, skip_opt, limit_opt, where_opt)| WithClause {
+                projections: items,
+                distinct,
+                order_by: order_by_opt.unwrap_or_default(),
+                limit: limit_opt,
+                skip: skip_opt,
+                where_clause: where_opt,
             },
         ),
     )(input)
@@ -1036,16 +1059,14 @@ fn parse_cypher_query(input: &str) -> IResult<&str, CypherQuery> {
                             parse_match_clause,
                             opt(preceded(multispace1, parse_where_clause)),
                         )),
-                        |((nodes, edges), where_opt)| {
-                            ReadingClause::Match {
-                                pattern: MatchPattern {
-                                    nodes,
-                                    edges,
-                                    paths: Vec::new(),
-                                    where_clause: where_opt,
-                                },
-                                optional: false,
-                            }
+                        |((nodes, edges), where_opt)| ReadingClause::Match {
+                            pattern: MatchPattern {
+                                nodes,
+                                edges,
+                                paths: Vec::new(),
+                                where_clause: where_opt,
+                            },
+                            optional: false,
                         },
                     ),
                 )),
@@ -1211,12 +1232,19 @@ mod tests {
         assert_eq!(compiled.where_clauses.len(), 1);
 
         match &compiled.where_clauses[0] {
-            WhereClause::Property { variable, property, constraint } => {
+            WhereClause::Property {
+                variable,
+                property,
+                constraint,
+            } => {
                 assert_eq!(variable, "p");
                 assert_eq!(property, "age");
                 match constraint {
                     PropertyConstraint::GreaterThan(val) => {
-                        assert_eq!(val, &serde_json::Value::Number(serde_json::Number::from(25)));
+                        assert_eq!(
+                            val,
+                            &serde_json::Value::Number(serde_json::Number::from(25))
+                        );
                     }
                     _ => panic!("Expected GreaterThan constraint"),
                 }
@@ -1237,7 +1265,9 @@ mod tests {
             WhereClause::And(left, right) => {
                 // Verify left side (age > 25)
                 match left.as_ref() {
-                    WhereClause::Property { variable, property, .. } => {
+                    WhereClause::Property {
+                        variable, property, ..
+                    } => {
                         assert_eq!(variable, "p");
                         assert_eq!(property, "age");
                     }
@@ -1246,7 +1276,9 @@ mod tests {
 
                 // Verify right side (name = "Alice")
                 match right.as_ref() {
-                    WhereClause::Property { variable, property, .. } => {
+                    WhereClause::Property {
+                        variable, property, ..
+                    } => {
                         assert_eq!(variable, "p");
                         assert_eq!(property, "name");
                     }
@@ -1459,7 +1491,11 @@ mod tests {
         let (_, clause) = result.unwrap();
         assert_eq!(clause.items.len(), 1);
         match &clause.items[0] {
-            SetItem::Property { variable, property, value } => {
+            SetItem::Property {
+                variable,
+                property,
+                value,
+            } => {
                 assert_eq!(variable, "n");
                 assert_eq!(property, "name");
                 assert_eq!(value, &serde_json::Value::String("Bob".to_string()));
@@ -1620,7 +1656,10 @@ mod tests {
         assert!(result.is_ok());
         let (_, props) = result.unwrap();
         assert_eq!(props.len(), 3);
-        assert_eq!(props.get("name"), Some(&serde_json::Value::String("Bob".to_string())));
+        assert_eq!(
+            props.get("name"),
+            Some(&serde_json::Value::String("Bob".to_string()))
+        );
         assert_eq!(props.get("age"), Some(&serde_json::json!(25)));
         assert_eq!(props.get("active"), Some(&serde_json::Value::Bool(true)));
     }

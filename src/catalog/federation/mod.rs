@@ -27,11 +27,11 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 
-pub mod federated_catalog;
 pub mod external;
+pub mod federated_catalog;
 
 // Re-exports
-pub use federated_catalog::{
-    FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo, ConstraintSupport,
-};
 pub use external::{ExternalCatalog, ExternalCatalogConfig, ExternalCatalogType};
+pub use federated_catalog::{
+    ConstraintSupport, FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo,
+};

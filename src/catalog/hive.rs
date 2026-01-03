@@ -44,12 +44,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::HiveCatalogConfig;
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth};
@@ -57,7 +58,6 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
     CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// Hive Metastore catalog implementation
 ///
@@ -499,8 +499,7 @@ impl Catalog for HiveCatalog {
         };
 
         // Update cache
-        self.cache
-            .put_table(&self.name, identifier, schema.clone());
+        self.cache.put_table(&self.name, identifier, schema.clone());
 
         Ok(schema)
     }

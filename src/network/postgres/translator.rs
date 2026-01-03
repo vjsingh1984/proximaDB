@@ -201,9 +201,7 @@ impl QueryTranslator {
     /// Check if a query is a DML statement
     pub fn is_dml(&self, query: &str) -> bool {
         let upper = query.trim().to_uppercase();
-        upper.starts_with("INSERT ")
-            || upper.starts_with("UPDATE ")
-            || upper.starts_with("DELETE ")
+        upper.starts_with("INSERT ") || upper.starts_with("UPDATE ") || upper.starts_with("DELETE ")
     }
 
     /// Check if a query is a SELECT statement
@@ -277,7 +275,9 @@ mod tests {
     #[test]
     fn test_translate_set() {
         let translator = QueryTranslator::new();
-        let result = translator.translate("SET client_encoding TO 'UTF8'").unwrap();
+        let result = translator
+            .translate("SET client_encoding TO 'UTF8'")
+            .unwrap();
         assert!(result.is_empty());
     }
 

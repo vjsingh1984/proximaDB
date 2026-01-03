@@ -37,7 +37,7 @@ impl DefaultRangeCoalescer {
     /// Create a new coalescer with default settings
     pub fn new() -> Self {
         Self {
-            default_threshold: 64 * 1024, // 64KB default gap threshold
+            default_threshold: 64 * 1024,     // 64KB default gap threshold
             min_range_for_split: 1024 * 1024, // 1MB minimum for splitting
         }
     }
@@ -92,11 +92,7 @@ impl RangeOptimizer for DefaultRangeCoalescer {
             if current.is_adjacent(&range, threshold) || current.overlaps(&range) {
                 // Merge the ranges
                 current = current.merge(&range);
-                trace!(
-                    "Merged range: [{}, {})",
-                    current.start,
-                    current.end
-                );
+                trace!("Merged range: [{}, {})", current.start, current.end);
             } else {
                 // Gap too large, start a new range
                 coalesced.push(current);
@@ -201,7 +197,10 @@ impl RangeOptimizerWithMapping for DefaultRangeCoalescer {
                 };
             } else {
                 // Gap too large - finalize current and start new
-                coalesced.push(ByteRange::new(current_coalesced_start, current_coalesced_end));
+                coalesced.push(ByteRange::new(
+                    current_coalesced_start,
+                    current_coalesced_end,
+                ));
 
                 // Start new coalesced range
                 current_coalesced_index += 1;
@@ -217,7 +216,10 @@ impl RangeOptimizerWithMapping for DefaultRangeCoalescer {
         }
 
         // Don't forget the last coalesced range
-        coalesced.push(ByteRange::new(current_coalesced_start, current_coalesced_end));
+        coalesced.push(ByteRange::new(
+            current_coalesced_start,
+            current_coalesced_end,
+        ));
 
         trace!(
             "Coalesced with mapping: {} original -> {} coalesced",
@@ -254,8 +256,8 @@ impl AdaptiveRangeCoalescer {
     pub fn for_cloud() -> Self {
         Self {
             base: DefaultRangeCoalescer::with_threshold(256 * 1024), // 256KB
-            storage_latency_us: 50_000, // 50ms
-            target_io_size: 1024 * 1024, // 1MB
+            storage_latency_us: 50_000,                              // 50ms
+            target_io_size: 1024 * 1024,                             // 1MB
         }
     }
 
@@ -417,10 +419,7 @@ mod tests {
     #[test]
     fn test_coalesce_overlapping_ranges() {
         let coalescer = DefaultRangeCoalescer::new();
-        let ranges = vec![
-            ByteRange::new(0, 150),
-            ByteRange::new(100, 200),
-        ];
+        let ranges = vec![ByteRange::new(0, 150), ByteRange::new(100, 200)];
 
         let result = coalescer.coalesce(ranges, 0);
         assert_eq!(result.len(), 1);

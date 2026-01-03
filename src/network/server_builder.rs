@@ -534,11 +534,7 @@ impl ArrowIpcServerBuilder {
     }
 
     /// Set TLS certificate and key files
-    pub fn with_tls<C: Into<String>, K: Into<String>>(
-        mut self,
-        cert_file: C,
-        key_file: K,
-    ) -> Self {
+    pub fn with_tls<C: Into<String>, K: Into<String>>(mut self, cert_file: C, key_file: K) -> Self {
         self.tls_cert_file = Some(cert_file.into());
         self.tls_key_file = Some(key_file.into());
         self
@@ -574,17 +570,9 @@ impl ArrowIpcServerBuilder {
     ) -> Result<crate::network::multi_server::ArrowIpcServerConfig> {
         let config = self.build()?;
 
-        info!(
-            "🚀 Arrow IPC Server Configuration:",
-        );
-        info!(
-            "   Bind Address: {}",
-            config.bind_address
-        );
-        info!(
-            "   Service Enabled: {}",
-            config.enable_arrow_ipc
-        );
+        info!("🚀 Arrow IPC Server Configuration:",);
+        info!("   Bind Address: {}", config.bind_address);
+        info!("   Service Enabled: {}", config.enable_arrow_ipc);
         info!(
             "   Max Message Size: {}MB",
             config.max_message_size / (1024 * 1024)
@@ -722,9 +710,20 @@ impl MultiServerBuilder {
             api_config: self.api_config.clone(),
             data_dir: self.data_dir.clone(),
             // Unified port mode defaults (Phase 14)
-            unified_mode: self.api_config.as_ref().map(|c| c.unified_mode).unwrap_or(false),
-            unified_port: self.api_config.as_ref().map(|c| c.unified_port).unwrap_or(5678),
+            unified_mode: self
+                .api_config
+                .as_ref()
+                .map(|c| c.unified_mode)
+                .unwrap_or(false),
+            unified_port: self
+                .api_config
+                .as_ref()
+                .map(|c| c.unified_port)
+                .unwrap_or(5678),
             unified_bind_address: "0.0.0.0".to_string(),
+            // Cluster mode defaults
+            #[cfg(feature = "cluster")]
+            cluster_config: None, // Cluster mode disabled by default
         })
     }
 

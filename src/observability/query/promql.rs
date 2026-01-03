@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use super::metrics::MetricResult;
 use crate::proto::proximadb_v1::MetricSample;
@@ -88,8 +88,10 @@ impl PromQLParser {
     /// Extract function parameter for functions like histogram_quantile(0.95, ...) or topk(5, ...)
     fn extract_function_param(op: &AggregationOp, inner: &str) -> Option<f64> {
         match op {
-            AggregationOp::HistogramQuantile | AggregationOp::TopK |
-            AggregationOp::BottomK | AggregationOp::Quantile => {
+            AggregationOp::HistogramQuantile
+            | AggregationOp::TopK
+            | AggregationOp::BottomK
+            | AggregationOp::Quantile => {
                 // Look for first comma and extract number before it
                 if let Some(comma_pos) = inner.find(',') {
                     let param_str = inner[..comma_pos].trim();
@@ -244,16 +246,32 @@ impl PromQLParser {
             // Determine match type
             let (label, op, value) = if part.contains("!~") {
                 let parts: Vec<&str> = part.splitn(2, "!~").collect();
-                (parts[0].trim(), MatchOp::NotRegex, parts.get(1).map(|s| s.trim()).unwrap_or(""))
+                (
+                    parts[0].trim(),
+                    MatchOp::NotRegex,
+                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                )
             } else if part.contains("=~") {
                 let parts: Vec<&str> = part.splitn(2, "=~").collect();
-                (parts[0].trim(), MatchOp::Regex, parts.get(1).map(|s| s.trim()).unwrap_or(""))
+                (
+                    parts[0].trim(),
+                    MatchOp::Regex,
+                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                )
             } else if part.contains("!=") {
                 let parts: Vec<&str> = part.splitn(2, "!=").collect();
-                (parts[0].trim(), MatchOp::NotEqual, parts.get(1).map(|s| s.trim()).unwrap_or(""))
+                (
+                    parts[0].trim(),
+                    MatchOp::NotEqual,
+                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                )
             } else if part.contains('=') {
                 let parts: Vec<&str> = part.splitn(2, '=').collect();
-                (parts[0].trim(), MatchOp::Equal, parts.get(1).map(|s| s.trim()).unwrap_or(""))
+                (
+                    parts[0].trim(),
+                    MatchOp::Equal,
+                    parts.get(1).map(|s| s.trim()).unwrap_or(""),
+                )
             } else {
                 return Err(anyhow!("Invalid label matcher: {}", part));
             };
@@ -289,16 +307,17 @@ impl PromQLParser {
                     return Err(anyhow!("Invalid duration format: {}", s));
                 }
 
-                let num: f64 = current_num.parse()
+                let num: f64 = current_num
+                    .parse()
                     .map_err(|_| anyhow!("Invalid number in duration: {}", current_num))?;
 
                 let multiplier = match c {
-                    's' => 1_000_000_000i64,           // seconds
-                    'm' => 60_000_000_000i64,          // minutes
-                    'h' => 3_600_000_000_000i64,       // hours
-                    'd' => 86_400_000_000_000i64,      // days
-                    'w' => 604_800_000_000_000i64,     // weeks
-                    'y' => 31_536_000_000_000_000i64,  // years (365 days)
+                    's' => 1_000_000_000i64,          // seconds
+                    'm' => 60_000_000_000i64,         // minutes
+                    'h' => 3_600_000_000_000i64,      // hours
+                    'd' => 86_400_000_000_000i64,     // days
+                    'w' => 604_800_000_000_000i64,    // weeks
+                    'y' => 31_536_000_000_000_000i64, // years (365 days)
                     _ => return Err(anyhow!("Unknown duration unit: {}", c)),
                 };
 
@@ -311,7 +330,9 @@ impl PromQLParser {
             return Err(anyhow!("Duration must end with a unit: {}", s));
         }
 
-        Ok(Duration { nanoseconds: total_ns })
+        Ok(Duration {
+            nanoseconds: total_ns,
+        })
     }
 
     /// Extract content inside parentheses
@@ -441,11 +462,15 @@ pub struct Duration {
 
 impl Duration {
     pub fn from_minutes(m: i64) -> Self {
-        Self { nanoseconds: m * 60_000_000_000 }
+        Self {
+            nanoseconds: m * 60_000_000_000,
+        }
     }
 
     pub fn from_hours(h: i64) -> Self {
-        Self { nanoseconds: h * 3_600_000_000_000 }
+        Self {
+            nanoseconds: h * 3_600_000_000_000,
+        }
     }
 
     pub fn as_seconds(&self) -> f64 {
@@ -465,29 +490,47 @@ impl PromQLExecutor {
         lookback_ns: i64,
     ) -> Result<Vec<MetricResult>> {
         match expr {
-            PromQLExpr::VectorSelector { name, matchers, range, offset } => {
-                Self::execute_vector_selector(
-                    name, matchers, range, offset, samples, eval_time_ns, lookback_ns
-                )
-            }
-            PromQLExpr::Aggregation { op, expr, by, without, param } => {
+            PromQLExpr::VectorSelector {
+                name,
+                matchers,
+                range,
+                offset,
+            } => Self::execute_vector_selector(
+                name,
+                matchers,
+                range,
+                offset,
+                samples,
+                eval_time_ns,
+                lookback_ns,
+            ),
+            PromQLExpr::Aggregation {
+                op,
+                expr,
+                by,
+                without,
+                param,
+            } => {
                 let inner_results = Self::execute(expr, samples, eval_time_ns, lookback_ns)?;
                 Self::execute_aggregation(op, inner_results, by, *without, *param)
             }
-            PromQLExpr::Binary { op, lhs, rhs, matching } => {
+            PromQLExpr::Binary {
+                op,
+                lhs,
+                rhs,
+                matching,
+            } => {
                 // For binary operations, we'd need to execute both sides
                 // This is simplified - full implementation would handle vector matching
                 let lhs_results = Self::execute(lhs, samples.clone(), eval_time_ns, lookback_ns)?;
                 let rhs_results = Self::execute(rhs, samples, eval_time_ns, lookback_ns)?;
                 Self::execute_binary(op, lhs_results, rhs_results, matching)
             }
-            PromQLExpr::Scalar(v) => {
-                Ok(vec![MetricResult {
-                    timestamp_ns: eval_time_ns,
-                    value: *v,
-                    labels: HashMap::new(),
-                }])
-            }
+            PromQLExpr::Scalar(v) => Ok(vec![MetricResult {
+                timestamp_ns: eval_time_ns,
+                value: *v,
+                labels: HashMap::new(),
+            }]),
         }
     }
 
@@ -515,20 +558,20 @@ impl PromQLExecutor {
 
                 // Label matchers
                 for matcher in matchers {
-                    let label_value = s.labels.get(&matcher.name).map(|s| s.as_str()).unwrap_or("");
+                    let label_value = s
+                        .labels
+                        .get(&matcher.name)
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
                     let matches = match matcher.op {
                         MatchOp::Equal => label_value == matcher.value,
                         MatchOp::NotEqual => label_value != matcher.value,
-                        MatchOp::Regex => {
-                            regex::Regex::new(&matcher.value)
-                                .map(|re| re.is_match(label_value))
-                                .unwrap_or(false)
-                        }
-                        MatchOp::NotRegex => {
-                            regex::Regex::new(&matcher.value)
-                                .map(|re| !re.is_match(label_value))
-                                .unwrap_or(true)
-                        }
+                        MatchOp::Regex => regex::Regex::new(&matcher.value)
+                            .map(|re| re.is_match(label_value))
+                            .unwrap_or(false),
+                        MatchOp::NotRegex => regex::Regex::new(&matcher.value)
+                            .map(|re| !re.is_match(label_value))
+                            .unwrap_or(true),
                     };
                     if !matches {
                         return false;
@@ -550,11 +593,14 @@ impl PromQLExecutor {
         // For range vectors, we return all samples; for instant vectors, we return the latest per series
         if range.is_some() {
             // Range vector - return all samples
-            Ok(filtered.into_iter().map(|s| MetricResult {
-                timestamp_ns: s.timestamp_ns,
-                value: s.value,
-                labels: s.labels,
-            }).collect())
+            Ok(filtered
+                .into_iter()
+                .map(|s| MetricResult {
+                    timestamp_ns: s.timestamp_ns,
+                    value: s.value,
+                    labels: s.labels,
+                })
+                .collect())
         } else {
             // Instant vector - return latest sample per label set
             let mut latest: HashMap<String, MetricResult> = HashMap::new();
@@ -565,7 +611,8 @@ impl PromQLExecutor {
                     value: s.value,
                     labels: s.labels,
                 };
-                latest.entry(key)
+                latest
+                    .entry(key)
                     .and_modify(|existing| {
                         if result.timestamp_ns > existing.timestamp_ns {
                             *existing = result.clone();
@@ -592,14 +639,18 @@ impl PromQLExecutor {
             let key = if !by.is_empty() {
                 if without {
                     // Keep all labels except those in 'by'
-                    let kept: HashMap<_, _> = result.labels.iter()
+                    let kept: HashMap<_, _> = result
+                        .labels
+                        .iter()
                         .filter(|(k, _)| !by.contains(k))
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
                     Self::labels_to_key(&kept)
                 } else {
                     // Keep only labels in 'by'
-                    let kept: HashMap<_, _> = result.labels.iter()
+                    let kept: HashMap<_, _> = result
+                        .labels
+                        .iter()
                         .filter(|(k, _)| by.contains(k))
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
@@ -622,13 +673,17 @@ impl PromQLExecutor {
 
             let labels = if !by.is_empty() && !without {
                 // Keep only 'by' labels
-                group[0].labels.iter()
+                group[0]
+                    .labels
+                    .iter()
                     .filter(|(k, _)| by.contains(k))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
             } else if !by.is_empty() && without {
                 // Remove 'by' labels
-                group[0].labels.iter()
+                group[0]
+                    .labels
+                    .iter()
                     .filter(|(k, _)| !by.contains(k))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
@@ -647,9 +702,8 @@ impl PromQLExecutor {
                 AggregationOp::Count => values.len() as f64,
                 AggregationOp::Stddev => {
                     let mean = values.iter().sum::<f64>() / values.len() as f64;
-                    let variance = values.iter()
-                        .map(|v| (v - mean).powi(2))
-                        .sum::<f64>() / values.len() as f64;
+                    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
+                        / values.len() as f64;
                     variance.sqrt()
                 }
                 AggregationOp::Rate | AggregationOp::Irate | AggregationOp::Increase => {
@@ -671,7 +725,8 @@ impl PromQLExecutor {
                                     // Use last two samples
                                     if ordered.len() >= 2 {
                                         let prev = ordered[ordered.len() - 2];
-                                        let time_diff = (last.timestamp_ns - prev.timestamp_ns) as f64 / 1e9;
+                                        let time_diff =
+                                            (last.timestamp_ns - prev.timestamp_ns) as f64 / 1e9;
                                         if time_diff > 0.0 {
                                             (last.value - prev.value) / time_diff
                                         } else {
@@ -700,7 +755,8 @@ impl PromQLExecutor {
                 }
                 AggregationOp::CountValues => {
                     // Count unique values
-                    let mut unique: std::collections::HashSet<u64> = std::collections::HashSet::new();
+                    let mut unique: std::collections::HashSet<u64> =
+                        std::collections::HashSet::new();
                     for v in &values {
                         unique.insert(v.to_bits());
                     }
@@ -738,15 +794,63 @@ impl PromQLExecutor {
                         BinaryOp::Add => l.value + r.value,
                         BinaryOp::Sub => l.value - r.value,
                         BinaryOp::Mul => l.value * r.value,
-                        BinaryOp::Div => if r.value != 0.0 { l.value / r.value } else { f64::NAN },
-                        BinaryOp::Mod => if r.value != 0.0 { l.value % r.value } else { f64::NAN },
+                        BinaryOp::Div => {
+                            if r.value != 0.0 {
+                                l.value / r.value
+                            } else {
+                                f64::NAN
+                            }
+                        }
+                        BinaryOp::Mod => {
+                            if r.value != 0.0 {
+                                l.value % r.value
+                            } else {
+                                f64::NAN
+                            }
+                        }
                         BinaryOp::Pow => l.value.powf(r.value),
-                        BinaryOp::Eq => if (l.value - r.value).abs() < f64::EPSILON { 1.0 } else { 0.0 },
-                        BinaryOp::Ne => if (l.value - r.value).abs() >= f64::EPSILON { 1.0 } else { 0.0 },
-                        BinaryOp::Gt => if l.value > r.value { 1.0 } else { 0.0 },
-                        BinaryOp::Lt => if l.value < r.value { 1.0 } else { 0.0 },
-                        BinaryOp::Ge => if l.value >= r.value { 1.0 } else { 0.0 },
-                        BinaryOp::Le => if l.value <= r.value { 1.0 } else { 0.0 },
+                        BinaryOp::Eq => {
+                            if (l.value - r.value).abs() < f64::EPSILON {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        BinaryOp::Ne => {
+                            if (l.value - r.value).abs() >= f64::EPSILON {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        BinaryOp::Gt => {
+                            if l.value > r.value {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        BinaryOp::Lt => {
+                            if l.value < r.value {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        BinaryOp::Ge => {
+                            if l.value >= r.value {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        BinaryOp::Le => {
+                            if l.value <= r.value {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
                         BinaryOp::And => l.value, // Return lhs if both exist
                         BinaryOp::Or => l.value,
                         BinaryOp::Unless => continue, // Skip matching pairs
@@ -778,7 +882,8 @@ impl PromQLExecutor {
     fn labels_to_key(labels: &HashMap<String, String>) -> String {
         let mut pairs: Vec<_> = labels.iter().collect();
         pairs.sort_by_key(|(k, _)| *k);
-        pairs.iter()
+        pairs
+            .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join(",")
@@ -808,7 +913,12 @@ mod tests {
     fn test_parse_simple_selector() {
         let expr = PromQLParser::parse("http_requests_total").unwrap();
         match expr {
-            PromQLExpr::VectorSelector { name, matchers, range, .. } => {
+            PromQLExpr::VectorSelector {
+                name,
+                matchers,
+                range,
+                ..
+            } => {
                 assert_eq!(name, "http_requests_total");
                 assert!(matchers.is_empty());
                 assert!(range.is_none());
@@ -819,7 +929,8 @@ mod tests {
 
     #[test]
     fn test_parse_selector_with_labels() {
-        let expr = PromQLParser::parse(r#"http_requests_total{method="GET", status="200"}"#).unwrap();
+        let expr =
+            PromQLParser::parse(r#"http_requests_total{method="GET", status="200"}"#).unwrap();
         match expr {
             PromQLExpr::VectorSelector { name, matchers, .. } => {
                 assert_eq!(name, "http_requests_total");
@@ -861,7 +972,9 @@ mod tests {
     fn test_parse_aggregation_with_by() {
         let expr = PromQLParser::parse("sum(http_requests_total) by (method)").unwrap();
         match expr {
-            PromQLExpr::Aggregation { op, by, without, .. } => {
+            PromQLExpr::Aggregation {
+                op, by, without, ..
+            } => {
                 assert_eq!(op, AggregationOp::Sum);
                 assert_eq!(by, vec!["method"]);
                 assert!(!without);
@@ -951,8 +1064,12 @@ mod tests {
 
         assert_eq!(results.len(), 2);
         // Results should be grouped by method
-        let get_result = results.iter().find(|r| r.labels.get("method") == Some(&"GET".to_string()));
-        let post_result = results.iter().find(|r| r.labels.get("method") == Some(&"POST".to_string()));
+        let get_result = results
+            .iter()
+            .find(|r| r.labels.get("method") == Some(&"GET".to_string()));
+        let post_result = results
+            .iter()
+            .find(|r| r.labels.get("method") == Some(&"POST".to_string()));
 
         assert!(get_result.is_some());
         assert!(post_result.is_some());
@@ -978,7 +1095,8 @@ mod tests {
         ];
 
         let expr = PromQLParser::parse("rate(counter[1m])").unwrap();
-        let results = PromQLExecutor::execute(&expr, samples, 2_000_000_000, 60_000_000_000).unwrap();
+        let results =
+            PromQLExecutor::execute(&expr, samples, 2_000_000_000, 60_000_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         // Rate should be (110 - 100) / 1 second = 10 per second

@@ -19,7 +19,7 @@ use tracing::{debug, info, trace};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 pub use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::{Collection, CompressionAlgorithm};
-use crate::query::rl_planner::{get_rl_planner, ExecutionAction};
+use crate::query::rl_planner::{ExecutionAction, get_rl_planner};
 use crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig;
 // Note: SearchStageContext from search_modes is for search stages, not query context - using StorageQueryContext instead
 
@@ -463,10 +463,7 @@ impl UnifiedQueryOptimizer {
         // Step 10: Apply RL-selected action to modify the plan if available
         if let Some(ref action) = rl_action {
             self.apply_rl_action_to_plan(action, &mut plan);
-            trace!(
-                "🎯 RL planner applied action: {}",
-                action.describe()
-            );
+            trace!("🎯 RL planner applied action: {}", action.describe());
         }
 
         let optimization_time = start.elapsed();
@@ -488,7 +485,10 @@ impl UnifiedQueryOptimizer {
     async fn get_rl_optimized_action(
         &self,
         context: &UnifiedQueryContext<'_>,
-    ) -> (Option<crate::query::rl_planner::PlannerState>, Option<ExecutionAction>) {
+    ) -> (
+        Option<crate::query::rl_planner::PlannerState>,
+        Option<ExecutionAction>,
+    ) {
         if let Some(rl_planner) = get_rl_planner() {
             if rl_planner.is_enabled() {
                 let state = rl_planner.extract_state(context);
@@ -540,8 +540,9 @@ impl UnifiedQueryOptimizer {
                     }
 
                     // Apply search mode expansion factor
-                    if let crate::query::rl_planner::SearchModeAction::Approximate { expansion_factor } =
-                        &action.search_mode
+                    if let crate::query::rl_planner::SearchModeAction::Approximate {
+                        expansion_factor,
+                    } = &action.search_mode
                     {
                         *candidates = (*candidates as f32 * expansion_factor) as usize;
                     }
@@ -1328,7 +1329,11 @@ impl UnifiedQueryOptimizer {
 
         // Calculate complexity based on multiple factors
         let query_complexity = {
-            let vector_complexity = if context.search_params.is_some() { 1 } else { 0 };
+            let vector_complexity = if context.search_params.is_some() {
+                1
+            } else {
+                0
+            };
             let filter_complexity = filter_count.min(10); // Cap at 10 for scoring
             let depth_penalty = filter_depth.min(5); // Cap depth penalty
             let data_scale_factor = if context.total_vectors > 1_000_000 {
@@ -1353,9 +1358,7 @@ impl UnifiedQueryOptimizer {
 
         trace!(
             "Query analysis: filter_depth={}, filter_count={}, complexity={:?}",
-            filter_depth,
-            filter_count,
-            query_complexity
+            filter_depth, filter_count, query_complexity
         );
 
         Ok(QueryAnalysis {
@@ -1566,8 +1569,8 @@ impl UnifiedQueryOptimizer {
         let estimated_memory_mb = (dataset_size * bytes_per_vector) as f64 / (1024.0 * 1024.0);
 
         // Estimate I/O operations (files to read)
-        let estimated_io_ops = context.available_files.len().max(1)
-            * (1.0 / combined_selectivity).ceil() as usize;
+        let estimated_io_ops =
+            context.available_files.len().max(1) * (1.0 / combined_selectivity).ceil() as usize;
 
         // Total cost combines all components
         let total_cost = filter_cost.unwrap_or(0.0) + search_cost.unwrap_or(0.0) + 0.1; // Base overhead
@@ -1784,9 +1787,7 @@ impl UnifiedQueryOptimizer {
 
         trace!(
             "Resource allocation: memory={}MB, cores={}, io_threads={}",
-            memory_budget_mb,
-            cpu_cores,
-            io_threads
+            memory_budget_mb, cpu_cores, io_threads
         );
 
         Ok(ResourceAllocation {
@@ -1895,9 +1896,7 @@ impl UnifiedQueryOptimizer {
 
         trace!(
             "Performance estimate: latency={:.1}ms, memory={}MB, recall={:.3}",
-            total_latency_ms,
-            total_memory_mb,
-            min_recall
+            total_latency_ms, total_memory_mb, min_recall
         );
 
         Ok(UnifiedPerformanceEstimate {
@@ -1937,11 +1936,7 @@ impl UnifiedQueryOptimizer {
         });
 
         // File parallelism based on available files
-        let file_parallelism = context
-            .available_files
-            .len()
-            .min(available_cores)
-            .max(1);
+        let file_parallelism = context.available_files.len().min(available_cores).max(1);
 
         // Vector parallelism for search operations
         let vector_parallelism = if has_heavy_search && context.total_vectors > 100_000 {
@@ -2038,11 +2033,7 @@ impl UnifiedQueryOptimizer {
                         use_two_stage: false,
                         candidate_multiplier: 5,
                     }),
-                    candidates: context
-                        .search_params
-                        .and_then(|p| p.top_k)
-                        .unwrap_or(10)
-                        * 20,
+                    candidates: context.search_params.and_then(|p| p.top_k).unwrap_or(10) * 20,
                 }],
                 resource_allocation: ResourceAllocation {
                     memory_budget_mb: 128,

@@ -3,7 +3,7 @@
 //! Central registry for managing and selecting search strategies.
 //! Enables runtime strategy selection and custom strategy registration.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -85,7 +85,10 @@ impl SearchStrategyRegistry {
 
     /// Register a custom strategy
     pub fn register(&self, name: &str, strategy: Arc<dyn SearchStrategy>) -> Result<()> {
-        let mut strategies = self.strategies.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut strategies = self
+            .strategies
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
         if strategies.contains_key(name) {
             tracing::warn!("Overwriting existing strategy: {}", name);
@@ -99,7 +102,10 @@ impl SearchStrategyRegistry {
 
     /// Unregister a strategy
     pub fn unregister(&self, name: &str) -> Result<Option<Arc<dyn SearchStrategy>>> {
-        let mut strategies = self.strategies.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut strategies = self
+            .strategies
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(strategies.remove(name))
     }
 
@@ -122,7 +128,10 @@ impl SearchStrategyRegistry {
             return Err(anyhow!("Strategy '{}' not found", name));
         }
 
-        let mut default = self.default_strategy.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut default = self
+            .default_strategy
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         *default = name.to_string();
 
         Ok(())
@@ -243,8 +252,8 @@ lazy_static::lazy_static! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::context::SearchContextImpl;
+    use super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::SearchMode;
 
@@ -285,22 +294,15 @@ mod tests {
         let registry = SearchStrategyRegistry::new();
 
         // Exact mode should find exact strategy
-        let exact_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let exact_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine);
 
         let strategy = registry.find_applicable(&exact_ctx);
         assert!(strategy.is_some());
         assert_eq!(strategy.unwrap().name(), "exact");
 
         // Approximate mode should find approximate strategy
-        let approx_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::approximate());
+        let approx_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::approximate());
 
         let strategy = registry.find_applicable(&approx_ctx);
         assert!(strategy.is_some());
@@ -312,17 +314,11 @@ mod tests {
         let registry = SearchStrategyRegistry::new();
 
         // Default is adaptive
-        assert_eq!(
-            registry.get_default().unwrap().name(),
-            "adaptive"
-        );
+        assert_eq!(registry.get_default().unwrap().name(), "adaptive");
 
         // Change to exact
         registry.set_default("exact").unwrap();
-        assert_eq!(
-            registry.get_default().unwrap().name(),
-            "exact"
-        );
+        assert_eq!(registry.get_default().unwrap().name(), "exact");
 
         // Invalid strategy should fail
         assert!(registry.set_default("nonexistent").is_err());

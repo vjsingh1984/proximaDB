@@ -13,12 +13,12 @@ use memmap2::Mmap;
 use tracing::debug;
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 use crate::storage::schema::proxima_schema::ProximaSchema;
+use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 
 use super::config::ArrowBlockMetadata;
 use super::index::ArrowBlockIndex;
-use super::{ArrowBlockError, ArrowBlockResult, ARROW_BLOCK_MAGIC, ARROW_BLOCK_VERSION};
+use super::{ARROW_BLOCK_MAGIC, ARROW_BLOCK_VERSION, ArrowBlockError, ArrowBlockResult};
 
 /// Reader for Arrow block files
 pub struct ArrowBlockReader {
@@ -76,7 +76,9 @@ impl ArrowBlockReader {
     }
 
     /// Read index and metadata from sidecar file
-    fn read_sidecar_index(index_path: &str) -> ArrowBlockResult<(ArrowBlockIndex, ArrowBlockMetadata)> {
+    fn read_sidecar_index(
+        index_path: &str,
+    ) -> ArrowBlockResult<(ArrowBlockIndex, ArrowBlockMetadata)> {
         let file = File::open(index_path)?;
         let mut reader = BufReader::new(file);
 
@@ -100,16 +102,18 @@ impl ArrowBlockReader {
         let meta_len = u32::from_le_bytes(buf4) as usize;
         let mut meta_bytes = vec![0u8; meta_len];
         reader.read_exact(&mut meta_bytes)?;
-        let metadata = ArrowBlockMetadata::from_bytes(&meta_bytes)
-            .ok_or_else(|| ArrowBlockError::ConversionError("Failed to deserialize metadata".to_string()))?;
+        let metadata = ArrowBlockMetadata::from_bytes(&meta_bytes).ok_or_else(|| {
+            ArrowBlockError::ConversionError("Failed to deserialize metadata".to_string())
+        })?;
 
         // Read index
         reader.read_exact(&mut buf4)?;
         let index_len = u32::from_le_bytes(buf4) as usize;
         let mut index_bytes = vec![0u8; index_len];
         reader.read_exact(&mut index_bytes)?;
-        let index = ArrowBlockIndex::from_bytes(&index_bytes)
-            .ok_or_else(|| ArrowBlockError::ConversionError("Failed to deserialize index".to_string()))?;
+        let index = ArrowBlockIndex::from_bytes(&index_bytes).ok_or_else(|| {
+            ArrowBlockError::ConversionError("Failed to deserialize index".to_string())
+        })?;
 
         Ok((index, metadata))
     }
@@ -146,7 +150,10 @@ impl ArrowBlockReader {
         }
 
         // Get block info from index
-        let entry = self.index.block_entries.get(block_num)
+        let entry = self
+            .index
+            .block_entries
+            .get(block_num)
             .ok_or_else(|| ArrowBlockError::BlockNotFound(block_num))?;
 
         // Read Arrow data
@@ -169,8 +176,7 @@ impl ArrowBlockReader {
     fn read_batch_from_file(&self, batch_idx: usize) -> ArrowBlockResult<RecordBatch> {
         // Reopen file for Arrow reader
         let file = File::open(&self.path)?;
-        let reader = FileReader::try_new(file, None)
-            .map_err(|e| ArrowBlockError::Arrow(e))?;
+        let reader = FileReader::try_new(file, None).map_err(|e| ArrowBlockError::Arrow(e))?;
 
         // Read specific batch
         for (i, batch_result) in reader.enumerate() {
@@ -206,14 +212,12 @@ impl ArrowBlockReader {
     /// Batch lookup multiple IDs
     pub fn lookup_batch(&self, ids: &[&str]) -> ArrowBlockResult<Vec<(String, VectorRecord)>> {
         // Group IDs by block for efficient reads
-        let mut block_to_ids: std::collections::HashMap<u32, Vec<&str>> = std::collections::HashMap::new();
+        let mut block_to_ids: std::collections::HashMap<u32, Vec<&str>> =
+            std::collections::HashMap::new();
 
         for id in ids {
             if let Some(entry) = self.index.find_block_for_id(id) {
-                block_to_ids
-                    .entry(entry.block_num)
-                    .or_default()
-                    .push(id);
+                block_to_ids.entry(entry.block_num).or_default().push(id);
             }
         }
 
@@ -253,7 +257,11 @@ impl ArrowBlockReader {
     }
 
     /// Find all records in a timestamp range
-    pub fn time_range_query(&self, start_ts: i64, end_ts: i64) -> ArrowBlockResult<Vec<VectorRecord>> {
+    pub fn time_range_query(
+        &self,
+        start_ts: i64,
+        end_ts: i64,
+    ) -> ArrowBlockResult<Vec<VectorRecord>> {
         let blocks = self.index.find_blocks_in_time_range(start_ts, end_ts);
         let mut results = Vec::new();
 
@@ -299,8 +307,8 @@ impl ArrowBlockReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::core::formats::arrow_block::writer::ArrowBlockWriter;
     use crate::storage::engines::core::formats::arrow_block::config::ArrowBlockConfig;
+    use crate::storage::engines::core::formats::arrow_block::writer::ArrowBlockWriter;
     use std::collections::HashMap;
     use tempfile::tempdir;
 
@@ -326,7 +334,9 @@ mod tests {
     #[test]
     fn test_read_basic() {
         let dir = tempdir().unwrap();
-        let records: Vec<_> = (0..100).map(|i| create_test_record(&format!("vec_{:05}", i), 64)).collect();
+        let records: Vec<_> = (0..100)
+            .map(|i| create_test_record(&format!("vec_{:05}", i), 64))
+            .collect();
 
         let path = create_test_file(
             dir.path(),
@@ -346,7 +356,9 @@ mod tests {
     #[test]
     fn test_lookup_by_id() {
         let dir = tempdir().unwrap();
-        let records: Vec<_> = (0..50).map(|i| create_test_record(&format!("vec_{:05}", i), 32)).collect();
+        let records: Vec<_> = (0..50)
+            .map(|i| create_test_record(&format!("vec_{:05}", i), 32))
+            .collect();
 
         let path = create_test_file(
             dir.path(),
@@ -369,7 +381,9 @@ mod tests {
     #[test]
     fn test_batch_lookup() {
         let dir = tempdir().unwrap();
-        let records: Vec<_> = (0..100).map(|i| create_test_record(&format!("vec_{:05}", i), 32)).collect();
+        let records: Vec<_> = (0..100)
+            .map(|i| create_test_record(&format!("vec_{:05}", i), 32))
+            .collect();
 
         let path = create_test_file(
             dir.path(),
@@ -388,7 +402,9 @@ mod tests {
     #[test]
     fn test_range_query() {
         let dir = tempdir().unwrap();
-        let records: Vec<_> = (0..100).map(|i| create_test_record(&format!("vec_{:05}", i), 32)).collect();
+        let records: Vec<_> = (0..100)
+            .map(|i| create_test_record(&format!("vec_{:05}", i), 32))
+            .collect();
 
         let path = create_test_file(
             dir.path(),

@@ -34,16 +34,16 @@
 //! let results = strategy.execute(&ctx, &candidates).await?;
 //! ```
 
+mod adaptive;
+mod approximate;
 mod context;
 mod exact;
-mod approximate;
-mod adaptive;
 mod registry;
 
+pub use adaptive::AdaptiveSearchStrategy;
+pub use approximate::ApproximateSearchStrategy;
 pub use context::{SearchContext, SearchContextImpl};
 pub use exact::ExactSearchStrategy;
-pub use approximate::ApproximateSearchStrategy;
-pub use adaptive::AdaptiveSearchStrategy;
 pub use registry::SearchStrategyRegistry;
 
 use anyhow::Result;
@@ -77,7 +77,10 @@ impl ScoredCandidate {
         self
     }
 
-    pub fn with_metadata(mut self, metadata: std::collections::HashMap<String, serde_json::Value>) -> Self {
+    pub fn with_metadata(
+        mut self,
+        metadata: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -126,7 +129,10 @@ pub trait CandidateProvider: Send + Sync {
     async fn get_all_candidates(&self) -> Result<Vec<(String, Vec<f32>)>>;
 
     /// Get candidates from specific partitions/blocks (for approximate search)
-    async fn get_partition_candidates(&self, partition_ids: &[usize]) -> Result<Vec<(String, Vec<f32>)>>;
+    async fn get_partition_candidates(
+        &self,
+        partition_ids: &[usize],
+    ) -> Result<Vec<(String, Vec<f32>)>>;
 
     /// Get number of partitions (for IVF-style search)
     fn num_partitions(&self) -> usize {
@@ -208,8 +214,8 @@ mod tests {
 
     #[test]
     fn test_scored_candidate_with_vector() {
-        let candidate = ScoredCandidate::new("vec_1".to_string(), 0.5)
-            .with_vector(vec![1.0, 2.0, 3.0]);
+        let candidate =
+            ScoredCandidate::new("vec_1".to_string(), 0.5).with_vector(vec![1.0, 2.0, 3.0]);
         assert!(candidate.vector.is_some());
         assert_eq!(candidate.vector.unwrap().len(), 3);
     }

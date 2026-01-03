@@ -1023,17 +1023,11 @@ impl Compaction {
                 &atomic_op.staging_url
             };
             let staging_file_path = PathBuf::from(format!("{}/{}", staging_path, staging_filename));
-            debug!(
-                "Writing to staging path: {}",
-                staging_file_path.display()
-            );
+            debug!("Writing to staging path: {}", staging_file_path.display());
 
             // Check block format and use appropriate writer
             let block_format = BlockFormat::from_str(&self.config.block_format);
-            debug!(
-                "🔍 COMPACTION: Using block format: {:?}",
-                block_format
-            );
+            debug!("🔍 COMPACTION: Using block format: {:?}", block_format);
 
             match block_format {
                 BlockFormat::ArrowBlock => {
@@ -1049,9 +1043,8 @@ impl Compaction {
 
                     // Ensure parent directory exists
                     if let Some(parent) = staging_file_path.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| {
-                            crate::core::StorageError::DiskIO(e)
-                        })?;
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
                     }
 
                     let config = ArrowBlockConfig::new(dimension);
@@ -1089,7 +1082,11 @@ impl Compaction {
                         )
                     } else {
                         debug!("   No compression - using default writer");
-                        SstableWriter::new(&staging_file_path, block_size, filesystem_factory.clone())
+                        SstableWriter::new(
+                            &staging_file_path,
+                            block_size,
+                            filesystem_factory.clone(),
+                        )
                     };
                     let record_count = btree_records.len();
                     let sorted_records_iter = btree_records.into_iter();
@@ -1132,10 +1129,7 @@ impl Compaction {
             written_bytes
         } else {
             // Fallback to direct write (non-atomic)
-            debug!(
-                "Writing directly to: {}",
-                task.output_file.display()
-            );
+            debug!("Writing directly to: {}", task.output_file.display());
 
             // Check block format and use appropriate writer
             let block_format = BlockFormat::from_str(&self.config.block_format);
@@ -1158,9 +1152,8 @@ impl Compaction {
 
                     // Ensure parent directory exists
                     if let Some(parent) = task.output_file.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| {
-                            crate::core::StorageError::DiskIO(e)
-                        })?;
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
                     }
 
                     let config = ArrowBlockConfig::new(dimension);
@@ -1184,7 +1177,9 @@ impl Compaction {
                 }
                 BlockFormat::ProximaBlocks => {
                     // Use SstableWriter for ProximaBlocks format
-                    debug!("🔍 COMPACTION (non-atomic): Creating SstableWriter with compression config");
+                    debug!(
+                        "🔍 COMPACTION (non-atomic): Creating SstableWriter with compression config"
+                    );
                     let writer = if let Some(ref compression) = compression_config {
                         debug!(
                             "   Using compression: algorithm={}, level={:?}",
@@ -1638,8 +1633,8 @@ impl Compaction {
         level: u8,
     ) -> PathBuf {
         // Use unified FilenameCodec directly from compaction framework
-        use crate::storage::common::compaction_orchestrator::FilenameCodec;
         use super::block_format::BlockFormat;
+        use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
         let codec = FilenameCodec::new();
         // Check block_format from config and use appropriate extension

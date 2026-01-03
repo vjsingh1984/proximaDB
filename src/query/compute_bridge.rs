@@ -64,12 +64,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tracing::{debug, info, instrument, trace, warn};
 
-use crate::compute::plan::{
-    BinaryOp, ComputePlan, Expr, LiteralValue, PlanHints, PlanNode,
-};
+use crate::compute::plan::{BinaryOp, ComputePlan, Expr, LiteralValue, PlanHints, PlanNode};
 use crate::compute::provider::traits::{ExecutionContext, RecordBatchStream};
 use crate::compute::scheduler::ComputeScheduler;
 use crate::query::unified_query_optimizer::{
@@ -248,8 +246,7 @@ impl ComputeBridge {
         if context.dataset_size < self.config.min_dataset_size_for_compute {
             trace!(
                 "Dataset size {} below threshold {}",
-                context.dataset_size,
-                self.config.min_dataset_size_for_compute
+                context.dataset_size, self.config.min_dataset_size_for_compute
             );
             return false;
         }
@@ -307,12 +304,18 @@ impl ComputeBridge {
 
         // Create execution context
         let exec_ctx = ExecutionContext::with_id(format!("bridge-{}", uuid::Uuid::new_v4()))
-            .with_timeout(std::time::Duration::from_millis(self.config.compute_timeout_ms))
+            .with_timeout(std::time::Duration::from_millis(
+                self.config.compute_timeout_ms,
+            ))
             .with_max_parallelism(self.config.max_parallelism)
             .with_metrics(self.config.collect_metrics);
 
         // Execute through scheduler
-        match self.scheduler.schedule_with_context(compute_plan, exec_ctx).await {
+        match self
+            .scheduler
+            .schedule_with_context(compute_plan, exec_ctx)
+            .await
+        {
             Ok(stream) => {
                 debug!("Compute execution succeeded");
                 Ok(ExecutionResult::Stream(stream))
@@ -361,11 +364,8 @@ impl ComputeBridge {
         // Create hints from execution plan
         let hints = self.create_plan_hints(plan);
 
-        let compute_plan = ComputePlan::new(
-            format!("bridge-{}", uuid::Uuid::new_v4()),
-            root,
-        )
-        .with_hints(hints);
+        let compute_plan =
+            ComputePlan::new(format!("bridge-{}", uuid::Uuid::new_v4()), root).with_hints(hints);
 
         trace!(
             "Converted to ComputePlan: id={}, tables={:?}",
@@ -377,11 +377,7 @@ impl ComputeBridge {
     }
 
     /// Build a plan tree from execution steps
-    fn build_plan_tree(
-        &self,
-        steps: &[ExecutionStep],
-        context: &QueryContext,
-    ) -> Result<PlanNode> {
+    fn build_plan_tree(&self, steps: &[ExecutionStep], context: &QueryContext) -> Result<PlanNode> {
         if steps.is_empty() {
             bail!("No execution steps to convert");
         }
@@ -443,12 +439,10 @@ impl ComputeBridge {
                 let predicate = self.conditions_to_expr(conditions)?;
 
                 // Create base table scan if no input
-                let input_node = input.unwrap_or_else(|| {
-                    PlanNode::TableScan {
-                        table: context.collection_name.clone(),
-                        columns: vec![],
-                        filter: None,
-                    }
+                let input_node = input.unwrap_or_else(|| PlanNode::TableScan {
+                    table: context.collection_name.clone(),
+                    columns: vec![],
+                    filter: None,
                 });
 
                 trace!(
@@ -529,9 +523,7 @@ impl ComputeBridge {
 
             ExecutionStep::BloomFilterCheck { .. } => {
                 // Bloom filter check is optimization hint, pass through input
-                input.ok_or_else(|| {
-                    anyhow::anyhow!("BloomFilterCheck requires input node")
-                })
+                input.ok_or_else(|| anyhow::anyhow!("BloomFilterCheck requires input node"))
             }
         }
     }
@@ -539,14 +531,12 @@ impl ComputeBridge {
     /// Convert search execution method to distance metric string
     fn method_to_metric(&self, method: &SearchExecutionMethod) -> String {
         match method {
-            SearchExecutionMethod::IndexBased { index_type } => {
-                match index_type {
-                    crate::query::unified_query_optimizer::Index::HNSW => "euclidean".to_string(),
-                    crate::query::unified_query_optimizer::Index::IVF => "cosine".to_string(),
-                    crate::query::unified_query_optimizer::Index::LSH => "hamming".to_string(),
-                    _ => "euclidean".to_string(),
-                }
-            }
+            SearchExecutionMethod::IndexBased { index_type } => match index_type {
+                crate::query::unified_query_optimizer::Index::HNSW => "euclidean".to_string(),
+                crate::query::unified_query_optimizer::Index::IVF => "cosine".to_string(),
+                crate::query::unified_query_optimizer::Index::LSH => "hamming".to_string(),
+                _ => "euclidean".to_string(),
+            },
             _ => "cosine".to_string(), // Default
         }
     }
@@ -624,10 +614,8 @@ impl ComputeBridge {
                 if values.is_empty() {
                     Expr::Literal(LiteralValue::Bool(false))
                 } else {
-                    let array_values: Vec<Expr> = values
-                        .iter()
-                        .map(|v| self.json_to_literal(v))
-                        .collect();
+                    let array_values: Vec<Expr> =
+                        values.iter().map(|v| self.json_to_literal(v)).collect();
                     Expr::InList {
                         expr: Box::new(Expr::Column(column.clone())),
                         list: array_values,
@@ -636,17 +624,17 @@ impl ComputeBridge {
                 }
             }
             FilterCondition::NotIn { column, values } => {
-                let array_values: Vec<Expr> = values
-                    .iter()
-                    .map(|v| self.json_to_literal(v))
-                    .collect();
+                let array_values: Vec<Expr> =
+                    values.iter().map(|v| self.json_to_literal(v)).collect();
                 Expr::InList {
                     expr: Box::new(Expr::Column(column.clone())),
                     list: array_values,
                     negated: true,
                 }
             }
-            FilterCondition::IsNull { column } => Expr::IsNull(Box::new(Expr::Column(column.clone()))),
+            FilterCondition::IsNull { column } => {
+                Expr::IsNull(Box::new(Expr::Column(column.clone())))
+            }
             FilterCondition::IsNotNull { column } => {
                 Expr::IsNotNull(Box::new(Expr::Column(column.clone())))
             }
@@ -657,10 +645,7 @@ impl ComputeBridge {
             },
             FilterCondition::Contains { column, value } => Expr::Function {
                 name: "contains".to_string(),
-                args: vec![
-                    Expr::Column(column.clone()),
-                    self.json_to_literal(value),
-                ],
+                args: vec![Expr::Column(column.clone()), self.json_to_literal(value)],
             },
             FilterCondition::StartsWith { column, prefix } => Expr::Function {
                 name: "starts_with".to_string(),
@@ -837,7 +822,10 @@ pub enum ExecutionResult {
 impl std::fmt::Debug for ExecutionResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ExecutionResult::Stream(_) => f.debug_tuple("Stream").field(&"<RecordBatchStream>").finish(),
+            ExecutionResult::Stream(_) => f
+                .debug_tuple("Stream")
+                .field(&"<RecordBatchStream>")
+                .finish(),
             ExecutionResult::Empty => f.debug_struct("Empty").finish(),
         }
     }
@@ -903,8 +891,7 @@ mod tests {
     use super::*;
     use crate::compute::provider::LocalComputeProvider;
     use crate::query::unified_query_optimizer::{
-        FilterExecutionMethod, ParallelismConfig, ResourceAllocation,
-        UnifiedPerformanceEstimate,
+        FilterExecutionMethod, ParallelismConfig, ResourceAllocation, UnifiedPerformanceEstimate,
     };
 
     fn create_test_bridge() -> ComputeBridge {
@@ -984,7 +971,9 @@ mod tests {
         let expr = bridge.condition_to_expr(&condition);
 
         match expr {
-            Expr::Binary { op: BinaryOp::Eq, .. } => {}
+            Expr::Binary {
+                op: BinaryOp::Eq, ..
+            } => {}
             _ => panic!("Expected Eq binary expression"),
         }
     }
@@ -1007,7 +996,9 @@ mod tests {
         let expr = bridge.conditions_to_expr(&conditions).unwrap();
 
         match expr {
-            Expr::Binary { op: BinaryOp::And, .. } => {}
+            Expr::Binary {
+                op: BinaryOp::And, ..
+            } => {}
             _ => panic!("Expected AND binary expression"),
         }
     }

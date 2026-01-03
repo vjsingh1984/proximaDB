@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use super::config::{BinlogPosition, MySqlConfig};
 use super::decoder::{BinlogDecoder, BinlogEvent, RowEventType};
@@ -143,7 +143,8 @@ impl MySqlConnector {
             }
             BinlogEvent::Rotate { filename, position } => {
                 // Update position but don't emit event
-                *self.current_position.write().await = Some(BinlogPosition::new(filename, position));
+                *self.current_position.write().await =
+                    Some(BinlogPosition::new(filename, position));
                 None
             }
             _ => None,
@@ -168,9 +169,10 @@ impl MySqlConnector {
 
         if let Some(binlog_event) = event {
             if let Some(change_event) = self.to_change_event(binlog_event).await {
-                event_tx.send(change_event).await.map_err(|e| {
-                    CdcError::Coordinator(format!("Failed to send event: {}", e))
-                })?;
+                event_tx
+                    .send(change_event)
+                    .await
+                    .map_err(|e| CdcError::Coordinator(format!("Failed to send event: {}", e)))?;
                 return Ok(1);
             }
         }
@@ -205,9 +207,10 @@ impl CdcSource for MySqlConnector {
 
         self.base.set_status(SourceStatus::Streaming);
 
-        Ok(self.base.create_handle().ok_or_else(|| {
-            CdcError::Coordinator("Failed to create source handle".to_string())
-        })?)
+        Ok(self
+            .base
+            .create_handle()
+            .ok_or_else(|| CdcError::Coordinator("Failed to create source handle".to_string()))?)
     }
 
     async fn stop(&mut self) -> CdcResult<()> {
@@ -215,8 +218,7 @@ impl CdcSource for MySqlConnector {
 
         // Save current position/GTID
         if let Some(gtid) = self.current_gtid.read().await.clone() {
-            let offset = Offset::new(&self.name().to_string(), 0)
-                .with_metadata("gtid", gtid);
+            let offset = Offset::new(&self.name().to_string(), 0).with_metadata("gtid", gtid);
             self.offset_store.store(&offset).await?;
         } else if let Some(pos) = self.current_position.read().await.clone() {
             let offset = Offset::new(&self.name().to_string(), pos.position)
@@ -266,8 +268,7 @@ mod tests {
     use crate::cdc::offset::MemoryOffsetStore;
 
     async fn create_test_connector() -> MySqlConnector {
-        let config = MySqlConfig::new("mysql://localhost/test")
-            .with_server_id(12345);
+        let config = MySqlConfig::new("mysql://localhost/test").with_server_id(12345);
 
         let offset_store = Arc::new(MemoryOffsetStore::new());
         MySqlConnector::new(config, offset_store).await.unwrap()
@@ -350,7 +351,10 @@ mod tests {
         connector.update_gtid("test-gtid:1".to_string()).await;
 
         let offset = connector.current_offset().await.unwrap().unwrap();
-        assert_eq!(offset.metadata.get("gtid"), Some(&"test-gtid:1".to_string()));
+        assert_eq!(
+            offset.metadata.get("gtid"),
+            Some(&"test-gtid:1".to_string())
+        );
     }
 
     #[tokio::test]

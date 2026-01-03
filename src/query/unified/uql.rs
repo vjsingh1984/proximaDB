@@ -32,14 +32,13 @@
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::debug;
 
 use super::ast::{
-    DataModel, DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue,
-    GraphTraversalExpr, LogQueryExpr, ModelOperation, MultiModelQuery,
-    PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
-    VectorSearchParams,
+    DataModel, DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, GraphTraversalExpr,
+    LogQueryExpr, ModelOperation, MultiModelQuery, PathFilter, QueryComponent, StartNodeSpec,
+    TraversalDirection, VectorSearchExpr, VectorSearchParams,
 };
 use super::fusion::FusionStrategy;
 
@@ -313,12 +312,12 @@ enum Token {
     Ranked,
 
     // Operators
-    Eq,        // =
-    Ne,        // != or <>
-    Lt,        // <
-    Lte,       // <=
-    Gt,        // >
-    Gte,       // >=
+    Eq,  // =
+    Ne,  // != or <>
+    Lt,  // <
+    Lte, // <=
+    Gt,  // >
+    Gte, // >=
     Like,
     In,
     Between,
@@ -331,7 +330,7 @@ enum Token {
     StringLit(String),
     NumberLit(f64),
     IntegerLit(i64),
-    Param,     // ?
+    Param, // ?
 
     // Punctuation
     Star,      // *
@@ -371,7 +370,10 @@ impl UQLParser {
 
         // Ensure we consumed all tokens
         if !self.is_at_end() && self.current() != Token::Semicolon {
-            return Err(anyhow!("Unexpected token after statement: {:?}", self.current()));
+            return Err(anyhow!(
+                "Unexpected token after statement: {:?}",
+                self.current()
+            ));
         }
 
         Ok(stmt)
@@ -408,19 +410,71 @@ impl UQLParser {
 
             // Single character tokens
             match c {
-                '*' => { tokens.push(Token::Star); i += 1; continue; }
-                ',' => { tokens.push(Token::Comma); i += 1; continue; }
-                '.' => { tokens.push(Token::Dot); i += 1; continue; }
-                '(' => { tokens.push(Token::LParen); i += 1; continue; }
-                ')' => { tokens.push(Token::RParen); i += 1; continue; }
-                '{' => { tokens.push(Token::LBrace); i += 1; continue; }
-                '}' => { tokens.push(Token::RBrace); i += 1; continue; }
-                '[' => { tokens.push(Token::LBracket); i += 1; continue; }
-                ']' => { tokens.push(Token::RBracket); i += 1; continue; }
-                ':' => { tokens.push(Token::Colon); i += 1; continue; }
-                ';' => { tokens.push(Token::Semicolon); i += 1; continue; }
-                '$' => { tokens.push(Token::Dollar); i += 1; continue; }
-                '?' => { tokens.push(Token::Param); i += 1; continue; }
+                '*' => {
+                    tokens.push(Token::Star);
+                    i += 1;
+                    continue;
+                }
+                ',' => {
+                    tokens.push(Token::Comma);
+                    i += 1;
+                    continue;
+                }
+                '.' => {
+                    tokens.push(Token::Dot);
+                    i += 1;
+                    continue;
+                }
+                '(' => {
+                    tokens.push(Token::LParen);
+                    i += 1;
+                    continue;
+                }
+                ')' => {
+                    tokens.push(Token::RParen);
+                    i += 1;
+                    continue;
+                }
+                '{' => {
+                    tokens.push(Token::LBrace);
+                    i += 1;
+                    continue;
+                }
+                '}' => {
+                    tokens.push(Token::RBrace);
+                    i += 1;
+                    continue;
+                }
+                '[' => {
+                    tokens.push(Token::LBracket);
+                    i += 1;
+                    continue;
+                }
+                ']' => {
+                    tokens.push(Token::RBracket);
+                    i += 1;
+                    continue;
+                }
+                ':' => {
+                    tokens.push(Token::Colon);
+                    i += 1;
+                    continue;
+                }
+                ';' => {
+                    tokens.push(Token::Semicolon);
+                    i += 1;
+                    continue;
+                }
+                '$' => {
+                    tokens.push(Token::Dollar);
+                    i += 1;
+                    continue;
+                }
+                '?' => {
+                    tokens.push(Token::Param);
+                    i += 1;
+                    continue;
+                }
                 _ => {}
             }
 
@@ -481,7 +535,9 @@ impl UQLParser {
             }
 
             // Numbers
-            if c.is_ascii_digit() || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
+            if c.is_ascii_digit()
+                || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+            {
                 let start = i;
                 if c == '-' {
                     i += 1;
@@ -610,7 +666,10 @@ impl UQLParser {
                 let mm = self.parse_multimodal()?;
                 Ok(UQLStatement::MultiModal(mm))
             }
-            _ => Err(anyhow!("Expected SELECT or MULTIMODAL, got {:?}", self.current())),
+            _ => Err(anyhow!(
+                "Expected SELECT or MULTIMODAL, got {:?}",
+                self.current()
+            )),
         }
     }
 
@@ -626,7 +685,10 @@ impl UQLParser {
 
         // Parse optional JOINs
         let mut joins = vec![];
-        while matches!(self.current(), Token::Join | Token::Inner | Token::Left | Token::Right | Token::Full | Token::Cross) {
+        while matches!(
+            self.current(),
+            Token::Join | Token::Inner | Token::Left | Token::Right | Token::Full | Token::Cross
+        ) {
             joins.push(self.parse_join()?);
         }
 
@@ -761,7 +823,10 @@ impl UQLParser {
                 // No model prefix, infer from context
                 (DataModel::Vector, first.to_string())
             }
-        } else if matches!(self.current(), Token::Vector | Token::Document | Token::Graph | Token::Logs | Token::Metrics) {
+        } else if matches!(
+            self.current(),
+            Token::Vector | Token::Document | Token::Graph | Token::Logs | Token::Metrics
+        ) {
             let model = match self.advance() {
                 Token::Vector => DataModel::Vector,
                 Token::Document => DataModel::Document,
@@ -791,7 +856,10 @@ impl UQLParser {
             }
         } else if let Token::Identifier(a) = self.current() {
             // Alias without AS
-            if !matches!(self.current(), Token::Where | Token::Join | Token::Order | Token::Limit | Token::Fusion) {
+            if !matches!(
+                self.current(),
+                Token::Where | Token::Join | Token::Order | Token::Limit | Token::Fusion
+            ) {
                 self.advance();
                 Some(a)
             } else {
@@ -811,13 +879,39 @@ impl UQLParser {
     fn parse_join(&mut self) -> Result<JoinClause> {
         // Parse join type
         let join_type = match self.current() {
-            Token::Inner => { self.advance(); self.expect(Token::Join)?; JoinType::Inner }
-            Token::Left => { self.advance(); self.expect(Token::Join)?; JoinType::Left }
-            Token::Right => { self.advance(); self.expect(Token::Join)?; JoinType::Right }
-            Token::Full => { self.advance(); self.expect(Token::Join)?; JoinType::Full }
-            Token::Cross => { self.advance(); self.expect(Token::Join)?; JoinType::Cross }
-            Token::Join => { self.advance(); JoinType::Inner }
-            Token::Graph => { self.advance(); JoinType::Graph }
+            Token::Inner => {
+                self.advance();
+                self.expect(Token::Join)?;
+                JoinType::Inner
+            }
+            Token::Left => {
+                self.advance();
+                self.expect(Token::Join)?;
+                JoinType::Left
+            }
+            Token::Right => {
+                self.advance();
+                self.expect(Token::Join)?;
+                JoinType::Right
+            }
+            Token::Full => {
+                self.advance();
+                self.expect(Token::Join)?;
+                JoinType::Full
+            }
+            Token::Cross => {
+                self.advance();
+                self.expect(Token::Join)?;
+                JoinType::Cross
+            }
+            Token::Join => {
+                self.advance();
+                JoinType::Inner
+            }
+            Token::Graph => {
+                self.advance();
+                JoinType::Graph
+            }
             _ => return Err(anyhow!("Expected JOIN keyword")),
         };
 
@@ -886,8 +980,14 @@ impl UQLParser {
             conditions.push(condition);
 
             match self.current() {
-                Token::And => { self.advance(); logic = LogicOperator::And; }
-                Token::Or => { self.advance(); logic = LogicOperator::Or; }
+                Token::And => {
+                    self.advance();
+                    logic = LogicOperator::And;
+                }
+                Token::Or => {
+                    self.advance();
+                    logic = LogicOperator::Or;
+                }
                 _ => break,
             }
         }
@@ -1258,10 +1358,22 @@ impl UQLParser {
         loop {
             // Parse model: query pairs
             let model = match self.current() {
-                Token::Vector => { self.advance(); DataModel::Vector }
-                Token::Document => { self.advance(); DataModel::Document }
-                Token::Graph => { self.advance(); DataModel::Graph }
-                Token::Logs | Token::Metrics => { self.advance(); DataModel::Observability }
+                Token::Vector => {
+                    self.advance();
+                    DataModel::Vector
+                }
+                Token::Document => {
+                    self.advance();
+                    DataModel::Document
+                }
+                Token::Graph => {
+                    self.advance();
+                    DataModel::Graph
+                }
+                Token::Logs | Token::Metrics => {
+                    self.advance();
+                    DataModel::Observability
+                }
                 _ => break,
             };
 
@@ -1348,7 +1460,8 @@ impl UQLParser {
         let mut query = MultiModelQuery::new();
 
         // Convert primary data source to component
-        let primary_component = self.data_source_to_component(&select.from, &select.where_clause)?;
+        let primary_component =
+            self.data_source_to_component(&select.from, &select.where_clause)?;
         query.components.push(primary_component);
 
         // Convert joins to additional components
@@ -1417,30 +1530,26 @@ impl UQLParser {
                     limit: Some(100),
                 })
             }
-            DataModel::Graph => {
-                ModelOperation::GraphTraversal(GraphTraversalExpr {
-                    graph_name: source.collection.clone(),
-                    start_nodes: StartNodeSpec::Ids(vec![]),
-                    edge_types: vec![],
-                    direction: TraversalDirection::Outgoing,
-                    max_depth: 2,
-                    min_depth: 1,
-                    node_filters: vec![],
-                    edge_filters: vec![],
-                    return_paths: false,
-                })
-            }
-            DataModel::Observability => {
-                ModelOperation::LogQuery(LogQueryExpr {
-                    namespace: source.collection.clone(),
-                    start_time_ns: 0,
-                    end_time_ns: i64::MAX,
-                    query: None,
-                    severities: vec![],
-                    services: vec![],
-                    limit: 100,
-                })
-            }
+            DataModel::Graph => ModelOperation::GraphTraversal(GraphTraversalExpr {
+                graph_name: source.collection.clone(),
+                start_nodes: StartNodeSpec::Ids(vec![]),
+                edge_types: vec![],
+                direction: TraversalDirection::Outgoing,
+                max_depth: 2,
+                min_depth: 1,
+                node_filters: vec![],
+                edge_filters: vec![],
+                return_paths: false,
+            }),
+            DataModel::Observability => ModelOperation::LogQuery(LogQueryExpr {
+                namespace: source.collection.clone(),
+                start_time_ns: 0,
+                end_time_ns: i64::MAX,
+                query: None,
+                severities: vec![],
+                services: vec![],
+                limit: 100,
+            }),
         };
 
         Ok(QueryComponent {
@@ -1464,7 +1573,12 @@ impl UQLParser {
         let mut filters = vec![];
 
         for condition in &wc.conditions {
-            if let Condition::JsonPath { path, operator, value } = condition {
+            if let Condition::JsonPath {
+                path,
+                operator,
+                value,
+            } = condition
+            {
                 filters.push(PathFilter {
                     path: path.clone(),
                     operator: self.convert_operator(operator),
@@ -1499,9 +1613,9 @@ impl UQLParser {
             Value::Integer(i) => FilterValue::Number(*i as f64),
             Value::Boolean(b) => FilterValue::Bool(*b),
             Value::Null => FilterValue::Null,
-            Value::Array(arr) => FilterValue::Array(
-                arr.iter().map(|v| self.convert_value(v)).collect()
-            ),
+            Value::Array(arr) => {
+                FilterValue::Array(arr.iter().map(|v| self.convert_value(v)).collect())
+            }
             Value::Param(_) => FilterValue::Null, // Placeholder
         }
     }
@@ -1531,7 +1645,9 @@ mod tests {
     #[test]
     fn test_parse_simple_select() {
         let mut parser = UQLParser::new();
-        let result = parser.parse("SELECT * FROM vectors.products LIMIT 10").unwrap();
+        let result = parser
+            .parse("SELECT * FROM vectors.products LIMIT 10")
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             assert_eq!(select.columns, vec!["*"]);
@@ -1545,9 +1661,9 @@ mod tests {
     #[test]
     fn test_parse_where_clause() {
         let mut parser = UQLParser::new();
-        let result = parser.parse(
-            "SELECT * FROM docs.products WHERE $.category = 'electronics'"
-        ).unwrap();
+        let result = parser
+            .parse("SELECT * FROM docs.products WHERE $.category = 'electronics'")
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             assert!(select.where_clause.is_some());
@@ -1559,9 +1675,9 @@ mod tests {
     #[test]
     fn test_parse_vector_similar() {
         let mut parser = UQLParser::new();
-        let result = parser.parse(
-            "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)"
-        ).unwrap();
+        let result = parser
+            .parse("SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8)")
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             let wc = select.where_clause.unwrap();
@@ -1577,10 +1693,12 @@ mod tests {
     #[test]
     fn test_parse_join() {
         let mut parser = UQLParser::new();
-        let result = parser.parse(
-            "SELECT v.*, d.title FROM vectors.items v \
-             JOIN documents.metadata d ON v.id = d.item_id"
-        ).unwrap();
+        let result = parser
+            .parse(
+                "SELECT v.*, d.title FROM vectors.items v \
+             JOIN documents.metadata d ON v.id = d.item_id",
+            )
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             assert_eq!(select.joins.len(), 1);
@@ -1593,9 +1711,9 @@ mod tests {
     #[test]
     fn test_parse_fusion() {
         let mut parser = UQLParser::new();
-        let result = parser.parse(
-            "SELECT * FROM vectors.products FUSION RRF(60)"
-        ).unwrap();
+        let result = parser
+            .parse("SELECT * FROM vectors.products FUSION RRF(60)")
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             if let Some(FusionStrategy::ReciprocalRankFusion { k }) = select.fusion {
@@ -1611,7 +1729,9 @@ mod tests {
     #[test]
     fn test_parse_explain() {
         let mut parser = UQLParser::new();
-        let result = parser.parse("EXPLAIN SELECT * FROM vectors.products").unwrap();
+        let result = parser
+            .parse("EXPLAIN SELECT * FROM vectors.products")
+            .unwrap();
 
         assert!(matches!(result, UQLStatement::Explain(_)));
     }
@@ -1619,9 +1739,9 @@ mod tests {
     #[test]
     fn test_parse_order_by() {
         let mut parser = UQLParser::new();
-        let result = parser.parse(
-            "SELECT * FROM vectors.products ORDER BY score DESC, name ASC"
-        ).unwrap();
+        let result = parser
+            .parse("SELECT * FROM vectors.products ORDER BY score DESC, name ASC")
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             let order = select.order_by.unwrap();
@@ -1636,9 +1756,11 @@ mod tests {
     #[test]
     fn test_convert_to_multi_model_query() {
         let mut parser = UQLParser::new();
-        let query = parser.parse_to_multi_model_query(
-            "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 10"
-        ).unwrap();
+        let query = parser
+            .parse_to_multi_model_query(
+                "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 10",
+            )
+            .unwrap();
 
         assert_eq!(query.components.len(), 1);
         assert_eq!(query.limit, Some(10));
@@ -1647,16 +1769,18 @@ mod tests {
     #[test]
     fn test_parse_complex_query() {
         let mut parser = UQLParser::new();
-        let result = parser.parse(
-            "SELECT v.id, v.score, d.title \
+        let result = parser
+            .parse(
+                "SELECT v.id, v.score, d.title \
              FROM vectors.embeddings v \
              JOIN documents.metadata d ON v.id = d.embedding_id \
              WHERE VECTOR_SIMILAR(v.embedding, ?, 0.7) \
                AND $.status = 'active' \
              ORDER BY v.score DESC \
              LIMIT 50 \
-             FUSION INTERSECTION"
-        ).unwrap();
+             FUSION INTERSECTION",
+            )
+            .unwrap();
 
         if let UQLStatement::Select(select) = result {
             assert_eq!(select.joins.len(), 1);

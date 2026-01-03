@@ -7,8 +7,6 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 use super::AlertSeverity;
 
 /// Alert rule identifier
@@ -192,7 +190,11 @@ impl RuleTemplates {
             .metric("cpu_usage")
             .condition(RuleCondition::Above(threshold))
             .severity(AlertSeverity::High)
-            .message("CPU usage is {{value}}% (threshold: {})".replace("{}", &threshold.to_string()).as_str())
+            .message(
+                "CPU usage is {{value}}% (threshold: {})"
+                    .replace("{}", &threshold.to_string())
+                    .as_str(),
+            )
             .build()
             .unwrap()
     }
@@ -203,7 +205,11 @@ impl RuleTemplates {
             .metric("memory_available_bytes")
             .condition(RuleCondition::Below(threshold))
             .severity(AlertSeverity::Critical)
-            .message("Available memory is {{value}} bytes (threshold: {})".replace("{}", &threshold.to_string()).as_str())
+            .message(
+                "Available memory is {{value}} bytes (threshold: {})"
+                    .replace("{}", &threshold.to_string())
+                    .as_str(),
+            )
             .build()
             .unwrap()
     }
@@ -214,7 +220,11 @@ impl RuleTemplates {
             .metric("error_rate")
             .condition(RuleCondition::Above(threshold))
             .severity(AlertSeverity::High)
-            .message("Error rate is {{value}}% (threshold: {})".replace("{}", &threshold.to_string()).as_str())
+            .message(
+                "Error rate is {{value}}% (threshold: {})"
+                    .replace("{}", &threshold.to_string())
+                    .as_str(),
+            )
             .build()
             .unwrap()
     }
@@ -225,7 +235,11 @@ impl RuleTemplates {
             .metric("request_latency_ms")
             .condition(RuleCondition::Above(threshold_ms))
             .severity(AlertSeverity::Medium)
-            .message("Request latency is {{value}}ms (threshold: {}ms)".replace("{}", &threshold_ms.to_string()).as_str())
+            .message(
+                "Request latency is {{value}}ms (threshold: {}ms)"
+                    .replace("{}", &threshold_ms.to_string())
+                    .as_str(),
+            )
             .build()
             .unwrap()
     }
@@ -236,7 +250,11 @@ impl RuleTemplates {
             .metric("disk_usage_percent")
             .condition(RuleCondition::Above(threshold))
             .severity(AlertSeverity::Medium)
-            .message("Disk usage is {{value}}% (threshold: {})".replace("{}", &threshold.to_string()).as_str())
+            .message(
+                "Disk usage is {{value}}% (threshold: {})"
+                    .replace("{}", &threshold.to_string())
+                    .as_str(),
+            )
             .build()
             .unwrap()
     }

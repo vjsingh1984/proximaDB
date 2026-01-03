@@ -281,7 +281,10 @@ impl PITRManager {
         if options.create_pre_recovery_point {
             self.create_recovery_point_with_options(
                 Some(format!("pre_recovery_{}", point_id)),
-                Some(format!("Automatic backup before recovering to point {}", point_id)),
+                Some(format!(
+                    "Automatic backup before recovering to point {}",
+                    point_id
+                )),
                 true,
                 vec!["pre_recovery".to_string()],
             )
@@ -295,8 +298,11 @@ impl PITRManager {
         };
 
         if options.dry_run {
-            info!("🕐 Dry-run mode: would recover {} collections to LSN {}",
-                  collections_to_recover.len(), recovery_point.lsn);
+            info!(
+                "🕐 Dry-run mode: would recover {} collections to LSN {}",
+                collections_to_recover.len(),
+                recovery_point.lsn
+            );
 
             return Ok(RecoveryResult {
                 success: true,
@@ -310,8 +316,9 @@ impl PITRManager {
         }
 
         // Perform recovery by replaying entries up to the recovery point LSN
-        let (entries_rolled_back, entries_replayed, warnings) =
-            self.execute_recovery(&recovery_point, &collections_to_recover).await?;
+        let (entries_rolled_back, entries_replayed, warnings) = self
+            .execute_recovery(&recovery_point, &collections_to_recover)
+            .await?;
 
         // Verify integrity if requested
         if options.verify_integrity {
@@ -360,9 +367,9 @@ impl PITRManager {
                 }
             }
 
-            best_match
-                .map(|(id, _)| id)
-                .ok_or_else(|| anyhow::anyhow!("No recovery point found at or before {}", timestamp))?
+            best_match.map(|(id, _)| id).ok_or_else(|| {
+                anyhow::anyhow!("No recovery point found at or before {}", timestamp)
+            })?
         };
 
         info!(
@@ -387,7 +394,10 @@ impl PITRManager {
             ));
         }
 
-        info!("🕐 Recovering to LSN {} (current: {})", target_lsn, current_lsn);
+        info!(
+            "🕐 Recovering to LSN {} (current: {})",
+            target_lsn, current_lsn
+        );
 
         // Create a virtual recovery point at this LSN
         let collection_states = self.capture_collection_states_at_lsn(target_lsn).await?;
@@ -407,8 +417,9 @@ impl PITRManager {
             recovery_point.collection_states.keys().cloned().collect();
 
         let start_time = std::time::Instant::now();
-        let (entries_rolled_back, entries_replayed, warnings) =
-            self.execute_recovery(&recovery_point, &collections_to_recover).await?;
+        let (entries_rolled_back, entries_replayed, warnings) = self
+            .execute_recovery(&recovery_point, &collections_to_recover)
+            .await?;
 
         let duration = start_time.elapsed();
         info!("🕐 LSN recovery completed in {:?}", duration);
@@ -476,7 +487,10 @@ impl PITRManager {
         &self,
         target_lsn: u64,
     ) -> Result<HashMap<String, CollectionRecoveryState>> {
-        let entries = self.manifest_service.get_entries_up_to_lsn(target_lsn).await;
+        let entries = self
+            .manifest_service
+            .get_entries_up_to_lsn(target_lsn)
+            .await;
 
         let mut collection_states: HashMap<String, CollectionRecoveryState> = HashMap::new();
 
@@ -496,12 +510,18 @@ impl PITRManager {
             state.storage_size_bytes += entry.size_bytes;
 
             if entry.status == WalEntryStatus::Flushed {
-                state.last_flush_at = Some(DateTime::from_timestamp_millis(entry.timestamp_ms as i64)
-                    .unwrap_or_else(Utc::now));
+                state.last_flush_at = Some(
+                    DateTime::from_timestamp_millis(entry.timestamp_ms as i64)
+                        .unwrap_or_else(Utc::now),
+                );
             }
         }
 
-        debug!("Captured {} collection states at LSN {}", collection_states.len(), target_lsn);
+        debug!(
+            "Captured {} collection states at LSN {}",
+            collection_states.len(),
+            target_lsn
+        );
         Ok(collection_states)
     }
 
@@ -564,7 +584,10 @@ impl PITRManager {
         recovery_point: &RecoveryPoint,
         collections: &[String],
     ) -> Result<()> {
-        info!("Verifying recovery integrity for {} collections", collections.len());
+        info!(
+            "Verifying recovery integrity for {} collections",
+            collections.len()
+        );
 
         for collection_id in collections {
             if let Some(expected_state) = recovery_point.collection_states.get(collection_id) {

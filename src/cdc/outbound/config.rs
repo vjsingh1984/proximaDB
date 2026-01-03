@@ -382,12 +382,10 @@ mod tests {
 
     #[test]
     fn test_subscription_config() {
-        let sub = SubscriptionConfig::new(
-            "sub1",
-            OutboundConfig::new().with_collection("products"),
-        )
-        .with_route(RouteConfig::new("r1", "kafka"))
-        .with_route(RouteConfig::new("r2", "webhook"));
+        let sub =
+            SubscriptionConfig::new("sub1", OutboundConfig::new().with_collection("products"))
+                .with_route(RouteConfig::new("r1", "kafka"))
+                .with_route(RouteConfig::new("r2", "webhook"));
 
         assert_eq!(sub.id, "sub1");
         assert_eq!(sub.routes.len(), 2);

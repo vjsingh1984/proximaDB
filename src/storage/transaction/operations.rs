@@ -16,8 +16,8 @@
 
 //! Transaction Operations for Different Data Models
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Operations for vector data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,10 +139,7 @@ pub enum GraphOperation {
         properties: HashMap<String, serde_json::Value>,
     },
     /// Delete node
-    DeleteNode {
-        graph: String,
-        id: String,
-    },
+    DeleteNode { graph: String, id: String },
     /// Create edge
     CreateEdge {
         graph: String,

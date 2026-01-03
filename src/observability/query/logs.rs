@@ -8,8 +8,6 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 use crate::proto::proximadb_v1::{LogEntry, Severity, SqlValue};
 
 /// Log query builder
@@ -182,7 +180,9 @@ impl LogQuery {
                 Some(sql_val) => {
                     // Extract string value from SqlValue for comparison
                     let matches = match &sql_val.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s == value,
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                            s == value
+                        }
                         _ => false,
                     };
                     if !matches {
@@ -222,7 +222,10 @@ pub enum LogAggregation {
     /// Group by multiple fields
     GroupByMultiple(Vec<String>),
     /// Time histogram with additional GROUP BY
-    HistogramGroupBy { interval_ns: i64, group_by: Vec<String> },
+    HistogramGroupBy {
+        interval_ns: i64,
+        group_by: Vec<String>,
+    },
 }
 
 /// Log aggregation result
@@ -302,25 +305,18 @@ impl LogAggregator {
                 vec![AggregationBucket::simple("total".to_string(), total_count)]
             }
 
-            LogAggregation::GroupBy(field) => {
-                Self::group_by_field(logs, field)
-            }
+            LogAggregation::GroupBy(field) => Self::group_by_field(logs, field),
 
-            LogAggregation::GroupByMultiple(fields) => {
-                Self::group_by_multiple_fields(logs, fields)
-            }
+            LogAggregation::GroupByMultiple(fields) => Self::group_by_multiple_fields(logs, fields),
 
-            LogAggregation::Histogram { interval_ns } => {
-                Self::time_histogram(logs, *interval_ns)
-            }
+            LogAggregation::Histogram { interval_ns } => Self::time_histogram(logs, *interval_ns),
 
-            LogAggregation::HistogramGroupBy { interval_ns, group_by } => {
-                Self::time_histogram_grouped(logs, *interval_ns, group_by)
-            }
+            LogAggregation::HistogramGroupBy {
+                interval_ns,
+                group_by,
+            } => Self::time_histogram_grouped(logs, *interval_ns, group_by),
 
-            LogAggregation::TopValues { field, limit } => {
-                Self::top_values(logs, field, *limit)
-            }
+            LogAggregation::TopValues { field, limit } => Self::top_values(logs, field, *limit),
         };
 
         LogAggregationResult {
@@ -453,8 +449,14 @@ impl LogAggregator {
     /// Extract field value from log entry
     fn extract_field_value(log: &LogEntry, field: &str) -> String {
         match field.to_lowercase().as_str() {
-            "service" => log.service.clone().unwrap_or_else(|| "<unknown>".to_string()),
-            "source" => log.source.clone().unwrap_or_else(|| "<unknown>".to_string()),
+            "service" => log
+                .service
+                .clone()
+                .unwrap_or_else(|| "<unknown>".to_string()),
+            "source" => log
+                .source
+                .clone()
+                .unwrap_or_else(|| "<unknown>".to_string()),
             "severity" => Severity::try_from(log.severity)
                 .map(|s| format!("{:?}", s))
                 .unwrap_or_else(|_| "UNKNOWN".to_string()),
@@ -492,9 +494,17 @@ impl LogAggregator {
 
 impl LogQuery {
     /// Execute aggregation on logs matching this query
-    pub fn aggregate(&self, logs: &[LogEntry], aggregation: &LogAggregation) -> LogAggregationResult {
+    pub fn aggregate(
+        &self,
+        logs: &[LogEntry],
+        aggregation: &LogAggregation,
+    ) -> LogAggregationResult {
         // First filter logs
-        let filtered: Vec<_> = logs.iter().filter(|log| self.matches(log)).cloned().collect();
+        let filtered: Vec<_> = logs
+            .iter()
+            .filter(|log| self.matches(log))
+            .cloned()
+            .collect();
         // Then aggregate
         LogAggregator::aggregate(&filtered, aggregation)
     }
@@ -701,7 +711,8 @@ mod tests {
             make_log("Info 2", Severity::Info, "auth"),
         ];
 
-        let result = LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("service".to_string()));
+        let result =
+            LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("service".to_string()));
 
         assert_eq!(result.total_count, 4);
         assert_eq!(result.buckets.len(), 3);
@@ -719,7 +730,8 @@ mod tests {
             make_log("Info 1", Severity::Info, "web"),
         ];
 
-        let result = LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("severity".to_string()));
+        let result =
+            LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("severity".to_string()));
 
         assert_eq!(result.total_count, 4);
         assert_eq!(result.buckets.len(), 2);
@@ -749,8 +761,14 @@ mod tests {
         assert_eq!(result.buckets.len(), 3);
         // First should be api+Error with count 2
         assert_eq!(result.buckets[0].count, 2);
-        assert_eq!(result.buckets[0].labels.get("service"), Some(&"api".to_string()));
-        assert_eq!(result.buckets[0].labels.get("severity"), Some(&"Error".to_string()));
+        assert_eq!(
+            result.buckets[0].labels.get("service"),
+            Some(&"api".to_string())
+        );
+        assert_eq!(
+            result.buckets[0].labels.get("severity"),
+            Some(&"Error".to_string())
+        );
     }
 
     #[test]
@@ -762,8 +780,18 @@ mod tests {
         let logs = vec![
             make_log_with_ts("E1", Severity::Error, "api", base_ns),
             make_log_with_ts("E2", Severity::Error, "api", base_ns + 30_000_000_000), // +30s (same bucket)
-            make_log_with_ts("E3", Severity::Error, "api", base_ns + interval_ns + 10_000_000_000), // next bucket
-            make_log_with_ts("E4", Severity::Error, "api", base_ns + interval_ns * 2 + 5_000_000_000), // third bucket
+            make_log_with_ts(
+                "E3",
+                Severity::Error,
+                "api",
+                base_ns + interval_ns + 10_000_000_000,
+            ), // next bucket
+            make_log_with_ts(
+                "E4",
+                Severity::Error,
+                "api",
+                base_ns + interval_ns * 2 + 5_000_000_000,
+            ), // third bucket
         ];
 
         let result = LogAggregator::aggregate(&logs, &LogAggregation::Histogram { interval_ns });
@@ -845,7 +873,8 @@ mod tests {
             make_log_with_fields("req3", Severity::Info, "api", 0, fields3),
         ];
 
-        let result = LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("status_code".to_string()));
+        let result =
+            LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("status_code".to_string()));
 
         assert_eq!(result.buckets.len(), 2);
         assert_eq!(result.buckets[0].key, "200");
@@ -886,7 +915,8 @@ mod tests {
         assert_eq!(result.total_count, 0);
         assert_eq!(result.buckets[0].count, 0);
 
-        let result2 = LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("service".to_string()));
+        let result2 =
+            LogAggregator::aggregate(&logs, &LogAggregation::GroupBy("service".to_string()));
         assert_eq!(result2.total_count, 0);
         assert!(result2.buckets.is_empty());
     }

@@ -23,7 +23,9 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
+use crate::index::axis::management::manager::{
+    FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
@@ -63,7 +65,9 @@ pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::
 }
 
 /// Get PCA model for a collection from the global cache (called during search)
-pub fn get_collection_pca_model(collection_id: &str) -> Option<super::pca_manager::EnhancedPCAModel> {
+pub fn get_collection_pca_model(
+    collection_id: &str,
+) -> Option<super::pca_manager::EnhancedPCAModel> {
     if let Ok(cache) = SWIFT_GLOBAL_PCA_MODEL_CACHE.read() {
         cache.get(collection_id).cloned()
     } else {
@@ -240,7 +244,11 @@ pub struct SwiftEngine {
     /// - Eliminates per-query PCA training overhead (40ms+ saved)
     ///
     /// Models are persisted to `{collection_dir}/__model/pca_model.bin`
-    pca_model_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>>>,
+    pca_model_cache: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
+        >,
+    >,
 }
 
 impl SwiftEngine {
@@ -701,7 +709,9 @@ impl SwiftEngine {
     /// - HNSW-based approximate nearest neighbor search
     /// - IVF partition pruning
     /// - Hybrid vector + metadata queries
-    pub fn axis_manager(&self) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
         self.axis_manager.as_ref()
     }
 
@@ -769,7 +779,11 @@ impl SwiftEngine {
     /// Get the PCA model cache for read access during search
     pub fn pca_model_cache(
         &self,
-    ) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>>> {
+    ) -> &Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
+        >,
+    > {
         &self.pca_model_cache
     }
 
@@ -827,9 +841,8 @@ impl SwiftEngine {
                     .await
                     .map_err(|e| anyhow!("Failed to read PCA model: {}", e))?;
 
-                let model: super::pca_manager::EnhancedPCAModel =
-                    bincode::deserialize(&data)
-                        .map_err(|e| anyhow!("Failed to deserialize PCA model: {}", e))?;
+                let model: super::pca_manager::EnhancedPCAModel = bincode::deserialize(&data)
+                    .map_err(|e| anyhow!("Failed to deserialize PCA model: {}", e))?;
 
                 info!(
                     "[SWIFT] Loaded persisted PCA model for collection (version: {}, {} components)",
@@ -838,17 +851,11 @@ impl SwiftEngine {
                 Ok(Some(model))
             }
             Ok(false) => {
-                tracing::debug!(
-                    "[SWIFT] No persisted PCA model found at {}",
-                    model_path
-                );
+                tracing::debug!("[SWIFT] No persisted PCA model found at {}", model_path);
                 Ok(None)
             }
             Err(e) => {
-                tracing::debug!(
-                    "[SWIFT] Error checking PCA model at {}: {}",
-                    model_path, e
-                );
+                tracing::debug!("[SWIFT] Error checking PCA model at {}: {}", model_path, e);
                 Ok(None)
             }
         }
@@ -919,14 +926,17 @@ impl SwiftEngine {
         if vectors.len() < n_components {
             tracing::debug!(
                 "[SWIFT] Not enough vectors ({}) for PCA training (need at least {})",
-                vectors.len(), n_components
+                vectors.len(),
+                n_components
             );
             return Ok(());
         }
 
         info!(
             "[SWIFT] Training PCA model: {} vectors → {} components (from {}-dim)",
-            vectors.len(), n_components, vector_dim
+            vectors.len(),
+            n_components,
+            vector_dim
         );
 
         // Train PCA model
@@ -1055,7 +1065,11 @@ impl UnifiedStorageEngine for SwiftEngine {
         // Create directory using tokio::fs for async compatibility
         // This handles local paths correctly without requiring URL scheme
         tokio::fs::create_dir_all(&data_dir).await.map_err(|e| {
-            anyhow!("SWIFT: Failed to create data directory '{}': {}", data_dir, e)
+            anyhow!(
+                "SWIFT: Failed to create data directory '{}': {}",
+                data_dir,
+                e
+            )
         })?;
 
         // Generate filename using FilenameCodec for consistency with compaction framework
@@ -1083,11 +1097,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         if params.vector_records.len() >= 100 {
             // Only train with enough samples
             match self
-                .train_and_cache_pca_model(
-                    &collection_id,
-                    &data_dir,
-                    &params.vector_records,
-                )
+                .train_and_cache_pca_model(&collection_id, &data_dir, &params.vector_records)
                 .await
             {
                 Ok(()) => {
@@ -1386,7 +1396,8 @@ impl UnifiedStorageEngine for SwiftEngine {
         // 2. Quantization is enabled, OR
         // 3. AXIS manager is available (for collections built after AXIS became available)
         let has_axis_manager = self.axis_manager().is_some();
-        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
+        let use_orchestration =
+            ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
 
         if has_axis_manager {
             debug!("🔍 SWIFT: AXIS manager is available for HNSW/IVF search");
@@ -1465,9 +1476,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             // ========================================================================
             // PHASE 1B: BLOCK-PRUNED SEARCH (FALLBACK)
             // ========================================================================
-            info!(
-                "🎯 SWIFT: Using progressive search with block pruning (quantization available)"
-            );
+            info!("🎯 SWIFT: Using progressive search with block pruning (quantization available)");
 
             // Load files and use progressive search with block pruning
             let files = self
@@ -1481,20 +1490,20 @@ impl UnifiedStorageEngine for SwiftEngine {
 
             let mut all_results = Vec::new();
             for swift_file in files.iter() {
-                let file_results = swift_file.search_without_index(
-                    query_vector,
-                    top_k,
-                    swift_filter.clone(),
-                    &prune_config,
-                ).await?;
+                let file_results = swift_file
+                    .search_without_index(query_vector, top_k, swift_filter.clone(), &prune_config)
+                    .await?;
                 // Apply filter expression after progressive search if provided
                 let filtered_results = if let Some(filter_expr) = filter_expression {
-                    file_results.into_iter().filter(|record| {
-                        crate::core::search::sql_value_filter::evaluate_filter(
-                            filter_expr,
-                            &record.metadata,
-                        )
-                    }).collect()
+                    file_results
+                        .into_iter()
+                        .filter(|record| {
+                            crate::core::search::sql_value_filter::evaluate_filter(
+                                filter_expr,
+                                &record.metadata,
+                            )
+                        })
+                        .collect()
                 } else {
                     file_results
                 };
@@ -1503,28 +1512,40 @@ impl UnifiedStorageEngine for SwiftEngine {
 
             // Sort and take top_k from all results
             all_results.sort_by(|a, b| {
-                let dist_a: f32 = self.distance_engine.calculate_distance(
-                    query_vector, &a.vector, &distance_metric
-                ).normalized_score;
-                let dist_b: f32 = self.distance_engine.calculate_distance(
-                    query_vector, &b.vector, &distance_metric
-                ).normalized_score;
-                dist_b.partial_cmp(&dist_a).unwrap_or(std::cmp::Ordering::Equal)
+                let dist_a: f32 = self
+                    .distance_engine
+                    .calculate_distance(query_vector, &a.vector, &distance_metric)
+                    .normalized_score;
+                let dist_b: f32 = self
+                    .distance_engine
+                    .calculate_distance(query_vector, &b.vector, &distance_metric)
+                    .normalized_score;
+                dist_b
+                    .partial_cmp(&dist_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             all_results.truncate(top_k);
 
             // Convert to OptimizedSearchRecord
-            let results: Vec<OptimizedSearchRecord> = all_results.into_iter().map(|record| {
-                let distance_result = self.distance_engine.calculate_distance(
-                    query_vector, &record.vector, &distance_metric
-                );
-                OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
-                    .with_similarity(distance_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone())
-            }).collect();
+            let results: Vec<OptimizedSearchRecord> = all_results
+                .into_iter()
+                .map(|record| {
+                    let distance_result = self.distance_engine.calculate_distance(
+                        query_vector,
+                        &record.vector,
+                        &distance_metric,
+                    );
+                    OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
+                        .with_similarity(distance_result.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(record.metadata.clone())
+                })
+                .collect();
 
-            info!("🎯 SWIFT progressive search found {} results", results.len());
+            info!(
+                "🎯 SWIFT progressive search found {} results",
+                results.len()
+            );
             return Ok(results);
         }
 
@@ -1550,21 +1571,21 @@ impl UnifiedStorageEngine for SwiftEngine {
         let mut all_results = Vec::new();
         for swift_file in files.iter() {
             // Use search_without_index which applies block pruning
-            let file_results = swift_file.search_without_index(
-                query_vector,
-                top_k,
-                swift_filter.clone(),
-                &prune_config,
-            ).await?;
+            let file_results = swift_file
+                .search_without_index(query_vector, top_k, swift_filter.clone(), &prune_config)
+                .await?;
 
             // Apply filter expression after block-pruned search if provided
             let filtered_results = if let Some(filter_expr) = filter_expression {
-                let filtered: Vec<_> = file_results.into_iter().filter(|record| {
-                    crate::core::search::sql_value_filter::evaluate_filter(
-                        filter_expr,
-                        &record.metadata,
-                    )
-                }).collect();
+                let filtered: Vec<_> = file_results
+                    .into_iter()
+                    .filter(|record| {
+                        crate::core::search::sql_value_filter::evaluate_filter(
+                            filter_expr,
+                            &record.metadata,
+                        )
+                    })
+                    .collect();
                 filtered
             } else {
                 file_results
@@ -1574,26 +1595,35 @@ impl UnifiedStorageEngine for SwiftEngine {
 
         // Sort and take top_k from all results
         all_results.sort_by(|a, b| {
-            let dist_a: f32 = self.distance_engine.calculate_distance(
-                query_vector, &a.vector, &distance_metric
-            ).normalized_score;
-            let dist_b: f32 = self.distance_engine.calculate_distance(
-                query_vector, &b.vector, &distance_metric
-            ).normalized_score;
-            dist_b.partial_cmp(&dist_a).unwrap_or(std::cmp::Ordering::Equal)
+            let dist_a: f32 = self
+                .distance_engine
+                .calculate_distance(query_vector, &a.vector, &distance_metric)
+                .normalized_score;
+            let dist_b: f32 = self
+                .distance_engine
+                .calculate_distance(query_vector, &b.vector, &distance_metric)
+                .normalized_score;
+            dist_b
+                .partial_cmp(&dist_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         all_results.truncate(top_k);
 
         // Convert to OptimizedSearchRecord
-        let search_results: Vec<OptimizedSearchRecord> = all_results.into_iter().map(|record| {
-            let distance_result = self.distance_engine.calculate_distance(
-                query_vector, &record.vector, &distance_metric
-            );
-            OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
-                .with_similarity(distance_result.normalized_score)
-                .add_vector(record.vector.clone())
-                .with_metadata(record.metadata.clone())
-        }).collect();
+        let search_results: Vec<OptimizedSearchRecord> = all_results
+            .into_iter()
+            .map(|record| {
+                let distance_result = self.distance_engine.calculate_distance(
+                    query_vector,
+                    &record.vector,
+                    &distance_metric,
+                );
+                OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
+                    .with_similarity(distance_result.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(record.metadata.clone())
+            })
+            .collect();
 
         let results_len = search_results.len();
 

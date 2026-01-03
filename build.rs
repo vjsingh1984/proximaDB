@@ -94,10 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         // QuantizationConfig: Only derive Serialize - custom Deserialize in serde_impls.rs
         // handles SDK compatibility (flat fields) and proto format (custom_levels)
-        .type_attribute(
-            "QuantizationConfig",
-            "#[derive(serde::Serialize)]",
-        )
+        .type_attribute("QuantizationConfig", "#[derive(serde::Serialize)]")
         // Add serde to specific config types used by IndexConfig
         .type_attribute(
             "HnswConfig",
@@ -673,10 +670,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // - UnifiedRecord (has unified_record::Content oneof)
         // Custom serde implementations will be added to serde_impls.rs
         // Add serde to Alert (simple struct - no oneof)
-        .type_attribute(
-            "Alert",
-            "#[derive(serde::Serialize, serde::Deserialize)]",
-        )
+        .type_attribute("Alert", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde to the oneof wrapper types so their container types can be serialized
         // The oneof enum variants use proto path notation: MessageName.oneof_field_name
         .type_attribute(
@@ -815,6 +809,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/catalog.proto",
                 // Real-time streaming
                 "proto/proximadb/v1/streaming.proto",
+                // Cluster RPC services
+                "proto/proximadb/v1/cluster.proto",
             ],
             &["proto"],
         )?;

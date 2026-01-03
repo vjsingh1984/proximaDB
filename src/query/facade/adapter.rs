@@ -35,11 +35,9 @@ use tracing::{debug, instrument};
 
 use serde::{Deserialize, Serialize};
 
+use super::{QueryRequest, QueryResult, QueryResultData, UnifiedQueryFacade};
 use crate::proto::proximadb_v1::{
-    VectorSearchRequest, VectorOperationResponse, SearchResult, SearchVectorRecord,
-};
-use super::{
-    UnifiedQueryFacade, QueryRequest, QueryResult, QueryResultData,
+    SearchResult, SearchVectorRecord, VectorOperationResponse, VectorSearchRequest,
 };
 
 /// Result of explaining a query's execution plan
@@ -102,7 +100,8 @@ impl QueryFacadeAdapter {
         let start = Instant::now();
 
         // Extract query vector from request
-        let query_vector = request.queries
+        let query_vector = request
+            .queries
             .first()
             .map(|q| q.vector.clone())
             .unwrap_or_default();
@@ -122,8 +121,8 @@ impl QueryFacadeAdapter {
         );
 
         // Create QueryRequest from proto request
-        let query_request = QueryRequest::vector_search(query_vector, top_k)
-            .with_target(&collection_id);
+        let query_request =
+            QueryRequest::vector_search(query_vector, top_k).with_target(&collection_id);
 
         // Execute through facade
         let result = self.facade.execute(query_request).await?;
@@ -132,7 +131,11 @@ impl QueryFacadeAdapter {
         let response = self.query_result_to_vector_response(result)?;
 
         debug!(
-            results = response.results.as_ref().map(|r| r.results.len()).unwrap_or(0),
+            results = response
+                .results
+                .as_ref()
+                .map(|r| r.results.len())
+                .unwrap_or(0),
             elapsed_ms = start.elapsed().as_millis(),
             "Vector search completed via adapter"
         );
@@ -164,11 +167,7 @@ impl QueryFacadeAdapter {
     ///
     /// Supports Cypher-like query syntax
     #[instrument(skip(self), fields(query_len = cypher.len()))]
-    pub async fn graph_query(
-        &self,
-        cypher: &str,
-        graph_name: Option<&str>,
-    ) -> Result<QueryResult> {
+    pub async fn graph_query(&self, cypher: &str, graph_name: Option<&str>) -> Result<QueryResult> {
         debug!(
             graph_name = ?graph_name,
             "Executing graph query via adapter"
@@ -194,7 +193,9 @@ impl QueryFacadeAdapter {
         let query_request = QueryRequest::federated(sql);
 
         // Find which strategy would handle this query
-        let strategy_name = self.facade.strategy_names()
+        let strategy_name = self
+            .facade
+            .strategy_names()
             .into_iter()
             .find(|name| {
                 // Check if this strategy can handle the query type
@@ -313,13 +314,12 @@ impl QueryFacadeAdapter {
                 // Convert JSON rows to search records if possible
                 for row in rows {
                     if let Some(obj) = row.as_object() {
-                        let id = obj.get("id")
+                        let id = obj
+                            .get("id")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let score = obj.get("score")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0);
+                        let score = obj.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
                         search_records.push(SearchVectorRecord {
                             id,
@@ -370,8 +370,8 @@ impl QueryFacadeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::facade::{FacadeConfig, QueryStrategy, QueryContext, VectorMatch};
     use crate::proto::proximadb_v1::SearchQuery;
+    use crate::query::facade::{FacadeConfig, QueryContext, QueryStrategy, VectorMatch};
     use async_trait::async_trait;
 
     /// Mock strategy for testing
@@ -379,13 +379,24 @@ mod tests {
 
     #[async_trait]
     impl QueryStrategy for MockVectorStrategy {
-        fn name(&self) -> &str { "mock_vector" }
-        fn can_handle(&self, request: &QueryRequest) -> bool {
-            matches!(request.query_type, crate::query::facade::QueryType::VectorSearch)
+        fn name(&self) -> &str {
+            "mock_vector"
         }
-        fn priority(&self) -> i32 { 100 }
+        fn can_handle(&self, request: &QueryRequest) -> bool {
+            matches!(
+                request.query_type,
+                crate::query::facade::QueryType::VectorSearch
+            )
+        }
+        fn priority(&self) -> i32 {
+            100
+        }
 
-        async fn execute(&self, _request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+        async fn execute(
+            &self,
+            _request: QueryRequest,
+            _ctx: &QueryContext,
+        ) -> Result<QueryResult> {
             Ok(QueryResult {
                 data: QueryResultData::VectorResults(vec![
                     VectorMatch {
@@ -405,9 +416,7 @@ mod tests {
     }
 
     fn create_test_adapter() -> QueryFacadeAdapter {
-        let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-            Arc::new(MockVectorStrategy),
-        ];
+        let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockVectorStrategy)];
         let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
         QueryFacadeAdapter::new(facade)
     }

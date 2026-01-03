@@ -245,6 +245,24 @@ pub mod proximadb_streaming_v1 {
     pub use super::streaming::v1::*;
 }
 
+// Cluster proto definitions for inter-node communication
+// This includes consensus, replication, and health services
+// The generated code uses `super::super::v1::` to reference v1 types,
+// so we need a nested module structure
+pub mod cluster {
+    //! Cluster proto module hierarchy for generated code compatibility
+    pub mod v1 {
+        //! Generated cluster v1 proto types
+        include!("../proto/proximadb.cluster.v1.rs");
+    }
+}
+
+// Re-export cluster types at the expected location (for convenience)
+pub mod proximadb_cluster_v1 {
+    //! Re-export of cluster proto types
+    pub use super::cluster::v1::*;
+}
+
 // Custom serde implementations for oneof types
 pub mod serde_impls;
 

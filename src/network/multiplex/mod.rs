@@ -119,9 +119,9 @@ pub mod unified_server;
 // Re-export main types
 pub use builder::{BuilderError, CommonMultiplexBuilder, MultiplexServiceBuilder};
 pub use service::{MultiplexConfig, MultiplexFuture, MultiplexService, MultiplexStats};
+pub use tcp_multiplexer::{TcpMultiplexConfig, TcpMultiplexer, TcpProtocol};
 pub use traits::{
     BoxResponseFuture, DetectedProtocol, DetectionResult, HandlerResult, MultiplexError,
     ProtocolDetector, ProtocolHandler, SharedDetector, SharedHandler,
 };
-pub use tcp_multiplexer::{TcpMultiplexConfig, TcpMultiplexer, TcpProtocol};
 pub use unified_server::{UnifiedServer, UnifiedServerConfig};

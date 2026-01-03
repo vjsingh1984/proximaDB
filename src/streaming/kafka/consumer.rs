@@ -19,12 +19,12 @@
 //! High-level consumer for ingesting vectors from Kafka topics.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
+use tokio::sync::{RwLock, mpsc};
+use tracing::{debug, info};
 
 use super::config::KafkaConsumerConfig;
 use super::deserializer::{MessageDeserializer, VectorMessage};
@@ -276,7 +276,9 @@ impl KafkaVectorConsumer {
         self.metrics
             .messages_failed
             .fetch_add(failed as u64, Ordering::Relaxed);
-        self.metrics.batches_processed.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .batches_processed
+            .fetch_add(1, Ordering::Relaxed);
 
         BatchResult {
             successful,

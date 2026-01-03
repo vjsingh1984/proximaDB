@@ -6,7 +6,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::{CandidateProvider, ScoredCandidate, SearchCostEstimate, SearchContext, SearchStrategy};
+use super::{
+    CandidateProvider, ScoredCandidate, SearchContext, SearchCostEstimate, SearchStrategy,
+};
 use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::search::SearchMode;
 
@@ -79,7 +81,11 @@ impl ExactSearchStrategy {
             .collect();
 
         // Sort by score (lower is better for distance metrics)
-        scored.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Return top-k
         scored.truncate(top_k);
@@ -156,7 +162,10 @@ impl SearchStrategy for ExactSearchStrategy {
             hints.push("SIMD acceleration enabled".to_string());
         }
         if self.enable_parallel {
-            hints.push(format!("Parallel processing with batch size {}", self.batch_size));
+            hints.push(format!(
+                "Parallel processing with batch size {}",
+                self.batch_size
+            ));
         }
         hints
     }
@@ -180,7 +189,10 @@ mod tests {
             Ok(self.candidates.clone())
         }
 
-        async fn get_partition_candidates(&self, _partition_ids: &[usize]) -> Result<Vec<(String, Vec<f32>)>> {
+        async fn get_partition_candidates(
+            &self,
+            _partition_ids: &[usize],
+        ) -> Result<Vec<(String, Vec<f32>)>> {
             Ok(self.candidates.clone())
         }
     }
@@ -199,11 +211,7 @@ mod tests {
             ],
         };
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            2,
-            DistanceMetric::Cosine,
-        );
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 2, DistanceMetric::Cosine);
 
         let results = strategy.execute(&ctx, &candidates).await.unwrap();
 
@@ -216,15 +224,9 @@ mod tests {
     async fn test_exact_search_empty() {
         let strategy = ExactSearchStrategy::new();
 
-        let candidates = MockCandidateProvider {
-            candidates: vec![],
-        };
+        let candidates = MockCandidateProvider { candidates: vec![] };
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 10, DistanceMetric::Cosine);
 
         let results = strategy.execute(&ctx, &candidates).await.unwrap();
         assert!(results.is_empty());
@@ -234,19 +236,12 @@ mod tests {
     fn test_applies_to() {
         let strategy = ExactSearchStrategy::new();
 
-        let exact_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let exact_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine);
 
         assert!(strategy.applies_to(&exact_ctx));
 
-        let approx_ctx = SearchContextImpl::new(
-            vec![1.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        ).with_search_mode(SearchMode::approximate());
+        let approx_ctx = SearchContextImpl::new(vec![1.0, 0.0], 10, DistanceMetric::Cosine)
+            .with_search_mode(SearchMode::approximate());
 
         assert!(!strategy.applies_to(&approx_ctx));
     }
@@ -255,11 +250,7 @@ mod tests {
     fn test_cost_estimate() {
         let strategy = ExactSearchStrategy::new();
 
-        let ctx = SearchContextImpl::new(
-            vec![1.0, 0.0, 0.0],
-            10,
-            DistanceMetric::Cosine,
-        );
+        let ctx = SearchContextImpl::new(vec![1.0, 0.0, 0.0], 10, DistanceMetric::Cosine);
 
         let cost = strategy.estimate_cost(&ctx, 10000);
 

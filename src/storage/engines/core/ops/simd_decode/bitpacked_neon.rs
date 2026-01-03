@@ -29,7 +29,7 @@
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::traits::{CpuFeatures, SimdDecoder};
 
@@ -100,7 +100,10 @@ impl SimdDecoder for NeonDecoder {
             bail!("bits_per_value must be > 0");
         }
         if bits_per_value > 32 {
-            bail!("bits_per_value must be <= 32 for i32 output, got {}", bits_per_value);
+            bail!(
+                "bits_per_value must be <= 32 for i32 output, got {}",
+                bits_per_value
+            );
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -244,10 +247,22 @@ fn decode_8bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
             let u64_3 = vmovl_u32(vget_high_u32(u32_hi));
 
             // Store as i64
-            vst1q_s64(output.as_mut_ptr().add(base) as *mut i64, vreinterpretq_s64_u64(u64_0));
-            vst1q_s64(output.as_mut_ptr().add(base + 2) as *mut i64, vreinterpretq_s64_u64(u64_1));
-            vst1q_s64(output.as_mut_ptr().add(base + 4) as *mut i64, vreinterpretq_s64_u64(u64_2));
-            vst1q_s64(output.as_mut_ptr().add(base + 6) as *mut i64, vreinterpretq_s64_u64(u64_3));
+            vst1q_s64(
+                output.as_mut_ptr().add(base) as *mut i64,
+                vreinterpretq_s64_u64(u64_0),
+            );
+            vst1q_s64(
+                output.as_mut_ptr().add(base + 2) as *mut i64,
+                vreinterpretq_s64_u64(u64_1),
+            );
+            vst1q_s64(
+                output.as_mut_ptr().add(base + 4) as *mut i64,
+                vreinterpretq_s64_u64(u64_2),
+            );
+            vst1q_s64(
+                output.as_mut_ptr().add(base + 6) as *mut i64,
+                vreinterpretq_s64_u64(u64_3),
+            );
         }
 
         // Handle remaining
@@ -282,8 +297,14 @@ fn decode_16bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
             let u64_hi = vmovl_u32(vget_high_u32(u32_vals));
 
             // Store as i64
-            vst1q_s64(output.as_mut_ptr().add(out_base) as *mut i64, vreinterpretq_s64_u64(u64_lo));
-            vst1q_s64(output.as_mut_ptr().add(out_base + 2) as *mut i64, vreinterpretq_s64_u64(u64_hi));
+            vst1q_s64(
+                output.as_mut_ptr().add(out_base) as *mut i64,
+                vreinterpretq_s64_u64(u64_lo),
+            );
+            vst1q_s64(
+                output.as_mut_ptr().add(out_base + 2) as *mut i64,
+                vreinterpretq_s64_u64(u64_hi),
+            );
         }
 
         // Handle remaining
@@ -320,8 +341,14 @@ fn decode_32bit_to_i64_neon(input: &[u8], output: &mut [i64]) -> Result<usize> {
             let u64_hi = vmovl_u32(vget_high_u32(vals));
 
             // Store as i64
-            vst1q_s64(output.as_mut_ptr().add(out_base) as *mut i64, vreinterpretq_s64_u64(u64_lo));
-            vst1q_s64(output.as_mut_ptr().add(out_base + 2) as *mut i64, vreinterpretq_s64_u64(u64_hi));
+            vst1q_s64(
+                output.as_mut_ptr().add(out_base) as *mut i64,
+                vreinterpretq_s64_u64(u64_lo),
+            );
+            vst1q_s64(
+                output.as_mut_ptr().add(out_base + 2) as *mut i64,
+                vreinterpretq_s64_u64(u64_hi),
+            );
         }
 
         // Handle remaining
@@ -405,8 +432,14 @@ fn decode_8bit_to_i32_neon(input: &[u8], output: &mut [i32]) -> Result<usize> {
             let u32_hi = vmovl_u16(vget_high_u16(u16_vals));
 
             // Store as i32
-            vst1q_s32(output.as_mut_ptr().add(base) as *mut i32, vreinterpretq_s32_u32(u32_lo));
-            vst1q_s32(output.as_mut_ptr().add(base + 4) as *mut i32, vreinterpretq_s32_u32(u32_hi));
+            vst1q_s32(
+                output.as_mut_ptr().add(base) as *mut i32,
+                vreinterpretq_s32_u32(u32_lo),
+            );
+            vst1q_s32(
+                output.as_mut_ptr().add(base + 4) as *mut i32,
+                vreinterpretq_s32_u32(u32_hi),
+            );
         }
 
         // Handle remaining
@@ -440,8 +473,14 @@ fn decode_16bit_to_i32_neon(input: &[u8], output: &mut [i32]) -> Result<usize> {
             let u32_hi = vmovl_u16(vget_high_u16(vals));
 
             // Store as i32
-            vst1q_s32(output.as_mut_ptr().add(out_base) as *mut i32, vreinterpretq_s32_u32(u32_lo));
-            vst1q_s32(output.as_mut_ptr().add(out_base + 4) as *mut i32, vreinterpretq_s32_u32(u32_hi));
+            vst1q_s32(
+                output.as_mut_ptr().add(out_base) as *mut i32,
+                vreinterpretq_s32_u32(u32_lo),
+            );
+            vst1q_s32(
+                output.as_mut_ptr().add(out_base + 4) as *mut i32,
+                vreinterpretq_s32_u32(u32_hi),
+            );
         }
 
         // Handle remaining
@@ -671,7 +710,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 8);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 8, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 8, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -686,7 +727,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 16);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 16, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 16, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -701,7 +744,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 32);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 32, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 32, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -716,7 +761,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 16);
 
         let mut output = vec![0i32; values.len()];
-        let count = decoder.decode_bitpacked_i32(&packed, 16, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i32(&packed, 16, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -739,11 +786,19 @@ mod tests {
             let mut neon_output = vec![0i64; values.len()];
             let mut scalar_output = vec![0i64; values.len()];
 
-            let neon_count = neon_decoder.decode_bitpacked_i64(&packed, bits, &mut neon_output).unwrap();
-            let scalar_count = scalar_decoder.decode_bitpacked_i64(&packed, bits, &mut scalar_output).unwrap();
+            let neon_count = neon_decoder
+                .decode_bitpacked_i64(&packed, bits, &mut neon_output)
+                .unwrap();
+            let scalar_count = scalar_decoder
+                .decode_bitpacked_i64(&packed, bits, &mut scalar_output)
+                .unwrap();
 
             assert_eq!(neon_count, scalar_count, "Count mismatch for {} bits", bits);
-            assert_eq!(neon_output, scalar_output, "Output mismatch for {} bits", bits);
+            assert_eq!(
+                neon_output, scalar_output,
+                "Output mismatch for {} bits",
+                bits
+            );
         }
     }
 

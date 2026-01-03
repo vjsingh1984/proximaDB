@@ -21,11 +21,10 @@ use bytes::Bytes;
 use parquet::file::reader::FileReader;
 use tracing::{debug, info};
 
-use crate::storage::persistence::filesystem::FileSystem;
 use super::header_cache::{
-    CachedHeader, ColumnBounds, ColumnValue, EncodingInfo, HeaderLoader, RowGroupMeta,
-    SpatialRange,
+    CachedHeader, ColumnBounds, ColumnValue, EncodingInfo, HeaderLoader, RowGroupMeta, SpatialRange,
 };
+use crate::storage::persistence::filesystem::FileSystem;
 
 // ============================================================================
 // Parquet-Based Header Loader (VIPER, NOVA, RAPTOR)
@@ -75,9 +74,7 @@ impl ParquetHeaderLoader {
             let total_byte_size = rg_metadata.total_byte_size() as u64;
 
             // Calculate offset from first column
-            let offset = rg_metadata
-                .column(0)
-                .file_offset() as u64;
+            let offset = rg_metadata.column(0).file_offset() as u64;
 
             let mut rg = RowGroupMeta::new(i, offset, total_byte_size, row_count);
 
@@ -105,12 +102,25 @@ impl ParquetHeaderLoader {
     }
 
     /// Get encoding info from rowgroup metadata.
-    fn get_encoding_info(&self, rg_metadata: &parquet::file::metadata::RowGroupMetaData) -> EncodingInfo {
+    fn get_encoding_info(
+        &self,
+        rg_metadata: &parquet::file::metadata::RowGroupMetaData,
+    ) -> EncodingInfo {
         // Check for quantized columns (typically named with _int8, _binary, _pq suffix)
-        let has_int8 = (0..rg_metadata.num_columns())
-            .any(|i| rg_metadata.column(i).column_path().string().contains("int8"));
-        let has_binary = (0..rg_metadata.num_columns())
-            .any(|i| rg_metadata.column(i).column_path().string().contains("binary"));
+        let has_int8 = (0..rg_metadata.num_columns()).any(|i| {
+            rg_metadata
+                .column(i)
+                .column_path()
+                .string()
+                .contains("int8")
+        });
+        let has_binary = (0..rg_metadata.num_columns()).any(|i| {
+            rg_metadata
+                .column(i)
+                .column_path()
+                .string()
+                .contains("binary")
+        });
         let has_pq = (0..rg_metadata.num_columns())
             .any(|i| rg_metadata.column(i).column_path().string().contains("pq"));
 
@@ -126,21 +136,33 @@ impl ParquetHeaderLoader {
 
         EncodingInfo {
             quantization_type,
-            bits: if has_int8 { Some(8) } else if has_binary { Some(1) } else { None },
+            bits: if has_int8 {
+                Some(8)
+            } else if has_binary {
+                Some(1)
+            } else {
+                None
+            },
             pq_subquantizers: if has_pq { Some(64) } else { None }, // Default PQ config
             pq_codebook_size: if has_pq { Some(256) } else { None },
         }
     }
 
     /// Extract Z-order range from RAPTOR rowgroup metadata.
-    fn extract_zorder_range(&self, _rg_metadata: &parquet::file::metadata::RowGroupMetaData) -> Option<SpatialRange> {
+    fn extract_zorder_range(
+        &self,
+        _rg_metadata: &parquet::file::metadata::RowGroupMetaData,
+    ) -> Option<SpatialRange> {
         // RAPTOR stores Z-order codes in dedicated columns
         // For now, return None - full implementation would parse the z_order_code column stats
         None
     }
 
     /// Extract zone map from NOVA rowgroup metadata.
-    fn extract_zonemap(&self, _rg_metadata: &parquet::file::metadata::RowGroupMetaData) -> Option<SpatialRange> {
+    fn extract_zonemap(
+        &self,
+        _rg_metadata: &parquet::file::metadata::RowGroupMetaData,
+    ) -> Option<SpatialRange> {
         // NOVA stores per-dimension min/max in column statistics
         // For now, return None - full implementation would aggregate per-dimension bounds
         None
@@ -171,8 +193,8 @@ impl HeaderLoader for ParquetHeaderLoader {
         header.rowgroups = self.extract_rowgroups_from_parquet(&metadata);
 
         // Estimate header size (metadata structure)
-        header.header_size_bytes = std::mem::size_of::<CachedHeader>()
-            + header.rowgroups.len() * 1024; // Approximate per-rowgroup overhead
+        header.header_size_bytes =
+            std::mem::size_of::<CachedHeader>() + header.rowgroups.len() * 1024; // Approximate per-rowgroup overhead
 
         // Extract schema version from Parquet key-value metadata
         if let Some(kv_metadata) = metadata.file_metadata().key_value_metadata() {
@@ -195,10 +217,9 @@ impl HeaderLoader for ParquetHeaderLoader {
                 if kv.key.starts_with("proximadb.") {
                     if let Some(ref value) = kv.value {
                         if let Some(key_suffix) = kv.key.strip_prefix("proximadb.") {
-                            header.engine_metadata.insert(
-                                key_suffix.to_string(),
-                                value.clone(),
-                            );
+                            header
+                                .engine_metadata
+                                .insert(key_suffix.to_string(), value.clone());
                         }
                     }
                 }
@@ -216,7 +237,10 @@ impl HeaderLoader for ParquetHeaderLoader {
     }
 
     fn supports_format(&self, format_type: &str) -> bool {
-        matches!(format_type.to_lowercase().as_str(), "viper" | "nova" | "raptor" | "parquet")
+        matches!(
+            format_type.to_lowercase().as_str(),
+            "viper" | "nova" | "raptor" | "parquet"
+        )
     }
 }
 
@@ -277,13 +301,17 @@ impl ProximaBlocksHeaderLoader {
         let header_size = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
 
         if data.len() < header_size {
-            return Err(anyhow::anyhow!("Incomplete header: {} < {}", data.len(), header_size));
+            return Err(anyhow::anyhow!(
+                "Incomplete header: {} < {}",
+                data.len(),
+                header_size
+            ));
         }
 
         // Parse JSON metadata from header
         let header_json = &data[16..header_size];
-        let metadata: serde_json::Value = serde_json::from_slice(header_json)
-            .unwrap_or(serde_json::json!({}));
+        let metadata: serde_json::Value =
+            serde_json::from_slice(header_json).unwrap_or(serde_json::json!({}));
 
         Ok(ProximaBlocksHeaderInfo {
             version,
@@ -310,23 +338,54 @@ impl ProximaBlocksHeaderLoader {
                 rg.spatial_range = match self.engine_type.as_str() {
                     "helix" => {
                         // HELIX uses Hilbert curve codes
-                        let min = block.get("hilbert_min").and_then(|h| h.as_u64()).unwrap_or(0);
-                        let max = block.get("hilbert_max").and_then(|h| h.as_u64()).unwrap_or(u64::MAX);
-                        let order = block.get("hilbert_order").and_then(|o| o.as_u64()).unwrap_or(16) as u8;
+                        let min = block
+                            .get("hilbert_min")
+                            .and_then(|h| h.as_u64())
+                            .unwrap_or(0);
+                        let max = block
+                            .get("hilbert_max")
+                            .and_then(|h| h.as_u64())
+                            .unwrap_or(u64::MAX);
+                        let order = block
+                            .get("hilbert_order")
+                            .and_then(|o| o.as_u64())
+                            .unwrap_or(16) as u8;
                         Some(SpatialRange::Hilbert { min, max, order })
                     }
                     "swift" => {
                         // SWIFT uses AdaCurve learned codes
-                        let min = block.get("adacurve_min").and_then(|a| a.as_u64()).unwrap_or(0);
-                        let max = block.get("adacurve_max").and_then(|a| a.as_u64()).unwrap_or(u64::MAX);
-                        let model_version = block.get("adacurve_version").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                        Some(SpatialRange::AdaCurve { min, max, model_version })
+                        let min = block
+                            .get("adacurve_min")
+                            .and_then(|a| a.as_u64())
+                            .unwrap_or(0);
+                        let max = block
+                            .get("adacurve_max")
+                            .and_then(|a| a.as_u64())
+                            .unwrap_or(u64::MAX);
+                        let model_version = block
+                            .get("adacurve_version")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                        Some(SpatialRange::AdaCurve {
+                            min,
+                            max,
+                            model_version,
+                        })
                     }
                     "sst" => {
                         // SST uses block ranges
-                        let start = block.get("block_start").and_then(|b| b.as_u64()).unwrap_or(i as u64) as u32;
-                        let end = block.get("block_end").and_then(|b| b.as_u64()).unwrap_or(i as u64 + 1) as u32;
-                        Some(SpatialRange::BlockRange { start_block: start, end_block: end })
+                        let start = block
+                            .get("block_start")
+                            .and_then(|b| b.as_u64())
+                            .unwrap_or(i as u64) as u32;
+                        let end = block
+                            .get("block_end")
+                            .and_then(|b| b.as_u64())
+                            .unwrap_or(i as u64 + 1) as u32;
+                        Some(SpatialRange::BlockRange {
+                            start_block: start,
+                            end_block: end,
+                        })
                     }
                     _ => None,
                 };
@@ -337,7 +396,7 @@ impl ProximaBlocksHeaderLoader {
                         centroid_array
                             .iter()
                             .filter_map(|v| v.as_f64().map(|f| f as f32))
-                            .collect()
+                            .collect(),
                     );
                 }
 
@@ -351,7 +410,10 @@ impl ProximaBlocksHeaderLoader {
                 }
 
                 // Extract compression info
-                rg.compression = block.get("compression").and_then(|c| c.as_str()).map(|s| s.to_string());
+                rg.compression = block
+                    .get("compression")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_string());
 
                 // Extract encoding info
                 if let Some(encoding) = block.get("encoding").and_then(|e| e.as_object()) {
@@ -361,9 +423,18 @@ impl ProximaBlocksHeaderLoader {
                             .and_then(|q| q.as_str())
                             .unwrap_or("None")
                             .to_string(),
-                        bits: encoding.get("bits").and_then(|b| b.as_u64()).map(|b| b as u8),
-                        pq_subquantizers: encoding.get("pq_subquantizers").and_then(|p| p.as_u64()).map(|p| p as u8),
-                        pq_codebook_size: encoding.get("pq_codebook_size").and_then(|c| c.as_u64()).map(|c| c as u16),
+                        bits: encoding
+                            .get("bits")
+                            .and_then(|b| b.as_u64())
+                            .map(|b| b as u8),
+                        pq_subquantizers: encoding
+                            .get("pq_subquantizers")
+                            .and_then(|p| p.as_u64())
+                            .map(|p| p as u8),
+                        pq_codebook_size: encoding
+                            .get("pq_codebook_size")
+                            .and_then(|c| c.as_u64())
+                            .map(|c| c as u16),
                     });
                 }
 
@@ -388,7 +459,10 @@ impl ProximaBlocksHeaderLoader {
 
         let min = Self::json_to_column_value(min_val)?;
         let max = Self::json_to_column_value(max_val)?;
-        let null_count = stats.get("null_count").and_then(|n| n.as_i64()).unwrap_or(0);
+        let null_count = stats
+            .get("null_count")
+            .and_then(|n| n.as_i64())
+            .unwrap_or(0);
         let distinct_count = stats.get("distinct_count").and_then(|d| d.as_i64());
 
         Some(ColumnBounds {
@@ -446,10 +520,18 @@ impl HeaderLoader for ProximaBlocksHeaderLoader {
             .unwrap_or(0);
 
         // Extract schema info from metadata
-        if let Some(schema_fingerprint) = header_info.metadata.get("schema_fingerprint").and_then(|f| f.as_u64()) {
+        if let Some(schema_fingerprint) = header_info
+            .metadata
+            .get("schema_fingerprint")
+            .and_then(|f| f.as_u64())
+        {
             header.schema_fingerprint = schema_fingerprint;
         }
-        if let Some(schema_version) = header_info.metadata.get("schema_version").and_then(|v| v.as_u64()) {
+        if let Some(schema_version) = header_info
+            .metadata
+            .get("schema_version")
+            .and_then(|v| v.as_u64())
+        {
             header.schema_version = schema_version as u32;
         }
 
@@ -460,7 +542,11 @@ impl HeaderLoader for ProximaBlocksHeaderLoader {
         header.header_size_bytes = header_info.header_size;
 
         // Store engine-specific metadata
-        if let Some(engine_meta) = header_info.metadata.get("engine").and_then(|e| e.as_object()) {
+        if let Some(engine_meta) = header_info
+            .metadata
+            .get("engine")
+            .and_then(|e| e.as_object())
+        {
             for (key, value) in engine_meta {
                 if let Some(s) = value.as_str() {
                     header.engine_metadata.insert(key.clone(), s.to_string());
@@ -479,7 +565,10 @@ impl HeaderLoader for ProximaBlocksHeaderLoader {
     }
 
     fn supports_format(&self, format_type: &str) -> bool {
-        matches!(format_type.to_lowercase().as_str(), "sst" | "helix" | "swift" | "proximablocks")
+        matches!(
+            format_type.to_lowercase().as_str(),
+            "sst" | "helix" | "swift" | "proximablocks"
+        )
     }
 }
 
@@ -511,7 +600,9 @@ impl HeaderLoaderRegistry {
 
         // ProximaBlocks-based loaders
         registry.register(Arc::new(ProximaBlocksHeaderLoader::sst(filesystem.clone())));
-        registry.register(Arc::new(ProximaBlocksHeaderLoader::helix(filesystem.clone())));
+        registry.register(Arc::new(ProximaBlocksHeaderLoader::helix(
+            filesystem.clone(),
+        )));
         registry.register(Arc::new(ProximaBlocksHeaderLoader::swift(filesystem)));
 
         registry
@@ -531,7 +622,11 @@ impl HeaderLoaderRegistry {
     }
 
     /// Load header using appropriate loader.
-    pub async fn load_header(&self, path: &str, format_hint: Option<&str>) -> anyhow::Result<CachedHeader> {
+    pub async fn load_header(
+        &self,
+        path: &str,
+        format_hint: Option<&str>,
+    ) -> anyhow::Result<CachedHeader> {
         // Try format hint first
         if let Some(fmt) = format_hint {
             if let Some(loader) = self.find_loader(fmt) {
@@ -594,10 +689,22 @@ mod tests {
 
     #[test]
     fn test_format_detection() {
-        assert_eq!(HeaderLoaderRegistry::detect_format_from_path("/data/test.parquet"), "viper");
-        assert_eq!(HeaderLoaderRegistry::detect_format_from_path("/data/test.sst"), "sst");
-        assert_eq!(HeaderLoaderRegistry::detect_format_from_path("/data/test.helix"), "helix");
-        assert_eq!(HeaderLoaderRegistry::detect_format_from_path("/data/test.swift"), "swift");
+        assert_eq!(
+            HeaderLoaderRegistry::detect_format_from_path("/data/test.parquet"),
+            "viper"
+        );
+        assert_eq!(
+            HeaderLoaderRegistry::detect_format_from_path("/data/test.sst"),
+            "sst"
+        );
+        assert_eq!(
+            HeaderLoaderRegistry::detect_format_from_path("/data/test.helix"),
+            "helix"
+        );
+        assert_eq!(
+            HeaderLoaderRegistry::detect_format_from_path("/data/test.swift"),
+            "swift"
+        );
     }
 
     #[test]

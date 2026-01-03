@@ -44,8 +44,8 @@ mod streaming_flush_tests {
     use super::*;
     use proximadb::proto::proximadb_v1::VectorRecord;
     use proximadb::streaming::{
-        BackpressureLevel, FlushRetryConfig, SessionConfig, StreamConfig,
-        StreamCoordinator, CoordinatorStats,
+        BackpressureLevel, CoordinatorStats, FlushRetryConfig, SessionConfig, StreamConfig,
+        StreamCoordinator,
     };
 
     /// Helper to create test vectors
@@ -130,7 +130,10 @@ mod streaming_flush_tests {
             .expect("Failed to create session");
 
         let vectors = create_test_vectors(50, 0, 64);
-        coordinator.push_records(&session_id, vectors).await.unwrap();
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
 
         let stats = coordinator.stats();
         assert_eq!(stats.total_buffered_records, 50);
@@ -178,7 +181,10 @@ mod streaming_flush_tests {
 
         // Push vectors until we hit backpressure
         let vectors = create_test_vectors(60, 0, 32);
-        let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+        let result = coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
 
         // With 60 items in 64-slot buffer, should have high backpressure
         assert!(result.buffer_percent >= 80);
@@ -196,7 +202,10 @@ mod streaming_flush_tests {
 
         // Push 100 vectors
         let vectors = create_test_vectors(100, 0, 64);
-        coordinator.push_records(&session_id, vectors).await.unwrap();
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
 
         // Drain in batches
         let batch1 = coordinator.drain_records(&session_id, 30).unwrap();
@@ -311,7 +320,10 @@ mod streaming_flush_tests {
 
         // Push some vectors
         let vectors = create_test_vectors(25, 0, 32);
-        coordinator.push_records(&session_id, vectors).await.unwrap();
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
 
         let info_after = coordinator.get_session_info(&session_id).unwrap();
         assert_eq!(info_after.buffer_len, 25);
@@ -325,8 +337,8 @@ mod streaming_flush_tests {
 
 mod graph_wal_recovery_tests {
     use super::*;
-    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use proximadb::graph::engines::orion::OrionGraphEngine;
+    use proximadb::graph::{Edge, Node, engines::GraphEngine};
 
     fn create_test_node(id: &str, label: &str) -> Node {
         Node {
@@ -361,7 +373,9 @@ mod graph_wal_recovery_tests {
             "insert_test".to_string(),
             base_url.clone(),
             true,
-        ).await.expect("Failed to create engine");
+        )
+        .await
+        .expect("Failed to create engine");
 
         // Insert nodes
         let node = create_test_node("test_node_1", "TestLabel");
@@ -382,13 +396,21 @@ mod graph_wal_recovery_tests {
             "edge_test".to_string(),
             base_url.clone(),
             true,
-        ).await.expect("Failed to create engine");
+        )
+        .await
+        .expect("Failed to create engine");
 
         // Insert nodes first
         let node1 = create_test_node("edge_node_1", "Person");
         let node2 = create_test_node("edge_node_2", "Person");
-        engine.insert_node(node1).await.expect("Insert node1 failed");
-        engine.insert_node(node2).await.expect("Insert node2 failed");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Insert node1 failed");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("Insert node2 failed");
 
         // Insert edge
         let edge = create_test_edge("test_edge_1", "edge_node_1", "edge_node_2", "KNOWS");
@@ -408,16 +430,22 @@ mod graph_wal_recovery_tests {
             "update_test".to_string(),
             base_url.clone(),
             true,
-        ).await.expect("Failed to create engine");
+        )
+        .await
+        .expect("Failed to create engine");
 
         // Insert node
         let node = create_test_node("upd_node", "Original");
         engine.insert_node(node).await.expect("Insert failed");
 
         // Update node
-        let mut updated_node = (*engine.get_node(&"upd_node".to_string()).unwrap().unwrap()).clone();
+        let mut updated_node =
+            (*engine.get_node(&"upd_node".to_string()).unwrap().unwrap()).clone();
         updated_node.labels.push("Updated".to_string());
-        let updated = engine.update_node(updated_node).await.expect("Update failed");
+        let updated = engine
+            .update_node(updated_node)
+            .await
+            .expect("Update failed");
 
         assert!(updated.labels.contains(&"Updated".to_string()));
 
@@ -433,20 +461,33 @@ mod graph_wal_recovery_tests {
             "delete_test".to_string(),
             base_url.clone(),
             true,
-        ).await.expect("Failed to create engine");
+        )
+        .await
+        .expect("Failed to create engine");
 
         // Insert nodes
         let node1 = create_test_node("del_node_1", "ToKeep");
         let node2 = create_test_node("del_node_2", "ToDelete");
-        engine.insert_node(node1).await.expect("Insert node1 failed");
-        engine.insert_node(node2).await.expect("Insert node2 failed");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Insert node1 failed");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("Insert node2 failed");
 
         // Delete one node
-        let deleted = engine.delete_node(&"del_node_2".to_string()).await.expect("Delete failed");
+        let deleted = engine
+            .delete_node(&"del_node_2".to_string())
+            .await
+            .expect("Delete failed");
         assert!(deleted.is_some());
 
         // Verify deletion
-        let missing = engine.get_node(&"del_node_2".to_string()).expect("Get failed");
+        let missing = engine
+            .get_node(&"del_node_2".to_string())
+            .expect("Get failed");
         assert!(missing.is_none());
 
         engine.flush_wal().await.expect("Flush failed");
@@ -463,7 +504,9 @@ mod graph_wal_recovery_tests {
                 "recovery_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             for i in 0..10 {
                 let node = create_test_node(&format!("rec_node_{}", i), "RecoveryTest");
@@ -479,7 +522,9 @@ mod graph_wal_recovery_tests {
                 "recovery_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
@@ -489,7 +534,8 @@ mod graph_wal_recovery_tests {
                 let recovered = engine.get_node(&node_id).expect("Get failed");
                 assert!(
                     recovered.is_some(),
-                    "Node {} should be recovered after WAL replay", node_id
+                    "Node {} should be recovered after WAL replay",
+                    node_id
                 );
             }
         }
@@ -506,12 +552,18 @@ mod graph_wal_recovery_tests {
                 "update_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             let node = create_test_node("upd_rec_node", "Original");
             engine.insert_node(node).await.expect("Insert failed");
 
-            let mut updated = (*engine.get_node(&"upd_rec_node".to_string()).unwrap().unwrap()).clone();
+            let mut updated = (*engine
+                .get_node(&"upd_rec_node".to_string())
+                .unwrap()
+                .unwrap())
+            .clone();
             updated.labels.push("Modified".to_string());
             engine.update_node(updated).await.expect("Update failed");
 
@@ -524,17 +576,21 @@ mod graph_wal_recovery_tests {
                 "update_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
-            let recovered = engine.get_node(&"upd_rec_node".to_string())
+            let recovered = engine
+                .get_node(&"upd_rec_node".to_string())
                 .expect("Get failed")
                 .expect("Node should exist");
 
             assert!(
                 recovered.labels.contains(&"Modified".to_string()),
-                "Update should persist after recovery. Labels: {:?}", recovered.labels
+                "Update should persist after recovery. Labels: {:?}",
+                recovered.labels
             );
         }
     }
@@ -550,14 +606,19 @@ mod graph_wal_recovery_tests {
                 "delete_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             let node1 = create_test_node("del_rec_keep", "ToKeep");
             let node2 = create_test_node("del_rec_remove", "ToRemove");
             engine.insert_node(node1).await.expect("Insert failed");
             engine.insert_node(node2).await.expect("Insert failed");
 
-            engine.delete_node(&"del_rec_remove".to_string()).await.expect("Delete failed");
+            engine
+                .delete_node(&"del_rec_remove".to_string())
+                .await
+                .expect("Delete failed");
 
             engine.flush_wal().await.expect("Flush failed");
         }
@@ -568,15 +629,24 @@ mod graph_wal_recovery_tests {
                 "delete_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
-            let kept = engine.get_node(&"del_rec_keep".to_string()).expect("Get failed");
-            let deleted = engine.get_node(&"del_rec_remove".to_string()).expect("Get failed");
+            let kept = engine
+                .get_node(&"del_rec_keep".to_string())
+                .expect("Get failed");
+            let deleted = engine
+                .get_node(&"del_rec_remove".to_string())
+                .expect("Get failed");
 
             assert!(kept.is_some(), "Kept node should exist after recovery");
-            assert!(deleted.is_none(), "Deleted node should not exist after recovery");
+            assert!(
+                deleted.is_none(),
+                "Deleted node should not exist after recovery"
+            );
         }
     }
 
@@ -591,7 +661,9 @@ mod graph_wal_recovery_tests {
                 "edge_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             // Create chain: A -> B -> C
             for c in ['A', 'B', 'C'] {
@@ -601,8 +673,14 @@ mod graph_wal_recovery_tests {
 
             let edge_ab = create_test_edge("e_ab", "chain_A", "chain_B", "NEXT");
             let edge_bc = create_test_edge("e_bc", "chain_B", "chain_C", "NEXT");
-            engine.insert_edge(edge_ab).await.expect("Insert edge failed");
-            engine.insert_edge(edge_bc).await.expect("Insert edge failed");
+            engine
+                .insert_edge(edge_ab)
+                .await
+                .expect("Insert edge failed");
+            engine
+                .insert_edge(edge_bc)
+                .await
+                .expect("Insert edge failed");
 
             engine.flush_wal().await.expect("Flush failed");
         }
@@ -613,13 +691,19 @@ mod graph_wal_recovery_tests {
                 "edge_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
             // Verify edges exist
-            let edge_ab = engine.get_edge(&"e_ab".to_string()).expect("Get edge failed");
-            let edge_bc = engine.get_edge(&"e_bc".to_string()).expect("Get edge failed");
+            let edge_ab = engine
+                .get_edge(&"e_ab".to_string())
+                .expect("Get edge failed");
+            let edge_bc = engine
+                .get_edge(&"e_bc".to_string())
+                .expect("Get edge failed");
 
             assert!(edge_ab.is_some(), "Edge A->B should be recovered");
             assert!(edge_bc.is_some(), "Edge B->C should be recovered");
@@ -637,7 +721,9 @@ mod graph_wal_recovery_tests {
                 "traversal_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             // Create star pattern: center -> spoke1, spoke2, spoke3
             let center = create_test_node("center", "Hub");
@@ -651,7 +737,7 @@ mod graph_wal_recovery_tests {
                     &format!("e_center_spoke_{}", i),
                     "center",
                     &format!("spoke_{}", i),
-                    "CONNECTS"
+                    "CONNECTS",
                 );
                 engine.insert_edge(edge).await.expect("Insert edge failed");
             }
@@ -665,15 +751,22 @@ mod graph_wal_recovery_tests {
                 "traversal_recovery".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
             // Test traversal from center
-            let neighbors = engine.get_neighbors(&"center".to_string(), None)
+            let neighbors = engine
+                .get_neighbors(&"center".to_string(), None)
                 .expect("Get neighbors failed");
 
-            assert_eq!(neighbors.len(), 3, "Center should have 3 neighbors after recovery");
+            assert_eq!(
+                neighbors.len(),
+                3,
+                "Center should have 3 neighbors after recovery"
+            );
         }
     }
 }
@@ -685,8 +778,8 @@ mod graph_wal_recovery_tests {
 #[cfg(feature = "distributed-graph")]
 mod pulsar_wal_tests {
     use super::*;
-    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use proximadb::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
+    use proximadb::graph::{Edge, Node, engines::GraphEngine};
 
     fn create_test_node(id: &str, label: &str) -> Node {
         Node {
@@ -725,14 +818,22 @@ mod pulsar_wal_tests {
         let node1 = create_test_node("p_node_1", "TestLabel");
         let node2 = create_test_node("p_node_2", "TestLabel");
 
-        let inserted1 = engine.insert_node(node1).await.expect("Insert node1 failed");
-        let inserted2 = engine.insert_node(node2).await.expect("Insert node2 failed");
+        let inserted1 = engine
+            .insert_node(node1)
+            .await
+            .expect("Insert node1 failed");
+        let inserted2 = engine
+            .insert_node(node2)
+            .await
+            .expect("Insert node2 failed");
 
         assert_eq!(inserted1.id, "p_node_1");
         assert_eq!(inserted2.id, "p_node_2");
 
         // Verify retrieval
-        let retrieved = engine.get_node(&"p_node_1".to_string()).expect("Get failed");
+        let retrieved = engine
+            .get_node(&"p_node_1".to_string())
+            .expect("Get failed");
         assert!(retrieved.is_some());
     }
 
@@ -754,7 +855,9 @@ mod pulsar_wal_tests {
         assert_eq!(inserted.id, "pe_edge_1");
 
         // Verify edge
-        let retrieved = engine.get_edge(&"pe_edge_1".to_string()).expect("Get edge failed");
+        let retrieved = engine
+            .get_edge(&"pe_edge_1".to_string())
+            .expect("Get edge failed");
         assert!(retrieved.is_some());
     }
 
@@ -792,11 +895,10 @@ mod pulsar_wal_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine");
 
             for i in 0..5 {
                 let node = create_test_node(&format!("p_rec_{}", i), "RecoveryTest");
@@ -813,11 +915,10 @@ mod pulsar_wal_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create engine for recovery");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
@@ -837,8 +938,8 @@ mod pulsar_wal_tests {
 #[cfg(feature = "tiered-graph")]
 mod quasar_wal_tests {
     use super::*;
+    use proximadb::graph::engines::quasar::{ColdStorageBackend, QuasarConfig, QuasarGraphEngine};
     use proximadb::graph::{Edge, Node, engines::GraphEngine};
-    use proximadb::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine, ColdStorageBackend};
 
     fn create_test_node(id: &str, label: &str) -> Node {
         Node {
@@ -860,7 +961,9 @@ mod quasar_wal_tests {
             cold_storage_backend: ColdStorageBackend::Json,
             ..QuasarConfig::default()
         };
-        let engine = QuasarGraphEngine::new(config).await.expect("Failed to create QUASAR engine");
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .expect("Failed to create QUASAR engine");
 
         // Insert nodes
         for i in 0..5 {
@@ -880,7 +983,9 @@ mod quasar_wal_tests {
             cold_storage_backend: ColdStorageBackend::Json,
             ..QuasarConfig::default()
         };
-        let engine = QuasarGraphEngine::new(config).await.expect("Failed to create engine");
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .expect("Failed to create engine");
 
         // Insert nodes
         for i in 0..5 {
@@ -913,11 +1018,10 @@ mod quasar_wal_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine");
 
             for i in 0..10 {
                 let node = create_test_node(&format!("q_rec_{}", i), "RecoveryTest");
@@ -935,11 +1039,10 @@ mod quasar_wal_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create engine for recovery");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
@@ -958,11 +1061,10 @@ mod quasar_wal_tests {
 
 mod mtls_tests {
     use super::*;
-    use proximadb::network::tls::{
-        CertificateConfig, CertificateManager, CertificateSubject,
-        TlsConfig, TlsServerConfig,
-    };
     use proximadb::network::middleware::{TlsClientCertConfig, matches_cn_pattern};
+    use proximadb::network::tls::{
+        CertificateConfig, CertificateManager, CertificateSubject, TlsConfig, TlsServerConfig,
+    };
 
     #[test]
     fn test_certificate_config_defaults() {
@@ -1048,7 +1150,11 @@ mod mtls_tests {
         let cert = manager.generate_self_signed().unwrap();
         let parsed = manager.parse_certificate(cert.cert_pem.as_bytes()).unwrap();
 
-        assert!(parsed.san_dns_names.contains(&"multi-san.example.com".to_string()));
+        assert!(
+            parsed
+                .san_dns_names
+                .contains(&"multi-san.example.com".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1091,15 +1197,24 @@ mod mtls_tests {
 
     #[test]
     fn test_cn_pattern_matching_exact() {
-        assert!(matches_cn_pattern("client.example.com", "client.example.com"));
-        assert!(!matches_cn_pattern("other.example.com", "client.example.com"));
+        assert!(matches_cn_pattern(
+            "client.example.com",
+            "client.example.com"
+        ));
+        assert!(!matches_cn_pattern(
+            "other.example.com",
+            "client.example.com"
+        ));
     }
 
     #[test]
     fn test_cn_pattern_matching_wildcard() {
         assert!(matches_cn_pattern("client.example.com", "*.example.com"));
         assert!(matches_cn_pattern("server.example.com", "*.example.com"));
-        assert!(!matches_cn_pattern("client.api.example.com", "*.example.com"));
+        assert!(!matches_cn_pattern(
+            "client.api.example.com",
+            "*.example.com"
+        ));
         assert!(!matches_cn_pattern("example.com", "*.example.com"));
     }
 
@@ -1281,7 +1396,11 @@ mod catalog_tests {
             .unwrap();
 
         manager
-            .create_iceberg_catalog("cat2", "memory://", &format!("file://{}", temp_dir2.display()))
+            .create_iceberg_catalog(
+                "cat2",
+                "memory://",
+                &format!("file://{}", temp_dir2.display()),
+            )
             .await
             .unwrap();
 
@@ -1349,7 +1468,7 @@ mod catalog_tests {
 mod delta_catalog_tests {
     use super::*;
     use proximadb::catalog::types::{CatalogColumn, CatalogDataType, CatalogTableSchema};
-    use proximadb::catalog::{CatalogManager, Catalog, TableIdentifier};
+    use proximadb::catalog::{Catalog, CatalogManager, TableIdentifier};
 
     fn temp_catalog_dir(name: &str) -> std::path::PathBuf {
         std::env::temp_dir()
@@ -1395,7 +1514,12 @@ mod delta_catalog_tests {
             .unwrap();
 
         assert_eq!(ns.levels, vec!["test_db"]);
-        assert!(catalog.namespace_exists(&["test_db".to_string()]).await.unwrap());
+        assert!(
+            catalog
+                .namespace_exists(&["test_db".to_string()])
+                .await
+                .unwrap()
+        );
 
         cleanup_dir(&temp_dir).await;
     }
@@ -1420,7 +1544,8 @@ mod delta_catalog_tests {
             .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
             .with_column(CatalogColumn::new(2, "name", CatalogDataType::String));
 
-        let identifier = TableIdentifier::new(vec!["deltadb".to_string()], "test_table".to_string());
+        let identifier =
+            TableIdentifier::new(vec!["deltadb".to_string()], "test_table".to_string());
 
         let created = catalog.create_table(&identifier, schema).await.unwrap();
         assert_eq!(created.name, "test_table");
@@ -1454,9 +1579,11 @@ mod delta_catalog_tests {
 
 mod graph_service_tests {
     use super::*;
-    use proximadb::graph::service::GraphOperationsService;
     use proximadb::graph::Node;
-    use proximadb::proto::proximadb_v1::{CreateGraphRequest, GraphStorageConfig, CompressionAlgorithm};
+    use proximadb::graph::service::GraphOperationsService;
+    use proximadb::proto::proximadb_v1::{
+        CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
+    };
 
     fn create_test_node(id: &str, label: &str) -> Node {
         Node {
@@ -1491,7 +1618,10 @@ mod graph_service_tests {
             access_control: None,
         };
 
-        service.create_graph_collection(request).await.expect("Create graph failed");
+        service
+            .create_graph_collection(request)
+            .await
+            .expect("Create graph failed");
 
         let graphs = service.list_graphs().await.expect("List graphs failed");
         assert!(graphs.contains(&"test_orion".to_string()));
@@ -1522,7 +1652,10 @@ mod graph_service_tests {
         service.create_graph_collection(request).await.unwrap();
 
         let node = create_test_node("flush_node", "Test");
-        service.create_node("flush_test", node).await.expect("Create node failed");
+        service
+            .create_node("flush_test", node)
+            .await
+            .expect("Create node failed");
 
         // Flush should succeed
         service.flush_wal("flush_test").await.expect("Flush failed");
@@ -1557,7 +1690,10 @@ mod graph_service_tests {
 
         // Multiple flushes should all succeed
         for _ in 0..5 {
-            service.flush_wal("idem_flush").await.expect("Flush should be idempotent");
+            service
+                .flush_wal("idem_flush")
+                .await
+                .expect("Flush should be idempotent");
         }
     }
 
@@ -1578,11 +1714,13 @@ mod graph_service_tests {
 
 mod cross_workstream_tests {
     use super::*;
-    use proximadb::proto::proximadb_v1::VectorRecord;
-    use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
-    use proximadb::graph::service::GraphOperationsService;
     use proximadb::graph::Node;
-    use proximadb::proto::proximadb_v1::{CreateGraphRequest, GraphStorageConfig, CompressionAlgorithm};
+    use proximadb::graph::service::GraphOperationsService;
+    use proximadb::proto::proximadb_v1::VectorRecord;
+    use proximadb::proto::proximadb_v1::{
+        CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
+    };
+    use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
         (0..count)
@@ -1636,7 +1774,10 @@ mod cross_workstream_tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(request).await.unwrap();
+        graph_service
+            .create_graph_collection(request)
+            .await
+            .unwrap();
 
         // Concurrent operations
         let coord_clone = Arc::clone(&coordinator);
@@ -1650,7 +1791,10 @@ mod cross_workstream_tests {
                 .unwrap();
 
             let vectors = create_test_vectors(50, 64);
-            coord_clone.push_records(&session_id, vectors).await.unwrap();
+            coord_clone
+                .push_records(&session_id, vectors)
+                .await
+                .unwrap();
 
             coord_clone.stats().total_buffered_records
         });
@@ -1696,7 +1840,10 @@ mod cross_workstream_tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(request).await.unwrap();
+        graph_service
+            .create_graph_collection(request)
+            .await
+            .unwrap();
 
         // Add data to both
         let session_id = coordinator
@@ -1705,13 +1852,19 @@ mod cross_workstream_tests {
             .unwrap();
 
         let vectors = create_test_vectors(100, 32);
-        coordinator.push_records(&session_id, vectors).await.unwrap();
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
 
         let node = create_test_node("coord_node", "Test");
         graph_service.create_node("coord_test", node).await.unwrap();
 
         // Flush both
-        graph_service.flush_wal("coord_test").await.expect("Graph WAL flush failed");
+        graph_service
+            .flush_wal("coord_test")
+            .await
+            .expect("Graph WAL flush failed");
 
         // Verify stats
         let stats = coordinator.stats();
@@ -1725,11 +1878,13 @@ mod cross_workstream_tests {
 
 mod stress_tests {
     use super::*;
-    use proximadb::proto::proximadb_v1::VectorRecord;
-    use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
-    use proximadb::graph::service::GraphOperationsService;
     use proximadb::graph::Node;
-    use proximadb::proto::proximadb_v1::{CreateGraphRequest, GraphStorageConfig, CompressionAlgorithm};
+    use proximadb::graph::service::GraphOperationsService;
+    use proximadb::proto::proximadb_v1::VectorRecord;
+    use proximadb::proto::proximadb_v1::{
+        CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
+    };
+    use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
         (0..count)
@@ -1759,12 +1914,18 @@ mod stress_tests {
 
         // Push 1000 vectors
         let vectors = create_test_vectors(1000, 128);
-        let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+        let result = coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
 
         let duration = start.elapsed();
 
         assert_eq!(result.pushed, 1000);
-        assert!(duration.as_millis() < 1000, "Should complete in under 1 second");
+        assert!(
+            duration.as_millis() < 1000,
+            "Should complete in under 1 second"
+        );
     }
 
     #[tokio::test]
@@ -1848,12 +2009,18 @@ mod stress_tests {
             });
         }
 
-        let created = service.batch_create_nodes("stress_graph", nodes).await.unwrap();
+        let created = service
+            .batch_create_nodes("stress_graph", nodes)
+            .await
+            .unwrap();
 
         let duration = start.elapsed();
 
         assert_eq!(created.len(), 100);
-        assert!(duration.as_millis() < 5000, "Should complete in under 5 seconds");
+        assert!(
+            duration.as_millis() < 5000,
+            "Should complete in under 5 seconds"
+        );
 
         // Flush and verify
         service.flush_wal("stress_graph").await.unwrap();

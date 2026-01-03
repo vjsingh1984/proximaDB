@@ -29,7 +29,8 @@ impl BetaDistribution {
 
     /// Sample from the posterior distribution
     pub fn sample(&self) -> f64 {
-        let beta = Beta::new(self.alpha, self.beta).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
+        let beta =
+            Beta::new(self.alpha, self.beta).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
         let mut rng = rand::thread_rng();
         beta.sample(&mut rng)
     }

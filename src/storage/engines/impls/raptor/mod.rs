@@ -100,9 +100,9 @@ pub mod unified_metadata_serializer;
 pub mod writer;
 // ivf_manager removed - obsolete with Matrix Trinity (P² + K² + P×K)
 pub mod artus_bloom;
+pub mod progressive_stages;
 pub mod rowgroup_manager;
-pub mod smart_rowgroup_sizing;
-pub mod progressive_stages; // ISP-compliant progressive search stages
+pub mod smart_rowgroup_sizing; // ISP-compliant progressive search stages
 
 // Re-export commonly used types from common module
 pub use common::{

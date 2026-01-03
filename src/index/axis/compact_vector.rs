@@ -140,11 +140,11 @@ impl CompactVector {
             // For quantized vectors, calculate based on method and dimension
             let method = self.quantization_method();
             match method {
-                Some(0) => dimension,                        // INT8: 1 byte per dimension
-                Some(1) => dimension,                        // PQ8: 1 byte per dimension
-                Some(2) => (dimension * 4).div_ceil(8),      // PQ4: 4 bits per dimension
-                Some(3) => dimension.div_ceil(8),            // Binary: 1 bit per dimension
-                _ => dimension,                              // Default to 1 byte per dimension
+                Some(0) => dimension,                   // INT8: 1 byte per dimension
+                Some(1) => dimension,                   // PQ8: 1 byte per dimension
+                Some(2) => (dimension * 4).div_ceil(8), // PQ4: 4 bits per dimension
+                Some(3) => dimension.div_ceil(8),       // Binary: 1 bit per dimension
+                _ => dimension,                         // Default to 1 byte per dimension
             }
         } else {
             dimension * std::mem::size_of::<f32>()

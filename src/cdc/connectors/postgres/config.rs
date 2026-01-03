@@ -16,8 +16,8 @@
 
 //! PostgreSQL connector configuration
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// PostgreSQL connector configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,11 +336,9 @@ mod tests {
 
     #[test]
     fn test_config_serialization() {
-        let config = PostgresConfig::new("postgres://localhost/db")
-            .with_table(
-                TableConfig::new("public", "users")
-                    .with_primary_key(vec!["id".to_string()]),
-            );
+        let config = PostgresConfig::new("postgres://localhost/db").with_table(
+            TableConfig::new("public", "users").with_primary_key(vec!["id".to_string()]),
+        );
 
         let json = serde_json::to_string(&config).unwrap();
         let parsed: PostgresConfig = serde_json::from_str(&json).unwrap();

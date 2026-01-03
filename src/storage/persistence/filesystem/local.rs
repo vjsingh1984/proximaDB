@@ -62,7 +62,8 @@ pub struct LocalFileSystem {
     config: LocalConfig,
     /// LRU cache for memory-mapped files (thread-safe)
     /// Files above MIN_MMAP_SIZE are cached for faster subsequent reads
-    mmap_cache: parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>>,
+    mmap_cache:
+        parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>>,
 }
 
 impl std::fmt::Debug for LocalFileSystem {
@@ -266,9 +267,9 @@ impl LocalFileSystem {
 
         Ok(Self {
             config,
-            mmap_cache: parking_lot::RwLock::new(
-                crate::utils::cache::LruCache::new(MMAP_CACHE_SIZE),
-            ),
+            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
+                MMAP_CACHE_SIZE,
+            )),
         })
     }
 
@@ -669,10 +670,7 @@ impl FileSystem for LocalFileSystem {
             };
             // Per-file logging removed - too verbose for production
             // Use trace only if debugging specific file issues
-            trace!(
-                "LocalFileSystem entry: '{}' -> {:?}",
-                entry_url, entry_path
-            );
+            trace!("LocalFileSystem entry: '{}' -> {:?}", entry_url, entry_path);
 
             entries.push(DirEntry {
                 name,
@@ -919,10 +917,10 @@ impl FilesystemFile for LocalFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
     use tempfile::TempDir;
     use tracing::{debug, error, info};
-    use std::sync::Mutex;
-    use once_cell::sync::Lazy;
 
     /// Mutex to serialize tests that change the current working directory
     /// This prevents race conditions when tests run in parallel

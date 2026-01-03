@@ -420,8 +420,7 @@ impl ParquetTestDataGenerator {
                 } else {
                     // Add metadata entries
                     keys_builder.append_value("category");
-                    values_builder
-                        .append_value(format!("cat_{}", i % config.metadata_cardinality));
+                    values_builder.append_value(format!("cat_{}", i % config.metadata_cardinality));
                     entry_count += 1;
 
                     keys_builder.append_value("year");

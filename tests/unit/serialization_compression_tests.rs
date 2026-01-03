@@ -10,8 +10,7 @@
 
 use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::serialization::{
-    CompressionAlgorithm, SerializationFormat, VectorHeader,
-    VectorSerializationConfig,
+    CompressionAlgorithm, SerializationFormat, VectorHeader, VectorSerializationConfig,
 };
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;

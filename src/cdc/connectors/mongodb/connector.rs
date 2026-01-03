@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use super::change_event::{ChangeStreamOperation, MongoChangeEvent, ResumeToken};
 use super::config::MongoDbConfig;
@@ -48,10 +48,7 @@ impl MongoDbConnector {
     ) -> CdcResult<Self> {
         mongo_config.validate().map_err(CdcError::Configuration)?;
 
-        let db_name = mongo_config
-            .database
-            .as_deref()
-            .unwrap_or("default");
+        let db_name = mongo_config.database.as_deref().unwrap_or("default");
 
         let source_config = SourceConfig::mongodb(
             &format!("mongodb_{}", db_name),
@@ -84,7 +81,10 @@ impl MongoDbConnector {
     /// Convert MongoDB change event to CDC ChangeEvent
     pub fn to_change_event(&self, mongo_event: &MongoChangeEvent) -> Option<ChangeEvent> {
         // Check if we should capture this collection
-        if !self.mongo_config.should_capture(&mongo_event.ns.db, &mongo_event.ns.coll) {
+        if !self
+            .mongo_config
+            .should_capture(&mongo_event.ns.db, &mongo_event.ns.coll)
+        {
             return None;
         }
 
@@ -99,19 +99,19 @@ impl MongoDbConnector {
             _ => return None,
         };
 
-        let key = mongo_event.get_id().unwrap_or_else(|| "unknown".to_string());
+        let key = mongo_event
+            .get_id()
+            .unwrap_or_else(|| "unknown".to_string());
 
         let source = SourceInfo::mongodb(
             &mongo_event.ns.db,
-            &format!("mongodb_{}", self.mongo_config.database.as_deref().unwrap_or("default")),
+            &format!(
+                "mongodb_{}",
+                self.mongo_config.database.as_deref().unwrap_or("default")
+            ),
         );
 
-        let mut event = ChangeEvent::new(
-            source,
-            operation,
-            mongo_event.collection_name(),
-            key,
-        );
+        let mut event = ChangeEvent::new(source, operation, mongo_event.collection_name(), key);
 
         // Add after state from full document
         if let Some(ref doc) = mongo_event.full_document {
@@ -185,9 +185,10 @@ impl MongoDbConnector {
 
         // Convert to CDC event
         if let Some(change_event) = self.to_change_event(&mongo_event) {
-            event_tx.send(change_event).await.map_err(|e| {
-                CdcError::Coordinator(format!("Failed to send event: {}", e))
-            })?;
+            event_tx
+                .send(change_event)
+                .await
+                .map_err(|e| CdcError::Coordinator(format!("Failed to send event: {}", e)))?;
             return Ok(true);
         }
 
@@ -220,9 +221,10 @@ impl CdcSource for MongoDbConnector {
 
         self.base.set_status(SourceStatus::Streaming);
 
-        Ok(self.base.create_handle().ok_or_else(|| {
-            CdcError::Coordinator("Failed to create source handle".to_string())
-        })?)
+        Ok(self
+            .base
+            .create_handle()
+            .ok_or_else(|| CdcError::Coordinator("Failed to create source handle".to_string()))?)
     }
 
     async fn stop(&mut self) -> CdcResult<()> {
@@ -230,8 +232,8 @@ impl CdcSource for MongoDbConnector {
 
         // Save resume token
         if let Some(token) = self.resume_token.read().await.clone() {
-            let offset = Offset::new(&self.name().to_string(), 0)
-                .with_metadata("resume_token", token.data);
+            let offset =
+                Offset::new(&self.name().to_string(), 0).with_metadata("resume_token", token.data);
             self.offset_store.store(&offset).await?;
         }
 
@@ -252,8 +254,7 @@ impl CdcSource for MongoDbConnector {
     async fn current_offset(&self) -> CdcResult<Option<Offset>> {
         if let Some(token) = self.resume_token.read().await.clone() {
             return Ok(Some(
-                Offset::new(&self.name().to_string(), 0)
-                    .with_metadata("resume_token", token.data),
+                Offset::new(&self.name().to_string(), 0).with_metadata("resume_token", token.data),
             ));
         }
         Ok(None)
@@ -271,8 +272,7 @@ mod tests {
     use crate::cdc::offset::MemoryOffsetStore;
 
     async fn create_test_connector() -> MongoDbConnector {
-        let config = MongoDbConfig::new("mongodb://localhost:27017")
-            .with_database("testdb");
+        let config = MongoDbConfig::new("mongodb://localhost:27017").with_database("testdb");
 
         let offset_store = Arc::new(MemoryOffsetStore::new());
         MongoDbConnector::new(config, offset_store).await.unwrap()
@@ -309,7 +309,10 @@ mod tests {
     #[tokio::test]
     async fn test_connector_config() {
         let connector = create_test_connector().await;
-        assert_eq!(connector.mongo_config().database, Some("testdb".to_string()));
+        assert_eq!(
+            connector.mongo_config().database,
+            Some("testdb".to_string())
+        );
     }
 
     #[tokio::test]
@@ -318,7 +321,9 @@ mod tests {
 
         assert!(connector.resume_token().await.is_none());
 
-        connector.update_resume_token(ResumeToken::new("token123")).await;
+        connector
+            .update_resume_token(ResumeToken::new("token123"))
+            .await;
 
         let token = connector.resume_token().await.unwrap();
         assert_eq!(token.as_str(), "token123");
@@ -401,10 +406,15 @@ mod tests {
 
         assert!(connector.current_offset().await.unwrap().is_none());
 
-        connector.update_resume_token(ResumeToken::new("token_abc")).await;
+        connector
+            .update_resume_token(ResumeToken::new("token_abc"))
+            .await;
 
         let offset = connector.current_offset().await.unwrap().unwrap();
-        assert_eq!(offset.metadata.get("resume_token"), Some(&"token_abc".to_string()));
+        assert_eq!(
+            offset.metadata.get("resume_token"),
+            Some(&"token_abc".to_string())
+        );
     }
 
     #[tokio::test]

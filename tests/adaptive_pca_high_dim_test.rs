@@ -9,14 +9,14 @@
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::SearchParams;
 use proximadb::proto::proximadb_v1::{
-    sql_value, Collection, CollectionConfig, SqlValue, StorageAssignment, StorageEngine,
-    VectorRecord,
+    Collection, CollectionConfig, SqlValue, StorageAssignment, StorageEngine, VectorRecord,
+    sql_value,
 };
+use proximadb::storage::engines::core::formats::proximablocks::spatial_clustering::AdaptivePcaConfig;
 use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
 };
-use proximadb::storage::engines::core::formats::proximablocks::spatial_clustering::AdaptivePcaConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -28,9 +28,7 @@ fn generate_high_dim_vectors(count: usize, dimension: usize, seed: u64) -> Vec<V
 
     (0..count)
         .map(|i| {
-            let vector: Vec<f32> = (0..dimension)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect();
+            let vector: Vec<f32> = (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
 
             let mut metadata = HashMap::new();
             metadata.insert(
@@ -58,10 +56,10 @@ fn generate_high_dim_vectors(count: usize, dimension: usize, seed: u64) -> Vec<V
 fn test_adaptive_pca_dimension_selection() {
     // Test dimension selection for various vector sizes
     let test_cases = vec![
-        (128, 16..=24),   // 128-dim: 16-24 PCA dims
-        (384, 32..=48),   // 384-dim: 32-48 PCA dims
-        (768, 48..=64),   // 768-dim (BGE): 48-64 PCA dims
-        (1536, 64..=64),  // 1536-dim (OpenAI): 64 PCA dims (max)
+        (128, 16..=24),  // 128-dim: 16-24 PCA dims
+        (384, 32..=48),  // 384-dim: 32-48 PCA dims
+        (768, 48..=64),  // 768-dim (BGE): 48-64 PCA dims
+        (1536, 64..=64), // 1536-dim (OpenAI): 64 PCA dims (max)
     ];
 
     for (vector_dim, expected_range) in test_cases {
@@ -128,7 +126,10 @@ async fn test_sst_with_bge_768_embeddings() -> anyhow::Result<()> {
 
     // Verify adaptive PCA will select optimal dimensions
     let pca_config = AdaptivePcaConfig::for_vector_dim(768);
-    println!("🔬 Adaptive PCA: {} → {} dimensions", 768, pca_config.n_components);
+    println!(
+        "🔬 Adaptive PCA: {} → {} dimensions",
+        768, pca_config.n_components
+    );
     assert!(
         pca_config.n_components >= 48 && pca_config.n_components <= 64,
         "BGE-768 should use 48-64 PCA dims"
@@ -192,12 +193,23 @@ async fn test_sst_with_bge_768_embeddings() -> anyhow::Result<()> {
         info!("⚠️ No results found - debugging search");
     } else {
         for (i, result) in results.iter().take(3).enumerate() {
-            info!("  Result {}: id={}, score={:?}", i+1, result.id, result.score);
+            info!(
+                "  Result {}: id={}, score={:?}",
+                i + 1,
+                result.id,
+                result.score
+            );
         }
     }
 
-    println!("✅ BGE-768 test: Found {} results with adaptive PCA", results.len());
-    assert!(!results.is_empty(), "Should find results with 768-dim vectors");
+    println!(
+        "✅ BGE-768 test: Found {} results with adaptive PCA",
+        results.len()
+    );
+    assert!(
+        !results.is_empty(),
+        "Should find results with 768-dim vectors"
+    );
 
     Ok(())
 }
@@ -243,7 +255,10 @@ async fn test_sst_with_openai_1536_embeddings() -> anyhow::Result<()> {
 
     // Verify adaptive PCA selects maximum 64 dimensions
     let pca_config = AdaptivePcaConfig::for_vector_dim(1536);
-    println!("🔬 Adaptive PCA: {} → {} dimensions (max)", 1536, pca_config.n_components);
+    println!(
+        "🔬 Adaptive PCA: {} → {} dimensions (max)",
+        1536, pca_config.n_components
+    );
     assert_eq!(
         pca_config.n_components, 64,
         "OpenAI-1536 should use max 64 PCA dims"
@@ -307,12 +322,23 @@ async fn test_sst_with_openai_1536_embeddings() -> anyhow::Result<()> {
         info!("⚠️ No results found - debugging search");
     } else {
         for (i, result) in results.iter().take(3).enumerate() {
-            info!("  Result {}: id={}, score={:?}", i+1, result.id, result.score);
+            info!(
+                "  Result {}: id={}, score={:?}",
+                i + 1,
+                result.id,
+                result.score
+            );
         }
     }
 
-    println!("✅ OpenAI-1536 test: Found {} results with 64 PCA dims", results.len());
-    assert!(!results.is_empty(), "Should find results with 1536-dim vectors");
+    println!(
+        "✅ OpenAI-1536 test: Found {} results with 64 PCA dims",
+        results.len()
+    );
+    assert!(
+        !results.is_empty(),
+        "Should find results with 1536-dim vectors"
+    );
 
     Ok(())
 }
@@ -323,10 +349,10 @@ async fn test_spatial_code_types_by_dimension() -> anyhow::Result<()> {
 
     // Test automatic code type selection based on dimensions
     let test_cases = vec![
-        (8, 8, CodeType::Bits64),    // 8 dims @ 8 bits = 64 bits
-        (16, 8, CodeType::Bits128),  // 16 dims @ 8 bits = 128 bits
-        (32, 8, CodeType::Bits256),  // 32 dims @ 8 bits = 256 bits
-        (64, 8, CodeType::Bits512),  // 64 dims @ 8 bits = 512 bits
+        (8, 8, CodeType::Bits64),   // 8 dims @ 8 bits = 64 bits
+        (16, 8, CodeType::Bits128), // 16 dims @ 8 bits = 128 bits
+        (32, 8, CodeType::Bits256), // 32 dims @ 8 bits = 256 bits
+        (64, 8, CodeType::Bits512), // 64 dims @ 8 bits = 512 bits
     ];
 
     for (dims, bits_per_dim, expected_type) in test_cases {

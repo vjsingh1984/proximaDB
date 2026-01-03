@@ -25,27 +25,27 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, warn};
 
 use crate::proto::proximadb_streaming_v1::{
-    streaming_service_server::{StreamingService, StreamingServiceServer},
     BackpressureLevel as ProtoBackpressureLevel, BackpressureSignal, BatchError,
     BatchStreamResponse, CloseSessionRequest, CloseSessionResponse, CreateSessionRequest,
     CreateSessionResponse, GetSessionStatusRequest, GetSessionStatusResponse, QueryUpdate,
     QueryUpdateType, SessionConfig as ProtoSessionConfig, SessionState as ProtoSessionState,
-    SessionStats as ProtoSessionStats, StreamInsertRequest, StreamInsertResponse,
-    SubscribeRequest, VectorBatch,
+    SessionStats as ProtoSessionStats, StreamInsertRequest, StreamInsertResponse, SubscribeRequest,
+    VectorBatch,
+    streaming_service_server::{StreamingService, StreamingServiceServer},
 };
 use crate::proto::proximadb_v1::{SearchVectorRecord, VectorRecord};
 use crate::streaming::{
+    BackpressureLevel, SessionConfig, SessionState, StreamConfig, StreamCoordinator, StreamId,
     subscriptions::{
         QueryUpdate as SubQueryUpdate, ResultChange, SubscriptionConfig, SubscriptionManager,
         UpdateType,
     },
-    BackpressureLevel, SessionConfig, SessionState, StreamConfig, StreamCoordinator, StreamId,
 };
 
 /// gRPC Streaming Service implementation
@@ -204,7 +204,10 @@ impl StreamingService for StreamingServiceImpl {
                         // Create session on first message if not using explicit session
                         if session_id.is_none() && request.session_id.is_empty() {
                             match coordinator
-                                .create_session(request.collection.clone(), SessionConfig::default())
+                                .create_session(
+                                    request.collection.clone(),
+                                    SessionConfig::default(),
+                                )
                                 .await
                             {
                                 Ok(id) => {
@@ -526,10 +529,7 @@ impl StreamingService for StreamingServiceImpl {
         {
             Ok(session_id) => {
                 let info = self.coordinator.get_session_info(&session_id);
-                let buffer_size = info
-                    .as_ref()
-                    .map(|s| s.buffer_capacity as u32)
-                    .unwrap_or(0);
+                let buffer_size = info.as_ref().map(|s| s.buffer_capacity as u32).unwrap_or(0);
 
                 info!(
                     session_id = %session_id,

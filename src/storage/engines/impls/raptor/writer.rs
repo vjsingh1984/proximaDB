@@ -2650,7 +2650,7 @@ impl RaptorWriter {
             id: id.clone(),
             vector: fp32_vector.clone(), // Clone for CompactRow, original used for IVF
             quantized_vector,
-            binary_sketch,  // Binary sketch for progressive search (1-bit per dimension)
+            binary_sketch, // Binary sketch for progressive search (1-bit per dimension)
             metadata,
             timestamp: vector.timestamp.unwrap_or(0) as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
@@ -2960,7 +2960,7 @@ impl RaptorWriter {
                 metadata_stats: HashMap::new(),
                 min_timestamp: None,
                 max_timestamp: None,
-                centroid,  // FIXED: Set centroid for EACH rowgroup, not just the last
+                centroid, // FIXED: Set centroid for EACH rowgroup, not just the last
                 centroid_stats: None,
                 bloom_filter_offset: None, // Will be set when bloom filter is written
             };

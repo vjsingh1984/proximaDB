@@ -138,7 +138,11 @@ pub trait ExternalCatalog: Send + Sync {
     }
 
     /// Create a namespace
-    async fn create_namespace(&self, namespace: &str, properties: HashMap<String, String>) -> Result<()>;
+    async fn create_namespace(
+        &self,
+        namespace: &str,
+        properties: HashMap<String, String>,
+    ) -> Result<()>;
 
     /// Drop a namespace
     async fn drop_namespace(&self, namespace: &str) -> Result<()>;
@@ -160,7 +164,11 @@ pub trait ExternalCatalog: Send + Sync {
     async fn get_table_schema(&self, namespace: &str, table: &str) -> Result<ArrowSchema>;
 
     /// Get table properties
-    async fn get_table_properties(&self, namespace: &str, table: &str) -> Result<HashMap<String, String>>;
+    async fn get_table_properties(
+        &self,
+        namespace: &str,
+        table: &str,
+    ) -> Result<HashMap<String, String>>;
 
     /// Get table location (storage path)
     async fn get_table_location(&self, namespace: &str, table: &str) -> Result<String>;
@@ -198,12 +206,20 @@ pub trait ExternalCatalog: Send + Sync {
     // ========================================================================
 
     /// Get table statistics (if available)
-    async fn get_table_statistics(&self, _namespace: &str, _table: &str) -> Result<Option<TableStatistics>> {
+    async fn get_table_statistics(
+        &self,
+        _namespace: &str,
+        _table: &str,
+    ) -> Result<Option<TableStatistics>> {
         Ok(None)
     }
 
     /// Get partition information (if partitioned)
-    async fn get_partition_spec(&self, _namespace: &str, _table: &str) -> Result<Option<Vec<String>>> {
+    async fn get_partition_spec(
+        &self,
+        _namespace: &str,
+        _table: &str,
+    ) -> Result<Option<Vec<String>>> {
         Ok(None)
     }
 

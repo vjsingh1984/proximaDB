@@ -20,8 +20,8 @@
 //! Executes compute plans locally with hardware-accelerated operations.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use anyhow::Result;
 use async_recursion::async_recursion;
@@ -33,8 +33,8 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::compute::plan::{ComputePlan, PlanNode};
 use crate::compute::provider::traits::{
-    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext,
-    ExecutionResult, ProviderMetrics, RecordBatchStream, ResourceUsage,
+    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, ExecutionResult,
+    ProviderMetrics, RecordBatchStream, ResourceUsage,
 };
 
 // ============================================================================
@@ -181,7 +181,8 @@ impl ExecutionState {
         self.cancel_channels.write().remove(id);
 
         if let Some(info) = self.active_executions.write().remove(id) {
-            self.memory_usage.fetch_sub(info.memory_allocated, Ordering::SeqCst);
+            self.memory_usage
+                .fetch_sub(info.memory_allocated, Ordering::SeqCst);
         }
     }
 
@@ -309,13 +310,19 @@ impl LocalComputeProvider {
     /// Estimate cost for a plan node recursively
     fn estimate_node_cost(&self, node: &PlanNode) -> CostEstimate {
         match node {
-            PlanNode::TableScan { filter, columns, .. } => {
+            PlanNode::TableScan {
+                filter, columns, ..
+            } => {
                 // Base cost for table scan
                 let base_cpu = 1.0;
                 let base_io = 10.0;
 
                 // Reduce CPU if fewer columns
-                let column_factor = if columns.is_empty() { 1.0 } else { 0.1 * columns.len() as f64 };
+                let column_factor = if columns.is_empty() {
+                    1.0
+                } else {
+                    0.1 * columns.len() as f64
+                };
 
                 // Reduce rows if filter present
                 let selectivity = if filter.is_some() { 0.3 } else { 1.0 };
@@ -364,7 +371,9 @@ impl LocalComputeProvider {
                 }
             }
 
-            PlanNode::Project { input, expressions, .. } => {
+            PlanNode::Project {
+                input, expressions, ..
+            } => {
                 let input_cost = self.estimate_node_cost(input);
                 CostEstimate {
                     cpu_cost: input_cost.cpu_cost + (0.1 * expressions.len() as f64),
@@ -375,18 +384,22 @@ impl LocalComputeProvider {
                 }
             }
 
-            PlanNode::Aggregate { input, aggregates, .. } => {
+            PlanNode::Aggregate {
+                input, aggregates, ..
+            } => {
                 let input_cost = self.estimate_node_cost(input);
                 CostEstimate {
                     cpu_cost: input_cost.cpu_cost + (5.0 * aggregates.len() as f64),
                     io_cost: input_cost.io_cost,
                     network_cost: input_cost.network_cost,
                     memory_bytes: input_cost.memory_bytes * 2, // Grouping buffers
-                    estimated_rows: 100, // Aggregates typically reduce rows
+                    estimated_rows: 100,                       // Aggregates typically reduce rows
                 }
             }
 
-            PlanNode::Sort { input, order_by, .. } => {
+            PlanNode::Sort {
+                input, order_by, ..
+            } => {
                 let input_cost = self.estimate_node_cost(input);
                 let n = input_cost.estimated_rows as f64;
                 let sort_cost = if n > 0.0 { n * n.log2() } else { 0.0 };
@@ -415,12 +428,15 @@ impl LocalComputeProvider {
                 let right_cost = self.estimate_node_cost(right);
 
                 CostEstimate {
-                    cpu_cost: left_cost.cpu_cost + right_cost.cpu_cost
+                    cpu_cost: left_cost.cpu_cost
+                        + right_cost.cpu_cost
                         + (left_cost.estimated_rows as f64 * 0.1),
                     io_cost: left_cost.io_cost + right_cost.io_cost,
                     network_cost: left_cost.network_cost + right_cost.network_cost,
                     memory_bytes: left_cost.memory_bytes + right_cost.memory_bytes,
-                    estimated_rows: (left_cost.estimated_rows as f64 * right_cost.estimated_rows as f64 * 0.01) as u64,
+                    estimated_rows: (left_cost.estimated_rows as f64
+                        * right_cost.estimated_rows as f64
+                        * 0.01) as u64,
                 }
             }
 
@@ -486,21 +502,34 @@ impl LocalComputeProvider {
         }
 
         match node {
-            PlanNode::TableScan { table, columns, filter } => {
+            PlanNode::TableScan {
+                table,
+                columns,
+                filter,
+            } => {
                 debug!(table = %table, columns = ?columns, has_filter = filter.is_some(), "Executing TableScan");
                 // Placeholder: Return empty stream
                 // In real implementation, this would read from storage layer
                 Ok(empty_stream())
             }
 
-            PlanNode::VectorScan { collection, query_vector, top_k, .. } => {
+            PlanNode::VectorScan {
+                collection,
+                query_vector,
+                top_k,
+                ..
+            } => {
                 debug!(collection = %collection, dim = query_vector.len(), top_k = top_k, "Executing VectorScan");
                 // Placeholder: Return empty stream
                 // In real implementation, this would use HNSW/IVF index
                 Ok(empty_stream())
             }
 
-            PlanNode::GraphScan { graph, start_nodes, traversal } => {
+            PlanNode::GraphScan {
+                graph,
+                start_nodes,
+                traversal,
+            } => {
                 debug!(
                     graph = %graph,
                     start_count = start_nodes.len(),
@@ -512,7 +541,10 @@ impl LocalComputeProvider {
                 Ok(empty_stream())
             }
 
-            PlanNode::Filter { input, predicate: _ } => {
+            PlanNode::Filter {
+                input,
+                predicate: _,
+            } => {
                 debug!("Executing Filter");
                 let input_stream = self.execute_node(input, ctx, _cancel_rx).await?;
                 // Placeholder: Pass through without filtering
@@ -520,7 +552,10 @@ impl LocalComputeProvider {
                 Ok(input_stream)
             }
 
-            PlanNode::Project { input, expressions: _ } => {
+            PlanNode::Project {
+                input,
+                expressions: _,
+            } => {
                 debug!("Executing Project");
                 let input_stream = self.execute_node(input, ctx, _cancel_rx).await?;
                 // Placeholder: Pass through without projection
@@ -528,7 +563,11 @@ impl LocalComputeProvider {
                 Ok(input_stream)
             }
 
-            PlanNode::Aggregate { input, group_by: _, aggregates: _ } => {
+            PlanNode::Aggregate {
+                input,
+                group_by: _,
+                aggregates: _,
+            } => {
                 debug!("Executing Aggregate");
                 let input_stream = self.execute_node(input, ctx, _cancel_rx).await?;
                 // Collect and aggregate
@@ -543,7 +582,11 @@ impl LocalComputeProvider {
                 Ok(input_stream)
             }
 
-            PlanNode::Limit { input, limit, offset } => {
+            PlanNode::Limit {
+                input,
+                limit,
+                offset,
+            } => {
                 debug!(limit = limit, offset = offset, "Executing Limit");
                 let input_stream = self.execute_node(input, ctx, _cancel_rx).await?;
 
@@ -551,9 +594,7 @@ impl LocalComputeProvider {
                 let offset = *offset as usize;
                 let limit = *limit as usize;
 
-                let limited = input_stream
-                    .skip(offset)
-                    .take(limit);
+                let limited = input_stream.skip(offset).take(limit);
 
                 Ok(Box::pin(limited) as RecordBatchStream)
             }
@@ -579,7 +620,10 @@ impl LocalComputeProvider {
                 Ok(Box::pin(combined) as RecordBatchStream)
             }
 
-            PlanNode::Exchange { input, partitioning: _ } => {
+            PlanNode::Exchange {
+                input,
+                partitioning: _,
+            } => {
                 debug!("Executing Exchange (local passthrough)");
                 // For local execution, exchange is a no-op
                 self.execute_node(input, ctx, _cancel_rx).await
@@ -605,11 +649,7 @@ impl ComputeProvider for LocalComputeProvider {
     }
 
     #[instrument(skip(self, plan, ctx), fields(execution_id = %ctx.execution_id))]
-    async fn execute(
-        &self,
-        plan: &ComputePlan,
-        ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult> {
+    async fn execute(&self, plan: &ComputePlan, ctx: &ExecutionContext) -> Result<ExecutionResult> {
         info!(
             plan_id = %plan.id,
             execution_id = %ctx.execution_id,
@@ -618,7 +658,9 @@ impl ComputeProvider for LocalComputeProvider {
 
         // Check memory availability
         let current_memory = self.state.memory_usage.load(Ordering::SeqCst);
-        if current_memory > (self.config.max_memory_bytes as f64 * self.config.spill_threshold) as u64 {
+        if current_memory
+            > (self.config.max_memory_bytes as f64 * self.config.spill_threshold) as u64
+        {
             warn!(
                 current = current_memory,
                 max = self.config.max_memory_bytes,
@@ -718,7 +760,13 @@ impl ComputeProvider for LocalComputeProvider {
         info!("Shutting down LocalComputeProvider");
 
         // Cancel all active executions
-        let execution_ids: Vec<String> = self.state.active_executions.read().keys().cloned().collect();
+        let execution_ids: Vec<String> = self
+            .state
+            .active_executions
+            .read()
+            .keys()
+            .cloned()
+            .collect();
         for id in execution_ids {
             let _ = self.state.cancel_execution(&id);
         }
@@ -734,7 +782,7 @@ impl ComputeProvider for LocalComputeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::plan::{PlanHints, TraversalSpec, TraversalDirection};
+    use crate::compute::plan::{PlanHints, TraversalDirection, TraversalSpec};
 
     fn create_simple_plan() -> ComputePlan {
         ComputePlan {
@@ -847,7 +895,7 @@ mod tests {
                         filter: None,
                     }),
                     predicate: crate::compute::plan::Expr::Literal(
-                        crate::compute::plan::LiteralValue::Bool(true)
+                        crate::compute::plan::LiteralValue::Bool(true),
                     ),
                 }),
                 order_by: vec![crate::compute::plan::SortExpr {

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 /// Storage path utilities for consistent path construction across all engines
 ///
 /// # Multi-Tenant Storage Isolation
@@ -44,7 +42,11 @@ impl StoragePath {
         tenant_id: Option<&str>,
         collection_id: &str,
     ) -> String {
-        format!("{}/{}/data", Self::tenant_prefix(base_url, tenant_id), collection_id)
+        format!(
+            "{}/{}/data",
+            Self::tenant_prefix(base_url, tenant_id),
+            collection_id
+        )
     }
 
     /// Constructs the data directory path for a collection (single-tenant, backward compatible)
@@ -60,7 +62,11 @@ impl StoragePath {
         tenant_id: Option<&str>,
         collection_id: &str,
     ) -> String {
-        format!("{}/{}/wal", Self::tenant_prefix(base_url, tenant_id), collection_id)
+        format!(
+            "{}/{}/wal",
+            Self::tenant_prefix(base_url, tenant_id),
+            collection_id
+        )
     }
 
     /// Constructs the WAL directory path for a collection (single-tenant)
@@ -76,7 +82,11 @@ impl StoragePath {
         tenant_id: Option<&str>,
         collection_id: &str,
     ) -> String {
-        format!("{}/{}/indexes", Self::tenant_prefix(base_url, tenant_id), collection_id)
+        format!(
+            "{}/{}/indexes",
+            Self::tenant_prefix(base_url, tenant_id),
+            collection_id
+        )
     }
 
     /// Constructs the index directory path for a collection (single-tenant)
@@ -92,7 +102,11 @@ impl StoragePath {
         tenant_id: Option<&str>,
         collection_id: &str,
     ) -> String {
-        format!("{}/{}/metadata", Self::tenant_prefix(base_url, tenant_id), collection_id)
+        format!(
+            "{}/{}/metadata",
+            Self::tenant_prefix(base_url, tenant_id),
+            collection_id
+        )
     }
 
     /// Constructs the metadata directory path for a collection (single-tenant)
@@ -108,7 +122,11 @@ impl StoragePath {
         tenant_id: Option<&str>,
         collection_id: &str,
     ) -> String {
-        format!("{}/{}/compaction_staging", Self::tenant_prefix(base_url, tenant_id), collection_id)
+        format!(
+            "{}/{}/compaction_staging",
+            Self::tenant_prefix(base_url, tenant_id),
+            collection_id
+        )
     }
 
     /// Constructs the compaction staging directory path (single-tenant)
@@ -167,7 +185,9 @@ impl StoragePath {
         }
 
         // Search from search_start for the marker
-        path[search_start..].rfind(marker).map(|pos| search_start + pos)
+        path[search_start..]
+            .rfind(marker)
+            .map(|pos| search_start + pos)
     }
 
     /// Parses a full path to extract base URL, optional tenant ID, and collection ID
@@ -178,7 +198,9 @@ impl StoragePath {
     ///
     /// # Returns
     /// Tuple of (base_url, tenant_id, collection_id)
-    pub fn parse_collection_path_with_tenant(full_path: &str) -> Option<(String, Option<String>, String)> {
+    pub fn parse_collection_path_with_tenant(
+        full_path: &str,
+    ) -> Option<(String, Option<String>, String)> {
         // Find the data/wal/indexes marker - must be followed by '/' or end of path
         // We use patterns with trailing slash to avoid matching directory names like /data/
         let marker_pos = Self::find_marker(full_path, "/data/")
@@ -188,7 +210,13 @@ impl StoragePath {
             .or_else(|| Self::find_marker(full_path, "/compaction_staging/"))
             // Also check for markers at end of path (no trailing content)
             .or_else(|| {
-                for marker in &["/data", "/wal", "/indexes", "/metadata", "/compaction_staging"] {
+                for marker in &[
+                    "/data",
+                    "/wal",
+                    "/indexes",
+                    "/metadata",
+                    "/compaction_staging",
+                ] {
                     if full_path.ends_with(marker) {
                         return Some(full_path.len() - marker.len());
                     }
@@ -205,7 +233,11 @@ impl StoragePath {
                 let tenant_id = &after_tenants[..slash_pos];
                 let collection_id = &after_tenants[slash_pos + 1..];
                 let base_url = &base_and_collection[..tenants_pos];
-                return Some((base_url.to_string(), Some(tenant_id.to_string()), collection_id.to_string()));
+                return Some((
+                    base_url.to_string(),
+                    Some(tenant_id.to_string()),
+                    collection_id.to_string(),
+                ));
             }
         }
 
@@ -222,15 +254,14 @@ impl StoragePath {
     /// Parses a full path to extract the base URL and collection ID (backward compatible)
     /// Expects format: {base_url}/{collection_id}/...
     pub fn parse_collection_path(full_path: &str) -> Option<(String, String)> {
-        Self::parse_collection_path_with_tenant(full_path)
-            .map(|(base, tenant, collection)| {
-                // For backward compatibility, include tenant in base_url if present
-                if let Some(tid) = tenant {
-                    (format!("{}/tenants/{}", base, tid), collection)
-                } else {
-                    (base, collection)
-                }
-            })
+        Self::parse_collection_path_with_tenant(full_path).map(|(base, tenant, collection)| {
+            // For backward compatibility, include tenant in base_url if present
+            if let Some(tid) = tenant {
+                (format!("{}/tenants/{}", base, tid), collection)
+            } else {
+                (base, collection)
+            }
+        })
     }
 
     /// Ensures the path uses forward slashes consistently (important for URLs)
@@ -281,19 +312,31 @@ mod tests {
     fn test_tenant_data_path() {
         // With tenant
         assert_eq!(
-            StoragePath::collection_data_path_with_tenant("file:///storage", Some("tenant1"), "test_collection"),
+            StoragePath::collection_data_path_with_tenant(
+                "file:///storage",
+                Some("tenant1"),
+                "test_collection"
+            ),
             "file:///storage/tenants/tenant1/test_collection/data"
         );
 
         // Without tenant (None)
         assert_eq!(
-            StoragePath::collection_data_path_with_tenant("file:///storage", None, "test_collection"),
+            StoragePath::collection_data_path_with_tenant(
+                "file:///storage",
+                None,
+                "test_collection"
+            ),
             "file:///storage/test_collection/data"
         );
 
         // Empty tenant treated as None
         assert_eq!(
-            StoragePath::collection_data_path_with_tenant("file:///storage", Some(""), "test_collection"),
+            StoragePath::collection_data_path_with_tenant(
+                "file:///storage",
+                Some(""),
+                "test_collection"
+            ),
             "file:///storage/test_collection/data"
         );
     }
@@ -301,7 +344,11 @@ mod tests {
     #[test]
     fn test_tenant_wal_path() {
         assert_eq!(
-            StoragePath::collection_wal_path_with_tenant("s3://bucket", Some("acme-corp"), "vectors"),
+            StoragePath::collection_wal_path_with_tenant(
+                "s3://bucket",
+                Some("acme-corp"),
+                "vectors"
+            ),
             "s3://bucket/tenants/acme-corp/vectors/wal"
         );
     }
@@ -309,7 +356,11 @@ mod tests {
     #[test]
     fn test_tenant_index_path() {
         assert_eq!(
-            StoragePath::collection_index_path_with_tenant("file:///data", Some("enterprise"), "embeddings"),
+            StoragePath::collection_index_path_with_tenant(
+                "file:///data",
+                Some("enterprise"),
+                "embeddings"
+            ),
             "file:///data/tenants/enterprise/embeddings/indexes"
         );
     }
@@ -317,7 +368,12 @@ mod tests {
     #[test]
     fn test_tenant_data_file_path() {
         assert_eq!(
-            StoragePath::data_file_path_with_tenant("file:///storage", Some("tenant-x"), "col1", "level0.sst"),
+            StoragePath::data_file_path_with_tenant(
+                "file:///storage",
+                Some("tenant-x"),
+                "col1",
+                "level0.sst"
+            ),
             "file:///storage/tenants/tenant-x/col1/data/level0.sst"
         );
     }
@@ -326,16 +382,18 @@ mod tests {
     fn test_parse_tenant_path() {
         // Multi-tenant path
         let (base, tenant, collection) = StoragePath::parse_collection_path_with_tenant(
-            "file:///storage/tenants/acme-corp/my-collection/data/file.sst"
-        ).unwrap();
+            "file:///storage/tenants/acme-corp/my-collection/data/file.sst",
+        )
+        .unwrap();
         assert_eq!(base, "file:///storage");
         assert_eq!(tenant, Some("acme-corp".to_string()));
         assert_eq!(collection, "my-collection");
 
         // Single-tenant path (no tenant)
         let (base, tenant, collection) = StoragePath::parse_collection_path_with_tenant(
-            "file:///storage/my-collection/data/file.sst"
-        ).unwrap();
+            "file:///storage/my-collection/data/file.sst",
+        )
+        .unwrap();
         assert_eq!(base, "file:///storage");
         assert_eq!(tenant, None);
         assert_eq!(collection, "my-collection");
@@ -361,16 +419,18 @@ mod tests {
     fn test_parse_various_markers() {
         // Test WAL path parsing
         let (base, tenant, collection) = StoragePath::parse_collection_path_with_tenant(
-            "file:///data/tenants/t1/c1/wal/segment.log"
-        ).unwrap();
+            "file:///data/tenants/t1/c1/wal/segment.log",
+        )
+        .unwrap();
         assert_eq!(base, "file:///data");
         assert_eq!(tenant, Some("t1".to_string()));
         assert_eq!(collection, "c1");
 
         // Test indexes path parsing
         let (base, tenant, collection) = StoragePath::parse_collection_path_with_tenant(
-            "s3://bucket/path/my-collection/indexes/hnsw.idx"
-        ).unwrap();
+            "s3://bucket/path/my-collection/indexes/hnsw.idx",
+        )
+        .unwrap();
         assert_eq!(base, "s3://bucket/path");
         assert_eq!(tenant, None);
         assert_eq!(collection, "my-collection");

@@ -27,14 +27,14 @@
 //! - Error handling for invalid graph queries
 //! - Traversal pattern parsing
 
-use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use proximadb::query::facade::{
-    ExecutionMetrics, FacadeConfig, GraphQueryResult, QueryContext, QueryFacadeAdapter,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
-    UnifiedQueryFacade, QueryContent,
+    ExecutionMetrics, FacadeConfig, GraphQueryResult, QueryContent, QueryContext,
+    QueryFacadeAdapter, QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
+    UnifiedQueryFacade,
 };
 
 // ================================================================================
@@ -106,27 +106,22 @@ impl MockGraphStrategy {
                     }
                 }),
             ],
-            paths: vec![
-                serde_json::json!({
-                    "entities": ["node_1", "node_2"],
-                    "relations": [
-                        {
-                            "source": "node_1",
-                            "target": "node_2",
-                            "type": "KNOWS"
-                        }
-                    ]
-                }),
-            ],
+            paths: vec![serde_json::json!({
+                "entities": ["node_1", "node_2"],
+                "relations": [
+                    {
+                        "source": "node_1",
+                        "target": "node_2",
+                        "type": "KNOWS"
+                    }
+                ]
+            })],
             should_parse_error: false,
             should_traversal_error: false,
         }
     }
 
-    fn with_nodes_edges(
-        nodes: Vec<serde_json::Value>,
-        edges: Vec<serde_json::Value>,
-    ) -> Self {
+    fn with_nodes_edges(nodes: Vec<serde_json::Value>, edges: Vec<serde_json::Value>) -> Self {
         Self {
             nodes,
             edges,
@@ -185,16 +180,15 @@ impl QueryStrategy for MockGraphStrategy {
 
         // Simulate traversal error
         if self.should_traversal_error {
-            return Err(anyhow::anyhow!("Graph traversal error: start node not found"));
+            return Err(anyhow::anyhow!(
+                "Graph traversal error: start node not found"
+            ));
         }
 
         // Apply LIMIT if present
         let limit = Self::extract_limit(&query).unwrap_or(100);
-        let limited_nodes: Vec<serde_json::Value> = self.nodes
-            .iter()
-            .take(limit)
-            .cloned()
-            .collect();
+        let limited_nodes: Vec<serde_json::Value> =
+            self.nodes.iter().take(limit).cloned().collect();
 
         Ok(QueryResult {
             data: QueryResultData::Graph(GraphQueryResult {
@@ -242,9 +236,7 @@ impl MockGraphStrategy {
 
 /// Create a test facade with mock graph strategy
 fn create_graph_facade() -> UnifiedQueryFacade {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockGraphStrategy::new()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockGraphStrategy::new())];
     UnifiedQueryFacade::new(strategies, FacadeConfig::default())
 }
 
@@ -259,27 +251,24 @@ fn create_facade_with_graph(
     nodes: Vec<serde_json::Value>,
     edges: Vec<serde_json::Value>,
 ) -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockGraphStrategy::with_nodes_edges(nodes, edges)),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockGraphStrategy::with_nodes_edges(nodes, edges))];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
 
 /// Create a facade that simulates parse errors
 fn create_parse_error_facade() -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockGraphStrategy::with_parse_error()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockGraphStrategy::with_parse_error())];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
 
 /// Create a facade that simulates traversal errors
 fn create_traversal_error_facade() -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockGraphStrategy::with_traversal_error()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockGraphStrategy::with_traversal_error())];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
@@ -342,8 +331,7 @@ async fn test_graph_query_respects_limit() {
 async fn test_graph_query_includes_metrics() {
     let facade = create_graph_facade();
 
-    let request = QueryRequest::graph("MATCH (n:Person)-[:KNOWS]->(m) RETURN n, m")
-        .with_metrics();
+    let request = QueryRequest::graph("MATCH (n:Person)-[:KNOWS]->(m) RETURN n, m").with_metrics();
 
     let result = facade.execute(request).await.unwrap();
 
@@ -374,12 +362,17 @@ async fn test_cypher_patterns() {
     assert!(r2.is_ok());
 
     // Relationship match
-    let r3 = adapter.graph_query("MATCH (a)-[:KNOWS]->(b) RETURN a, b", None).await;
+    let r3 = adapter
+        .graph_query("MATCH (a)-[:KNOWS]->(b) RETURN a, b", None)
+        .await;
     assert!(r3.is_ok());
 
     // Multi-hop pattern
     let r4 = adapter
-        .graph_query("MATCH (a)-[:KNOWS]->(b)-[:WORKS_AT]->(c) RETURN a, b, c", None)
+        .graph_query(
+            "MATCH (a)-[:KNOWS]->(b)-[:WORKS_AT]->(c) RETURN a, b, c",
+            None,
+        )
         .await;
     assert!(r4.is_ok());
 
@@ -435,10 +428,7 @@ async fn test_graph_traversal_error() {
     let adapter = create_traversal_error_facade();
 
     let result = adapter
-        .graph_query(
-            r#"MATCH (n:Person {id: "unknown_node"}) RETURN n"#,
-            None,
-        )
+        .graph_query(r#"MATCH (n:Person {id: "unknown_node"}) RETURN n"#, None)
         .await;
 
     assert!(result.is_err());
@@ -486,7 +476,10 @@ async fn test_graph_response_node_format() {
             // Each node should have id, labels, and properties
             assert!(node.get("id").is_some(), "Node should have id");
             assert!(node.get("labels").is_some(), "Node should have labels");
-            assert!(node.get("properties").is_some(), "Node should have properties");
+            assert!(
+                node.get("properties").is_some(),
+                "Node should have properties"
+            );
 
             // Labels should be an array
             assert!(node.get("labels").unwrap().is_array());
@@ -515,7 +508,10 @@ async fn test_graph_response_edge_format() {
             assert!(edge.get("target").is_some(), "Edge should have target");
             assert!(edge.get("type").is_some(), "Edge should have type");
             assert!(edge.get("weight").is_some(), "Edge should have weight");
-            assert!(edge.get("properties").is_some(), "Edge should have properties");
+            assert!(
+                edge.get("properties").is_some(),
+                "Edge should have properties"
+            );
         }
     }
 }
@@ -534,7 +530,10 @@ async fn test_graph_response_path_format() {
         for path in &graph.paths {
             // Each path should have entities and relations
             assert!(path.get("entities").is_some(), "Path should have entities");
-            assert!(path.get("relations").is_some(), "Path should have relations");
+            assert!(
+                path.get("relations").is_some(),
+                "Path should have relations"
+            );
 
             // Entities should be an array
             assert!(path.get("entities").unwrap().is_array());
@@ -727,7 +726,10 @@ async fn test_unified_facade_routing_graph_concept() {
     "#;
 
     // Handler routes through adapter
-    let result = adapter.graph_query(cypher, Some("social_graph")).await.unwrap();
+    let result = adapter
+        .graph_query(cypher, Some("social_graph"))
+        .await
+        .unwrap();
 
     // Verify result structure
     if let QueryResultData::Graph(graph) = result.data {
@@ -745,43 +747,42 @@ async fn test_unified_facade_routing_graph_concept() {
 /// Test graph query with properties in response
 #[tokio::test]
 async fn test_graph_response_with_properties() {
-    let nodes = vec![
-        serde_json::json!({
-            "id": "person_1",
-            "labels": ["Person", "Employee"],
-            "properties": {
-                "name": "John Doe",
-                "age": 35,
-                "email": "john@example.com",
-                "skills": ["rust", "python", "go"],
-                "active": true,
-                "metadata": {
-                    "created_at": "2024-01-01",
-                    "department": "Engineering"
-                }
+    let nodes = vec![serde_json::json!({
+        "id": "person_1",
+        "labels": ["Person", "Employee"],
+        "properties": {
+            "name": "John Doe",
+            "age": 35,
+            "email": "john@example.com",
+            "skills": ["rust", "python", "go"],
+            "active": true,
+            "metadata": {
+                "created_at": "2024-01-01",
+                "department": "Engineering"
             }
-        }),
-    ];
+        }
+    })];
 
-    let edges = vec![
-        serde_json::json!({
-            "id": "rel_1",
-            "source": "person_1",
-            "target": "company_1",
-            "type": "WORKS_AT",
-            "weight": 1.0,
-            "properties": {
-                "since": "2020-01-15",
-                "title": "Senior Engineer",
-                "full_time": true
-            }
-        }),
-    ];
+    let edges = vec![serde_json::json!({
+        "id": "rel_1",
+        "source": "person_1",
+        "target": "company_1",
+        "type": "WORKS_AT",
+        "weight": 1.0,
+        "properties": {
+            "since": "2020-01-15",
+            "title": "Senior Engineer",
+            "full_time": true
+        }
+    })];
 
     let adapter = create_facade_with_graph(nodes, edges);
 
     let result = adapter
-        .graph_query("MATCH (p:Person)-[r:WORKS_AT]->(c:Company) RETURN p, r, c", None)
+        .graph_query(
+            "MATCH (p:Person)-[r:WORKS_AT]->(c:Company) RETURN p, r, c",
+            None,
+        )
         .await
         .unwrap();
 

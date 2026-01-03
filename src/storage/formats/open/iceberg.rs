@@ -64,7 +64,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_schema::{DataType as ArrowDataType, Field, Schema as ArrowSchema};
 use async_trait::async_trait;
@@ -77,9 +77,9 @@ use tracing::{debug, info, warn};
 
 use super::StorageOptions;
 use crate::storage::formats::{
-    CompressionCodec, FileEntry, FormatType, MergeAction, OptimizeContext, OptimizeResult,
-    ReadContext, RecordBatchStream, Snapshot, StorageFormat, OpenTableFormat,
-    VectorBatchStream, VectorReadContext, WriteContext, WriteMode,
+    CompressionCodec, FileEntry, FormatType, MergeAction, OpenTableFormat, OptimizeContext,
+    OptimizeResult, ReadContext, RecordBatchStream, Snapshot, StorageFormat, VectorBatchStream,
+    VectorReadContext, WriteContext, WriteMode,
 };
 
 // ============================================================================
@@ -155,7 +155,9 @@ impl IcebergConfig {
     /// Create config for REST catalog
     pub fn rest(uri: &str, warehouse: &str, table: &str) -> Self {
         Self {
-            catalog: CatalogType::Rest { uri: uri.to_string() },
+            catalog: CatalogType::Rest {
+                uri: uri.to_string(),
+            },
             table_identifier: table.to_string(),
             storage_options: StorageOptions {
                 url: warehouse.to_string(),
@@ -192,7 +194,9 @@ impl IcebergConfig {
     /// Create config for Hive Metastore
     pub fn hive(uri: &str, table: &str) -> Self {
         Self {
-            catalog: CatalogType::Hive { uri: uri.to_string() },
+            catalog: CatalogType::Hive {
+                uri: uri.to_string(),
+            },
             table_identifier: table.to_string(),
             ..Default::default()
         }
@@ -522,9 +526,7 @@ impl IcebergFormat {
                 // Hadoop-style: warehouse/namespace/table
                 let parts: Vec<&str> = self.config.table_identifier.split('.').collect();
                 let table_path = if parts.len() >= 2 {
-                    Path::new(warehouse_path)
-                        .join(parts[0])
-                        .join(parts[1])
+                    Path::new(warehouse_path).join(parts[0]).join(parts[1])
                 } else {
                     Path::new(warehouse_path).join(&self.config.table_identifier)
                 };
@@ -539,15 +541,27 @@ impl IcebergFormat {
             CatalogType::Rest { uri } => {
                 // REST catalog would make HTTP call to get table location
                 // Simplified: assume table identifier is the path
-                info!("REST catalog at {}, table: {}", uri, self.config.table_identifier);
+                info!(
+                    "REST catalog at {}, table: {}",
+                    uri, self.config.table_identifier
+                );
                 *self.table_location.write() = Some(self.config.table_identifier.clone());
             }
-            CatalogType::Glue { database, region: _ } => {
-                info!("Glue catalog database: {}, table: {}", database, self.config.table_identifier);
+            CatalogType::Glue {
+                database,
+                region: _,
+            } => {
+                info!(
+                    "Glue catalog database: {}, table: {}",
+                    database, self.config.table_identifier
+                );
                 *self.table_location.write() = Some(self.config.table_identifier.clone());
             }
             CatalogType::Hive { uri } => {
-                info!("Hive catalog at {}, table: {}", uri, self.config.table_identifier);
+                info!(
+                    "Hive catalog at {}, table: {}",
+                    uri, self.config.table_identifier
+                );
                 *self.table_location.write() = Some(self.config.table_identifier.clone());
             }
         }
@@ -556,7 +570,8 @@ impl IcebergFormat {
 
     /// Get table location
     fn get_table_location(&self) -> Result<String> {
-        self.table_location.read()
+        self.table_location
+            .read()
             .clone()
             .ok_or_else(|| anyhow!("Table location not resolved"))
     }
@@ -627,7 +642,8 @@ impl IcebergFormat {
 
     /// Convert Iceberg schema to Arrow schema
     fn iceberg_schema_to_arrow(&self, schema: &IcebergSchema) -> Result<ArrowSchema> {
-        let fields: Vec<Field> = schema.fields
+        let fields: Vec<Field> = schema
+            .fields
             .iter()
             .map(|f| {
                 let arrow_type = self.iceberg_type_to_arrow(&f.field_type);
@@ -666,19 +682,31 @@ impl IcebergFormat {
                         "list" => {
                             if let Some(element) = obj.get("element-type") {
                                 let element_type = self.iceberg_type_to_arrow(element);
-                                ArrowDataType::List(Arc::new(Field::new("item", element_type, true)))
+                                ArrowDataType::List(Arc::new(Field::new(
+                                    "item",
+                                    element_type,
+                                    true,
+                                )))
                             } else {
-                                ArrowDataType::List(Arc::new(Field::new("item", ArrowDataType::Utf8, true)))
+                                ArrowDataType::List(Arc::new(Field::new(
+                                    "item",
+                                    ArrowDataType::Utf8,
+                                    true,
+                                )))
                             }
                         }
                         "map" => ArrowDataType::Utf8, // Simplified
                         "struct" => {
                             if let Some(serde_json::Value::Array(fields)) = obj.get("fields") {
-                                let arrow_fields: Vec<Field> = fields.iter()
+                                let arrow_fields: Vec<Field> = fields
+                                    .iter()
                                     .filter_map(|f| {
                                         let name = f.get("name")?.as_str()?;
                                         let field_type = f.get("type")?;
-                                        let required = f.get("required").and_then(|r| r.as_bool()).unwrap_or(false);
+                                        let required = f
+                                            .get("required")
+                                            .and_then(|r| r.as_bool())
+                                            .unwrap_or(false);
                                         let arrow_type = self.iceberg_type_to_arrow(field_type);
                                         Some(Field::new(name, arrow_type, !required))
                                     })
@@ -689,12 +717,10 @@ impl IcebergFormat {
                             }
                         }
                         "decimal" => {
-                            let precision = obj.get("precision")
-                                .and_then(|p| p.as_u64())
-                                .unwrap_or(38) as u8;
-                            let scale = obj.get("scale")
-                                .and_then(|s| s.as_i64())
-                                .unwrap_or(0) as i8;
+                            let precision =
+                                obj.get("precision").and_then(|p| p.as_u64()).unwrap_or(38) as u8;
+                            let scale =
+                                obj.get("scale").and_then(|s| s.as_i64()).unwrap_or(0) as i8;
                             ArrowDataType::Decimal128(precision, scale)
                         }
                         _ => ArrowDataType::Utf8,
@@ -709,7 +735,8 @@ impl IcebergFormat {
 
     /// Convert Arrow schema to Iceberg schema
     fn arrow_schema_to_iceberg(&self, schema: &ArrowSchema) -> Result<IcebergSchema> {
-        let fields: Vec<IcebergField> = schema.fields()
+        let fields: Vec<IcebergField> = schema
+            .fields()
             .iter()
             .enumerate()
             .map(|(i, f)| {
@@ -761,17 +788,28 @@ impl IcebergFormat {
     }
 
     /// Get current snapshot from metadata
-    fn get_current_iceberg_snapshot<'a>(&self, metadata: &'a TableMetadata) -> Option<&'a IcebergSnapshot> {
-        metadata.current_snapshot_id.and_then(move |id| {
-            metadata.snapshots.iter().find(|s| s.snapshot_id == id)
-        })
+    fn get_current_iceberg_snapshot<'a>(
+        &self,
+        metadata: &'a TableMetadata,
+    ) -> Option<&'a IcebergSnapshot> {
+        metadata
+            .current_snapshot_id
+            .and_then(move |id| metadata.snapshots.iter().find(|s| s.snapshot_id == id))
     }
 
     /// Convert Iceberg snapshot to public Snapshot type
-    async fn to_public_snapshot(&self, iceberg_snap: &IcebergSnapshot, metadata: &TableMetadata) -> Result<Snapshot> {
+    async fn to_public_snapshot(
+        &self,
+        iceberg_snap: &IcebergSnapshot,
+        metadata: &TableMetadata,
+    ) -> Result<Snapshot> {
         // Get schema for this snapshot
-        let schema = metadata.schemas.iter()
-            .find(|s| Some(s.schema_id) == iceberg_snap.schema_id || iceberg_snap.schema_id.is_none())
+        let schema = metadata
+            .schemas
+            .iter()
+            .find(|s| {
+                Some(s.schema_id) == iceberg_snap.schema_id || iceberg_snap.schema_id.is_none()
+            })
             .ok_or_else(|| anyhow!("Schema not found for snapshot"))?;
 
         // Load manifest list and get files
@@ -792,7 +830,10 @@ impl IcebergFormat {
         let manifest_list_path = if snapshot.manifest_list.starts_with('/') {
             snapshot.manifest_list.clone()
         } else {
-            Path::new(&location).join(&snapshot.manifest_list).to_string_lossy().to_string()
+            Path::new(&location)
+                .join(&snapshot.manifest_list)
+                .to_string_lossy()
+                .to_string()
         };
 
         // For now, return empty - would need to read Avro manifest list
@@ -927,7 +968,9 @@ impl StorageFormat for IcebergFormat {
 
     async fn infer_schema(&self, _path: &str) -> Result<ArrowSchema> {
         let metadata = self.get_metadata().await?;
-        let schema = metadata.schemas.iter()
+        let schema = metadata
+            .schemas
+            .iter()
             .find(|s| s.schema_id == metadata.current_schema_id)
             .ok_or_else(|| anyhow!("Current schema not found"))?;
         self.iceberg_schema_to_arrow(schema)
@@ -942,10 +985,17 @@ impl StorageFormat for IcebergFormat {
     }
 
     fn supports_feature(&self, feature: &str) -> bool {
-        matches!(feature,
-            "acid" | "time_travel" | "schema_evolution" |
-            "partitioning" | "hidden_partitioning" | "merge" |
-            "delete" | "update" | "row_level_deletes"
+        matches!(
+            feature,
+            "acid"
+                | "time_travel"
+                | "schema_evolution"
+                | "partitioning"
+                | "hidden_partitioning"
+                | "merge"
+                | "delete"
+                | "update"
+                | "row_level_deletes"
         )
     }
 }
@@ -958,14 +1008,17 @@ impl StorageFormat for IcebergFormat {
 impl OpenTableFormat for IcebergFormat {
     async fn get_current_snapshot(&self, _table_path: &str) -> Result<Snapshot> {
         let metadata = self.get_metadata().await?;
-        let iceberg_snap = self.get_current_iceberg_snapshot(&metadata)
+        let iceberg_snap = self
+            .get_current_iceberg_snapshot(&metadata)
             .ok_or_else(|| anyhow!("No current snapshot"))?;
         self.to_public_snapshot(iceberg_snap, &metadata).await
     }
 
     async fn get_snapshot_at(&self, _table_path: &str, version: i64) -> Result<Snapshot> {
         let metadata = self.get_metadata().await?;
-        let iceberg_snap = metadata.snapshots.iter()
+        let iceberg_snap = metadata
+            .snapshots
+            .iter()
             .find(|s| s.snapshot_id == version)
             .ok_or_else(|| anyhow!("Snapshot {} not found", version))?;
         self.to_public_snapshot(iceberg_snap, &metadata).await
@@ -980,15 +1033,25 @@ impl OpenTableFormat for IcebergFormat {
         Ok(metadata.snapshots.iter().map(|s| s.snapshot_id).collect())
     }
 
-    async fn read_snapshot(&self, snapshot: &Snapshot, ctx: &ReadContext) -> Result<RecordBatchStream> {
+    async fn read_snapshot(
+        &self,
+        snapshot: &Snapshot,
+        ctx: &ReadContext,
+    ) -> Result<RecordBatchStream> {
         // Get list of Parquet files to read
         let location = self.get_table_location()?;
-        let files: Vec<String> = snapshot.files.iter()
+        let files: Vec<String> = snapshot
+            .files
+            .iter()
             .map(|f| {
                 if f.path.starts_with('/') || f.path.starts_with("s3://") {
                     f.path.clone()
                 } else {
-                    Path::new(&location).join("data").join(&f.path).to_string_lossy().to_string()
+                    Path::new(&location)
+                        .join("data")
+                        .join(&f.path)
+                        .to_string_lossy()
+                        .to_string()
                 }
             })
             .collect();
@@ -1000,28 +1063,36 @@ impl OpenTableFormat for IcebergFormat {
         let batch_size = ctx.batch_size;
         let projection = ctx.projection.clone();
 
-        let batches_stream = stream::iter(files)
-            .then(move |file_path| {
-                let projection = projection.clone();
-                async move {
-                    Self::read_parquet_file(&file_path, batch_size, projection.as_ref()).await
-                }
-            })
-            .flat_map(|result| {
-                match result {
+        let batches_stream =
+            stream::iter(files)
+                .then(move |file_path| {
+                    let projection = projection.clone();
+                    async move {
+                        Self::read_parquet_file(&file_path, batch_size, projection.as_ref()).await
+                    }
+                })
+                .flat_map(|result| match result {
                     Ok(batches) => stream::iter(batches.into_iter().map(Ok)).boxed(),
                     Err(e) => stream::once(async move { Err(e) }).boxed(),
-                }
-            });
+                });
 
         Ok(Box::pin(batches_stream))
     }
 
-    async fn read_snapshot_vectors(&self, _snapshot: &Snapshot, _ctx: &VectorReadContext) -> Result<Option<VectorBatchStream>> {
+    async fn read_snapshot_vectors(
+        &self,
+        _snapshot: &Snapshot,
+        _ctx: &VectorReadContext,
+    ) -> Result<Option<VectorBatchStream>> {
         Ok(None)
     }
 
-    async fn write_atomic(&self, _table_path: &str, batches: Vec<RecordBatch>, ctx: &WriteContext) -> Result<Snapshot> {
+    async fn write_atomic(
+        &self,
+        _table_path: &str,
+        batches: Vec<RecordBatch>,
+        ctx: &WriteContext,
+    ) -> Result<Snapshot> {
         // Create table if needed
         let metadata = match self.get_metadata().await {
             Ok(m) => m,
@@ -1070,7 +1141,11 @@ impl OpenTableFormat for IcebergFormat {
 
         // Create new snapshot
         let new_snapshot_id = Utc::now().timestamp_millis();
-        let manifest_list_path = format!("metadata/snap-{}-{}.avro", new_snapshot_id, uuid::Uuid::new_v4());
+        let manifest_list_path = format!(
+            "metadata/snap-{}-{}.avro",
+            new_snapshot_id,
+            uuid::Uuid::new_v4()
+        );
 
         let operation = match ctx.mode {
             WriteMode::Append => "append",
@@ -1135,7 +1210,8 @@ impl OpenTableFormat for IcebergFormat {
         _not_matched_action: MergeAction,
     ) -> Result<Snapshot> {
         warn!("MERGE INTO not fully implemented for Iceberg");
-        self.get_current_snapshot(&self.config.table_identifier).await
+        self.get_current_snapshot(&self.config.table_identifier)
+            .await
     }
 
     async fn time_travel(&self, _table_path: &str, timestamp: DateTime<Utc>) -> Result<Snapshot> {
@@ -1143,7 +1219,9 @@ impl OpenTableFormat for IcebergFormat {
         let target_ms = timestamp.timestamp_millis();
 
         // Find snapshot closest to (but not after) timestamp
-        let snap = metadata.snapshots.iter()
+        let snap = metadata
+            .snapshots
+            .iter()
             .filter(|s| s.timestamp_ms <= target_ms)
             .max_by_key(|s| s.timestamp_ms)
             .ok_or_else(|| anyhow!("No snapshot found for timestamp {}", timestamp))?;
@@ -1155,7 +1233,9 @@ impl OpenTableFormat for IcebergFormat {
         let metadata = self.get_metadata().await?;
 
         // Find the snapshot
-        let old_snap = metadata.snapshots.iter()
+        let old_snap = metadata
+            .snapshots
+            .iter()
             .find(|s| s.snapshot_id == version)
             .ok_or_else(|| anyhow!("Snapshot {} not found", version))?
             .clone();
@@ -1213,14 +1293,19 @@ impl OpenTableFormat for IcebergFormat {
         let cutoff = Utc::now().timestamp_millis() - (retention_hours * 3600 * 1000) as i64;
 
         // Find snapshots to expire
-        let expired: Vec<_> = metadata.snapshots.iter()
+        let expired: Vec<_> = metadata
+            .snapshots
+            .iter()
             .filter(|s| {
-                s.timestamp_ms < cutoff &&
-                Some(s.snapshot_id) != metadata.current_snapshot_id
+                s.timestamp_ms < cutoff && Some(s.snapshot_id) != metadata.current_snapshot_id
             })
             .collect();
 
-        info!("Would expire {} snapshots older than {} hours", expired.len(), retention_hours);
+        info!(
+            "Would expire {} snapshots older than {} hours",
+            expired.len(),
+            retention_hours
+        );
 
         // In production, would:
         // 1. Remove expired snapshots from metadata
@@ -1232,12 +1317,16 @@ impl OpenTableFormat for IcebergFormat {
 
     async fn get_schema_at(&self, _table_path: &str, version: i64) -> Result<ArrowSchema> {
         let metadata = self.get_metadata().await?;
-        let snap = metadata.snapshots.iter()
+        let snap = metadata
+            .snapshots
+            .iter()
             .find(|s| s.snapshot_id == version)
             .ok_or_else(|| anyhow!("Snapshot {} not found", version))?;
 
         let schema_id = snap.schema_id.unwrap_or(metadata.current_schema_id);
-        let schema = metadata.schemas.iter()
+        let schema = metadata
+            .schemas
+            .iter()
             .find(|s| s.schema_id == schema_id)
             .ok_or_else(|| anyhow!("Schema {} not found", schema_id))?;
 
@@ -1248,16 +1337,21 @@ impl OpenTableFormat for IcebergFormat {
         let mut metadata = self.get_metadata().await?;
 
         // Create new schema
-        let new_schema_id = metadata.schemas.iter()
+        let new_schema_id = metadata
+            .schemas
+            .iter()
             .map(|s| s.schema_id)
             .max()
-            .unwrap_or(0) + 1;
+            .unwrap_or(0)
+            + 1;
 
         let mut iceberg_schema = self.arrow_schema_to_iceberg(new_schema)?;
         iceberg_schema.schema_id = new_schema_id;
 
         // Update last column ID
-        let max_field_id = iceberg_schema.fields.iter()
+        let max_field_id = iceberg_schema
+            .fields
+            .iter()
             .map(|f| f.id)
             .max()
             .unwrap_or(0);
@@ -1294,18 +1388,15 @@ impl IcebergFormat {
         use std::fs::File;
 
         let file = File::open(path)?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?
-            .with_batch_size(batch_size);
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?.with_batch_size(batch_size);
 
         let reader = if let Some(cols) = projection {
             let schema = builder.schema();
-            let indices: Vec<usize> = cols.iter()
+            let indices: Vec<usize> = cols
+                .iter()
                 .filter_map(|name| schema.index_of(name).ok())
                 .collect();
-            let mask = parquet::arrow::ProjectionMask::roots(
-                builder.parquet_schema(),
-                indices,
-            );
+            let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), indices);
             builder.with_projection(mask).build()?
         } else {
             builder.build()?
@@ -1374,15 +1465,13 @@ mod tests {
         let schema = IcebergSchema {
             schema_id: 0,
             schema_type: "struct".to_string(),
-            fields: vec![
-                IcebergField {
-                    id: 1,
-                    name: "id".to_string(),
-                    field_type: serde_json::json!("long"),
-                    required: true,
-                    doc: None,
-                },
-            ],
+            fields: vec![IcebergField {
+                id: 1,
+                name: "id".to_string(),
+                field_type: serde_json::json!("long"),
+                required: true,
+                doc: None,
+            }],
             identifier_field_ids: vec![1],
         };
 
@@ -1395,14 +1484,12 @@ mod tests {
     fn test_partition_spec_serialization() {
         let spec = PartitionSpec {
             spec_id: 0,
-            fields: vec![
-                PartitionField {
-                    field_id: 1000,
-                    source_id: 4,
-                    name: "ts_day".to_string(),
-                    transform: "day".to_string(),
-                },
-            ],
+            fields: vec![PartitionField {
+                field_id: 1000,
+                source_id: 4,
+                name: "ts_day".to_string(),
+                transform: "day".to_string(),
+            }],
         };
 
         let json = serde_json::to_string(&spec).unwrap();

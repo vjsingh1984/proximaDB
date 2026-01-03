@@ -106,10 +106,7 @@ pub enum DocumentOperation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ObservabilityOperation {
     /// Write a log entry
-    WriteLog {
-        namespace: String,
-        log: LogEntry,
-    },
+    WriteLog { namespace: String, log: LogEntry },
     /// Write a batch of logs
     WriteLogs {
         namespace: String,
@@ -472,14 +469,22 @@ impl UnifiedWALReader {
         }
 
         let data = fs.read(&url).await?;
-        tracing::debug!("Reading WAL segment {}: {} total bytes", segment_number, data.len());
+        tracing::debug!(
+            "Reading WAL segment {}: {} total bytes",
+            segment_number,
+            data.len()
+        );
         let mut entries = Vec::new();
         let mut cursor = 0;
 
         while cursor < data.len() {
             // Read size header
             if cursor + 4 > data.len() {
-                tracing::debug!("End of WAL segment at cursor {}, {} bytes remaining", cursor, data.len() - cursor);
+                tracing::debug!(
+                    "End of WAL segment at cursor {}, {} bytes remaining",
+                    cursor,
+                    data.len() - cursor
+                );
                 break;
             }
 
@@ -532,7 +537,11 @@ impl UnifiedWALReader {
                     );
                     // Log first few bytes for debugging
                     let preview = &entry_data[..entry_data.len().min(32)];
-                    tracing::debug!("Entry data preview (first {} bytes): {:?}", preview.len(), preview);
+                    tracing::debug!(
+                        "Entry data preview (first {} bytes): {:?}",
+                        preview.len(),
+                        preview
+                    );
                     // Continue trying to read more entries
                 }
             }

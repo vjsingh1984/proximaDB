@@ -74,19 +74,19 @@
 use std::sync::Arc;
 
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Path, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb_v1::{sql_value, SqlValue, VectorRecord};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::streaming::{
     BackpressureLevel, SessionConfig, StreamConfig, StreamCoordinator, StreamId,
 };
@@ -338,7 +338,10 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
     let session_info = state.coordinator.get_session_info(&session_id);
     let created_msg = ServerMessage::SessionCreated(SessionCreatedMessage {
         session_id: session_id.to_string(),
-        buffer_size: session_info.as_ref().map(|s| s.buffer_capacity as u32).unwrap_or(10000),
+        buffer_size: session_info
+            .as_ref()
+            .map(|s| s.buffer_capacity as u32)
+            .unwrap_or(10000),
         expires_in_seconds: state.coordinator.config().session_timeout.as_secs() as u32,
     });
     if sender
@@ -364,7 +367,10 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                             .into_iter()
                             .map(|v| {
                                 // Convert JSON metadata to SqlValue map
-                                let metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = v
+                                let metadata: std::collections::HashMap<
+                                    String,
+                                    crate::proto::proximadb_v1::SqlValue,
+                                > = v
                                     .metadata
                                     .into_iter()
                                     .map(|(k, v)| {
@@ -486,30 +492,28 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, state: W
     // Wait for subscribe message
     let subscribe_msg = loop {
         match receiver.next().await {
-            Some(Ok(Message::Text(text))) => {
-                match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(ClientMessage::Subscribe(msg)) => break msg,
-                    Ok(ClientMessage::Close) => return,
-                    Ok(_) => {
-                        let error_msg = ServerMessage::Error(ErrorMessage {
-                            code: "EXPECTED_SUBSCRIBE".to_string(),
-                            message: "First message must be a subscribe message".to_string(),
-                        });
-                        let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                            .await;
-                    }
-                    Err(e) => {
-                        let error_msg = ServerMessage::Error(ErrorMessage {
-                            code: "PARSE_ERROR".to_string(),
-                            message: e.to_string(),
-                        });
-                        let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                            .await;
-                    }
+            Some(Ok(Message::Text(text))) => match serde_json::from_str::<ClientMessage>(&text) {
+                Ok(ClientMessage::Subscribe(msg)) => break msg,
+                Ok(ClientMessage::Close) => return,
+                Ok(_) => {
+                    let error_msg = ServerMessage::Error(ErrorMessage {
+                        code: "EXPECTED_SUBSCRIBE".to_string(),
+                        message: "First message must be a subscribe message".to_string(),
+                    });
+                    let _ = sender
+                        .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
+                        .await;
                 }
-            }
+                Err(e) => {
+                    let error_msg = ServerMessage::Error(ErrorMessage {
+                        code: "PARSE_ERROR".to_string(),
+                        message: e.to_string(),
+                    });
+                    let _ = sender
+                        .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
+                        .await;
+                }
+            },
             Some(Ok(Message::Close(_))) | None => return,
             _ => {}
         }

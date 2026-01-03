@@ -51,13 +51,11 @@
 //! Strategy Strategy Strategy
 //! ```
 
-pub mod test_vector_through_facade;
-pub mod test_sql_through_facade;
 pub mod test_graph_through_facade;
+pub mod test_sql_through_facade;
+pub mod test_vector_through_facade;
 
 /// REST/gRPC parity tests - validates consistent results between API protocols
-/// This module requires the unified-facade-routing feature flag
-#[cfg(feature = "unified-facade-routing")]
 pub mod test_rest_grpc_parity;
 
 /// Explain plan consistency tests - validates explain plan format across query types

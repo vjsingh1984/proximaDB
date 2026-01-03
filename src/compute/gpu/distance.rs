@@ -16,14 +16,14 @@
 //! The module automatically detects available GPU backends and selects
 //! the most appropriate one for optimal performance.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 // Import DistanceMetric from proto module
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
 use crate::core::hardware_capabilities::{
-    get_hardware_capabilities, GpuBackend, GpuDevice, HardwareCapabilities,
+    GpuBackend, GpuDevice, HardwareCapabilities, get_hardware_capabilities,
 };
 use crate::proto::proximadb_v1::DistanceMetric;
 
@@ -553,8 +553,7 @@ impl GpuDistanceCompute {
         use metal::{Device, MTLResourceOptions, MTLSize};
         use std::ffi::c_void;
 
-        let device = Device::system_default()
-            .ok_or_else(|| anyhow!("No Metal device found"))?;
+        let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
 
         let num_vectors = vectors.len();
         if num_vectors == 0 {
@@ -666,9 +665,8 @@ impl GpuDistanceCompute {
 
         // Read results back
         let results_ptr = results_buffer.contents() as *const f32;
-        let results: Vec<f32> = unsafe {
-            std::slice::from_raw_parts(results_ptr, num_vectors).to_vec()
-        };
+        let results: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(results_ptr, num_vectors).to_vec() };
 
         debug!(
             "MPS batch distance: {} vectors x {}D, metric={:?}",
@@ -689,8 +687,7 @@ impl GpuDistanceCompute {
         use metal::{Device, MTLResourceOptions, MTLSize};
         use std::ffi::c_void;
 
-        let device = Device::system_default()
-            .ok_or_else(|| anyhow!("No Metal device found"))?;
+        let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
 
         let num_vectors = vectors.len();
         if num_vectors == 0 {
@@ -733,7 +730,8 @@ impl GpuDistanceCompute {
 
         // For cosine, we also need pre-computed norms
         let norms_buffer = if matches!(metric, DistanceMetric::Cosine) {
-            let norms: Vec<f32> = vectors.iter()
+            let norms: Vec<f32> = vectors
+                .iter()
                 .map(|v| v.iter().map(|x| x * x).sum::<f32>().sqrt())
                 .collect();
             Some(device.new_buffer_with_data(
@@ -814,8 +812,10 @@ impl GpuDistanceCompute {
 
         // Total threads needed
         let num_threadgroups = MTLSize {
-            width: ((num_vectors as u64 + threads_per_threadgroup.width - 1) / threads_per_threadgroup.width),
-            height: ((num_vectors as u64 + threads_per_threadgroup.height - 1) / threads_per_threadgroup.height),
+            width: ((num_vectors as u64 + threads_per_threadgroup.width - 1)
+                / threads_per_threadgroup.width),
+            height: ((num_vectors as u64 + threads_per_threadgroup.height - 1)
+                / threads_per_threadgroup.height),
             depth: 1,
         };
 
@@ -828,9 +828,8 @@ impl GpuDistanceCompute {
 
         // Read results back
         let results_ptr = results_buffer.contents() as *const f32;
-        let results: Vec<f32> = unsafe {
-            std::slice::from_raw_parts(results_ptr, output_size).to_vec()
-        };
+        let results: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(results_ptr, output_size).to_vec() };
 
         info!(
             "MPS pairwise matrix: {}×{} vectors x {}D = {} distances computed on GPU",
@@ -920,9 +919,8 @@ impl GpuDistanceCompute {
         command_buffer.wait_until_completed();
 
         let results_ptr = results_buffer.contents() as *const f32;
-        let results: Vec<f32> = unsafe {
-            std::slice::from_raw_parts(results_ptr, num_vectors).to_vec()
-        };
+        let results: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(results_ptr, num_vectors).to_vec() };
 
         Ok(results)
     }

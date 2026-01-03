@@ -12,7 +12,7 @@ use crate::network::multiplex::traits::{BoxResponseFuture, DetectedProtocol, Pro
 use axum::body::Body;
 use hyper::http::{Method, Request, Response, StatusCode};
 use std::sync::Arc;
-use tracing::{trace, warn, debug};
+use tracing::{debug, trace, warn};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
@@ -142,14 +142,19 @@ impl RestHandler {
                 Err(e) => Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
-                    .body(Body::from(format!(r#"{{"error":"Failed to serialize metrics: {}"}}"#, e)))
+                    .body(Body::from(format!(
+                        r#"{{"error":"Failed to serialize metrics: {}"}}"#,
+                        e
+                    )))
                     .expect("response builder should not fail"),
             }
         } else {
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"message":"No metrics collector configured"}"#))
+                .body(Body::from(
+                    r#"{"message":"No metrics collector configured"}"#,
+                ))
                 .expect("response builder should not fail")
         }
     }
@@ -180,7 +185,10 @@ impl RestHandler {
                     Err(e) => Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Serialization error: {}"}}"#, e)))
+                        .body(Body::from(format!(
+                            r#"{{"error":"Serialization error: {}"}}"#,
+                            e
+                        )))
                         .expect("response builder should not fail"),
                 }
             }
@@ -211,15 +219,26 @@ impl RestHandler {
 
         // Extract collection name and config
         let name = request.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let dimension = request.get("dimension").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let engine = request.get("engine").and_then(|v| v.as_str()).unwrap_or("sst");
-        let distance_metric = request.get("distance_metric").and_then(|v| v.as_str()).unwrap_or("cosine");
+        let dimension = request
+            .get("dimension")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let engine = request
+            .get("engine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sst");
+        let distance_metric = request
+            .get("distance_metric")
+            .and_then(|v| v.as_str())
+            .unwrap_or("cosine");
 
         if name.is_empty() || dimension == 0 {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"error":"Missing required fields: name, dimension"}"#))
+                .body(Body::from(
+                    r#"{"error":"Missing required fields: name, dimension"}"#,
+                ))
                 .expect("response builder should not fail");
         }
 
@@ -249,28 +268,33 @@ impl RestHandler {
             ..Default::default()
         };
 
-        use crate::proto::proximadb_v1::{CollectionRequest, CollectionOperation};
+        use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
         let request = CollectionRequest {
             operation: CollectionOperation::CollectionCreate as i32,
             collection_config: Some(collection_config),
             ..Default::default()
         };
 
-        match config.unified_handlers.handle_collection_operation(request).await {
-            Ok(result) => {
-                match serde_json::to_string(&result) {
-                    Ok(json) => Response::builder()
-                        .status(StatusCode::CREATED)
-                        .header("content-type", "application/json")
-                        .body(Body::from(json))
-                        .expect("response builder should not fail"),
-                    Err(e) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Serialization error: {}"}}"#, e)))
-                        .expect("response builder should not fail"),
-                }
-            }
+        match config
+            .unified_handlers
+            .handle_collection_operation(request)
+            .await
+        {
+            Ok(result) => match serde_json::to_string(&result) {
+                Ok(json) => Response::builder()
+                    .status(StatusCode::CREATED)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json))
+                    .expect("response builder should not fail"),
+                Err(e) => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"error":"Serialization error: {}"}}"#,
+                        e
+                    )))
+                    .expect("response builder should not fail"),
+            },
             Err(e) => {
                 let response = serde_json::json!({ "error": e.to_string() });
                 Response::builder()
@@ -283,26 +307,33 @@ impl RestHandler {
     }
 
     /// Handle GET /api/v1/collections/{id} - get a collection
-    async fn handle_get_collection(config: &RestHandlerConfig, collection_id: &str) -> Response<Body> {
+    async fn handle_get_collection(
+        config: &RestHandlerConfig,
+        collection_id: &str,
+    ) -> Response<Body> {
         match config.unified_handlers.collection(collection_id).await {
-            Ok(Some(collection)) => {
-                match serde_json::to_string(&collection) {
-                    Ok(json) => Response::builder()
-                        .status(StatusCode::OK)
-                        .header("content-type", "application/json")
-                        .body(Body::from(json))
-                        .expect("response builder should not fail"),
-                    Err(e) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Serialization error: {}"}}"#, e)))
-                        .expect("response builder should not fail"),
-                }
-            }
+            Ok(Some(collection)) => match serde_json::to_string(&collection) {
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json))
+                    .expect("response builder should not fail"),
+                Err(e) => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"error":"Serialization error: {}"}}"#,
+                        e
+                    )))
+                    .expect("response builder should not fail"),
+            },
             Ok(None) => Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("content-type", "application/json")
-                .body(Body::from(format!(r#"{{"error":"Collection '{}' not found"}}"#, collection_id)))
+                .body(Body::from(format!(
+                    r#"{{"error":"Collection '{}' not found"}}"#,
+                    collection_id
+                )))
                 .expect("response builder should not fail"),
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -313,8 +344,13 @@ impl RestHandler {
     }
 
     /// Handle DELETE /api/v1/collections/{id} - delete a collection
-    async fn handle_delete_collection(config: &RestHandlerConfig, collection_id: &str) -> Response<Body> {
-        use crate::proto::proximadb_v1::{CollectionRequest, CollectionOperation, CollectionConfig};
+    async fn handle_delete_collection(
+        config: &RestHandlerConfig,
+        collection_id: &str,
+    ) -> Response<Body> {
+        use crate::proto::proximadb_v1::{
+            CollectionConfig, CollectionOperation, CollectionRequest,
+        };
         let request = CollectionRequest {
             operation: CollectionOperation::CollectionDelete as i32,
             collection_id: Some(collection_id.to_string()),
@@ -324,21 +360,26 @@ impl RestHandler {
             }),
             ..Default::default()
         };
-        match config.unified_handlers.handle_collection_operation(request).await {
-            Ok(result) => {
-                match serde_json::to_string(&result) {
-                    Ok(json) => Response::builder()
-                        .status(StatusCode::OK)
-                        .header("content-type", "application/json")
-                        .body(Body::from(json))
-                        .expect("response builder should not fail"),
-                    Err(e) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Serialization error: {}"}}"#, e)))
-                        .expect("response builder should not fail"),
-                }
-            }
+        match config
+            .unified_handlers
+            .handle_collection_operation(request)
+            .await
+        {
+            Ok(result) => match serde_json::to_string(&result) {
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json))
+                    .expect("response builder should not fail"),
+                Err(e) => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"error":"Serialization error: {}"}}"#,
+                        e
+                    )))
+                    .expect("response builder should not fail"),
+            },
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
@@ -348,7 +389,11 @@ impl RestHandler {
     }
 
     /// Handle POST /api/v1/collections/{id}/vectors - insert vectors
-    async fn handle_insert_vectors(config: &RestHandlerConfig, collection_id: &str, body: Vec<u8>) -> Response<Body> {
+    async fn handle_insert_vectors(
+        config: &RestHandlerConfig,
+        collection_id: &str,
+        body: Vec<u8>,
+    ) -> Response<Body> {
         // Parse the request body
         let request: serde_json::Value = match serde_json::from_slice(&body) {
             Ok(v) => v,
@@ -368,7 +413,9 @@ impl RestHandler {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"error":"Missing 'vectors' array in request body"}"#))
+                    .body(Body::from(
+                        r#"{"error":"Missing 'vectors' array in request body"}"#,
+                    ))
                     .expect("response builder should not fail");
             }
         };
@@ -377,31 +424,45 @@ impl RestHandler {
         use crate::proto::proximadb_v1::VectorRecord;
         let mut vectors: Vec<VectorRecord> = Vec::new();
         for (i, v) in vectors_array.iter().enumerate() {
-            let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let id = v
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             let vector_data = match v.get("vector").and_then(|x| x.as_array()) {
-                Some(arr) => arr.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect::<Vec<f32>>(),
+                Some(arr) => arr
+                    .iter()
+                    .filter_map(|x| x.as_f64().map(|f| f as f32))
+                    .collect::<Vec<f32>>(),
                 None => {
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Vector at index {} missing 'vector' field"}}"#, i)))
+                        .body(Body::from(format!(
+                            r#"{{"error":"Vector at index {} missing 'vector' field"}}"#,
+                            i
+                        )))
                         .expect("response builder should not fail");
                 }
             };
 
-            let metadata_map: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-                if let Some(meta) = v.get("metadata").and_then(|m| m.as_object()) {
-                    meta.iter().map(|(k, v)| {
+            let metadata_map: std::collections::HashMap<
+                String,
+                crate::proto::proximadb_v1::SqlValue,
+            > = if let Some(meta) = v.get("metadata").and_then(|m| m.as_object()) {
+                meta.iter()
+                    .map(|(k, v)| {
                         let sql_value = crate::proto::proximadb_v1::SqlValue {
                             value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                v.to_string().trim_matches('"').to_string()
+                                v.to_string().trim_matches('"').to_string(),
                             )),
                         };
                         (k.clone(), sql_value)
-                    }).collect()
-                } else {
-                    std::collections::HashMap::new()
-                };
+                    })
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            };
 
             vectors.push(VectorRecord {
                 id,
@@ -411,7 +472,11 @@ impl RestHandler {
             });
         }
 
-        debug!("Inserting {} vectors into collection {}", vectors.len(), collection_id);
+        debug!(
+            "Inserting {} vectors into collection {}",
+            vectors.len(),
+            collection_id
+        );
 
         use crate::proto::proximadb_v1::VectorBatchRequest;
         let batch_request = VectorBatchRequest {
@@ -419,21 +484,26 @@ impl RestHandler {
             vectors,
         };
 
-        match config.unified_handlers.handle_vector_batch_v1(batch_request).await {
-            Ok(result) => {
-                match serde_json::to_string(&result) {
-                    Ok(json) => Response::builder()
-                        .status(StatusCode::OK)
-                        .header("content-type", "application/json")
-                        .body(Body::from(json))
-                        .expect("response builder should not fail"),
-                    Err(e) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Serialization error: {}"}}"#, e)))
-                        .expect("response builder should not fail"),
-                }
-            }
+        match config
+            .unified_handlers
+            .handle_vector_batch_v1(batch_request)
+            .await
+        {
+            Ok(result) => match serde_json::to_string(&result) {
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json))
+                    .expect("response builder should not fail"),
+                Err(e) => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"error":"Serialization error: {}"}}"#,
+                        e
+                    )))
+                    .expect("response builder should not fail"),
+            },
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
@@ -443,7 +513,11 @@ impl RestHandler {
     }
 
     /// Handle POST /api/v1/collections/{id}/search - search vectors
-    async fn handle_search_vectors(config: &RestHandlerConfig, collection_id: &str, body: Vec<u8>) -> Response<Body> {
+    async fn handle_search_vectors(
+        config: &RestHandlerConfig,
+        collection_id: &str,
+        body: Vec<u8>,
+    ) -> Response<Body> {
         // Parse the request body
         let request: serde_json::Value = match serde_json::from_slice(&body) {
             Ok(v) => v,
@@ -458,20 +532,28 @@ impl RestHandler {
 
         // Parse search parameters
         let vector = match request.get("vector").and_then(|v| v.as_array()) {
-            Some(arr) => arr.iter().filter_map(|x| x.as_f64().map(|f| f as f32)).collect::<Vec<f32>>(),
+            Some(arr) => arr
+                .iter()
+                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                .collect::<Vec<f32>>(),
             None => {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"error":"Missing 'vector' field in request"}"#))
+                    .body(Body::from(
+                        r#"{"error":"Missing 'vector' field in request"}"#,
+                    ))
                     .expect("response builder should not fail");
             }
         };
 
         let top_k = request.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
-        let _filter = request.get("filter").and_then(|v| v.as_str()).map(String::from);
+        let _filter = request
+            .get("filter")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
-        use crate::proto::proximadb_v1::{VectorSearchRequest, SearchQuery};
+        use crate::proto::proximadb_v1::{SearchQuery, VectorSearchRequest};
         let search_request = VectorSearchRequest {
             collection_id: collection_id.to_string(),
             queries: vec![SearchQuery {
@@ -482,21 +564,26 @@ impl RestHandler {
             ..Default::default()
         };
 
-        match config.unified_handlers.handle_vector_search_v1(search_request).await {
-            Ok(result) => {
-                match serde_json::to_string(&result) {
-                    Ok(json) => Response::builder()
-                        .status(StatusCode::OK)
-                        .header("content-type", "application/json")
-                        .body(Body::from(json))
-                        .expect("response builder should not fail"),
-                    Err(e) => Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Serialization error: {}"}}"#, e)))
-                        .expect("response builder should not fail"),
-                }
-            }
+        match config
+            .unified_handlers
+            .handle_vector_search_v1(search_request)
+            .await
+        {
+            Ok(result) => match serde_json::to_string(&result) {
+                Ok(json) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(Body::from(json))
+                    .expect("response builder should not fail"),
+                Err(e) => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"error":"Serialization error: {}"}}"#,
+                        e
+                    )))
+                    .expect("response builder should not fail"),
+            },
             Err(e) => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("content-type", "application/json")
@@ -568,7 +655,9 @@ impl ProtocolHandler for RestHandler {
                 return Response::builder()
                     .status(StatusCode::NOT_IMPLEMENTED)
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"error":"REST handler not configured for unified port mode"}"#))
+                    .body(Body::from(
+                        r#"{"error":"REST handler not configured for unified port mode"}"#,
+                    ))
                     .expect("response builder should not fail");
             }
 
@@ -618,7 +707,10 @@ impl ProtocolHandler for RestHandler {
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .header("content-type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"Failed to read body: {}"}}"#, e)))
+                        .body(Body::from(format!(
+                            r#"{{"error":"Failed to read body: {}"}}"#,
+                            e
+                        )))
                         .expect("response builder should not fail");
                 }
             };
@@ -633,7 +725,9 @@ impl ProtocolHandler for RestHandler {
                     return Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .header("content-type", "application/json")
-                        .body(Body::from(r#"{"error":"REST handler not properly configured"}"#))
+                        .body(Body::from(
+                            r#"{"error":"REST handler not properly configured"}"#,
+                        ))
                         .expect("response builder should not fail");
                 }
             };
@@ -661,9 +755,7 @@ impl ProtocolHandler for RestHandler {
                     RestHandler::handle_search_vectors(cfg, collection_id, body_bytes).await
                 }
                 // Fallback for unknown endpoints
-                _ => {
-                    handler.handle_not_found(&path)
-                }
+                _ => handler.handle_not_found(&path),
             }
         })
     }
@@ -725,6 +817,7 @@ impl Default for RestHandlerBuilder {
 }
 
 // Re-export for easier access
+#[allow(unused_imports)]
 pub use RestHandlerConfig as Config;
 
 #[cfg(test)]

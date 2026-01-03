@@ -58,7 +58,10 @@ impl Ord for OrderedFloat {
             (true, true) => std::cmp::Ordering::Equal,
             (true, false) => std::cmp::Ordering::Greater,
             (false, true) => std::cmp::Ordering::Less,
-            (false, false) => self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal),
+            (false, false) => self
+                .0
+                .partial_cmp(&other.0)
+                .unwrap_or(std::cmp::Ordering::Equal),
         }
     }
 }
@@ -467,7 +470,11 @@ mod tests {
         assert!(!rs.contains("r1"));
 
         // Should have removal changes
-        assert!(changes.iter().any(|c| matches!(c, ResultChange::Removed { .. })));
+        assert!(
+            changes
+                .iter()
+                .any(|c| matches!(c, ResultChange::Removed { .. }))
+        );
     }
 
     #[test]
@@ -611,10 +618,7 @@ mod tests {
     fn test_result_set_clear() {
         let mut rs = ResultSet::new(5);
 
-        let results = vec![
-            create_result("r1", 0.9),
-            create_result("r2", 0.8),
-        ];
+        let results = vec![create_result("r1", 0.9), create_result("r2", 0.8)];
         rs.update(results);
 
         let changes = rs.clear();

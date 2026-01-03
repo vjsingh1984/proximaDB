@@ -14,17 +14,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use arrow_array::{
-    Array, ArrayRef, Float32Array, Int32Array, Int64Array,
-    RecordBatch, StringArray, ListArray,
+    Array, ArrayRef, Float32Array, Int32Array, Int64Array, ListArray, RecordBatch, StringArray,
     builder::{Float32Builder, ListBuilder},
 };
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
 use serde_json::Value as JsonValue;
 
 use super::traits::VectorBatch;
-use crate::proto::proximadb_v1::{VectorRecord, SqlArray, SqlObject};
+use crate::proto::proximadb_v1::{SqlArray, SqlObject, VectorRecord};
 
 // Use proto SqlValue type
 use crate::proto::proximadb_v1::SqlValue;
@@ -38,10 +37,14 @@ use crate::proto::proximadb_v1::sql_value::Value as ProtoSqlValueInner;
 pub fn vector_schema(dimension: usize) -> ArrowSchema {
     ArrowSchema::new(vec![
         Field::new("id", DataType::Utf8, false),
-        Field::new("vector", DataType::FixedSizeList(
-            Arc::new(Field::new("item", DataType::Float32, false)),
-            dimension as i32,
-        ), false),
+        Field::new(
+            "vector",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                dimension as i32,
+            ),
+            false,
+        ),
         Field::new("metadata", DataType::Utf8, true), // JSON encoded
         Field::new("version", DataType::Int64, true),
         Field::new("timestamp", DataType::Int64, true),
@@ -52,7 +55,11 @@ pub fn vector_schema(dimension: usize) -> ArrowSchema {
 pub fn vector_schema_flat() -> ArrowSchema {
     ArrowSchema::new(vec![
         Field::new("id", DataType::Utf8, false),
-        Field::new("vector", DataType::List(Arc::new(Field::new("item", DataType::Float32, false))), false),
+        Field::new(
+            "vector",
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+            false,
+        ),
         Field::new("dimension", DataType::Int32, false),
         Field::new("metadata", DataType::Utf8, true), // JSON encoded
         Field::new("version", DataType::Int64, true),
@@ -75,7 +82,11 @@ pub fn document_schema() -> ArrowSchema {
 pub fn graph_node_schema() -> ArrowSchema {
     ArrowSchema::new(vec![
         Field::new("id", DataType::Utf8, false),
-        Field::new("labels", DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))), false),
+        Field::new(
+            "labels",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
+            false,
+        ),
         Field::new("properties", DataType::Utf8, true), // JSON encoded
     ])
 }
@@ -176,28 +187,29 @@ pub fn record_batch_to_vector_batch(batch: &RecordBatch) -> Result<VectorBatch> 
         .ok_or_else(|| anyhow!("Missing 'vector' column"))?;
 
     // Handle both List and FixedSizeList
-    let (vectors, dimension) = if let Some(list_array) = vector_col.as_any().downcast_ref::<ListArray>() {
-        let mut all_vectors = Vec::new();
-        let mut dim = 0;
+    let (vectors, dimension) =
+        if let Some(list_array) = vector_col.as_any().downcast_ref::<ListArray>() {
+            let mut all_vectors = Vec::new();
+            let mut dim = 0;
 
-        for i in 0..list_array.len() {
-            if list_array.is_valid(i) {
-                let value = list_array.value(i);
-                let float_array = value
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .ok_or_else(|| anyhow!("Vector values are not Float32Array"))?;
+            for i in 0..list_array.len() {
+                if list_array.is_valid(i) {
+                    let value = list_array.value(i);
+                    let float_array = value
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .ok_or_else(|| anyhow!("Vector values are not Float32Array"))?;
 
-                dim = float_array.len();
-                for j in 0..float_array.len() {
-                    all_vectors.push(float_array.value(j));
+                    dim = float_array.len();
+                    for j in 0..float_array.len() {
+                        all_vectors.push(float_array.value(j));
+                    }
                 }
             }
-        }
-        (all_vectors, dim)
-    } else {
-        return Err(anyhow!("'vector' column has unsupported type"));
-    };
+            (all_vectors, dim)
+        } else {
+            return Err(anyhow!("'vector' column has unsupported type"));
+        };
 
     // Extract metadata column if present
     let metadata = batch.column_by_name("metadata").and_then(|col| {
@@ -312,25 +324,21 @@ pub fn sql_value_to_json(value: &SqlValue) -> JsonValue {
             ProtoSqlValueInner::NullValue(_) => JsonValue::Null,
             ProtoSqlValueInner::BoolValue(b) => JsonValue::Bool(*b),
             ProtoSqlValueInner::Int64Value(i) => JsonValue::Number((*i).into()),
-            ProtoSqlValueInner::NumberValue(f) => {
-                serde_json::Number::from_f64(*f)
-                    .map(JsonValue::Number)
-                    .unwrap_or(JsonValue::Null)
-            }
+            ProtoSqlValueInner::NumberValue(f) => serde_json::Number::from_f64(*f)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null),
             ProtoSqlValueInner::StringValue(s) => JsonValue::String(s.clone()),
             ProtoSqlValueInner::BytesValue(b) => JsonValue::String(base64_helper::encode(b)),
             ProtoSqlValueInner::ArrayValue(arr) => {
                 JsonValue::Array(arr.values.iter().map(sql_value_to_json).collect())
             }
-            ProtoSqlValueInner::ObjectValue(obj) => {
-                JsonValue::Object(
-                    obj.fields
-                        .iter()
-                        .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                        .collect(),
-                )
-            }
-        }
+            ProtoSqlValueInner::ObjectValue(obj) => JsonValue::Object(
+                obj.fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
+                    .collect(),
+            ),
+        },
     }
 }
 
@@ -349,19 +357,15 @@ pub fn json_to_sql_value(value: &JsonValue) -> SqlValue {
             }
         }
         JsonValue::String(s) => Some(ProtoSqlValueInner::StringValue(s.clone())),
-        JsonValue::Array(arr) => {
-            Some(ProtoSqlValueInner::ArrayValue(SqlArray {
-                values: arr.iter().map(json_to_sql_value).collect(),
-            }))
-        }
-        JsonValue::Object(obj) => {
-            Some(ProtoSqlValueInner::ObjectValue(SqlObject {
-                fields: obj
-                    .iter()
-                    .map(|(k, v)| (k.clone(), json_to_sql_value(v)))
-                    .collect(),
-            }))
-        }
+        JsonValue::Array(arr) => Some(ProtoSqlValueInner::ArrayValue(SqlArray {
+            values: arr.iter().map(json_to_sql_value).collect(),
+        })),
+        JsonValue::Object(obj) => Some(ProtoSqlValueInner::ObjectValue(SqlObject {
+            fields: obj
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_sql_value(v)))
+                .collect(),
+        })),
     };
     SqlValue { value: inner }
 }
@@ -417,7 +421,7 @@ pub fn filter_to_string(filter: &FilterExpression) -> String {
 
 /// Encode bytes as base64
 mod base64_helper {
-    use ::base64::{engine::general_purpose::STANDARD, Engine};
+    use ::base64::{Engine, engine::general_purpose::STANDARD};
 
     pub fn encode(data: &[u8]) -> String {
         STANDARD.encode(data)
@@ -442,13 +446,17 @@ pub fn sql_value_to_arrow_type(value: &SqlValue) -> DataType {
             ProtoSqlValueInner::BytesValue(_) => DataType::Binary,
             ProtoSqlValueInner::ArrayValue(arr) => {
                 if let Some(first) = arr.values.first() {
-                    DataType::List(Arc::new(Field::new("item", sql_value_to_arrow_type(first), true)))
+                    DataType::List(Arc::new(Field::new(
+                        "item",
+                        sql_value_to_arrow_type(first),
+                        true,
+                    )))
                 } else {
                     DataType::List(Arc::new(Field::new("item", DataType::Null, true)))
                 }
             }
             ProtoSqlValueInner::ObjectValue(_) => DataType::Utf8, // JSON encoded
-        }
+        },
     }
 }
 
@@ -493,21 +501,36 @@ mod tests {
     fn test_sql_value_json_roundtrip() {
         // Create a proto SqlValue with object value
         let mut fields = std::collections::HashMap::new();
-        fields.insert("string".to_string(), SqlValue {
-            value: Some(ProtoSqlValueInner::StringValue("hello".to_string())),
-        });
-        fields.insert("number".to_string(), SqlValue {
-            value: Some(ProtoSqlValueInner::Int64Value(42)),
-        });
-        fields.insert("float".to_string(), SqlValue {
-            value: Some(ProtoSqlValueInner::NumberValue(3.14)),
-        });
-        fields.insert("bool".to_string(), SqlValue {
-            value: Some(ProtoSqlValueInner::BoolValue(true)),
-        });
-        fields.insert("null".to_string(), SqlValue {
-            value: Some(ProtoSqlValueInner::NullValue(0)),
-        });
+        fields.insert(
+            "string".to_string(),
+            SqlValue {
+                value: Some(ProtoSqlValueInner::StringValue("hello".to_string())),
+            },
+        );
+        fields.insert(
+            "number".to_string(),
+            SqlValue {
+                value: Some(ProtoSqlValueInner::Int64Value(42)),
+            },
+        );
+        fields.insert(
+            "float".to_string(),
+            SqlValue {
+                value: Some(ProtoSqlValueInner::NumberValue(3.14)),
+            },
+        );
+        fields.insert(
+            "bool".to_string(),
+            SqlValue {
+                value: Some(ProtoSqlValueInner::BoolValue(true)),
+            },
+        );
+        fields.insert(
+            "null".to_string(),
+            SqlValue {
+                value: Some(ProtoSqlValueInner::NullValue(0)),
+            },
+        );
 
         let original = SqlValue {
             value: Some(ProtoSqlValueInner::ObjectValue(SqlObject { fields })),

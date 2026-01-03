@@ -7,9 +7,7 @@ use tonic::{Request, Response, Status};
 
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::document_service_server::{DocumentService, DocumentServiceServer};
-use crate::storage::document::{
-    DocumentQueryParams, DocumentService as DocStorageService,
-};
+use crate::storage::document::{DocumentQueryParams, DocumentService as DocStorageService};
 
 /// Document gRPC service implementation
 pub struct DocumentServiceImpl {
@@ -35,15 +33,22 @@ impl DocumentService for DocumentServiceImpl {
         request: Request<proximadb_v1::CreateDocumentCollectionRequest>,
     ) -> Result<Response<proximadb_v1::CreateDocumentCollectionResponse>, Status> {
         let req = request.into_inner();
-        let config = req.config.ok_or_else(|| Status::invalid_argument("Missing config"))?;
+        let config = req
+            .config
+            .ok_or_else(|| Status::invalid_argument("Missing config"))?;
         let name = config.name.clone();
 
         match self.document_service.create_collection(&name, config).await {
-            Ok(id) => Ok(Response::new(proximadb_v1::CreateDocumentCollectionResponse {
-                collection_id: id,
-                success: true,
-            })),
-            Err(e) => Err(Status::internal(format!("Failed to create collection: {}", e))),
+            Ok(id) => Ok(Response::new(
+                proximadb_v1::CreateDocumentCollectionResponse {
+                    collection_id: id,
+                    success: true,
+                },
+            )),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to create collection: {}",
+                e
+            ))),
         }
     }
 
@@ -62,11 +67,14 @@ impl DocumentService for DocumentServiceImpl {
                         indexes: c.indexes.clone(),
                     })
                     .collect();
-                Ok(Response::new(proximadb_v1::ListDocumentCollectionsResponse {
-                    collections: infos,
-                }))
+                Ok(Response::new(
+                    proximadb_v1::ListDocumentCollectionsResponse { collections: infos },
+                ))
             }
-            Err(e) => Err(Status::internal(format!("Failed to list collections: {}", e))),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to list collections: {}",
+                e
+            ))),
         }
     }
 
@@ -75,11 +83,18 @@ impl DocumentService for DocumentServiceImpl {
         request: Request<proximadb_v1::DeleteDocumentCollectionRequest>,
     ) -> Result<Response<proximadb_v1::DeleteDocumentCollectionResponse>, Status> {
         let req = request.into_inner();
-        match self.document_service.delete_collection(&req.collection).await {
-            Ok(_) => Ok(Response::new(proximadb_v1::DeleteDocumentCollectionResponse {
-                success: true,
-            })),
-            Err(e) => Err(Status::internal(format!("Failed to delete collection: {}", e))),
+        match self
+            .document_service
+            .delete_collection(&req.collection)
+            .await
+        {
+            Ok(_) => Ok(Response::new(
+                proximadb_v1::DeleteDocumentCollectionResponse { success: true },
+            )),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to delete collection: {}",
+                e
+            ))),
         }
     }
 
@@ -88,15 +103,24 @@ impl DocumentService for DocumentServiceImpl {
         request: Request<proximadb_v1::InsertDocumentRequest>,
     ) -> Result<Response<proximadb_v1::InsertDocumentResponse>, Status> {
         let req = request.into_inner();
-        let document = req.document.ok_or_else(|| Status::invalid_argument("Missing document"))?;
+        let document = req
+            .document
+            .ok_or_else(|| Status::invalid_argument("Missing document"))?;
         let id = req.id.as_deref();
 
-        match self.document_service.insert_document(&req.collection, id, document).await {
+        match self
+            .document_service
+            .insert_document(&req.collection, id, document)
+            .await
+        {
             Ok(record) => Ok(Response::new(proximadb_v1::InsertDocumentResponse {
                 id: record.id,
                 version: record.version,
             })),
-            Err(e) => Err(Status::internal(format!("Failed to insert document: {}", e))),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to insert document: {}",
+                e
+            ))),
         }
     }
 
@@ -111,7 +135,11 @@ impl DocumentService for DocumentServiceImpl {
             Some(req.projection)
         };
 
-        match self.document_service.get_document(&req.collection, &req.id, projection).await {
+        match self
+            .document_service
+            .get_document(&req.collection, &req.id, projection)
+            .await
+        {
             Ok(Some(record)) => Ok(Response::new(proximadb_v1::GetDocumentResponse {
                 document: Some(record.document),
                 version: record.version,
@@ -141,7 +169,10 @@ impl DocumentService for DocumentServiceImpl {
                 new_version: record.version,
                 success: true,
             })),
-            Err(e) => Err(Status::internal(format!("Failed to update document: {}", e))),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to update document: {}",
+                e
+            ))),
         }
     }
 
@@ -151,11 +182,18 @@ impl DocumentService for DocumentServiceImpl {
     ) -> Result<Response<proximadb_v1::DeleteDocumentResponse>, Status> {
         let req = request.into_inner();
 
-        match self.document_service.delete_document(&req.collection, &req.id).await {
+        match self
+            .document_service
+            .delete_document(&req.collection, &req.id)
+            .await
+        {
             Ok(deleted) => Ok(Response::new(proximadb_v1::DeleteDocumentResponse {
                 deleted,
             })),
-            Err(e) => Err(Status::internal(format!("Failed to delete document: {}", e))),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to delete document: {}",
+                e
+            ))),
         }
     }
 
@@ -174,7 +212,11 @@ impl DocumentService for DocumentServiceImpl {
             include_count: req.include_count,
         };
 
-        match self.document_service.query_documents(&req.collection, params).await {
+        match self
+            .document_service
+            .query_documents(&req.collection, params)
+            .await
+        {
             Ok(result) => {
                 let documents: Vec<proximadb_v1::DocumentResult> = result
                     .documents
@@ -193,7 +235,10 @@ impl DocumentService for DocumentServiceImpl {
                     query_time_ms: result.query_time_ms,
                 }))
             }
-            Err(e) => Err(Status::internal(format!("Failed to query documents: {}", e))),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to query documents: {}",
+                e
+            ))),
         }
     }
 

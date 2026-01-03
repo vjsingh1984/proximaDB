@@ -20,10 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::{
-    MetadataItem, SqlValue,
-    VectorRecord, VectorSearchRequest,
-};
+use crate::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord, VectorSearchRequest};
 
 /// Write mode for Arrow IPC operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -351,7 +348,8 @@ impl ArrowProtoCodec {
         }
         let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
         let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
-        let vector_array = FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
+        let vector_array =
+            FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
 
         // Build metadata array (Struct<key, value>)
         let metadata_array = Self::build_metadata_struct_array(&records)?;
@@ -606,7 +604,7 @@ impl ArrowProtoCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Float32Array, Int64Array, StringArray, FixedSizeListArray, ArrayRef};
+    use arrow_array::{ArrayRef, FixedSizeListArray, Float32Array, Int64Array, StringArray};
     use arrow_schema::{DataType, Field};
 
     #[test]
@@ -710,9 +708,8 @@ mod tests {
 
     #[test]
     fn test_batches_to_flight_data_empty() {
-        let flight_data =
-            ArrowProtoCodec::batches_to_flight_data_with_compression(&[], None)
-                .expect("Failed to convert empty batches");
+        let flight_data = ArrowProtoCodec::batches_to_flight_data_with_compression(&[], None)
+            .expect("Failed to convert empty batches");
 
         assert!(flight_data.is_empty());
     }
@@ -746,7 +743,8 @@ mod tests {
         let flat_values: Vec<f32> = vec![0.0f32; num_rows * dimension];
         let values_array = Arc::new(Float32Array::from(flat_values)) as ArrayRef;
         let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
-        let vector_array = FixedSizeListArray::new(vector_field, dimension as i32, values_array, None);
+        let vector_array =
+            FixedSizeListArray::new(vector_field, dimension as i32, values_array, None);
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -760,18 +758,13 @@ mod tests {
             ),
         ]));
 
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![Arc::new(id_array), Arc::new(vector_array)],
-        )
-        .expect("Failed to create batch");
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(id_array), Arc::new(vector_array)])
+            .expect("Failed to create batch");
 
         // Get uncompressed size
-        let uncompressed = ArrowProtoCodec::batches_to_flight_data_with_compression(
-            &[batch.clone()],
-            None,
-        )
-        .expect("Failed uncompressed");
+        let uncompressed =
+            ArrowProtoCodec::batches_to_flight_data_with_compression(&[batch.clone()], None)
+                .expect("Failed uncompressed");
 
         // Get compressed size
         let compressed = ArrowProtoCodec::batches_to_flight_data_with_compression(

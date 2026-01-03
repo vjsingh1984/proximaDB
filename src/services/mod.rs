@@ -183,8 +183,13 @@ pub mod tests;
 
 // Re-export main service types with cleaner names
 pub use collection::Collections;
-pub use ddl::{DdlService, DdlStatement, DdlResult, ColumnDefinition, SqlDataType, AlterTableChange, IndexType};
-pub use dml::{DmlService, DmlStatement, DmlResult, SqlValueLiteral, WhereClause, Condition, ComparisonOperator, LogicalOperator};
+pub use ddl::{
+    AlterTableChange, ColumnDefinition, DdlResult, DdlService, DdlStatement, IndexType, SqlDataType,
+};
+pub use dml::{
+    ComparisonOperator, Condition, DmlResult, DmlService, DmlStatement, LogicalOperator,
+    SqlValueLiteral, WhereClause,
+};
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;
 pub use operations::VectorOps;

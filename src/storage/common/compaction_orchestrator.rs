@@ -769,10 +769,7 @@ impl TieredFileRegistry {
                     extension: extension.to_string(),
                 };
 
-                files_by_level
-                    .entry(level)
-                    .or_default()
-                    .push(metadata);
+                files_by_level.entry(level).or_default().push(metadata);
             } else {
                 debug!("❌ Skipping non-tiered file: {}", entry.name);
             }

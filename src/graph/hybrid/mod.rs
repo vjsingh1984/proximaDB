@@ -143,8 +143,8 @@
 //! - [`ranking`]: Hybrid ranking strategies (vector + graph centrality)
 
 // Submodules
-pub mod semantic_traversal;
 pub mod ranking;
+pub mod semantic_traversal;
 
 use crate::core::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{

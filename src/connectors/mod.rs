@@ -97,52 +97,49 @@ pub mod traits;
 pub mod types;
 
 // Compute engine connectors
+pub mod duckdb;
 pub mod spark;
 pub mod trino;
-pub mod duckdb;
 
 // Legacy Hadoop compatibility
 pub mod hadoop;
 
 // Re-export main types for convenient access
 pub use pushdown::{
-    AggExpr, Expr, GraphTraversalPushdown, PushdownRequest, PushdownResponse,
-    VectorSearchPushdown,
+    AggExpr, Expr, GraphTraversalPushdown, PushdownRequest, PushdownResponse, VectorSearchPushdown,
 };
 pub use traits::{DataReader, DataSourceConnector, DataWriter, ReadContext, WriteContext};
 pub use types::{ColumnStatistics, Statistics, TableInfo, TableStatistics, WriteResult};
 
 // Spark DataSource V2 connector
 pub use spark::{
-    SparkConnectorConfig, SparkTable, SparkInputPartition, SparkScanBuilder,
-    SparkFilter, SparkFilterType, SparkPartitionReader, SparkWriteBuilder,
-    SparkWriteMode, SparkDataWriter, SparkWriteCommitMessage, SparkWriteError,
+    SparkConnectorConfig, SparkDataWriter, SparkFilter, SparkFilterType, SparkInputPartition,
+    SparkPartitionReader, SparkScanBuilder, SparkTable, SparkWriteBuilder, SparkWriteCommitMessage,
+    SparkWriteError, SparkWriteMode,
 };
 
 // Trino SPI connector
 pub use trino::{
-    TrinoConnectorConfig, TrinoSchema, TrinoTable, TrinoColumnMetadata,
-    TrinoSplit, TrinoHostAddress, TrinoTupleDomain, TrinoDomain, TrinoRange,
-    TrinoConnectorSession, TrinoTableLayout, TrinoSplitManager,
-    TrinoPageSource, TrinoPage, TrinoBlock, TrinoPageSink, TrinoWriteSummary,
-    TrinoError, TrinoErrorCode,
+    TrinoBlock, TrinoColumnMetadata, TrinoConnectorConfig, TrinoConnectorSession, TrinoDomain,
+    TrinoError, TrinoErrorCode, TrinoHostAddress, TrinoPage, TrinoPageSink, TrinoPageSource,
+    TrinoRange, TrinoSchema, TrinoSplit, TrinoSplitManager, TrinoTable, TrinoTableLayout,
+    TrinoTupleDomain, TrinoWriteSummary,
 };
 
 // DuckDB extension connector
 pub use duckdb::{
-    DuckDBConnectorConfig, DuckDBBindData, DuckDBInitData, DuckDBGlobalState,
-    DuckDBLocalState, DuckDBFilter, DuckDBFilterType, DuckDBColumnRef,
-    DuckDBScanStatistics, DuckDBColumnStats, DuckDBVectorSearchParams,
-    DuckDBDistanceMetric, DuckDBTableScan, DuckDBVectorSearch, DuckDBInsert,
-    DuckDBInsertResult, DuckDBCopy, DuckDBWriteMode, DuckDBCopyResult,
-    DuckDBError, DuckDBErrorType,
+    DuckDBBindData, DuckDBColumnRef, DuckDBColumnStats, DuckDBConnectorConfig, DuckDBCopy,
+    DuckDBCopyResult, DuckDBDistanceMetric, DuckDBError, DuckDBErrorType, DuckDBFilter,
+    DuckDBFilterType, DuckDBGlobalState, DuckDBInitData, DuckDBInsert, DuckDBInsertResult,
+    DuckDBLocalState, DuckDBScanStatistics, DuckDBTableScan, DuckDBVectorSearch,
+    DuckDBVectorSearchParams, DuckDBWriteMode,
 };
 
 // Hadoop compatibility shim (for Hive, EMR, legacy MapReduce)
 pub use hadoop::{
-    HadoopShimConfig, HadoopInputSplit, ProximaInputFormat, ProximaRecordReader,
-    ProximaOutputFormat, ProximaRecordWriter, ProximaOutputCommitter,
-    HadoopWritable, ProximaSerDe, HiveType, HadoopError, HadoopErrorCode,
+    HadoopError, HadoopErrorCode, HadoopInputSplit, HadoopShimConfig, HadoopWritable, HiveType,
+    ProximaInputFormat, ProximaOutputCommitter, ProximaOutputFormat, ProximaRecordReader,
+    ProximaRecordWriter, ProximaSerDe,
 };
 
 #[cfg(test)]
@@ -172,10 +169,11 @@ mod tests {
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new("vector", DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, true)),
-                128,
-            ), false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 128),
+                false,
+            ),
         ]));
 
         let table_info = TableInfo {

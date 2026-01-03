@@ -9,11 +9,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::info;
 
 use crate::catalog::CatalogManager;
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
 use crate::services::operations::VectorOps;
 
 /// DML Statement types
@@ -72,7 +72,10 @@ pub enum SqlValueLiteral {
     /// DEFAULT keyword
     Default,
     /// Function call (e.g., NOW(), CURRENT_TIMESTAMP)
-    Function { name: String, args: Vec<SqlValueLiteral> },
+    Function {
+        name: String,
+        args: Vec<SqlValueLiteral>,
+    },
 }
 
 /// WHERE clause for UPDATE/DELETE
@@ -105,10 +108,7 @@ pub enum Condition {
         negated: bool,
     },
     /// IS NULL / IS NOT NULL
-    IsNull {
-        column: String,
-        negated: bool,
-    },
+    IsNull { column: String, negated: bool },
     /// LIKE pattern match
     Like {
         column: String,
@@ -195,10 +195,7 @@ pub struct DmlService {
 
 impl DmlService {
     /// Create a new DML service
-    pub fn new(
-        catalog_manager: Arc<CatalogManager>,
-        vector_ops: Arc<VectorOps>,
-    ) -> Self {
+    pub fn new(catalog_manager: Arc<CatalogManager>, vector_ops: Arc<VectorOps>) -> Self {
         Self {
             catalog_manager,
             vector_ops,
@@ -210,17 +207,38 @@ impl DmlService {
         let start = std::time::Instant::now();
 
         let result = match statement {
-            DmlStatement::Insert { table_name, columns, values } => {
-                self.execute_insert(&table_name, &columns, values).await?
+            DmlStatement::Insert {
+                table_name,
+                columns,
+                values,
+            } => self.execute_insert(&table_name, &columns, values).await?,
+            DmlStatement::Update {
+                table_name,
+                assignments,
+                where_clause,
+            } => {
+                self.execute_update(&table_name, assignments, where_clause)
+                    .await?
             }
-            DmlStatement::Update { table_name, assignments, where_clause } => {
-                self.execute_update(&table_name, assignments, where_clause).await?
-            }
-            DmlStatement::Delete { table_name, where_clause } => {
-                self.execute_delete(&table_name, where_clause).await?
-            }
-            DmlStatement::Upsert { table_name, columns, values, conflict_columns, update_assignments } => {
-                self.execute_upsert(&table_name, &columns, values, &conflict_columns, update_assignments).await?
+            DmlStatement::Delete {
+                table_name,
+                where_clause,
+            } => self.execute_delete(&table_name, where_clause).await?,
+            DmlStatement::Upsert {
+                table_name,
+                columns,
+                values,
+                conflict_columns,
+                update_assignments,
+            } => {
+                self.execute_upsert(
+                    &table_name,
+                    &columns,
+                    values,
+                    &conflict_columns,
+                    update_assignments,
+                )
+                .await?
             }
         };
 
@@ -256,7 +274,10 @@ impl DmlService {
 
         // Insert via vector operations service
         let num_records = records.len();
-        let _batch_result = self.vector_ops.insert_batch(&table_id.name, records).await?;
+        let _batch_result = self
+            .vector_ops
+            .insert_batch(&table_id.name, records)
+            .await?;
 
         info!(
             table = %table_name,
@@ -264,8 +285,10 @@ impl DmlService {
             "Inserted rows"
         );
 
-        Ok(DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
-            .with_inserted_ids(inserted_ids))
+        Ok(
+            DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
+                .with_inserted_ids(inserted_ids),
+        )
     }
 
     /// Execute UPDATE statement
@@ -319,7 +342,9 @@ impl DmlService {
         let ids_to_delete = if let Some(ref wc) = where_clause {
             self.extract_ids_from_where(wc)?
         } else {
-            return Err(anyhow!("DELETE without WHERE clause is not allowed. Use WHERE id IN (...) to delete specific rows."));
+            return Err(anyhow!(
+                "DELETE without WHERE clause is not allowed. Use WHERE id IN (...) to delete specific rows."
+            ));
         };
 
         if ids_to_delete.is_empty() {
@@ -336,8 +361,11 @@ impl DmlService {
             "Delete requested (implementation pending)"
         );
 
-        Ok(DmlResult::success(deleted_count as u64, format!("Delete of {} rows requested", deleted_count))
-            .with_warning("Full DELETE implementation pending - records marked for deletion"))
+        Ok(DmlResult::success(
+            deleted_count as u64,
+            format!("Delete of {} rows requested", deleted_count),
+        )
+        .with_warning("Full DELETE implementation pending - records marked for deletion"))
     }
 
     /// Execute UPSERT statement
@@ -372,7 +400,10 @@ impl DmlService {
 
         // Insert via vector operations service (will overwrite on ID conflict)
         let num_records = records.len();
-        let _batch_result = self.vector_ops.insert_batch(&table_id.name, records).await?;
+        let _batch_result = self
+            .vector_ops
+            .insert_batch(&table_id.name, records)
+            .await?;
 
         info!(
             table = %table_name,
@@ -380,8 +411,10 @@ impl DmlService {
             "Upserted rows"
         );
 
-        Ok(DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
-            .with_inserted_ids(inserted_ids))
+        Ok(
+            DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
+                .with_inserted_ids(inserted_ids),
+        )
     }
 
     // ========================
@@ -449,12 +482,20 @@ impl DmlService {
 
         for condition in &where_clause.conditions {
             match condition {
-                Condition::Comparison { column, operator, value } => {
+                Condition::Comparison {
+                    column,
+                    operator,
+                    value,
+                } => {
                     if column == "id" && matches!(operator, ComparisonOperator::Equal) {
                         ids.push(self.literal_to_string(value)?);
                     }
                 }
-                Condition::In { column, values, negated } => {
+                Condition::In {
+                    column,
+                    values,
+                    negated,
+                } => {
                     if column == "id" && !negated {
                         for v in values {
                             ids.push(self.literal_to_string(v)?);
@@ -489,15 +530,14 @@ impl DmlService {
     /// Convert SqlValueLiteral to vector
     fn literal_to_vector(&self, val: &SqlValueLiteral) -> Result<Vec<f32>> {
         match val {
-            SqlValueLiteral::Array(arr) => {
-                arr.iter()
-                    .map(|v| match v {
-                        SqlValueLiteral::Float(f) => Ok(*f as f32),
-                        SqlValueLiteral::Integer(i) => Ok(*i as f32),
-                        _ => Err(anyhow!("Vector elements must be numeric")),
-                    })
-                    .collect()
-            }
+            SqlValueLiteral::Array(arr) => arr
+                .iter()
+                .map(|v| match v {
+                    SqlValueLiteral::Float(f) => Ok(*f as f32),
+                    SqlValueLiteral::Integer(i) => Ok(*i as f32),
+                    _ => Err(anyhow!("Vector elements must be numeric")),
+                })
+                .collect(),
             _ => Err(anyhow!("Vector column expects array value")),
         }
     }
@@ -535,7 +575,8 @@ impl DmlService {
             SqlValueLiteral::Json(j) => Value::StringValue(j.to_string()),
             SqlValueLiteral::Array(arr) => {
                 // Convert to JSON array string
-                let json_arr: Vec<serde_json::Value> = arr.iter()
+                let json_arr: Vec<serde_json::Value> = arr
+                    .iter()
                     .filter_map(|v| self.literal_to_json(v).ok())
                     .collect();
                 Value::StringValue(serde_json::to_string(&json_arr).unwrap_or_default())
@@ -551,7 +592,9 @@ impl DmlService {
             }
             SqlValueLiteral::Function { name, .. } => {
                 // Evaluate simple functions
-                if name.eq_ignore_ascii_case("NOW") || name.eq_ignore_ascii_case("CURRENT_TIMESTAMP") {
+                if name.eq_ignore_ascii_case("NOW")
+                    || name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+                {
                     Value::Int64Value(chrono::Utc::now().timestamp_millis())
                 } else {
                     return Err(anyhow!("Unsupported function: {}", name));
@@ -568,17 +611,14 @@ impl DmlService {
             SqlValueLiteral::Null => Ok(serde_json::Value::Null),
             SqlValueLiteral::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
             SqlValueLiteral::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
-            SqlValueLiteral::Float(f) => {
-                serde_json::Number::from_f64(*f)
-                    .map(serde_json::Value::Number)
-                    .ok_or_else(|| anyhow!("Invalid float value"))
-            }
+            SqlValueLiteral::Float(f) => serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .ok_or_else(|| anyhow!("Invalid float value")),
             SqlValueLiteral::String(s) => Ok(serde_json::Value::String(s.clone())),
             SqlValueLiteral::Json(j) => Ok(j.clone()),
             SqlValueLiteral::Array(arr) => {
-                let json_arr: Result<Vec<_>> = arr.iter()
-                    .map(|v| self.literal_to_json(v))
-                    .collect();
+                let json_arr: Result<Vec<_>> =
+                    arr.iter().map(|v| self.literal_to_json(v)).collect();
                 Ok(serde_json::Value::Array(json_arr?))
             }
             _ => Err(anyhow!("Cannot convert to JSON")),
@@ -634,13 +674,11 @@ mod tests {
     #[test]
     fn test_where_clause() {
         let wc = WhereClause {
-            conditions: vec![
-                Condition::Comparison {
-                    column: "id".to_string(),
-                    operator: ComparisonOperator::Equal,
-                    value: SqlValueLiteral::String("test123".to_string()),
-                },
-            ],
+            conditions: vec![Condition::Comparison {
+                column: "id".to_string(),
+                operator: ComparisonOperator::Equal,
+                value: SqlValueLiteral::String("test123".to_string()),
+            }],
             operator: LogicalOperator::And,
         };
 

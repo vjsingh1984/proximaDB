@@ -6,7 +6,7 @@
 
 use super::key_store::{EncryptionKey, KeyStore, KeyStoreError};
 use anyhow::Result;
-use ring::aead::{Aad, Nonce, NONCE_LEN, AES_256_GCM};
+use ring::aead::{AES_256_GCM, Aad, NONCE_LEN, Nonce};
 use ring::digest::{self, SHA256};
 use ring::hkdf::{HKDF_SHA256, Salt};
 use ring::hmac::{self, HMAC_SHA256};
@@ -140,9 +140,14 @@ pub struct FieldEncryption {
 
 impl FieldEncryption {
     /// Create a new field encryption service
-    pub fn new(key_store: Arc<KeyStore>, config: EncryptionConfig) -> Result<Self, FieldEncryptionError> {
+    pub fn new(
+        key_store: Arc<KeyStore>,
+        config: EncryptionConfig,
+    ) -> Result<Self, FieldEncryptionError> {
         let blind_index_key = if config.enable_blind_indexes {
-            let salt = config.blind_index_salt.as_deref()
+            let salt = config
+                .blind_index_salt
+                .as_deref()
                 .unwrap_or("proximadb-blind-index-default-salt");
 
             // Derive a key from the salt using HKDF
@@ -151,7 +156,9 @@ impl FieldEncryption {
 
             let mut key_bytes = [0u8; 32];
             prk.expand(&[b"blind-index"], HKDF_SHA256)
-                .map_err(|_| FieldEncryptionError::EncryptionFailed("HKDF expansion failed".into()))?
+                .map_err(|_| {
+                    FieldEncryptionError::EncryptionFailed("HKDF expansion failed".into())
+                })?
                 .fill(&mut key_bytes)
                 .map_err(|_| FieldEncryptionError::EncryptionFailed("HKDF fill failed".into()))?;
 
@@ -180,9 +187,7 @@ impl FieldEncryption {
             .map(|s| s.encryption_type)
             .unwrap_or(self.config.default_type);
 
-        let key_id = settings
-            .map(|s| s.key_id.as_str())
-            .unwrap_or("default");
+        let key_id = settings.map(|s| s.key_id.as_str()).unwrap_or("default");
 
         // Serialize value to bytes
         let plaintext = serde_json::to_vec(value)
@@ -196,13 +201,14 @@ impl FieldEncryption {
             EncryptionType::Deterministic => {
                 self.encrypt_deterministic(&plaintext, &key, field_name)?
             }
-            EncryptionType::Randomized => {
-                self.encrypt_randomized(&plaintext, &key)?
-            }
+            EncryptionType::Randomized => self.encrypt_randomized(&plaintext, &key)?,
         };
 
         // Generate blind index if enabled
-        let blind_index = if settings.map(|s| s.blind_index).unwrap_or(self.config.enable_blind_indexes) {
+        let blind_index = if settings
+            .map(|s| s.blind_index)
+            .unwrap_or(self.config.enable_blind_indexes)
+        {
             let truncate = settings.and_then(|s| s.blind_index_bytes);
             self.generate_blind_index(value, truncate)?
         } else {
@@ -210,11 +216,15 @@ impl FieldEncryption {
         };
 
         Ok(EncryptedField {
-            ciphertext: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ciphertext),
+            ciphertext: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &ciphertext,
+            ),
             key_id: key_id.to_string(),
             key_version: key.version,
             encryption_type,
-            nonce: nonce.map(|n| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &n)),
+            nonce: nonce
+                .map(|n| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &n)),
             blind_index,
         })
     }
@@ -225,22 +235,28 @@ impl FieldEncryption {
         encrypted: &EncryptedField,
     ) -> Result<serde_json::Value, FieldEncryptionError> {
         // Get the key version used for encryption
-        let key = self.key_store.get_key_version(&encrypted.key_id, encrypted.key_version)?;
+        let key = self
+            .key_store
+            .get_key_version(&encrypted.key_id, encrypted.key_version)?;
 
         // Decode ciphertext
-        let ciphertext = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &encrypted.ciphertext)
-            .map_err(|_| FieldEncryptionError::InvalidFormat)?;
+        let ciphertext = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &encrypted.ciphertext,
+        )
+        .map_err(|_| FieldEncryptionError::InvalidFormat)?;
 
         // Decrypt based on type
         let plaintext = match encrypted.encryption_type {
-            EncryptionType::Deterministic => {
-                self.decrypt_deterministic(&ciphertext, &key)?
-            }
+            EncryptionType::Deterministic => self.decrypt_deterministic(&ciphertext, &key)?,
             EncryptionType::Randomized => {
-                let nonce = encrypted.nonce.as_ref()
+                let nonce = encrypted
+                    .nonce
+                    .as_ref()
                     .ok_or(FieldEncryptionError::InvalidFormat)?;
-                let nonce_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, nonce)
-                    .map_err(|_| FieldEncryptionError::InvalidFormat)?;
+                let nonce_bytes =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, nonce)
+                        .map_err(|_| FieldEncryptionError::InvalidFormat)?;
                 self.decrypt_randomized(&ciphertext, &key, &nonce_bytes)?
             }
         };
@@ -274,7 +290,8 @@ impl FieldEncryption {
         let mut in_out = plaintext.to_vec();
         in_out.resize(plaintext.len() + AES_256_GCM.tag_len(), 0);
 
-        aead_key.seal_in_place_separate_tag(nonce, Aad::empty(), &mut in_out[..plaintext.len()])
+        aead_key
+            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut in_out[..plaintext.len()])
             .map(|tag| {
                 in_out[plaintext.len()..].copy_from_slice(tag.as_ref());
             })
@@ -295,8 +312,9 @@ impl FieldEncryption {
     ) -> Result<(Vec<u8>, Option<Vec<u8>>), FieldEncryptionError> {
         // Generate random nonce
         let mut nonce_bytes = [0u8; NONCE_LEN];
-        self.rng.fill(&mut nonce_bytes)
-            .map_err(|_| FieldEncryptionError::EncryptionFailed("Failed to generate nonce".into()))?;
+        self.rng.fill(&mut nonce_bytes).map_err(|_| {
+            FieldEncryptionError::EncryptionFailed("Failed to generate nonce".into())
+        })?;
 
         let nonce = Nonce::assume_unique_for_key(nonce_bytes);
         let aead_key = key.to_aead_key()?;
@@ -305,7 +323,8 @@ impl FieldEncryption {
         let mut in_out = plaintext.to_vec();
         in_out.resize(plaintext.len() + AES_256_GCM.tag_len(), 0);
 
-        aead_key.seal_in_place_separate_tag(nonce, Aad::empty(), &mut in_out[..plaintext.len()])
+        aead_key
+            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut in_out[..plaintext.len()])
             .map(|tag| {
                 in_out[plaintext.len()..].copy_from_slice(tag.as_ref());
             })
@@ -325,7 +344,8 @@ impl FieldEncryption {
         }
 
         // Extract nonce and encrypted data
-        let nonce_bytes: [u8; NONCE_LEN] = ciphertext[..NONCE_LEN].try_into()
+        let nonce_bytes: [u8; NONCE_LEN] = ciphertext[..NONCE_LEN]
+            .try_into()
             .map_err(|_| FieldEncryptionError::InvalidFormat)?;
         let encrypted = &ciphertext[NONCE_LEN..];
 
@@ -334,7 +354,8 @@ impl FieldEncryption {
 
         // Decrypt
         let mut in_out = encrypted.to_vec();
-        let plaintext = aead_key.open_in_place(nonce, Aad::empty(), &mut in_out)
+        let plaintext = aead_key
+            .open_in_place(nonce, Aad::empty(), &mut in_out)
             .map_err(|_| FieldEncryptionError::DecryptionFailed("AEAD open failed".into()))?;
 
         Ok(plaintext.to_vec())
@@ -354,14 +375,16 @@ impl FieldEncryption {
             return Err(FieldEncryptionError::InvalidFormat);
         }
 
-        let nonce_arr: [u8; NONCE_LEN] = nonce_bytes.try_into()
+        let nonce_arr: [u8; NONCE_LEN] = nonce_bytes
+            .try_into()
             .map_err(|_| FieldEncryptionError::InvalidFormat)?;
         let nonce = Nonce::assume_unique_for_key(nonce_arr);
         let aead_key = key.to_aead_key()?;
 
         // Decrypt
         let mut in_out = ciphertext.to_vec();
-        let plaintext = aead_key.open_in_place(nonce, Aad::empty(), &mut in_out)
+        let plaintext = aead_key
+            .open_in_place(nonce, Aad::empty(), &mut in_out)
             .map_err(|_| FieldEncryptionError::DecryptionFailed("AEAD open failed".into()))?;
 
         Ok(plaintext.to_vec())
@@ -373,8 +396,9 @@ impl FieldEncryption {
         value: &serde_json::Value,
         truncate_bytes: Option<usize>,
     ) -> Result<Option<String>, FieldEncryptionError> {
-        let key = self.blind_index_key.as_ref()
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Blind index key not configured".into()))?;
+        let key = self.blind_index_key.as_ref().ok_or_else(|| {
+            FieldEncryptionError::EncryptionFailed("Blind index key not configured".into())
+        })?;
 
         // Serialize value consistently
         let value_bytes = serde_json::to_vec(value)
@@ -400,7 +424,9 @@ impl FieldEncryption {
         truncate_bytes: Option<usize>,
     ) -> Result<String, FieldEncryptionError> {
         self.generate_blind_index(value, truncate_bytes)?
-            .ok_or_else(|| FieldEncryptionError::EncryptionFailed("Blind indexes not enabled".into()))
+            .ok_or_else(|| {
+                FieldEncryptionError::EncryptionFailed("Blind indexes not enabled".into())
+            })
     }
 
     /// Encrypt a record's metadata fields based on configuration
@@ -455,23 +481,26 @@ mod tests {
     use crate::security::encryption::key_store::KeyStoreConfig;
 
     fn setup() -> (Arc<KeyStore>, FieldEncryption) {
-        let key_store = Arc::new(
-            KeyStore::new(KeyStoreConfig::default()).unwrap()
-        );
-        key_store.create_key("default", "Default encryption key").unwrap();
-        key_store.create_key("ssn-key", "SSN encryption key").unwrap();
+        let key_store = Arc::new(KeyStore::new(KeyStoreConfig::default()).unwrap());
+        key_store
+            .create_key("default", "Default encryption key")
+            .unwrap();
+        key_store
+            .create_key("ssn-key", "SSN encryption key")
+            .unwrap();
 
         let config = EncryptionConfig {
             enabled: true,
             default_type: EncryptionType::Randomized,
-            field_settings: HashMap::from([
-                ("ssn".to_string(), FieldEncryptionSettings {
+            field_settings: HashMap::from([(
+                "ssn".to_string(),
+                FieldEncryptionSettings {
                     encryption_type: EncryptionType::Deterministic,
                     key_id: "ssn-key".to_string(),
                     blind_index: true,
                     blind_index_bytes: Some(8),
-                }),
-            ]),
+                },
+            )]),
             enable_blind_indexes: true,
             blind_index_salt: Some("test-salt".to_string()),
         };
@@ -659,9 +688,8 @@ mod tests {
     fn test_decrypt_record_metadata() {
         let (_, encryption) = setup();
 
-        let mut metadata: HashMap<String, serde_json::Value> = HashMap::from([
-            ("ssn".to_string(), serde_json::json!("123-45-6789")),
-        ]);
+        let mut metadata: HashMap<String, serde_json::Value> =
+            HashMap::from([("ssn".to_string(), serde_json::json!("123-45-6789"))]);
 
         let encrypted = encryption.encrypt_record_metadata(&mut metadata).unwrap();
         let decrypted = encryption.decrypt_record_metadata(&encrypted).unwrap();

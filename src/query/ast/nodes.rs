@@ -171,7 +171,7 @@ pub enum Expr {
         center_lat: Box<Expr>,
         center_lon: Box<Expr>,
         radius: Box<Expr>,
-        unit: Option<String>,  // km, mi, m
+        unit: Option<String>, // km, mi, m
     },
     /// GEO_WITHIN_BOX(lat, lon, sw_lat, sw_lon, ne_lat, ne_lon) - check if within bounding box
     GeoWithinBox {

@@ -26,7 +26,10 @@ pub struct GeoPoint {
 impl GeoPoint {
     /// Create a new GeoPoint (unchecked)
     pub fn new(latitude: f64, longitude: f64) -> Self {
-        Self { latitude, longitude }
+        Self {
+            latitude,
+            longitude,
+        }
     }
 
     /// Create a new GeoPoint with validation
@@ -37,7 +40,10 @@ impl GeoPoint {
         if !(-180.0..=180.0).contains(&longitude) {
             return Err(GeoError::InvalidLongitude(longitude));
         }
-        Ok(Self { latitude, longitude })
+        Ok(Self {
+            latitude,
+            longitude,
+        })
     }
 
     /// Calculate the Haversine distance to another point in kilometers
@@ -71,8 +77,7 @@ impl GeoPoint {
         let delta_lon = (other.longitude - self.longitude).to_radians();
 
         let x = delta_lon.sin() * lat2_rad.cos();
-        let y = lat1_rad.cos() * lat2_rad.sin()
-            - lat1_rad.sin() * lat2_rad.cos() * delta_lon.cos();
+        let y = lat1_rad.cos() * lat2_rad.sin() - lat1_rad.sin() * lat2_rad.cos() * delta_lon.cos();
 
         let bearing = x.atan2(y).to_degrees();
         (bearing + 360.0) % 360.0
@@ -230,7 +235,11 @@ impl GeoDistanceUnit {
 impl GeoCircle {
     /// Create a new circle
     pub fn new(center: GeoPoint, radius: f64, unit: GeoDistanceUnit) -> Self {
-        Self { center, radius, unit }
+        Self {
+            center,
+            radius,
+            unit,
+        }
     }
 
     /// Get radius in kilometers
@@ -371,7 +380,11 @@ impl std::fmt::Display for GeoError {
                 write!(f, "Invalid latitude: {}. Must be between -90 and 90", lat)
             }
             GeoError::InvalidLongitude(lon) => {
-                write!(f, "Invalid longitude: {}. Must be between -180 and 180", lon)
+                write!(
+                    f,
+                    "Invalid longitude: {}. Must be between -180 and 180",
+                    lon
+                )
             }
             GeoError::InvalidPolygon => {
                 write!(f, "Invalid polygon: must have at least 3 vertices")

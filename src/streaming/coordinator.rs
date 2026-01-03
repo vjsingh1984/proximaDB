@@ -32,8 +32,8 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use super::{
-    AckMessage, BackpressureLevel, RateLimiter, SessionConfig, SessionState, StreamConfig,
-    StreamError, StreamId, StreamMetrics, StreamResult, StreamSession,
+    BackpressureLevel, RateLimiter, SessionConfig, SessionState, StreamConfig, StreamError,
+    StreamId, StreamMetrics, StreamResult, StreamSession,
 };
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -187,12 +187,12 @@ impl StreamCoordinator {
         }
 
         // Get session
-        let session = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| StreamError::SessionNotFound {
-                session_id: session_id.to_string(),
-            })?;
+        let session =
+            self.sessions
+                .get(session_id)
+                .ok_or_else(|| StreamError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
 
         // Check session state
         if !session.state.load().accepts_records() {
@@ -221,7 +221,8 @@ impl StreamCoordinator {
 
         // Update metrics
         session.increment_received(pushed as u64);
-        self.metrics.record_received(&session.collection, pushed as u64);
+        self.metrics
+            .record_received(&session.collection, pushed as u64);
 
         if dropped > 0 {
             self.metrics.record_dropped(dropped as u64);
@@ -242,10 +243,8 @@ impl StreamCoordinator {
             .record_ingestion_latency(&session.collection, latency.as_secs_f64());
 
         // Update buffer utilization metric
-        self.metrics.set_buffer_utilization(
-            session_id.as_str(),
-            buffer_percent as f64 / 100.0,
-        );
+        self.metrics
+            .set_buffer_utilization(session_id.as_str(), buffer_percent as f64 / 100.0);
 
         debug!(
             session_id = %session_id,
@@ -282,12 +281,12 @@ impl StreamCoordinator {
         session_id: &StreamId,
         max: usize,
     ) -> StreamResult<Vec<VectorRecord>> {
-        let session = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| StreamError::SessionNotFound {
-                session_id: session_id.to_string(),
-            })?;
+        let session =
+            self.sessions
+                .get(session_id)
+                .ok_or_else(|| StreamError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
 
         let records = session.buffer.drain(max);
         let count = records.len();
@@ -430,12 +429,12 @@ impl StreamCoordinator {
         let start = Instant::now();
 
         // Get session info to verify it exists
-        let session_info = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| StreamError::SessionNotFound {
-                session_id: session_id.to_string(),
-            })?;
+        let session_info =
+            self.sessions
+                .get(session_id)
+                .ok_or_else(|| StreamError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
 
         let collection_id = session_info.collection.clone();
         drop(session_info); // Release lock before draining
@@ -449,10 +448,13 @@ impl StreamCoordinator {
         }
 
         let count = records.len();
-        let bytes_estimate = records.iter().map(|r| {
-            // Estimate: id + vector data + metadata overhead
-            r.id.len() + (r.vector.len() * 4) + 100
-        }).sum::<usize>();
+        let bytes_estimate = records
+            .iter()
+            .map(|r| {
+                // Estimate: id + vector data + metadata overhead
+                r.id.len() + (r.vector.len() * 4) + 100
+            })
+            .sum::<usize>();
 
         // Create flush parameters for storage engine
         let flush_params = crate::storage::traits::FlushParameters {
@@ -467,11 +469,13 @@ impl StreamCoordinator {
         };
 
         // Flush to storage engine
-        let flush_result = storage.flush(flush_params).await.map_err(|e| {
-            StreamError::StorageError {
-                message: format!("Storage flush failed: {}", e),
-            }
-        })?;
+        let flush_result =
+            storage
+                .flush(flush_params)
+                .await
+                .map_err(|e| StreamError::StorageError {
+                    message: format!("Storage flush failed: {}", e),
+                })?;
 
         let elapsed = start.elapsed();
 
@@ -621,12 +625,12 @@ impl StreamCoordinator {
         let mut attempts = 0;
 
         // Get session info and drain records once (don't retry the drain)
-        let session_info = self
-            .sessions
-            .get(session_id)
-            .ok_or_else(|| StreamError::SessionNotFound {
-                session_id: session_id.to_string(),
-            })?;
+        let session_info =
+            self.sessions
+                .get(session_id)
+                .ok_or_else(|| StreamError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
 
         let collection_id = session_info.collection.clone();
         drop(session_info);
@@ -640,9 +644,10 @@ impl StreamCoordinator {
         }
 
         let count = records.len();
-        let bytes_estimate = records.iter().map(|r| {
-            r.id.len() + (r.vector.len() * 4) + 100
-        }).sum::<usize>();
+        let bytes_estimate = records
+            .iter()
+            .map(|r| r.id.len() + (r.vector.len() * 4) + 100)
+            .sum::<usize>();
 
         // Create flush parameters
         let flush_params = crate::storage::traits::FlushParameters {
@@ -689,7 +694,8 @@ impl StreamCoordinator {
 
                     return Ok(FlushStats {
                         records_flushed: count,
-                        bytes_written: flush_result.bytes_written.unwrap_or(bytes_estimate as u64) as usize,
+                        bytes_written: flush_result.bytes_written.unwrap_or(bytes_estimate as u64)
+                            as usize,
                         flush_duration: elapsed,
                         collection_id,
                         success: flush_result.success,
@@ -723,7 +729,9 @@ impl StreamCoordinator {
                     // Exponential backoff
                     tokio::time::sleep(delay).await;
                     delay = std::cmp::min(
-                        Duration::from_secs_f64(delay.as_secs_f64() * retry_config.backoff_multiplier),
+                        Duration::from_secs_f64(
+                            delay.as_secs_f64() * retry_config.backoff_multiplier,
+                        ),
                         retry_config.max_delay,
                     );
                 }
@@ -742,12 +750,9 @@ impl StreamCoordinator {
         let mut results = Vec::with_capacity(session_ids.len());
 
         for session_id in session_ids {
-            let result = self.flush_to_storage_with_retry(
-                &session_id,
-                storage,
-                None,
-                retry_config.clone(),
-            ).await;
+            let result = self
+                .flush_to_storage_with_retry(&session_id, storage, None, retry_config.clone())
+                .await;
             results.push((session_id, result));
         }
 
@@ -876,7 +881,10 @@ mod tests {
             })
             .collect();
 
-        let result = coordinator.push_records(&session_id, records).await.unwrap();
+        let result = coordinator
+            .push_records(&session_id, records)
+            .await
+            .unwrap();
 
         assert_eq!(result.pushed, 100);
         assert_eq!(result.dropped, 0);
@@ -901,7 +909,10 @@ mod tests {
             })
             .collect();
 
-        coordinator.push_records(&session_id, records).await.unwrap();
+        coordinator
+            .push_records(&session_id, records)
+            .await
+            .unwrap();
 
         let drained = coordinator.drain_records(&session_id, 50).unwrap();
         assert_eq!(drained.len(), 50);

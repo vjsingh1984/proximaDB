@@ -23,10 +23,10 @@
 
 use dashmap::DashMap;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::graph::engines::orion::traversal::vector_guided_astar;
+use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::engines::orion::traversal::TraversalConfig;
-use proximadb::graph::engines::GraphEngine;
+use proximadb::graph::engines::orion::traversal::vector_guided_astar;
 use proximadb::graph::hybrid::ranking::{HybridRankingStrategy, RankingContext, RankingStrategy};
 use proximadb::graph::hybrid::semantic_traversal::{SemanticBFSTraversal, SemanticTraversalInput};
 use proximadb::graph::{Edge, Node};
@@ -85,8 +85,14 @@ async fn test_semantic_traversal_finds_similar_topics() {
     }
 
     // Create edges
-    engine.insert_edge(create_edge("AI", "ML", "RELATED_TO")).await.unwrap();
-    engine.insert_edge(create_edge("ML", "DL", "RELATED_TO")).await.unwrap();
+    engine
+        .insert_edge(create_edge("AI", "ML", "RELATED_TO"))
+        .await
+        .unwrap();
+    engine
+        .insert_edge(create_edge("ML", "DL", "RELATED_TO"))
+        .await
+        .unwrap();
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let semantic_bfs = SemanticBFSTraversal::new(
@@ -130,8 +136,14 @@ async fn test_vector_guided_pathfinding() {
         engine.insert_node(node).await.unwrap();
     }
 
-    engine.insert_edge(create_edge("AI", "ML", "RELATED_TO")).await.unwrap();
-    engine.insert_edge(create_edge("ML", "DL", "RELATED_TO")).await.unwrap();
+    engine
+        .insert_edge(create_edge("AI", "ML", "RELATED_TO"))
+        .await
+        .unwrap();
+    engine
+        .insert_edge(create_edge("ML", "DL", "RELATED_TO"))
+        .await
+        .unwrap();
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let guide_embedding = vec![0.85, 0.2, 0.05]; // Between AI and ML
@@ -202,8 +214,8 @@ async fn test_hybrid_ranking() {
     // AI: 0.6 * 0.993 + 0.4 * 0.9 = 0.956
     // ML: 0.6 * 1.0 + 0.4 * 0.85 = 0.94
     assert!(ai_score > ml_score);
-    assert!(ai_score > 0.95);  // High combined score
-    assert!(ml_score > 0.93);  // Still high due to perfect vector match
+    assert!(ai_score > 0.95); // High combined score
+    assert!(ml_score > 0.93); // Still high due to perfect vector match
 }
 
 #[tokio::test]
@@ -222,9 +234,18 @@ async fn test_end_to_end_semantic_search_with_ranking() {
         engine.insert_node(node).await.unwrap();
     }
 
-    engine.insert_edge(create_edge("AI", "ML", "RELATED_TO")).await.unwrap();
-    engine.insert_edge(create_edge("ML", "DL", "RELATED_TO")).await.unwrap();
-    engine.insert_edge(create_edge("AI", "NLP", "SIMILAR_TO")).await.unwrap();
+    engine
+        .insert_edge(create_edge("AI", "ML", "RELATED_TO"))
+        .await
+        .unwrap();
+    engine
+        .insert_edge(create_edge("ML", "DL", "RELATED_TO"))
+        .await
+        .unwrap();
+    engine
+        .insert_edge(create_edge("AI", "NLP", "SIMILAR_TO"))
+        .await
+        .unwrap();
 
     // Step 1: Semantic traversal
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -252,10 +273,7 @@ async fn test_end_to_end_semantic_search_with_ranking() {
     centrality_cache.insert("DL".to_string(), 0.7);
     centrality_cache.insert("NLP".to_string(), 0.5);
 
-    let strategy = HybridRankingStrategy::balanced(
-        distance_compute,
-        centrality_cache,
-    );
+    let strategy = HybridRankingStrategy::balanced(distance_compute, centrality_cache);
 
     let context = RankingContext {
         query_embedding,

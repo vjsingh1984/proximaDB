@@ -54,20 +54,37 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "cluster")]
+use crate::cluster::consensus::RaftConsensus;
+#[cfg(feature = "cluster")]
+use crate::cluster::replication::EngineReplication;
+#[cfg(feature = "cluster")]
+use crate::cluster::rpc::grpc_server::{
+    ConsensusServiceImpl, HealthServiceImpl, ReplicationServiceImpl,
+};
+#[cfg(feature = "cluster")]
+use crate::proto::proximadb_cluster_v1::{
+    consensus_service_server::ConsensusServiceServer, health_service_server::HealthServiceServer,
+    replication_service_server::ReplicationServiceServer,
+};
+
 use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
-use crate::query::facade::{UnifiedQueryFacade, VectorSearchStrategy, GraphStrategy, SqlStrategy, ColumnarStrategy, DocumentStrategy, ObservabilityStrategy, FacadeConfig, QueryStrategy, QueryFacadeAdapter};
-use crate::storage::document::DocumentService;
 use crate::observability::query::ObservabilityQueryEngine;
 use crate::observability::storage::ObservabilityStorage;
+use crate::query::facade::{
+    ColumnarStrategy, DocumentStrategy, FacadeConfig, GraphStrategy, ObservabilityStrategy,
+    QueryFacadeAdapter, SqlStrategy, UnifiedQueryFacade, VectorSearchStrategy,
+};
 use crate::query::federated::FederatedQueryContext;
-use crate::storage::multimodel::MultiModelStorageFacade;
+use crate::security::SecurityCoordinator;
 use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
-use crate::security::SecurityCoordinator;
 use crate::storage::StorageEngine;
+use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
+use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
@@ -117,7 +134,6 @@ pub struct MultiServerConfig {
     // ============================================================
     // Unified Port Architecture (Phase 14)
     // ============================================================
-
     /// Enable unified port mode (REST + gRPC + Arrow Flight on single port)
     /// When enabled, `unified_port` is used; individual ports are ignored.
     /// Default: false (legacy multi-port mode for backward compatibility)
@@ -130,6 +146,40 @@ pub struct MultiServerConfig {
 
     /// Bind address for unified port (e.g., "0.0.0.0")
     pub unified_bind_address: String,
+
+    /// Cluster mode configuration (consensus, replication, health services)
+    /// Only used when `cluster` feature is enabled
+    #[cfg(feature = "cluster")]
+    pub cluster_config: Option<ClusterServerConfig>,
+}
+
+/// Cluster server configuration for distributed mode
+#[cfg(feature = "cluster")]
+#[derive(Debug, Clone)]
+pub struct ClusterServerConfig {
+    /// This node's unique identifier
+    pub node_id: String,
+
+    /// Enable cluster consensus service (Raft)
+    pub enable_consensus: bool,
+
+    /// Enable cluster replication service
+    pub enable_replication: bool,
+
+    /// Enable cluster health service
+    pub enable_health: bool,
+}
+
+#[cfg(feature = "cluster")]
+impl Default for ClusterServerConfig {
+    fn default() -> Self {
+        Self {
+            node_id: format!("node-{}", uuid::Uuid::new_v4()),
+            enable_consensus: true,
+            enable_replication: true,
+            enable_health: true,
+        }
+    }
 }
 
 /// PostgreSQL wire protocol server configuration
@@ -528,7 +578,7 @@ impl Default for MultiServerConfig {
                 bind_address: "0.0.0.0:5680".parse().unwrap(),
                 enable_arrow_ipc: true,
                 max_message_size: 512 * 1024 * 1024, // 512MB for massive batch uploads
-                compression: false, // Arrow has built-in compression
+                compression: false,                  // Arrow has built-in compression
                 tls_cert_file: None,
                 tls_key_file: None,
             },
@@ -540,6 +590,9 @@ impl Default for MultiServerConfig {
             unified_mode: false, // Legacy multi-port mode by default
             unified_port: 5678,  // Use REST port for unified
             unified_bind_address: "0.0.0.0".to_string(),
+            // Cluster mode defaults
+            #[cfg(feature = "cluster")]
+            cluster_config: None, // Cluster mode disabled by default
         }
     }
 }
@@ -619,7 +672,11 @@ impl MultiServerConfig {
     pub fn unified_bind_address(&self) -> SocketAddr {
         format!("{}:{}", self.unified_bind_address, self.unified_port)
             .parse()
-            .unwrap_or_else(|_| format!("0.0.0.0:{}", self.unified_port).parse().expect("valid default"))
+            .unwrap_or_else(|_| {
+                format!("0.0.0.0:{}", self.unified_port)
+                    .parse()
+                    .expect("valid default")
+            })
     }
 
     /// Check if unified port mode is enabled
@@ -714,7 +771,10 @@ impl SharedServices {
                     } else {
                         loc.url.clone()
                     };
-                    debug!("🔧 SharedServices: WAL directory URL from storage_locations: {}", url);
+                    debug!(
+                        "🔧 SharedServices: WAL directory URL from storage_locations: {}",
+                        url
+                    );
                     url
                 })
                 .collect();
@@ -754,7 +814,8 @@ impl SharedServices {
         debug!("✅ SharedServices::new - SST engine created successfully");
 
         // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
-        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> = sst_engine.clone();
+        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> =
+            sst_engine.clone();
 
         // Create WAL manager for two-stage search
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
@@ -788,7 +849,9 @@ impl SharedServices {
 
         // Make AXIS manager available to SST engine for HNSW/IVF search
         crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_manager.clone());
-        debug!("✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search");
+        debug!(
+            "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
+        );
 
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!(
@@ -817,7 +880,8 @@ impl SharedServices {
 
         // Use the global collection cache (shared across services)
         // Collections are registered in this cache when created via register_collection_in_cache()
-        let collection_cache = crate::services::events::log::get_or_create_global_collection_cache();
+        let collection_cache =
+            crate::services::events::log::get_or_create_global_collection_cache();
 
         // Get base storage URL for EventLog persistence
         let base_storage_url = storage_config
@@ -848,19 +912,22 @@ impl SharedServices {
             // For now, the consumer will run until the process exits
             std::mem::forget(shutdown_tx); // Prevent sender from being dropped
 
-            let _consumer_handle = crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
-                crate::services::events::log::event_log_service()
-                    .expect("EventLog service just initialized")
-                    .inner(),
-                axis_manager.clone(),
-                filesystem_factory.clone(),
-                collection_cache.clone(),
-                orchestrator.clone(),
-                shutdown_rx,
-            )
-            .await;
+            let _consumer_handle =
+                crate::index::axis::integration::eventlog_consumer::start_axis_consumer(
+                    crate::services::events::log::event_log_service()
+                        .expect("EventLog service just initialized")
+                        .inner(),
+                    axis_manager.clone(),
+                    filesystem_factory.clone(),
+                    collection_cache.clone(),
+                    orchestrator.clone(),
+                    shutdown_rx,
+                )
+                .await;
 
-            info!("✅ SharedServices: AXIS EventLog consumer started - automatic index building enabled");
+            info!(
+                "✅ SharedServices: AXIS EventLog consumer started - automatic index building enabled"
+            );
         }
 
         let vector_operations_service = Arc::new(
@@ -1023,15 +1090,23 @@ impl SharedServices {
         // This ensures ALL graph endpoints and operations share the same state.
         // ==================================================================================
 
-        debug!("🔧 SharedServices::new - Creating SHARED GraphCollectionService instance with auto-recovery...");
-        let graph_collection_service = match crate::services::GraphCollectionService::new_with_recovery().await {
-            Ok(svc) => Arc::new(svc),
-            Err(e) => {
-                warn!("Failed to create GraphCollectionService with recovery: {}. Using non-persistent service.", e);
-                Arc::new(crate::services::GraphCollectionService::new())
-            }
-        };
-        debug!("✅ SharedServices::new - Shared GraphCollectionService created (with auto-recovery)");
+        debug!(
+            "🔧 SharedServices::new - Creating SHARED GraphCollectionService instance with auto-recovery..."
+        );
+        let graph_collection_service =
+            match crate::services::GraphCollectionService::new_with_recovery().await {
+                Ok(svc) => Arc::new(svc),
+                Err(e) => {
+                    warn!(
+                        "Failed to create GraphCollectionService with recovery: {}. Using non-persistent service.",
+                        e
+                    );
+                    Arc::new(crate::services::GraphCollectionService::new())
+                }
+            };
+        debug!(
+            "✅ SharedServices::new - Shared GraphCollectionService created (with auto-recovery)"
+        );
 
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
@@ -1041,9 +1116,10 @@ impl SharedServices {
         // ALWAYS use new_with_collection_service to ensure shared GraphCollectionService
         // Even if config is provided, we must share the collection service
         // (Config-specific settings can be applied later if needed)
-        let mut graph_service_inst = crate::graph::GraphOperationsService::new_with_collection_service(
-            graph_collection_service.clone()
-        );
+        let mut graph_service_inst =
+            crate::graph::GraphOperationsService::new_with_collection_service(
+                graph_collection_service.clone(),
+            );
         // Wire the storage root so graph engines persist under the same base path as vectors
         if let Some(first_loc) = storage_config.storage_locations.first() {
             graph_service_inst.set_base_storage_url(first_loc.url.clone());
@@ -1079,19 +1155,19 @@ impl SharedServices {
         graph_service_inst.set_metrics_updater(metrics_updater.clone());
         debug!("📈 GraphOperationsService metrics updater wired");
         let graph_service = Arc::new(graph_service_inst);
-        debug!("✅ SharedServices::new - GraphOperationsService created with shared collection service");
+        debug!(
+            "✅ SharedServices::new - GraphOperationsService created with shared collection service"
+        );
 
         // Create unified handlers with SHARED graph services
         // IMPORTANT: Pass the pre-created GraphCollectionService and GraphOperationsService
         // to ensure ALL graph endpoints and operations share the same state
-        debug!(
-            "🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services..."
-        );
+        debug!("🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services...");
         let unified_handlers_instance = UnifiedHandlers::new(
             collection_service.clone(),
             vector_operations_service.clone(),
             graph_collection_service.clone(), // SHARED instance
-            graph_service.clone(),             // Uses the SHARED collection service
+            graph_service.clone(),            // Uses the SHARED collection service
         );
 
         // Apply hybrid runtime config if provided
@@ -1110,21 +1186,21 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating UnifiedQueryFacade with real strategies...");
 
         // Create VectorSearchStrategy wrapping VectorOperationsService
-        let vector_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
-            VectorSearchStrategy::new(
+        let vector_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(VectorSearchStrategy::new(
                 vector_operations_service.clone(),
                 collection_service.clone(),
-            )
-        );
+            ));
 
         // Create GraphStrategy wrapping GraphOperationsService
-        let graph_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
-            GraphStrategy::new(graph_service.clone())
-        );
+        let graph_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(GraphStrategy::new(graph_service.clone()));
 
         // Create MultiModelStorageFacade for federated queries
         // This provides unified access to vector/graph/document stores for SQL execution
-        debug!("🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries...");
+        debug!(
+            "🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries..."
+        );
         let multimodel_storage = Arc::new(MultiModelStorageFacade::new());
         debug!("✅ SharedServices::new - MultiModelStorageFacade created");
 
@@ -1134,39 +1210,38 @@ impl SharedServices {
         debug!("✅ SharedServices::new - FederatedQueryContext created");
 
         // Create SqlStrategy wrapping FederatedQueryContext
-        let sql_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
-            SqlStrategy::new(federated_context)
-        );
+        let sql_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(SqlStrategy::new(federated_context));
 
         // Create ColumnarStrategy for analytical queries (M2 Dual Columnar Execution)
         // This strategy handles SQL queries with aggregations, GROUP BY, DISTINCT
         // by routing them through Arrow/Parquet columnar providers
-        let columnar_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
-            ColumnarStrategy::new()
-        );
+        let columnar_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(ColumnarStrategy::new());
         debug!("✅ SharedServices::new - ColumnarStrategy created for analytical queries");
 
         // Create DocumentStrategy wrapping DocumentService for JSON document queries
         // DocumentService provides MongoDB-like document operations (CRUD, indexing, queries)
         debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
         let document_service = Arc::new(DocumentService::new(sst_engine_for_documents));
-        let document_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
-            DocumentStrategy::new(document_service)
-        );
+        let document_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(DocumentStrategy::new(document_service));
         debug!("✅ SharedServices::new - DocumentStrategy created for document queries");
 
         // Create ObservabilityStrategy wrapping ObservabilityQueryEngine for logs/metrics/traces
         // This enables unified query interface for observability data
-        debug!("🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries...");
-        let observability_base_path = storage_config
-            .metadata_url
-            .replace("file://", "");
-        let observability_storage = Arc::new(ObservabilityStorage::new(&observability_base_path));
-        let observability_query_engine = Arc::new(ObservabilityQueryEngine::new(observability_storage));
-        let observability_strategy: Arc<dyn crate::query::facade::QueryStrategy> = Arc::new(
-            ObservabilityStrategy::new(observability_query_engine)
+        debug!(
+            "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
         );
-        debug!("✅ SharedServices::new - ObservabilityStrategy created for logs/metrics/traces queries");
+        let observability_base_path = storage_config.metadata_url.replace("file://", "");
+        let observability_storage = Arc::new(ObservabilityStorage::new(&observability_base_path));
+        let observability_query_engine =
+            Arc::new(ObservabilityQueryEngine::new(observability_storage));
+        let observability_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
+            Arc::new(ObservabilityStrategy::new(observability_query_engine));
+        debug!(
+            "✅ SharedServices::new - ObservabilityStrategy created for logs/metrics/traces queries"
+        );
 
         // Build the unified facade with all strategies
         // Priority order: vector (100) > graph (75) > document (70) > observability (60) > columnar (50) > sql (25)
@@ -1178,9 +1253,7 @@ impl SharedServices {
             columnar_strategy,
             sql_strategy,
         ];
-        let query_facade = Arc::new(
-            UnifiedQueryFacade::new(strategies, FacadeConfig::default())
-        );
+        let query_facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
 
         info!(
             "✅ SharedServices: UnifiedQueryFacade created with 6 strategies (vector, graph, document, observability, columnar, sql)"
@@ -1465,16 +1538,24 @@ impl MultiServer {
             // Check TLS configuration early
             let tls_enabled = self.config.grpc_config.is_tls_enabled();
             let mtls_enabled = self.config.tls_config.is_mtls_enabled();
-            let cert_path = self.config.grpc_config.tls_cert_file.clone()
+            let cert_path = self
+                .config
+                .grpc_config
+                .tls_cert_file
+                .clone()
                 .or_else(|| self.config.tls_config.cert_file.clone());
-            let key_path = self.config.grpc_config.tls_key_file.clone()
+            let key_path = self
+                .config
+                .grpc_config
+                .tls_key_file
+                .clone()
                 .or_else(|| self.config.tls_config.key_file.clone());
             let ca_path = self.config.tls_config.ca_file.clone();
 
             // Create gRPC server builder with TLS if configured
             let mut server_builder = if tls_enabled || mtls_enabled {
                 if let (Some(cert), Some(key)) = (&cert_path, &key_path) {
-                    use tonic::transport::{Identity, ServerTlsConfig, Certificate};
+                    use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 
                     // Load certificate and key
                     let cert_data = std::fs::read(cert)
@@ -1487,8 +1568,9 @@ impl MultiServer {
                     // Build TLS config - with or without client CA for mTLS
                     let tls_config = if mtls_enabled {
                         if let Some(ref ca) = ca_path {
-                            let ca_data = std::fs::read(ca)
-                                .map_err(|e| anyhow::anyhow!("Failed to read CA certificate: {}", e))?;
+                            let ca_data = std::fs::read(ca).map_err(|e| {
+                                anyhow::anyhow!("Failed to read CA certificate: {}", e)
+                            })?;
                             let client_ca = Certificate::from_pem(ca_data);
                             info!("Configuring gRPC with mTLS (client certificates required)");
                             ServerTlsConfig::new()
@@ -1515,15 +1597,11 @@ impl MultiServer {
             };
 
             // Add versioned VectorService (v1)
-            #[cfg(feature = "unified-facade-routing")]
-            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
-                services.unified_handlers.clone(),
-                Some(services.query_adapter()),
-            );
-            #[cfg(not(feature = "unified-facade-routing"))]
-            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
-                services.unified_handlers.clone(),
-            );
+            let vector_service_impl =
+                crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+                    services.unified_handlers.clone(),
+                    Some(services.query_adapter()),
+                );
             let mut vector_service =
                 crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
                     vector_service_impl,
@@ -1573,15 +1651,10 @@ impl MultiServer {
             }
 
             // Add GraphService for native graph database operations
-            // When unified-facade-routing is enabled, provide the adapter for Cypher query routing
-            #[cfg(feature = "unified-facade-routing")]
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
                 services.unified_handlers.clone(),
                 services.query_adapter(),
             );
-            #[cfg(not(feature = "unified-facade-routing"))]
-            let graph_service_impl =
-                crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service =
                 crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
                     graph_service_impl,
@@ -1594,12 +1667,17 @@ impl MultiServer {
             let doc_path_str = doc_base_path.to_string_lossy().to_string();
             let doc_storage_service = {
                 let engine = services.vector_operations_service.unified_engine();
-                match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str).await {
+                match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str)
+                    .await
+                {
                     Ok(svc) => Arc::new(svc),
                     Err(e) => {
-                        warn!("Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
+                        warn!(
+                            "Failed to create DocumentService with WAL: {}. Using non-durable storage.",
+                            e
+                        );
                         Arc::new(crate::storage::document::DocumentService::new(
-                            services.vector_operations_service.unified_engine()
+                            services.vector_operations_service.unified_engine(),
                         ))
                     }
                 }
@@ -1616,23 +1694,41 @@ impl MultiServer {
             // data_dir comes from TOML config (server.data_dir)
             let obs_base_path = self.config.data_dir.join("observability");
             let obs_path_str = obs_base_path.to_string_lossy().to_string();
-            let obs_storage = match crate::observability::ObservabilityStorage::new_with_wal(&obs_path_str).await {
+            let obs_storage = match crate::observability::ObservabilityStorage::new_with_wal(
+                &obs_path_str,
+            )
+            .await
+            {
                 Ok(storage) => Arc::new(storage),
                 Err(e) => {
-                    warn!("Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.", e);
-                    Arc::new(crate::observability::ObservabilityStorage::new(&obs_path_str))
+                    warn!(
+                        "Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.",
+                        e
+                    );
+                    Arc::new(crate::observability::ObservabilityStorage::new(
+                        &obs_path_str,
+                    ))
                 }
             };
-            let obs_service = match crate::observability::ObservabilityService::new(obs_storage).await {
-                Ok(svc) => Arc::new(svc),
-                Err(e) => {
-                    warn!("Failed to create ObservabilityService: {}. Creating minimal instance.", e);
-                    // Create a minimal instance with WAL if possible
-                    let fallback_storage = Arc::new(crate::observability::ObservabilityStorage::new(&obs_path_str));
-                    Arc::new(crate::observability::ObservabilityService::new(fallback_storage)
-                        .await.expect("Failed to create fallback observability service"))
-                }
-            };
+            let obs_service =
+                match crate::observability::ObservabilityService::new(obs_storage).await {
+                    Ok(svc) => Arc::new(svc),
+                    Err(e) => {
+                        warn!(
+                            "Failed to create ObservabilityService: {}. Creating minimal instance.",
+                            e
+                        );
+                        // Create a minimal instance with WAL if possible
+                        let fallback_storage = Arc::new(
+                            crate::observability::ObservabilityStorage::new(&obs_path_str),
+                        );
+                        Arc::new(
+                            crate::observability::ObservabilityService::new(fallback_storage)
+                                .await
+                                .expect("Failed to create fallback observability service"),
+                        )
+                    }
+                };
             let observability_service_impl =
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service);
             let observability_service =
@@ -1771,7 +1867,10 @@ impl MultiServer {
 
         // Start PostgreSQL wire protocol server on port 5433 if configured
         if self.config.postgres_config.enable_postgres {
-            info!("🐘 Starting PostgreSQL Server on port {}", self.config.postgres_config.port);
+            info!(
+                "🐘 Starting PostgreSQL Server on port {}",
+                self.config.postgres_config.port
+            );
 
             let pg_bind_addr = self.config.postgres_config.active_bind_address();
             let collection_service = services.collection_service.clone();
@@ -1782,7 +1881,12 @@ impl MultiServer {
 
                 let postgres_handle = tokio::spawn(async move {
                     use crate::network::postgres::PostgresServer;
-                    let server = PostgresServer::new(pg_bind_addr, storage_clone, collection_service, vector_ops);
+                    let server = PostgresServer::new(
+                        pg_bind_addr,
+                        storage_clone,
+                        collection_service,
+                        vector_ops,
+                    );
                     if let Err(e) = server.start().await {
                         tracing::error!("❌ PostgreSQL Server error: {}", e);
                     }
@@ -1790,14 +1894,21 @@ impl MultiServer {
                 handles.push(postgres_handle);
                 info!("✅ PostgreSQL Server started on {}", pg_bind_addr);
             } else {
-                warn!("PostgreSQL server is enabled but storage engine is not wired - use set_storage() before start()");
-                info!("📋 PostgreSQL server will be available at {} once storage wiring is complete", pg_bind_addr);
+                warn!(
+                    "PostgreSQL server is enabled but storage engine is not wired - use set_storage() before start()"
+                );
+                info!(
+                    "📋 PostgreSQL server will be available at {} once storage wiring is complete",
+                    pg_bind_addr
+                );
             }
         }
 
         *self.server_handles.lock().await = handles;
 
-        info!("🎯 Multi-Server started successfully: gRPC:5679 + Arrow IPC:5680 + REST:5678 + PostgreSQL:5433");
+        info!(
+            "🎯 Multi-Server started successfully: gRPC:5679 + Arrow IPC:5680 + REST:5678 + PostgreSQL:5433"
+        );
         Ok(())
     }
 
@@ -1819,8 +1930,10 @@ impl MultiServer {
 
         // Internal addresses for REST and gRPC servers
         // These are only accessible via the TCP multiplexer
-        let internal_rest_addr: std::net::SocketAddr = "127.0.0.1:15678".parse().expect("valid address");
-        let internal_grpc_addr: std::net::SocketAddr = "127.0.0.1:15679".parse().expect("valid address");
+        let internal_rest_addr: std::net::SocketAddr =
+            "127.0.0.1:15678".parse().expect("valid address");
+        let internal_grpc_addr: std::net::SocketAddr =
+            "127.0.0.1:15679".parse().expect("valid address");
 
         let mut handles = Vec::new();
 
@@ -1862,7 +1975,10 @@ impl MultiServer {
             };
 
             let server = UnifiedServer::with_config(service, server_config);
-            info!("🌐 REST Server starting on {} (internal)", internal_rest_addr);
+            info!(
+                "🌐 REST Server starting on {} (internal)",
+                internal_rest_addr
+            );
 
             let handle = tokio::spawn(async move {
                 if let Err(e) = server.serve().await {
@@ -1877,15 +1993,11 @@ impl MultiServer {
             let services = self.shared_services.clone();
             let compression = self.config.grpc_config.compression;
 
-            #[cfg(feature = "unified-facade-routing")]
-            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
-                services.unified_handlers.clone(),
-                Some(services.query_adapter()),
-            );
-            #[cfg(not(feature = "unified-facade-routing"))]
-            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
-                services.unified_handlers.clone(),
-            );
+            let vector_service_impl =
+                crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+                    services.unified_handlers.clone(),
+                    Some(services.query_adapter()),
+                );
             let mut vector_service =
                 crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
                     vector_service_impl,
@@ -1930,15 +2042,10 @@ impl MultiServer {
                     .send_compressed(CompressionEncoding::Gzip);
             }
 
-            // When unified-facade-routing is enabled, provide the adapter for Cypher query routing
-            #[cfg(feature = "unified-facade-routing")]
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
                 services.unified_handlers.clone(),
                 services.query_adapter(),
             );
-            #[cfg(not(feature = "unified-facade-routing"))]
-            let graph_service_impl =
-                crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service =
                 crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
                     graph_service_impl,
@@ -1948,9 +2055,10 @@ impl MultiServer {
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
                 services.unified_handlers.clone(),
             );
-            let flight_server = arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
-                .max_encoding_message_size(512 * 1024 * 1024) // 512MB for large vector batches
-                .max_decoding_message_size(512 * 1024 * 1024);
+            let flight_server =
+                arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
+                    .max_encoding_message_size(512 * 1024 * 1024) // 512MB for large vector batches
+                    .max_decoding_message_size(512 * 1024 * 1024);
 
             let server = tonic::transport::Server::builder()
                 .add_service(vector_service)
@@ -1959,7 +2067,10 @@ impl MultiServer {
                 .add_service(graph_service)
                 .add_service(flight_server);
 
-            info!("🔗 gRPC + Arrow Flight Server starting on {} (internal)", internal_grpc_addr);
+            info!(
+                "🔗 gRPC + Arrow Flight Server starting on {} (internal)",
+                internal_grpc_addr
+            );
 
             let grpc_handle = tokio::spawn(async move {
                 if let Err(e) = server.serve(internal_grpc_addr).await {
@@ -1971,7 +2082,9 @@ impl MultiServer {
 
         // 3. Start TCP multiplexer on unified port (routes to internal servers)
         {
-            use crate::network::multiplex::tcp_multiplexer::{TcpMultiplexConfig, TcpMultiplexer, TcpProtocol};
+            use crate::network::multiplex::tcp_multiplexer::{
+                TcpMultiplexConfig, TcpMultiplexer, TcpProtocol,
+            };
 
             let multiplex_config = TcpMultiplexConfig {
                 bind_address: unified_addr,
@@ -2093,6 +2206,327 @@ impl MultiServer {
             .map_err(|e| anyhow::anyhow!("Failed to configure TLS: {}", e))?;
 
         Ok(server)
+    }
+
+    /// Start all configured servers with cluster services enabled
+    ///
+    /// This method extends the standard `start()` method by also registering
+    /// cluster-specific gRPC services (Consensus, Replication, Health) when
+    /// the `cluster` feature is enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `consensus` - The Raft consensus instance wrapped in Arc<RwLock>
+    /// * `replication` - The replication manager instance wrapped in Arc<RwLock>
+    /// * `node_id` - This node's unique identifier for health service
+    ///
+    /// # Feature Gate
+    ///
+    /// This method is only available when the `cluster` feature is enabled.
+    #[cfg(feature = "cluster")]
+    pub async fn start_with_cluster(
+        &mut self,
+        consensus: Arc<RwLock<RaftConsensus>>,
+        replication: Arc<RwLock<EngineReplication>>,
+        node_id: String,
+    ) -> Result<()> {
+        info!("Starting ProximaDB Multi-Server with Cluster Services");
+        info!(
+            "  Node ID: {}, Consensus: enabled, Replication: enabled, Health: enabled",
+            node_id
+        );
+
+        // Get cluster config or use defaults
+        let cluster_config =
+            self.config
+                .cluster_config
+                .clone()
+                .unwrap_or_else(|| ClusterServerConfig {
+                    node_id: node_id.clone(),
+                    enable_consensus: true,
+                    enable_replication: true,
+                    enable_health: true,
+                });
+
+        // Check for unified mode (Phase 14)
+        if self.config.is_unified_mode() {
+            // TODO: Add cluster services to unified mode
+            warn!("Cluster services in unified mode not yet implemented, using legacy mode");
+        }
+
+        // Start standard services first
+        info!(
+            "Starting ProximaDB Multi-Server: gRPC:5679 + Arrow IPC:5680 + REST:5678 + Cluster Services"
+        );
+
+        let services = self.shared_services.clone();
+        let mut handles = Vec::new();
+
+        // Start gRPC server with cluster services on port 5679
+        if self.config.grpc_config.enable_grpc {
+            info!("Starting gRPC Server on port 5679 with cluster services");
+
+            // Check TLS configuration
+            let tls_enabled = self.config.grpc_config.is_tls_enabled();
+            let mtls_enabled = self.config.tls_config.is_mtls_enabled();
+            let cert_path = self
+                .config
+                .grpc_config
+                .tls_cert_file
+                .clone()
+                .or_else(|| self.config.tls_config.cert_file.clone());
+            let key_path = self
+                .config
+                .grpc_config
+                .tls_key_file
+                .clone()
+                .or_else(|| self.config.tls_config.key_file.clone());
+            let ca_path = self.config.tls_config.ca_file.clone();
+
+            // Create gRPC server builder with TLS if configured
+            let mut server_builder = if tls_enabled || mtls_enabled {
+                if let (Some(cert), Some(key)) = (&cert_path, &key_path) {
+                    use tonic::transport::{Certificate, Identity, ServerTlsConfig};
+
+                    let cert_data = std::fs::read(cert)
+                        .map_err(|e| anyhow::anyhow!("Failed to read TLS certificate: {}", e))?;
+                    let key_data = std::fs::read(key)
+                        .map_err(|e| anyhow::anyhow!("Failed to read TLS key: {}", e))?;
+
+                    let identity = Identity::from_pem(cert_data, key_data);
+
+                    let tls_config = if mtls_enabled {
+                        if let Some(ref ca) = ca_path {
+                            let ca_data = std::fs::read(ca).map_err(|e| {
+                                anyhow::anyhow!("Failed to read CA certificate: {}", e)
+                            })?;
+                            let client_ca = Certificate::from_pem(ca_data);
+                            info!("Configuring gRPC with mTLS (client certificates required)");
+                            ServerTlsConfig::new()
+                                .identity(identity)
+                                .client_ca_root(client_ca)
+                        } else {
+                            warn!("mTLS enabled but no CA certificate - using standard TLS");
+                            ServerTlsConfig::new().identity(identity)
+                        }
+                    } else {
+                        info!("Configuring gRPC with TLS");
+                        ServerTlsConfig::new().identity(identity)
+                    };
+
+                    tonic::transport::Server::builder()
+                        .tls_config(tls_config)
+                        .map_err(|e| anyhow::anyhow!("Failed to configure TLS: {}", e))?
+                } else {
+                    warn!("TLS enabled but certificate/key paths not configured - using plaintext");
+                    tonic::transport::Server::builder()
+                }
+            } else {
+                tonic::transport::Server::builder()
+            };
+
+            // Build standard services
+            let vector_service_impl =
+                crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+                    services.unified_handlers.clone(),
+                    Some(services.query_adapter()),
+                );
+            let mut vector_service =
+                crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
+                    vector_service_impl,
+                )
+                .max_decoding_message_size(64 * 1024 * 1024)
+                .max_encoding_message_size(64 * 1024 * 1024);
+
+            if self.config.grpc_config.compression {
+                use tonic::codec::CompressionEncoding;
+                vector_service = vector_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+
+            let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
+                services.unified_handlers.clone(),
+            );
+            let mut sql_service =
+                crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
+                    sql_service_impl,
+                )
+                .max_decoding_message_size(64 * 1024 * 1024)
+                .max_encoding_message_size(64 * 1024 * 1024);
+
+            if self.config.grpc_config.compression {
+                use tonic::codec::CompressionEncoding;
+                sql_service = sql_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+
+            let col_service_impl =
+                crate::network::grpc::collection_service::CollectionServiceImpl::new(
+                    services.unified_handlers.clone(),
+                );
+            let mut col_service =
+                crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
+                    col_service_impl,
+                );
+            if self.config.grpc_config.compression {
+                use tonic::codec::CompressionEncoding;
+                col_service = col_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+
+            let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
+                services.unified_handlers.clone(),
+                services.query_adapter(),
+            );
+            let graph_service =
+                crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
+                    graph_service_impl,
+                );
+
+            // Build cluster services
+            let mut server = server_builder
+                .add_service(vector_service)
+                .add_service(sql_service)
+                .add_service(col_service)
+                .add_service(graph_service);
+
+            // Add consensus service if enabled
+            if cluster_config.enable_consensus {
+                let consensus_service = ConsensusServiceImpl::new(consensus.clone());
+                let consensus_server = ConsensusServiceServer::new(consensus_service);
+                server = server.add_service(consensus_server);
+                info!("  ConsensusService registered");
+            }
+
+            // Add replication service if enabled
+            if cluster_config.enable_replication {
+                let replication_service = ReplicationServiceImpl::new(
+                    replication.clone(),
+                    cluster_config.node_id.clone(),
+                );
+                let replication_server = ReplicationServiceServer::new(replication_service);
+                server = server.add_service(replication_server);
+                info!("  ReplicationService registered");
+            }
+
+            // Add health service if enabled
+            if cluster_config.enable_health {
+                let health_service = HealthServiceImpl::with_consensus(
+                    cluster_config.node_id.clone(),
+                    consensus.clone(),
+                );
+                let health_server = HealthServiceServer::new(health_service);
+                server = server.add_service(health_server);
+                info!("  HealthService registered");
+            }
+
+            let grpc_bind_addr = self.config.grpc_bind_address();
+            let mode = if mtls_enabled && cert_path.is_some() && ca_path.is_some() {
+                "mTLS"
+            } else if (tls_enabled || mtls_enabled) && cert_path.is_some() {
+                "TLS"
+            } else {
+                "plaintext"
+            };
+
+            let grpc_handle = tokio::spawn(async move {
+                if let Err(e) = server.serve(grpc_bind_addr).await {
+                    tracing::error!("gRPC server error: {}", e);
+                }
+            });
+            handles.push(grpc_handle);
+            info!(
+                "gRPC Server with cluster services started on {} ({})",
+                grpc_bind_addr, mode
+            );
+        }
+
+        // Start Arrow IPC server on port 5680 if configured
+        if self.config.arrow_ipc_config.enable_arrow_ipc {
+            info!("Starting Arrow IPC Server on port 5680");
+
+            let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
+            let unified_handlers = services.unified_handlers.clone();
+            let max_message_size = self.config.arrow_ipc_config.max_message_size;
+
+            let arrow_handle = tokio::spawn(async move {
+                use crate::network::arrow_ipc::ArrowFlightServer;
+
+                match ArrowFlightServer::new(arrow_bind_addr, unified_handlers)
+                    .with_max_message_size(max_message_size)
+                    .start()
+                    .await
+                {
+                    Ok(_) => {
+                        info!("Arrow IPC Server completed");
+                    }
+                    Err(e) => {
+                        tracing::error!("Arrow IPC Server error: {}", e);
+                    }
+                }
+            });
+
+            handles.push(arrow_handle);
+            info!("Arrow IPC Server started on {}", arrow_bind_addr);
+        }
+
+        // Start REST server on port 5678 if configured
+        if self.config.http_config.enable_rest {
+            info!("Starting REST Server on port 5678");
+
+            let rest_bind_addr = self.config.http_bind_address();
+            let unified_handlers = services.unified_handlers.clone();
+            let metrics_collector = services.metrics_collector.clone();
+            let security_coordinator = self.security_coordinator.clone();
+            let rest_auth_enabled = self.rest_auth_enabled;
+            let data_dir = self.config.data_dir.clone();
+            let query_adapter = Some(services.query_adapter());
+            let api_config = self.config.api_config.clone();
+
+            let rest_handle = tokio::spawn(async move {
+                use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
+
+                let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
+                let mut rest_security = RestServerSecurityConfig::default();
+                let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
+                rest_security.auth.enabled = auth_enabled;
+
+                match RestServer::with_security_and_config(
+                    rest_bind_addr,
+                    unified_handlers,
+                    max_request_size_mb,
+                    false, // compression disabled
+                    metrics_collector,
+                    security_coordinator,
+                    rest_security,
+                    data_dir,
+                    query_adapter,
+                )
+                .start()
+                .await
+                {
+                    Ok(_) => {
+                        info!("REST Server completed");
+                    }
+                    Err(e) => {
+                        tracing::error!("REST Server error: {}", e);
+                    }
+                }
+            });
+
+            handles.push(rest_handle);
+            info!("REST Server started on {}", rest_bind_addr);
+        }
+
+        *self.server_handles.lock().await = handles;
+
+        info!(
+            "Multi-Server with cluster services started successfully: gRPC:5679 + Arrow IPC:5680 + REST:5678"
+        );
+        Ok(())
     }
 
     /// Stop all servers

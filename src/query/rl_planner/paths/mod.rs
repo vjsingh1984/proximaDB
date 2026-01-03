@@ -181,7 +181,10 @@ impl OptimizationPath {
 }
 
 /// Filter paths by category
-pub fn filter_by_category(paths: &[OptimizationPath], category: PathCategory) -> Vec<&OptimizationPath> {
+pub fn filter_by_category(
+    paths: &[OptimizationPath],
+    category: PathCategory,
+) -> Vec<&OptimizationPath> {
     paths.iter().filter(|p| p.category() == category).collect()
 }
 
@@ -212,7 +215,12 @@ pub fn recommend_paths(
 
     // For small collections, prefer simpler paths
     if collection_size < 10_000 {
-        suitable.retain(|p| matches!(p.category(), PathCategory::Baseline | PathCategory::IndexBased));
+        suitable.retain(|p| {
+            matches!(
+                p.category(),
+                PathCategory::Baseline | PathCategory::IndexBased
+            )
+        });
     }
 
     suitable
@@ -233,11 +241,7 @@ mod tests {
             StorageEngineType::RAPTOR,
         ] {
             let paths = get_paths(*engine);
-            assert!(
-                !paths.is_empty(),
-                "No paths for {:?}",
-                engine
-            );
+            assert!(!paths.is_empty(), "No paths for {:?}", engine);
         }
     }
 

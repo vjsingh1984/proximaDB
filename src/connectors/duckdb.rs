@@ -170,7 +170,12 @@ pub struct DuckDBGlobalState {
 
 impl DuckDBGlobalState {
     /// Create new global state
-    pub fn new(collection: String, schema: Arc<ArrowSchema>, splits: Vec<FileSplit>, max_threads: usize) -> Self {
+    pub fn new(
+        collection: String,
+        schema: Arc<ArrowSchema>,
+        splits: Vec<FileSplit>,
+        max_threads: usize,
+    ) -> Self {
         Self {
             max_threads,
             next_split: std::sync::atomic::AtomicUsize::new(0),
@@ -182,7 +187,9 @@ impl DuckDBGlobalState {
 
     /// Get next split for a thread
     pub fn get_next_split(&self) -> Option<&FileSplit> {
-        let idx = self.next_split.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let idx = self
+            .next_split
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.splits.get(idx)
     }
 }
@@ -351,10 +358,7 @@ impl DuckDBTableScan {
             Field::new("id", DataType::Utf8, false),
             Field::new(
                 "vector",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, true)),
-                    128,
-                ),
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 128),
                 false,
             ),
         ]));
@@ -381,7 +385,9 @@ impl DuckDBTableScan {
             file_path: String::new(),
             offset: 0,
             length: 0,
-            split_type: SplitType::ByteRange { estimated_records: 0 },
+            split_type: SplitType::ByteRange {
+                estimated_records: 0,
+            },
             statistics: SplitStatistics::default(),
             locality: crate::storage::formats::SplitLocality::default(),
         }];
@@ -448,7 +454,10 @@ impl DuckDBVectorSearch {
     }
 
     /// Execute vector search
-    pub fn search(&self, params: &DuckDBVectorSearchParams) -> Result<Vec<RecordBatch>, DuckDBError> {
+    pub fn search(
+        &self,
+        params: &DuckDBVectorSearchParams,
+    ) -> Result<Vec<RecordBatch>, DuckDBError> {
         // TODO: Implement actual vector search via ProximaDB
         Ok(Vec::new())
     }
@@ -459,10 +468,7 @@ impl DuckDBVectorSearch {
             Field::new("id", DataType::Utf8, false),
             Field::new(
                 "vector",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, true)),
-                    128,
-                ),
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 128),
                 false,
             ),
         ];
@@ -561,7 +567,10 @@ impl DuckDBCopy {
     }
 
     /// Execute copy operation
-    pub fn copy_from(&self, _batches: impl Iterator<Item = RecordBatch>) -> Result<DuckDBCopyResult, DuckDBError> {
+    pub fn copy_from(
+        &self,
+        _batches: impl Iterator<Item = RecordBatch>,
+    ) -> Result<DuckDBCopyResult, DuckDBError> {
         // TODO: Implement bulk copy via ProximaDB
         Ok(DuckDBCopyResult {
             rows_copied: 0,
@@ -718,7 +727,10 @@ mod tests {
                 file_path: "/data/0.sst".to_string(),
                 offset: 0,
                 length: 1024,
-                split_type: SplitType::Block { block_id: 0, record_count: 100 },
+                split_type: SplitType::Block {
+                    block_id: 0,
+                    record_count: 100,
+                },
                 statistics: SplitStatistics::default(),
                 locality: crate::storage::formats::SplitLocality::default(),
             },
@@ -727,7 +739,10 @@ mod tests {
                 file_path: "/data/1.sst".to_string(),
                 offset: 0,
                 length: 2048,
-                split_type: SplitType::Block { block_id: 1, record_count: 200 },
+                split_type: SplitType::Block {
+                    block_id: 1,
+                    record_count: 200,
+                },
                 statistics: SplitStatistics::default(),
                 locality: crate::storage::formats::SplitLocality::default(),
             },
@@ -742,17 +757,17 @@ mod tests {
     #[test]
     fn test_duckdb_global_state() {
         let schema = Arc::new(ArrowSchema::empty());
-        let splits = vec![
-            FileSplit {
-                split_id: "s0".to_string(),
-                file_path: String::new(),
-                offset: 0,
-                length: 0,
-                split_type: SplitType::ByteRange { estimated_records: 0 },
-                statistics: SplitStatistics::default(),
-                locality: crate::storage::formats::SplitLocality::default(),
+        let splits = vec![FileSplit {
+            split_id: "s0".to_string(),
+            file_path: String::new(),
+            offset: 0,
+            length: 0,
+            split_type: SplitType::ByteRange {
+                estimated_records: 0,
             },
-        ];
+            statistics: SplitStatistics::default(),
+            locality: crate::storage::formats::SplitLocality::default(),
+        }];
 
         let state = DuckDBGlobalState::new("test".to_string(), schema, splits, 4);
         assert_eq!(state.max_threads, 4);
@@ -765,6 +780,9 @@ mod tests {
 
     #[test]
     fn test_duckdb_distance_metric() {
-        assert_eq!(DuckDBDistanceMetric::default(), DuckDBDistanceMetric::Cosine);
+        assert_eq!(
+            DuckDBDistanceMetric::default(),
+            DuckDBDistanceMetric::Cosine
+        );
     }
 }

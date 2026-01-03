@@ -14,9 +14,9 @@ use tracing::debug;
 
 use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, SortField, SortOrder};
 
+use self::filter::FilterEvaluator;
 use super::indexes::IndexManager;
 use super::{DocumentQueryParams, DocumentRecord};
-use self::filter::FilterEvaluator;
 
 /// Query executor for document queries
 pub struct QueryExecutor {
@@ -67,11 +67,8 @@ impl QueryExecutor {
             params.limit as usize
         };
 
-        let paginated: Vec<DocumentRecord> = documents
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect();
+        let paginated: Vec<DocumentRecord> =
+            documents.into_iter().skip(offset).take(limit).collect();
 
         Ok((paginated, total_count))
     }
@@ -177,7 +174,9 @@ impl QueryExecutor {
         };
 
         if let Some(cond) = query_condition {
-            let candidates = index_manager.query_path_index(collection, path, &cond).await?;
+            let candidates = index_manager
+                .query_path_index(collection, path, &cond)
+                .await?;
             if !candidates.is_empty() {
                 return Ok(Some(candidates));
             }

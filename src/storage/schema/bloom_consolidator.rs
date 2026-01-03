@@ -48,7 +48,6 @@
 //! }
 //! ```
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -56,8 +55,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use super::pruning_strategies::{BloomCheckResult, BloomChecker};
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, BloomStrategy};
 use crate::core::bloom::factory::BloomFilterFactory;
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, BloomStrategy};
 
 // ============================================================================
 // BloomConsolidator
@@ -280,7 +279,11 @@ impl ConsolidatedBloom {
                 trace!(
                     "Consolidated bloom check for '{}': {}",
                     id,
-                    if result { "possibly present" } else { "definitely absent" }
+                    if result {
+                        "possibly present"
+                    } else {
+                        "definitely absent"
+                    }
                 );
                 result
             }
@@ -299,7 +302,7 @@ impl ConsolidatedBloom {
         if self.data.is_empty() {
             // No bloom filter - all possibly present
             return BloomCheckResult::all_possibly_present(
-                ids.iter().map(|s| s.to_string()).collect()
+                ids.iter().map(|s| s.to_string()).collect(),
             );
         }
 
@@ -321,9 +324,7 @@ impl ConsolidatedBloom {
             }
             Err(_) => {
                 // Deserialization failed - all possibly present
-                BloomCheckResult::all_possibly_present(
-                    ids.iter().map(|s| s.to_string()).collect()
-                )
+                BloomCheckResult::all_possibly_present(ids.iter().map(|s| s.to_string()).collect())
             }
         }
     }

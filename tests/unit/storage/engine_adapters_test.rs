@@ -15,12 +15,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use proximadb::datafusion::{
-    CollectionInfo, EngineType, PruningStatistics, SplitReader,
-};
+use proximadb::datafusion::{CollectionInfo, EngineType, PruningStatistics, SplitReader};
 use proximadb::storage::formats::{
-    FileSplit, SplitType, SplitStatistics, ColumnBounds, SpatialBounds,
-    ScalarPredicate, ScalarValue, StorageTier, CacheStatus,
+    CacheStatus, ColumnBounds, FileSplit, ScalarPredicate, ScalarValue, SpatialBounds,
+    SplitStatistics, SplitType, StorageTier,
 };
 
 // ============================================================================
@@ -49,13 +47,7 @@ mod sst_adapter_tests {
 
     #[test]
     fn test_sst_block_split_creation() {
-        let split = FileSplit::new_block(
-            "/data/test/file.sst".to_string(),
-            0,
-            0,
-            65536,
-            1000,
-        );
+        let split = FileSplit::new_block("/data/test/file.sst".to_string(), 0, 0, 65536, 1000);
 
         assert_eq!(split.file_path, "/data/test/file.sst");
         assert_eq!(split.offset, 0);
@@ -64,7 +56,10 @@ mod sst_adapter_tests {
 
         // Verify split type
         match split.split_type {
-            SplitType::Block { block_id, record_count } => {
+            SplitType::Block {
+                block_id,
+                record_count,
+            } => {
                 assert_eq!(block_id, 0);
                 assert_eq!(record_count, 1000);
             }
@@ -74,13 +69,7 @@ mod sst_adapter_tests {
 
     #[test]
     fn test_sst_split_with_bloom_filter() {
-        let mut split = FileSplit::new_block(
-            "/data/test/file.sst".to_string(),
-            0,
-            0,
-            65536,
-            1000,
-        );
+        let mut split = FileSplit::new_block("/data/test/file.sst".to_string(), 0, 0, 65536, 1000);
 
         // Add bloom filter
         split.statistics.bloom_filter = Some(vec![0xFF; 32]);
@@ -91,13 +80,7 @@ mod sst_adapter_tests {
 
     #[test]
     fn test_sst_split_with_column_statistics() {
-        let mut split = FileSplit::new_block(
-            "/data/test/file.sst".to_string(),
-            0,
-            0,
-            65536,
-            1000,
-        );
+        let mut split = FileSplit::new_block("/data/test/file.sst".to_string(), 0, 0, 65536, 1000);
 
         // Add column statistics
         split.statistics.column_stats.insert(
@@ -153,13 +136,7 @@ mod sst_adapter_tests {
 
     #[test]
     fn test_sst_split_estimated_cost() {
-        let mut split = FileSplit::new_block(
-            "/data/test/file.sst".to_string(),
-            0,
-            0,
-            65536,
-            1000,
-        );
+        let mut split = FileSplit::new_block("/data/test/file.sst".to_string(), 0, 0, 65536, 1000);
 
         // Test with different cache statuses
         split.locality.cache_status = CacheStatus::Cached;
@@ -211,7 +188,11 @@ mod helix_adapter_tests {
 
         // Verify split type
         match split.split_type {
-            SplitType::HilbertRange { start_code, end_code, hilbert_order } => {
+            SplitType::HilbertRange {
+                start_code,
+                end_code,
+                hilbert_order,
+            } => {
                 assert_eq!(start_code, 1000);
                 assert_eq!(end_code, 2000);
                 assert_eq!(hilbert_order, 16);
@@ -221,7 +202,11 @@ mod helix_adapter_tests {
 
         // Verify spatial bounds
         match split.statistics.spatial_bounds {
-            Some(SpatialBounds::Hilbert { min_code, max_code, order }) => {
+            Some(SpatialBounds::Hilbert {
+                min_code,
+                max_code,
+                order,
+            }) => {
                 assert_eq!(min_code, 1000);
                 assert_eq!(max_code, 2000);
                 assert_eq!(order, 16);
@@ -366,7 +351,10 @@ mod viper_adapter_tests {
 
         // Verify split type
         match split.split_type {
-            SplitType::RowGroup { row_group_index, row_count } => {
+            SplitType::RowGroup {
+                row_group_index,
+                row_count,
+            } => {
                 assert_eq!(row_group_index, 0);
                 assert_eq!(row_count, 128000);
             }
@@ -567,7 +555,8 @@ mod cross_engine_tests {
         assert!(rg_split.split_cost().decode_complexity < 1.0);
 
         // Hilbert splits have overhead (> 1.0)
-        let hilbert_split = FileSplit::new_hilbert_range("/f.helix".to_string(), 0, 1000, 16, 0, 65536);
+        let hilbert_split =
+            FileSplit::new_hilbert_range("/f.helix".to_string(), 0, 1000, 16, 0, 65536);
         assert!(hilbert_split.split_cost().decode_complexity > 1.0);
     }
 
@@ -629,7 +618,7 @@ mod cross_engine_tests {
 mod schema_tests {
     use super::*;
     use proximadb::datafusion::engine_adapters::common::{
-        vector_collection_schema, flat_vector_schema, estimate_record_size,
+        estimate_record_size, flat_vector_schema, vector_collection_schema,
     };
 
     #[test]

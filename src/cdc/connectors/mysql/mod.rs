@@ -83,6 +83,6 @@ mod config;
 mod connector;
 mod decoder;
 
-pub use config::{MySqlConfig, MySqlTableConfig, GtidMode, BinlogPosition};
+pub use config::{BinlogPosition, GtidMode, MySqlConfig, MySqlTableConfig};
 pub use connector::MySqlConnector;
-pub use decoder::{BinlogDecoder, BinlogEvent, RowEvent, TableMapEvent, ColumnDef};
+pub use decoder::{BinlogDecoder, BinlogEvent, ColumnDef, RowEvent, TableMapEvent};

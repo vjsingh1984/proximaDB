@@ -31,7 +31,10 @@ async fn test_postgres_connection() {
         }
         Ok(Err(_)) | Err(_) => {
             // Server not running - skip test
-            eprintln!("PostgreSQL server not available at {} - skipping test", addr);
+            eprintln!(
+                "PostgreSQL server not available at {} - skipping test",
+                addr
+            );
             return;
         }
     }
@@ -94,9 +97,8 @@ async fn test_postgres_startup_message() {
             // or AuthenticationCleartextPassword (auth type 3)
             if response[0] == b'R' {
                 // Authentication response received
-                let auth_type = i32::from_be_bytes([
-                    response[5], response[6], response[7], response[8]
-                ]);
+                let auth_type =
+                    i32::from_be_bytes([response[5], response[6], response[7], response[8]]);
 
                 match auth_type {
                     0 => {

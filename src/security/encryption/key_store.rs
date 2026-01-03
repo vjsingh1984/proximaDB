@@ -4,13 +4,13 @@
 //! and secure storage. Keys are stored encrypted at rest using a master key.
 
 use anyhow::Result;
-use ring::aead::{LessSafeKey, UnboundKey, AES_256_GCM};
+use chrono::{DateTime, Utc};
+use ring::aead::{AES_256_GCM, LessSafeKey, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use thiserror::Error;
-use chrono::{DateTime, Utc};
 
 /// Errors from the key store
 #[derive(Debug, Error)]
@@ -89,7 +89,10 @@ pub struct EncryptionKey {
 
 impl EncryptionKey {
     /// Create a new encryption key with random material
-    pub fn generate(key_id: impl Into<String>, purpose: impl Into<String>) -> Result<Self, KeyStoreError> {
+    pub fn generate(
+        key_id: impl Into<String>,
+        purpose: impl Into<String>,
+    ) -> Result<Self, KeyStoreError> {
         let rng = SystemRandom::new();
         let mut key_material = vec![0u8; 32]; // 256 bits
         rng.fill(&mut key_material)
@@ -113,9 +116,10 @@ impl EncryptionKey {
         purpose: impl Into<String>,
     ) -> Result<Self, KeyStoreError> {
         if material.len() != 32 {
-            return Err(KeyStoreError::InvalidKeyMaterial(
-                format!("Key must be 256 bits (32 bytes), got {} bytes", material.len())
-            ));
+            return Err(KeyStoreError::InvalidKeyMaterial(format!(
+                "Key must be 256 bits (32 bytes), got {} bytes",
+                material.len()
+            )));
         }
 
         Ok(Self {
@@ -166,19 +170,22 @@ impl KeyStore {
     /// Create a new key store
     pub fn new(config: KeyStoreConfig) -> Result<Self, KeyStoreError> {
         let master_key = if let Some(ref master_key_b64) = config.master_key {
-            let master_bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                master_key_b64,
-            ).map_err(|e| KeyStoreError::InvalidKeyMaterial(format!("Invalid master key: {}", e)))?;
+            let master_bytes =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, master_key_b64)
+                    .map_err(|e| {
+                        KeyStoreError::InvalidKeyMaterial(format!("Invalid master key: {}", e))
+                    })?;
 
             if master_bytes.len() != 32 {
-                return Err(KeyStoreError::InvalidKeyMaterial(
-                    format!("Master key must be 256 bits, got {} bits", master_bytes.len() * 8)
-                ));
+                return Err(KeyStoreError::InvalidKeyMaterial(format!(
+                    "Master key must be 256 bits, got {} bits",
+                    master_bytes.len() * 8
+                )));
             }
 
-            let unbound = UnboundKey::new(&AES_256_GCM, &master_bytes)
-                .map_err(|_| KeyStoreError::InvalidKeyMaterial("Invalid master key material".into()))?;
+            let unbound = UnboundKey::new(&AES_256_GCM, &master_bytes).map_err(|_| {
+                KeyStoreError::InvalidKeyMaterial("Invalid master key material".into())
+            })?;
             Some(LessSafeKey::new(unbound))
         } else {
             None
@@ -240,10 +247,12 @@ impl KeyStore {
     /// Get the current (active) version of a key
     pub fn get_key(&self, key_id: &str) -> Result<EncryptionKey, KeyStoreError> {
         let keys = self.keys.read().unwrap();
-        let stored = keys.get(key_id)
+        let stored = keys
+            .get(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
 
-        stored.versions
+        stored
+            .versions
             .get(&stored.current_version)
             .cloned()
             .ok_or_else(|| KeyStoreError::KeyVersionNotFound {
@@ -253,12 +262,18 @@ impl KeyStore {
     }
 
     /// Get a specific version of a key (for decryption of old data)
-    pub fn get_key_version(&self, key_id: &str, version: u32) -> Result<EncryptionKey, KeyStoreError> {
+    pub fn get_key_version(
+        &self,
+        key_id: &str,
+        version: u32,
+    ) -> Result<EncryptionKey, KeyStoreError> {
         let keys = self.keys.read().unwrap();
-        let stored = keys.get(key_id)
+        let stored = keys
+            .get(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
 
-        stored.versions
+        stored
+            .versions
             .get(&version)
             .cloned()
             .ok_or_else(|| KeyStoreError::KeyVersionNotFound {
@@ -270,17 +285,21 @@ impl KeyStore {
     /// Rotate a key, creating a new version
     pub fn rotate_key(&self, key_id: &str) -> Result<EncryptionKey, KeyStoreError> {
         let mut keys = self.keys.write().unwrap();
-        let stored = keys.get_mut(key_id)
+        let stored = keys
+            .get_mut(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
 
         // Get the old key for reference
-        let old_key = stored.versions.get(&stored.current_version)
+        let old_key = stored
+            .versions
+            .get(&stored.current_version)
             .ok_or_else(|| KeyStoreError::RotationFailed("Current version not found".into()))?;
 
         // Generate new key material
         let mut new_material = vec![0u8; 32];
-        self.rng.fill(&mut new_material)
-            .map_err(|_| KeyStoreError::RotationFailed("Failed to generate new key material".into()))?;
+        self.rng.fill(&mut new_material).map_err(|_| {
+            KeyStoreError::RotationFailed("Failed to generate new key material".into())
+        })?;
 
         let new_version = stored.current_version + 1;
         let new_key = EncryptionKey {
@@ -346,10 +365,13 @@ impl KeyStore {
     /// Get key metadata (without material)
     pub fn get_key_info(&self, key_id: &str) -> Result<KeyInfo, KeyStoreError> {
         let keys = self.keys.read().unwrap();
-        let stored = keys.get(key_id)
+        let stored = keys
+            .get(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
 
-        let current = stored.versions.get(&stored.current_version)
+        let current = stored
+            .versions
+            .get(&stored.current_version)
             .ok_or_else(|| KeyStoreError::KeyVersionNotFound {
                 key_id: key_id.to_string(),
                 version: stored.current_version,
@@ -500,7 +522,8 @@ mod tests {
         let store = KeyStore::new(test_config()).unwrap();
 
         let material = vec![0u8; 32];
-        let key = EncryptionKey::from_material("imported", material.clone(), "Imported key").unwrap();
+        let key =
+            EncryptionKey::from_material("imported", material.clone(), "Imported key").unwrap();
 
         store.import_key(key).unwrap();
 

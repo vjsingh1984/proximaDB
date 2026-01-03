@@ -12,11 +12,11 @@ use std::sync::RwLock;
 use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, Schema, Value, STORED, TEXT};
+use tantivy::schema::{Field, STORED, Schema, TEXT, Value};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
 
-use crate::proto::proximadb_v1::{sql_value::Value as SqlValueVariant, SqlObject, SqlValue};
 use super::super::query::path_parser::JsonPath;
+use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as SqlValueVariant};
 
 /// Full-text search index for a collection
 pub struct FullTextIndex {
@@ -136,13 +136,7 @@ impl FullTextIndex {
     /// Search for documents matching query
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<(String, f32)>> {
         // Get all text fields for query parser
-        let text_fields: Vec<Field> = self
-            .text_fields
-            .read()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect();
+        let text_fields: Vec<Field> = self.text_fields.read().unwrap().values().cloned().collect();
 
         if text_fields.is_empty() {
             return Ok(vec![]);
@@ -213,7 +207,8 @@ impl FullTextIndex {
             Some(SqlValueVariant::BoolValue(b)) => Some(b.to_string()),
             Some(SqlValueVariant::ArrayValue(arr)) => {
                 // Concatenate array elements
-                let parts: Vec<String> = arr.values
+                let parts: Vec<String> = arr
+                    .values
                     .iter()
                     .filter_map(|v| self.sql_value_to_string(v))
                     .collect();
@@ -225,7 +220,8 @@ impl FullTextIndex {
             }
             Some(SqlValueVariant::ObjectValue(obj)) => {
                 // Concatenate all object field values (for nested text extraction)
-                let parts: Vec<String> = obj.fields
+                let parts: Vec<String> = obj
+                    .fields
                     .values()
                     .filter_map(|v| self.sql_value_to_string(v))
                     .collect();

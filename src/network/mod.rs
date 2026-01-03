@@ -202,8 +202,8 @@ pub use server_builder::{
     ArrowIpcServerBuilder, GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder,
 };
 pub use unified_handler::{
-    UnifiedQueryHandler, UnifiedQueryRequest, UnifiedQueryResponse,
-    RequestProtocol, ResponseData, ResponseMetadata,
+    RequestProtocol, ResponseData, ResponseMetadata, UnifiedQueryHandler, UnifiedQueryRequest,
+    UnifiedQueryResponse,
 };
 
 /// Network server configuration

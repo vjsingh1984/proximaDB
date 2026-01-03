@@ -10,12 +10,12 @@
 //! - **WAL persistence** for durability
 //! - **1M+ edges/sec** traversal throughput
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
-use crate::graph::{Node, Edge, NodeId, EdgeId};
+use crate::graph::{Edge, EdgeId, Node, NodeId};
 
 use super::super::traits::{ModelType, StoreCapabilities};
 
@@ -94,7 +94,8 @@ impl GraphStore {
             supports_acid: false,
             supports_streaming: true,
             max_recommended_records: Some(100_000_000), // 100M nodes/edges
-            description: "Native graph storage with ORION CSR engine (1M+ edges/sec traversal)".to_string(),
+            description: "Native graph storage with ORION CSR engine (1M+ edges/sec traversal)"
+                .to_string(),
         }
     }
 
@@ -115,14 +116,16 @@ impl GraphStore {
 
     /// Get node count (convenience method)
     pub fn node_count(&self) -> usize {
-        self.engine.as_ref()
+        self.engine
+            .as_ref()
             .and_then(|e| e.node_count().ok())
             .unwrap_or(0)
     }
 
     /// Get edge count (convenience method)
     pub fn edge_count(&self) -> usize {
-        self.engine.as_ref()
+        self.engine
+            .as_ref()
             .and_then(|e| e.edge_count().ok())
             .unwrap_or(0)
     }
@@ -132,91 +135,129 @@ impl GraphStore {
 #[async_trait]
 impl GraphEngine for GraphStore {
     async fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.insert_node(node).await
     }
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_node(id)
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.update_node(node).await
     }
 
     async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.delete_node(id).await
     }
 
     async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.insert_edge(edge).await
     }
 
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_edge(id)
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.update_edge(edge).await
     }
 
     async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.delete_edge(id).await
     }
 
-    fn get_outgoing_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
-        let engine = self.engine.as_ref()
+    fn get_outgoing_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>> {
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_outgoing_edges(node_id, edge_type)
     }
 
-    fn get_incoming_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
-        let engine = self.engine.as_ref()
+    fn get_incoming_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>> {
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_incoming_edges(node_id, edge_type)
     }
 
     fn get_neighbors(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Node>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_neighbors(node_id, edge_type)
     }
 
     fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_nodes_by_label(label)
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.get_all_nodes()
     }
 
     fn node_count(&self) -> Result<usize> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.node_count()
     }
 
     fn edge_count(&self) -> Result<usize> {
-        let engine = self.engine.as_ref()
+        let engine = self
+            .engine
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Config("Graph engine not configured".to_string()))?;
         engine.edge_count()
     }

@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb_v1::PolarisCatalogConfig;
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth, CatalogTransaction, LakehouseExtension, TableFormat};
@@ -24,7 +24,7 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
     CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
+use crate::proto::proximadb_v1::PolarisCatalogConfig;
 
 /// Apache Polaris catalog implementation
 ///
@@ -477,9 +477,8 @@ impl Catalog for PolarisCatalog {
             "/namespaces".to_string()
         };
 
-        let response: IcebergListNamespacesResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergListNamespacesResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -519,9 +518,7 @@ impl Catalog for PolarisCatalog {
         let encoded = Self::encode_namespace(namespace);
         let path = format!("/namespaces/{}", encoded);
 
-        let ns: IcebergNamespace = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let ns: IcebergNamespace = self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -643,9 +640,8 @@ impl Catalog for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(namespace);
         let path = format!("/namespaces/{}/tables", encoded_ns);
 
-        let response: IcebergListTablesResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergListTablesResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let tables: Vec<TableIdentifier> = response
             .identifiers
@@ -678,9 +674,8 @@ impl Catalog for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let columns: Vec<CatalogColumn> = response
             .metadata
@@ -810,9 +805,8 @@ impl Catalog for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         // Find schema by version in schemas array
         if let Some(schemas) = &response.metadata.schemas {
@@ -964,9 +958,8 @@ impl Catalog for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         // Convert Iceberg partition spec to internal type
         if response.metadata.partition_spec.is_some() {
@@ -1010,9 +1003,8 @@ impl Catalog for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         if response.metadata.sort_order.is_some() {
             Ok(Some(CatalogSortOrder::default()))
@@ -1088,9 +1080,8 @@ impl LakehouseExtension for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         Ok(response.metadata.location)
     }
@@ -1099,9 +1090,8 @@ impl LakehouseExtension for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         Ok(response.metadata.current_snapshot_id)
     }
@@ -1110,9 +1100,8 @@ impl LakehouseExtension for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         // Extract snapshot IDs from snapshots array
         let snapshot_ids = response
@@ -1133,9 +1122,8 @@ impl LakehouseExtension for PolarisCatalog {
         let encoded_ns = Self::encode_namespace(&identifier.namespace);
         let path = format!("/namespaces/{}/tables/{}", encoded_ns, identifier.name);
 
-        let response: IcebergLoadTableResponse = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: IcebergLoadTableResponse =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let schema_ids = response
             .metadata
@@ -1196,7 +1184,8 @@ mod tests {
         let mut vec_props = HashMap::new();
         vec_props.insert("dimension".to_string(), "768".to_string());
 
-        let iceberg_type = PolarisCatalog::data_type_to_iceberg(&CatalogDataType::Vector, &vec_props);
+        let iceberg_type =
+            PolarisCatalog::data_type_to_iceberg(&CatalogDataType::Vector, &vec_props);
         assert!(iceberg_type.get("type").is_some());
         assert_eq!(iceberg_type.get("type").unwrap(), "list");
         assert_eq!(iceberg_type.get("element").unwrap(), "float");

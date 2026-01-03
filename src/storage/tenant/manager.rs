@@ -2,7 +2,7 @@
 
 use super::resources::TenantResourceUsageSnapshot;
 use super::{TenantConfig, TenantContext, TenantResourceTracker, TenantStatus};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;

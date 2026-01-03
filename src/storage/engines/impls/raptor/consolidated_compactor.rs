@@ -10,8 +10,8 @@ use tracing::{debug, info};
 // DIRECT use of unified components - no wrappers
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
 use super::config::RaptorConfig;
-use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
 use super::consolidated_reader::RaptorReader;
+use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
     AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
@@ -98,7 +98,8 @@ impl RaptorCompactor {
 
         // Step 4: Calculate optimal row group size using Matrix Trinity balanced sizing
         // This uses p = k = √N for optimal query complexity
-        let sizing = BalancedMatrixTrinitySizing::calculate(deduplicated.len(), self.config.dimension);
+        let sizing =
+            BalancedMatrixTrinitySizing::calculate(deduplicated.len(), self.config.dimension);
         let group_size = self
             .config
             .target_rowgroup_size

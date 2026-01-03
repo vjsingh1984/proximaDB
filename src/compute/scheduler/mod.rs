@@ -76,18 +76,17 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, warn};
 
 use crate::compute::plan::ComputePlan;
 use crate::compute::provider::traits::{
-    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext,
-    RecordBatchStream,
+    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, RecordBatchStream,
 };
 
 // ============================================================================
@@ -229,7 +228,8 @@ impl ProviderState {
 
     fn finish_execution(&self, success: bool, duration_ms: u64) {
         self.active_executions.fetch_sub(1, Ordering::SeqCst);
-        self.total_execution_time_ms.fetch_add(duration_ms, Ordering::SeqCst);
+        self.total_execution_time_ms
+            .fetch_add(duration_ms, Ordering::SeqCst);
 
         if success {
             self.successful_executions.fetch_add(1, Ordering::SeqCst);
@@ -247,8 +247,12 @@ impl ProviderState {
         } else {
             // Consider both current load and historical success rate
             let success = self.successful_executions.load(Ordering::SeqCst) as f64;
-            let failure_rate = if total > 0.0 { 1.0 - (success / total) } else { 0.0 };
-            active + (failure_rate * 10.0)  // Penalize providers with failures
+            let failure_rate = if total > 0.0 {
+                1.0 - (success / total)
+            } else {
+                0.0
+            };
+            active + (failure_rate * 10.0) // Penalize providers with failures
         }
     }
 
@@ -346,7 +350,8 @@ impl ComputeScheduler {
     /// This method selects the best provider and executes the plan.
     #[instrument(skip(self, plan), fields(plan_id = %plan.id))]
     pub async fn schedule(&self, plan: ComputePlan) -> Result<RecordBatchStream> {
-        self.schedule_with_context(plan, ExecutionContext::default()).await
+        self.schedule_with_context(plan, ExecutionContext::default())
+            .await
     }
 
     /// Schedule and execute with custom context
@@ -383,8 +388,9 @@ impl ComputeScheduler {
 
                 // Wait before retry
                 tokio::time::sleep(std::time::Duration::from_millis(
-                    self.config.retry_delay_ms * (1 << attempts)  // Exponential backoff
-                )).await;
+                    self.config.retry_delay_ms * (1 << attempts), // Exponential backoff
+                ))
+                .await;
 
                 // Try selecting a different provider if available
                 if let Ok(alt_idx) = self.select_alternative_provider(&plan, provider_idx) {
@@ -399,12 +405,14 @@ impl ComputeScheduler {
 
                     match alt_state.provider.execute(&plan, &ctx).await {
                         Ok(result) => {
-                            alt_state.finish_execution(true, exec_start.elapsed().as_millis() as u64);
+                            alt_state
+                                .finish_execution(true, exec_start.elapsed().as_millis() as u64);
                             self.update_statistics(&plan, alt_state.provider.provider_name(), true);
                             return Ok(result.data);
                         }
                         Err(e) => {
-                            alt_state.finish_execution(false, exec_start.elapsed().as_millis() as u64);
+                            alt_state
+                                .finish_execution(false, exec_start.elapsed().as_millis() as u64);
                             last_error = Some(e);
                         }
                     }
@@ -454,7 +462,9 @@ impl ComputeScheduler {
         bail!(
             "Plan execution failed after {} attempts: {}",
             attempts,
-            last_error.map(|e| e.to_string()).unwrap_or_else(|| "unknown error".to_string())
+            last_error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unknown error".to_string())
         )
     }
 
@@ -534,7 +544,10 @@ impl ComputeScheduler {
         }
 
         // Fall back to default
-        if self.providers[self.default_provider_index].provider.can_execute(plan) {
+        if self.providers[self.default_provider_index]
+            .provider
+            .can_execute(plan)
+        {
             Ok(self.default_provider_index)
         } else {
             bail!("No provider can execute this plan")
@@ -655,7 +668,10 @@ impl ComputeScheduler {
         let mut stats = self.statistics.write();
         stats.total_plans += 1;
 
-        *stats.plans_by_provider.entry(provider_name.to_string()).or_insert(0) += 1;
+        *stats
+            .plans_by_provider
+            .entry(provider_name.to_string())
+            .or_insert(0) += 1;
 
         if !success {
             stats.failed_plans += 1;
@@ -823,10 +839,7 @@ impl ComputeSchedulerBuilder {
             bail!("At least one provider must be specified")
         }
 
-        let provider_states: Vec<_> = all_providers
-            .into_iter()
-            .map(ProviderState::new)
-            .collect();
+        let provider_states: Vec<_> = all_providers.into_iter().map(ProviderState::new).collect();
 
         info!(
             provider_count = provider_states.len(),
@@ -908,7 +921,10 @@ mod tests {
         assert!(matches!(policy, SchedulingPolicy::RoundRobin));
 
         let policy = SchedulingPolicy::Fixed { provider_index: 0 };
-        assert!(matches!(policy, SchedulingPolicy::Fixed { provider_index: 0 }));
+        assert!(matches!(
+            policy,
+            SchedulingPolicy::Fixed { provider_index: 0 }
+        ));
     }
 
     #[test]

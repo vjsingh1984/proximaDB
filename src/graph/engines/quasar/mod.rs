@@ -231,8 +231,10 @@ impl QuasarGraphEngine {
     }
 
     /// Common initialization logic for both constructors
-    async fn finish_initialization(config: QuasarConfig, hot_tier: Arc<OrionGraphEngine>) -> Result<Self> {
-
+    async fn finish_initialization(
+        config: QuasarConfig,
+        hot_tier: Arc<OrionGraphEngine>,
+    ) -> Result<Self> {
         // Initialize cold storage backend
         let cold_tier = Arc::new(
             storage_backend::ColdStorageBackend::new(
@@ -570,7 +572,9 @@ impl GraphEngine for QuasarGraphEngine {
         // WAL writes happen automatically via ORION hot tier delegation
         // (ORION's delete_node writes to WAL if persistence is enabled)
         // Try deleting from hot tier first
-        if let Some(node) = crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id).await? {
+        if let Some(node) =
+            crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id).await?
+        {
             // Update stats
             {
                 let mut stats = self.stats.write().await;
@@ -601,9 +605,7 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         if let Ok(Some(edge)) = self.hot_tier.get_edge(id) {
-            let _ = self
-                .access_cache
-                .record_access(id.as_str(), Instant::now());
+            let _ = self.access_cache.record_access(id.as_str(), Instant::now());
             return Ok(Some(edge));
         }
 
@@ -646,7 +648,9 @@ impl GraphEngine for QuasarGraphEngine {
         // WAL writes happen automatically via ORION hot tier delegation
         // (ORION's delete_edge writes to WAL if persistence is enabled)
         // Try hot tier first
-        if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id).await? {
+        if let Some(edge) =
+            crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id).await?
+        {
             {
                 let mut stats = self.stats.write().await;
                 stats.hot_tier_edges = stats.hot_tier_edges.saturating_sub(1);
@@ -879,7 +883,11 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        engine.cold_tier.store_node(cold_node.clone()).await.unwrap();
+        engine
+            .cold_tier
+            .store_node(cold_node.clone())
+            .await
+            .unwrap();
         {
             let mut stats = engine.stats.write().await;
             stats.cold_tier_nodes += 1;
@@ -887,7 +895,10 @@ mod tests {
 
         // Should miss hot, hit cold, and schedule promotion
         // Use get_node_from_tiers which checks both tiers (sync get_node skips cold tier)
-        let retrieved = engine.get_node_from_tiers(&"cold_node".to_string()).await.unwrap();
+        let retrieved = engine
+            .get_node_from_tiers(&"cold_node".to_string())
+            .await
+            .unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, "cold_node");
 
@@ -895,7 +906,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Verify hot tier has the node now
-        let hot_has = engine.hot_tier.get_node(&"cold_node".to_string()).unwrap().is_some();
+        let hot_has = engine
+            .hot_tier
+            .get_node(&"cold_node".to_string())
+            .unwrap()
+            .is_some();
         assert!(hot_has, "Node should have been promoted to hot tier");
     }
 }

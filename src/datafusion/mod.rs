@@ -48,14 +48,14 @@
 //! let batches = df.collect().await?;
 //! ```
 
-pub mod table_provider;
-pub mod scan_executor;
 pub mod predicate_pushdown;
+pub mod scan_executor;
 pub mod schema_inference;
+pub mod table_provider;
 
 // New split-based table provider and execution plan modules
-pub mod proxima_table_provider;
 pub mod proxima_scan_exec;
+pub mod proxima_table_provider;
 
 // Engine-specific TableProvider adapters
 pub mod engine_adapters;
@@ -65,51 +65,41 @@ pub use table_provider::{
     // Original format-based provider
     ProximaDBTableProvider,
     ProximaDBTableProviderConfig,
-    // Factory functions
-    create_viper_table_provider,
-    create_nova_table_provider,
     // New split-based provider
     ProximaDataFusionTable,
     ProximaDataFusionTableConfig,
+    create_nova_table_provider,
+    // Factory functions
+    create_viper_table_provider,
 };
 
-pub use scan_executor::{
-    ProximaDBScanExec,
-    PartitionInfo,
-};
+pub use scan_executor::{PartitionInfo, ProximaDBScanExec};
 
-pub use predicate_pushdown::{
-    convert_expr_to_filter,
-    FilterPushdownResult,
-    PushdownCapability,
-};
+pub use predicate_pushdown::{FilterPushdownResult, PushdownCapability, convert_expr_to_filter};
 
-pub use schema_inference::{
-    infer_schema_from_collection,
-    extract_statistics,
-};
+pub use schema_inference::{extract_statistics, infer_schema_from_collection};
 
 // Re-export new split-based types
 pub use proxima_table_provider::{
-    // Trait
-    ProximaTableProvider,
+    CollectionInfo,
     // Types
     EngineType,
-    CollectionInfo,
-    PruningStatistics,
     // Null implementation for testing
     NullProximaTableProvider,
+    // Trait
+    ProximaTableProvider,
+    PruningStatistics,
 };
 
 pub use proxima_scan_exec::{
+    EmptyRecordBatchStream,
+    // Null implementations for testing
+    NullSplitReader,
     // Core execution plan
     ProximaScanExec,
     ProximaScanExecBuilder,
     // Split reader trait
     SplitReader,
-    // Null implementations for testing
-    NullSplitReader,
-    EmptyRecordBatchStream,
 };
 
 // Re-export FileSplit from storage::formats
@@ -117,15 +107,15 @@ pub use crate::storage::formats::FileSplit;
 
 // Re-export engine-specific adapters
 pub use engine_adapters::{
-    // SST engine adapter
-    SstTableProvider,
-    SstSplitReader,
+    HelixSplitReader,
     // HELIX engine adapter
     HelixTableProvider,
-    HelixSplitReader,
+    SstSplitReader,
+    // SST engine adapter
+    SstTableProvider,
+    ViperSplitReader,
     // VIPER engine adapter
     ViperTableProvider,
-    ViperSplitReader,
 };
 
 use datafusion::prelude::*;

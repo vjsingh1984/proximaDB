@@ -23,9 +23,9 @@ use std::collections::HashMap;
 use anyhow::Result;
 use tracing::debug;
 
+use crate::query::unified::UnifiedRecord;
 use crate::query::unified::ast::DataModel;
 use crate::query::unified::fusion::SubQueryResult;
-use crate::query::unified::UnifiedRecord;
 
 /// Strategy for aggregating results from multiple nodes
 #[derive(Debug, Clone)]
@@ -102,10 +102,7 @@ impl ResultAggregator {
         let mut by_model: HashMap<DataModel, Vec<SubQueryResult>> = HashMap::new();
         for result in all_results {
             let model = result.source_model.clone();
-            by_model
-                .entry(model)
-                .or_default()
-                .push(result);
+            by_model.entry(model).or_default().push(result);
         }
 
         // Aggregate each model's results
@@ -136,21 +133,11 @@ impl ResultAggregator {
             AggregationStrategy::Merge(config) => {
                 self.merge_results(model.clone(), results, config)
             }
-            AggregationStrategy::Sum => {
-                self.sum_results(model.clone(), results)
-            }
-            AggregationStrategy::Average => {
-                self.average_results(model.clone(), results)
-            }
-            AggregationStrategy::TopK(k) => {
-                self.topk_results(model.clone(), results, *k)
-            }
-            AggregationStrategy::UnionDedup => {
-                self.union_dedup_results(model.clone(), results)
-            }
-            AggregationStrategy::Intersection => {
-                self.intersection_results(model, results)
-            }
+            AggregationStrategy::Sum => self.sum_results(model.clone(), results),
+            AggregationStrategy::Average => self.average_results(model.clone(), results),
+            AggregationStrategy::TopK(k) => self.topk_results(model.clone(), results, *k),
+            AggregationStrategy::UnionDedup => self.union_dedup_results(model.clone(), results),
+            AggregationStrategy::Intersection => self.intersection_results(model, results),
         }
     }
 
@@ -161,10 +148,8 @@ impl ResultAggregator {
         results: Vec<SubQueryResult>,
         config: &MergeConfig,
     ) -> Result<SubQueryResult> {
-        let mut all_records: Vec<UnifiedRecord> = results
-            .into_iter()
-            .flat_map(|r| r.records)
-            .collect();
+        let mut all_records: Vec<UnifiedRecord> =
+            results.into_iter().flat_map(|r| r.records).collect();
 
         // Deduplicate by ID
         if config.deduplicate {
@@ -189,7 +174,9 @@ impl ResultAggregator {
         // Sort by score
         if config.sort_by_score {
             all_records.sort_by(|a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
 

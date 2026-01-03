@@ -127,12 +127,15 @@ impl TieringPolicy {
     }
 
     /// Create an age-based policy (demote after N days)
-    pub fn age_based(name: impl Into<String>, max_age: Duration, target_tier: PerformanceTier) -> Self {
-        Self::new(name)
-            .with_rule(TieringRule {
-                condition: PolicyCondition::AgeGreaterThan(max_age),
-                action: PolicyAction::MoveToTier(target_tier),
-            })
+    pub fn age_based(
+        name: impl Into<String>,
+        max_age: Duration,
+        target_tier: PerformanceTier,
+    ) -> Self {
+        Self::new(name).with_rule(TieringRule {
+            condition: PolicyCondition::AgeGreaterThan(max_age),
+            action: PolicyAction::MoveToTier(target_tier),
+        })
     }
 
     /// Create an access-based policy (promote if accessed N times)
@@ -141,11 +144,10 @@ impl TieringPolicy {
         min_access_count: u64,
         target_tier: PerformanceTier,
     ) -> Self {
-        Self::new(name)
-            .with_rule(TieringRule {
-                condition: PolicyCondition::AccessCountGreaterThan(min_access_count),
-                action: PolicyAction::MoveToTier(target_tier),
-            })
+        Self::new(name).with_rule(TieringRule {
+            condition: PolicyCondition::AccessCountGreaterThan(min_access_count),
+            action: PolicyAction::MoveToTier(target_tier),
+        })
     }
 
     /// Create a size-based policy (tier down when size exceeds threshold)
@@ -154,11 +156,10 @@ impl TieringPolicy {
         max_size_bytes: u64,
         target_tier: PerformanceTier,
     ) -> Self {
-        Self::new(name)
-            .with_rule(TieringRule {
-                condition: PolicyCondition::SizeGreaterThan(max_size_bytes),
-                action: PolicyAction::MoveToTier(target_tier),
-            })
+        Self::new(name).with_rule(TieringRule {
+            condition: PolicyCondition::SizeGreaterThan(max_size_bytes),
+            action: PolicyAction::MoveToTier(target_tier),
+        })
     }
 
     /// Add a rule to the policy
@@ -373,13 +374,19 @@ mod tests {
     fn test_performance_tier_demotion() {
         assert_eq!(PerformanceTier::Hot.demote(), Some(PerformanceTier::Warm));
         assert_eq!(PerformanceTier::Warm.demote(), Some(PerformanceTier::Cold));
-        assert_eq!(PerformanceTier::Cold.demote(), Some(PerformanceTier::Archive));
+        assert_eq!(
+            PerformanceTier::Cold.demote(),
+            Some(PerformanceTier::Archive)
+        );
         assert_eq!(PerformanceTier::Archive.demote(), None);
     }
 
     #[test]
     fn test_performance_tier_promotion() {
-        assert_eq!(PerformanceTier::Archive.promote(), Some(PerformanceTier::Cold));
+        assert_eq!(
+            PerformanceTier::Archive.promote(),
+            Some(PerformanceTier::Cold)
+        );
         assert_eq!(PerformanceTier::Cold.promote(), Some(PerformanceTier::Warm));
         assert_eq!(PerformanceTier::Warm.promote(), Some(PerformanceTier::Hot));
         assert_eq!(PerformanceTier::Hot.promote(), None);
@@ -387,7 +394,11 @@ mod tests {
 
     #[test]
     fn test_age_based_policy() {
-        let policy = TieringPolicy::age_based("cold-after-7d", Duration::from_secs(7 * 24 * 3600), PerformanceTier::Cold);
+        let policy = TieringPolicy::age_based(
+            "cold-after-7d",
+            Duration::from_secs(7 * 24 * 3600),
+            PerformanceTier::Cold,
+        );
 
         assert_eq!(policy.name, "cold-after-7d");
         assert_eq!(policy.rules.len(), 1);

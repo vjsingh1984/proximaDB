@@ -66,10 +66,7 @@ pub type EdgeId = String;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GraphCommand {
     /// Create a new node in the graph
-    CreateNode {
-        graph_id: GraphId,
-        node: Node,
-    },
+    CreateNode { graph_id: GraphId, node: Node },
     /// Update an existing node's properties
     UpdateNode {
         graph_id: GraphId,
@@ -77,15 +74,9 @@ pub enum GraphCommand {
         properties: HashMap<String, crate::proto::proximadb_v1::PropertyValue>,
     },
     /// Delete a node from the graph
-    DeleteNode {
-        graph_id: GraphId,
-        node_id: NodeId,
-    },
+    DeleteNode { graph_id: GraphId, node_id: NodeId },
     /// Create a new edge in the graph
-    CreateEdge {
-        graph_id: GraphId,
-        edge: Edge,
-    },
+    CreateEdge { graph_id: GraphId, edge: Edge },
     /// Update an existing edge's properties
     UpdateEdge {
         graph_id: GraphId,
@@ -93,20 +84,11 @@ pub enum GraphCommand {
         properties: HashMap<String, crate::proto::proximadb_v1::PropertyValue>,
     },
     /// Delete an edge from the graph
-    DeleteEdge {
-        graph_id: GraphId,
-        edge_id: EdgeId,
-    },
+    DeleteEdge { graph_id: GraphId, edge_id: EdgeId },
     /// Bulk create nodes (optimized for batch operations)
-    BulkCreateNodes {
-        graph_id: GraphId,
-        nodes: Vec<Node>,
-    },
+    BulkCreateNodes { graph_id: GraphId, nodes: Vec<Node> },
     /// Bulk create edges (optimized for batch operations)
-    BulkCreateEdges {
-        graph_id: GraphId,
-        edges: Vec<Edge>,
-    },
+    BulkCreateEdges { graph_id: GraphId, edges: Vec<Edge> },
     /// No-op command (used for leader establishment)
     Noop,
 }
@@ -198,7 +180,10 @@ impl StateMachine for GraphStateMachine {
                 self.last_applied_index += 1;
                 Ok(vec![])
             }
-            DeleteNode { graph_id: _, node_id } => {
+            DeleteNode {
+                graph_id: _,
+                node_id,
+            } => {
                 // Apply node deletion
                 self.last_applied_index += 1;
                 Ok(vec![])
@@ -217,7 +202,10 @@ impl StateMachine for GraphStateMachine {
                 self.last_applied_index += 1;
                 Ok(vec![])
             }
-            DeleteEdge { graph_id: _, edge_id } => {
+            DeleteEdge {
+                graph_id: _,
+                edge_id,
+            } => {
                 // Apply edge deletion
                 self.last_applied_index += 1;
                 Ok(vec![])
@@ -276,11 +264,14 @@ impl GraphRaftNode {
     /// # Returns
     ///
     /// A new GraphRaftNode instance
-    pub fn new(config: ConsensusConfig, shard: Arc<dyn GraphEngine>) -> Result<Self, ProximaDBError> {
-        let raft = Arc::new(
-            RaftConsensus::new(config)
-                .map_err(|e| ProximaDBError::Internal(format!("Failed to create RAFT node: {}", e)))?,
-        );
+    pub fn new(
+        config: ConsensusConfig,
+        shard: Arc<dyn GraphEngine>,
+    ) -> Result<Self, ProximaDBError> {
+        let raft =
+            Arc::new(RaftConsensus::new(config).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to create RAFT node: {}", e))
+            })?);
 
         let node_id = uuid::Uuid::new_v4().to_string();
 

@@ -472,7 +472,11 @@ impl TransactionCoordinator {
         relative_path: &str,
         data: &[u8],
     ) -> Result<()> {
-        trace!("write_to_staging: {} bytes to {}", data.len(), relative_path);
+        trace!(
+            "write_to_staging: {} bytes to {}",
+            data.len(),
+            relative_path
+        );
 
         // Get operation metadata from DashMap
         let metadata = self
@@ -533,9 +537,7 @@ impl TransactionCoordinator {
 
         trace!(
             "Operation metadata: id={}, type={:?}, zero_copy={}",
-            metadata.operation_id,
-            metadata.operation_type,
-            metadata.zero_copy_managed
+            metadata.operation_id, metadata.operation_type, metadata.zero_copy_managed
         );
 
         // Check if this operation is managed by ZeroCopyFilesystem
@@ -561,10 +563,7 @@ impl TransactionCoordinator {
             .await?;
 
         // List all files in staging directory
-        trace!(
-            "Listing staging directory: {}",
-            metadata.staging_url
-        );
+        trace!("Listing staging directory: {}", metadata.staging_url);
 
         let staging_entries = self
             .filesystem
@@ -572,10 +571,7 @@ impl TransactionCoordinator {
             .await
             .context("Failed to list staging directory")?;
 
-        trace!(
-            "Found {} files in staging",
-            staging_entries.len()
-        );
+        trace!("Found {} files in staging", staging_entries.len());
 
         // Individual file listing removed - too verbose for production
 

@@ -74,10 +74,7 @@ pub(super) use service_helpers::*;
 use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
-    engines::{
-        GraphEngine,
-        orion::OrionGraphEngine,
-    },
+    engines::{GraphEngine, orion::OrionGraphEngine},
 };
 use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
@@ -178,8 +175,11 @@ impl GraphOperationsService {
     /// let service = GraphOperationsService::new_with_recovery().await?;
     /// ```
     pub async fn new_with_recovery() -> anyhow::Result<Self> {
-        let collection_service = crate::services::graph_collection::GraphCollectionService::new_with_recovery().await?;
-        Ok(Self::new_with_collection_service(Arc::new(collection_service)))
+        let collection_service =
+            crate::services::graph_collection::GraphCollectionService::new_with_recovery().await?;
+        Ok(Self::new_with_collection_service(Arc::new(
+            collection_service,
+        )))
     }
 
     /// Create GraphOperationsService with existing collection service (for dependency injection)
@@ -304,7 +304,10 @@ impl GraphOperationsService {
             return Ok(());
         }
 
-        tracing::info!("📋 Found {} graph collections to recover", collections.len());
+        tracing::info!(
+            "📋 Found {} graph collections to recover",
+            collections.len()
+        );
 
         // Recover each graph
         let mut recovered_count = 0;
@@ -349,7 +352,11 @@ impl GraphOperationsService {
             .map(|sc| sc.engine_type.to_uppercase())
             .unwrap_or_else(|| "ORION".to_string());
 
-        tracing::debug!("Recovering graph {} with engine type: {}", graph_id, engine_type);
+        tracing::debug!(
+            "Recovering graph {} with engine type: {}",
+            graph_id,
+            engine_type
+        );
 
         let engine_impl = match engine_type.as_str() {
             "PULSAR" => {
@@ -362,14 +369,15 @@ impl GraphOperationsService {
                         config,
                         graph_id.to_string(),
                         self.base_storage_url.clone(),
-                    ).await?;
+                    )
+                    .await?;
                     engine.recover().await?;
                     crate::graph::engines::GraphEngineImpl::Pulsar(engine)
                 }
                 #[cfg(not(feature = "distributed-graph"))]
                 {
                     return Err(ProximaDBError::NotImplemented(
-                        "PULSAR engine requires 'distributed-graph' feature".to_string()
+                        "PULSAR engine requires 'distributed-graph' feature".to_string(),
                     ));
                 }
             }
@@ -391,14 +399,15 @@ impl GraphOperationsService {
                         config,
                         graph_id.to_string(),
                         self.base_storage_url.clone(),
-                    ).await?;
+                    )
+                    .await?;
                     engine.recover().await?;
                     crate::graph::engines::GraphEngineImpl::Quasar(engine)
                 }
                 #[cfg(not(feature = "tiered-graph"))]
                 {
                     return Err(ProximaDBError::NotImplemented(
-                        "QUASAR engine requires 'tiered-graph' feature".to_string()
+                        "QUASAR engine requires 'tiered-graph' feature".to_string(),
                     ));
                 }
             }
@@ -416,10 +425,8 @@ impl GraphOperationsService {
         };
 
         // Store in graphs map
-        self.graphs.insert(
-            graph_id.to_string(),
-            Arc::new(engine_impl),
-        );
+        self.graphs
+            .insert(graph_id.to_string(), Arc::new(engine_impl));
 
         Ok(())
     }
@@ -588,14 +595,11 @@ impl GraphOperationsService {
     /// Returns `None` if no graphs have been created yet.
     pub fn get_default_engine(&self) -> Option<Arc<dyn crate::graph::engines::GraphEngine>> {
         // Return the first available graph engine
-        self.graphs
-            .iter()
-            .next()
-            .map(|entry| {
-                let engine_impl: Arc<crate::graph::engines::GraphEngineImpl> = entry.value().clone();
-                // GraphEngineImpl implements GraphEngine, so we can upcast
-                engine_impl as Arc<dyn crate::graph::engines::GraphEngine>
-            })
+        self.graphs.iter().next().map(|entry| {
+            let engine_impl: Arc<crate::graph::engines::GraphEngineImpl> = entry.value().clone();
+            // GraphEngineImpl implements GraphEngine, so we can upcast
+            engine_impl as Arc<dyn crate::graph::engines::GraphEngine>
+        })
     }
 
     /// Flush WAL buffer to disk for a specific graph
@@ -627,7 +631,9 @@ impl GraphOperationsService {
                 #[allow(unreachable_patterns)]
                 _ => {
                     // Stub engines (feature-disabled) don't support WAL
-                    tracing::debug!("WAL flush not supported for this engine type (feature disabled)");
+                    tracing::debug!(
+                        "WAL flush not supported for this engine type (feature disabled)"
+                    );
                 }
             }
         }
@@ -1151,7 +1157,10 @@ impl GraphOperationsService {
                             {
                                 // Handle poisoned lock gracefully
                                 let Ok(map) = map_lock.read() else {
-                                    tracing::warn!("Poisoned lock in edge_property_str_ordered for key {}", filter.key);
+                                    tracing::warn!(
+                                        "Poisoned lock in edge_property_str_ordered for key {}",
+                                        filter.key
+                                    );
                                     continue;
                                 };
                                 let mut matched = std::collections::HashSet::new();
@@ -1174,14 +1183,16 @@ impl GraphOperationsService {
                             continue;
                         };
                         // Prefer numeric range if value numeric, else fallback to string ordered
-                        if let Some(num) = extract_number_from_value(filter_val)
-                        {
+                        if let Some(num) = extract_number_from_value(filter_val) {
                             if let Some(map_lock) =
                                 self.memory_pool.edge_property_num_indexes.get(&filter.key)
                             {
                                 // Handle poisoned lock gracefully
                                 let Ok(map) = map_lock.read() else {
-                                    tracing::warn!("Poisoned lock in edge_property_num_indexes for key {}", filter.key);
+                                    tracing::warn!(
+                                        "Poisoned lock in edge_property_num_indexes for key {}",
+                                        filter.key
+                                    );
                                     continue;
                                 };
                                 let mut matched = std::collections::HashSet::new();
@@ -1226,13 +1237,15 @@ impl GraphOperationsService {
                         {
                             // Handle poisoned lock gracefully
                             let Ok(map) = map_lock.read() else {
-                                tracing::warn!("Poisoned lock in edge_property_str_ordered for key {} (string fallback)", filter.key);
+                                tracing::warn!(
+                                    "Poisoned lock in edge_property_str_ordered for key {} (string fallback)",
+                                    filter.key
+                                );
                                 continue;
                             };
                             let mut matched = std::collections::HashSet::new();
                             // filter_val was already validated at the start of this Op branch
-                            let s = extract_string_from_value(filter_val)
-                                .unwrap_or("");
+                            let s = extract_string_from_value(filter_val).unwrap_or("");
                             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                 Op::GreaterThan => {
                                     for (_k, ids) in map.range((
@@ -1317,17 +1330,11 @@ impl GraphOperationsService {
                             Some(v) => v.value != filter_val.value,
                             None => true,
                         },
-                        Op::GreaterThan => {
-                            cmp_prop_gt(prop_val_opt, filter_val)
-                        }
-                        Op::GreaterEqual => {
-                            cmp_prop_ge(prop_val_opt, filter_val)
-                        }
+                        Op::GreaterThan => cmp_prop_gt(prop_val_opt, filter_val),
+                        Op::GreaterEqual => cmp_prop_ge(prop_val_opt, filter_val),
                         Op::LessThan => cmp_prop_lt(prop_val_opt, filter_val),
                         Op::LessEqual => cmp_prop_le(prop_val_opt, filter_val),
-                        Op::StartsWith => {
-                            prop_starts_with(prop_val_opt, filter_val)
-                        }
+                        Op::StartsWith => prop_starts_with(prop_val_opt, filter_val),
                         Op::Contains => prop_contains(prop_val_opt, filter_val),
                         _ => false,
                     };

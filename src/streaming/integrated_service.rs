@@ -51,10 +51,12 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 use super::coordinator::{FlushRetryConfig, FlushStats, PushResult, StreamCoordinator};
-use super::subscriptions::{SubscriptionConfig, SubscriptionHandle, SubscriptionManager, ScoredResult};
+use super::subscriptions::{
+    ScoredResult, SubscriptionConfig, SubscriptionHandle, SubscriptionManager,
+};
 use super::{SessionConfig, StreamConfig, StreamError, StreamId, StreamResult};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -176,22 +178,24 @@ impl IntegratedStreamingService {
         records: Vec<VectorRecord>,
     ) -> StreamResult<PushAndNotifyResult> {
         // Get collection name before push
-        let collection = self.coordinator
+        let collection = self
+            .coordinator
             .get_session_collection(session_id)
             .ok_or_else(|| StreamError::SessionNotFound {
                 session_id: session_id.to_string(),
             })?;
 
         // Push to coordinator
-        let push_result = self.coordinator.push_records(session_id, records.clone()).await?;
+        let push_result = self
+            .coordinator
+            .push_records(session_id, records.clone())
+            .await?;
 
         // Notify subscriptions if enabled
         let subscriptions_notified = if self.config.auto_notify_subscriptions {
             // Convert records to format expected by subscription manager
-            let vectors: Vec<(String, Vec<f32>, f32)> = records
-                .into_iter()
-                .map(|r| (r.id, r.vector, 0.0))
-                .collect();
+            let vectors: Vec<(String, Vec<f32>, f32)> =
+                records.into_iter().map(|r| (r.id, r.vector, 0.0)).collect();
 
             self.subscriptions.notify_insert(&collection, vectors).await
         } else {
@@ -213,20 +217,17 @@ impl IntegratedStreamingService {
         let start = Instant::now();
 
         // Get collection name
-        let collection = self.coordinator
+        let collection = self
+            .coordinator
             .get_session_collection(session_id)
             .ok_or_else(|| StreamError::SessionNotFound {
                 session_id: session_id.to_string(),
             })?;
 
         // Flush to storage with retry
-        let flush_stats = self.coordinator
-            .flush_to_storage_with_retry(
-                session_id,
-                storage,
-                None,
-                self.config.flush_retry.clone(),
-            )
+        let flush_stats = self
+            .coordinator
+            .flush_to_storage_with_retry(session_id, storage, None, self.config.flush_retry.clone())
             .await?;
 
         // Record metrics
@@ -277,10 +278,7 @@ impl IntegratedStreamingService {
     }
 
     /// Start background tasks (flush and cleanup)
-    pub async fn start_background_tasks(
-        &self,
-        storage: Arc<dyn UnifiedStorageEngine>,
-    ) {
+    pub async fn start_background_tasks(&self, storage: Arc<dyn UnifiedStorageEngine>) {
         let mut tasks = self.background_tasks.write().await;
 
         // Cleanup task for coordinator
@@ -318,10 +316,8 @@ impl IntegratedStreamingService {
                     ticker.tick().await;
 
                     // Flush all sessions
-                    let session_ids: Vec<StreamId> = coordinator
-                        .list_sessions()
-                        .into_iter()
-                        .collect();
+                    let session_ids: Vec<StreamId> =
+                        coordinator.list_sessions().into_iter().collect();
 
                     for session_id in session_ids {
                         if let Err(e) = coordinator
@@ -336,12 +332,16 @@ impl IntegratedStreamingService {
             tasks.push(flush_handle);
         }
 
-        info!("Started {} background tasks for integrated streaming service", tasks.len());
+        info!(
+            "Started {} background tasks for integrated streaming service",
+            tasks.len()
+        );
     }
 
     /// Shutdown the service gracefully
     pub async fn shutdown(&self, storage: Option<&dyn UnifiedStorageEngine>) {
-        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
 
         // Flush all remaining data if storage is provided
         if let Some(storage) = storage {
@@ -350,7 +350,10 @@ impl IntegratedStreamingService {
             let failed = results.len() - successful;
 
             if failed > 0 {
-                warn!("Final flush completed with {} successes and {} failures", successful, failed);
+                warn!(
+                    "Final flush completed with {} successes and {} failures",
+                    successful, failed
+                );
             } else {
                 info!("Final flush completed: {} sessions flushed", successful);
             }
@@ -488,7 +491,10 @@ mod tests {
             .unwrap();
 
         // Activate
-        service.activate_subscription(&sub_handle.id, vec![]).await.unwrap();
+        service
+            .activate_subscription(&sub_handle.id, vec![])
+            .await
+            .unwrap();
 
         // Push with notification
         let records: Vec<VectorRecord> = (0..5)

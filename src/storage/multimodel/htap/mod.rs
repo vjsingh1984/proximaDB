@@ -38,5 +38,5 @@ pub mod replication;
 pub mod router;
 
 // Re-exports
-pub use replication::{ReplicationCoordinator, ReplicationConfig, ReplicationStats};
-pub use router::{WorkloadRouter, QueryCharacteristics, WorkloadType, RoutingDecision};
+pub use replication::{ReplicationConfig, ReplicationCoordinator, ReplicationStats};
+pub use router::{QueryCharacteristics, RoutingDecision, WorkloadRouter, WorkloadType};

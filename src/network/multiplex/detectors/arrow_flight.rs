@@ -8,7 +8,7 @@
 //! Detects Arrow Flight requests based on path patterns and gRPC indicators.
 
 use crate::network::multiplex::traits::{DetectedProtocol, DetectionResult, ProtocolDetector};
-use hyper::http::{header, Request};
+use hyper::http::{Request, header};
 
 /// Default priority for Arrow Flight detector (highest - most specific)
 pub const ARROW_FLIGHT_DETECTOR_PRIORITY: u32 = 110;
@@ -154,10 +154,7 @@ mod tests {
     fn test_arrow_flight_short_path() {
         let detector = ArrowFlightDetector::new();
 
-        let request = make_request()
-            .uri("/FlightService/DoGet")
-            .body(())
-            .unwrap();
+        let request = make_request().uri("/FlightService/DoGet").body(()).unwrap();
 
         let result = detector.detect(&request);
         assert!(result.is_some());
@@ -175,11 +172,7 @@ mod tests {
             let request = make_request().uri(path.as_str()).body(()).unwrap();
 
             let result = detector.detect(&request);
-            assert!(
-                result.is_some(),
-                "Should detect Flight method: {}",
-                method
-            );
+            assert!(result.is_some(), "Should detect Flight method: {}", method);
             assert_eq!(result.unwrap().protocol, DetectedProtocol::ArrowFlight);
         }
     }

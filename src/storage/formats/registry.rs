@@ -9,15 +9,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
-use super::traits::{
-    FormatDetector, FormatType, InternalFormat, OpenTableFormat, StorageFormat,
-    DefaultFormatDetector,
-};
 use super::adapters::InternalFormatAdapter;
+use super::traits::{
+    DefaultFormatDetector, FormatDetector, FormatType, InternalFormat, OpenTableFormat,
+    StorageFormat,
+};
 use crate::storage::traits::UnifiedStorageEngine;
 
 // ============================================================================

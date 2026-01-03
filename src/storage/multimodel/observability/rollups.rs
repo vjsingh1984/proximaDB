@@ -64,11 +64,11 @@ impl RollupInterval {
         let duration_secs = (end_ns - start_ns) / 1_000_000_000;
 
         match duration_secs {
-            0..=300 => RollupInterval::Raw, // Up to 5 min -> raw
-            301..=3600 => RollupInterval::OneMinute, // Up to 1 hour -> 1m
+            0..=300 => RollupInterval::Raw,              // Up to 5 min -> raw
+            301..=3600 => RollupInterval::OneMinute,     // Up to 1 hour -> 1m
             3601..=86400 => RollupInterval::FiveMinutes, // Up to 1 day -> 5m
-            86401..=604800 => RollupInterval::OneHour, // Up to 1 week -> 1h
-            _ => RollupInterval::OneDay, // More than 1 week -> 1d
+            86401..=604800 => RollupInterval::OneHour,   // Up to 1 week -> 1h
+            _ => RollupInterval::OneDay,                 // More than 1 week -> 1d
         }
     }
 }
@@ -244,29 +244,34 @@ impl RollupManager {
             let interval_rollups = metric_rollups.entry(*interval).or_default();
 
             // Find or create view for this bucket and labels
-            if let Some(view) = interval_rollups.iter_mut().find(|v| {
-                v.bucket_start_ns == bucket_start_ns && v.labels == labels
-            }) {
+            if let Some(view) = interval_rollups
+                .iter_mut()
+                .find(|v| v.bucket_start_ns == bucket_start_ns && v.labels == labels)
+            {
                 // Update existing view (simplified - real impl would maintain running aggregates)
                 view.sample_count += 1;
 
                 // Update aggregations (simplified)
                 if let Some(current_sum) = view.values.get(&AggregationFunction::Sum) {
-                    view.values.insert(AggregationFunction::Sum, current_sum + value);
+                    view.values
+                        .insert(AggregationFunction::Sum, current_sum + value);
                 } else {
                     view.values.insert(AggregationFunction::Sum, value);
                 }
 
-                view.values.insert(AggregationFunction::Count, view.sample_count as f64);
+                view.values
+                    .insert(AggregationFunction::Count, view.sample_count as f64);
 
                 if let Some(&current_min) = view.values.get(&AggregationFunction::Min) {
-                    view.values.insert(AggregationFunction::Min, current_min.min(value));
+                    view.values
+                        .insert(AggregationFunction::Min, current_min.min(value));
                 } else {
                     view.values.insert(AggregationFunction::Min, value);
                 }
 
                 if let Some(&current_max) = view.values.get(&AggregationFunction::Max) {
-                    view.values.insert(AggregationFunction::Max, current_max.max(value));
+                    view.values
+                        .insert(AggregationFunction::Max, current_max.max(value));
                 } else {
                     view.values.insert(AggregationFunction::Max, value);
                 }
@@ -288,7 +293,8 @@ impl RollupManager {
             }
         }
 
-        self.total_rollups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.total_rollups
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -321,9 +327,9 @@ impl RollupManager {
                         })
                         .filter(|view| {
                             if let Some(filter_labels) = labels {
-                                filter_labels.iter().all(|(k, filter_val)| {
-                                    view.labels.get(k) == Some(filter_val)
-                                })
+                                filter_labels
+                                    .iter()
+                                    .all(|(k, filter_val)| view.labels.get(k) == Some(filter_val))
                             } else {
                                 true
                             }
@@ -369,7 +375,10 @@ impl RollupManager {
         }
 
         if total_flushed > 0 {
-            debug!("Flushed {} rollup buckets for namespace {}", total_flushed, self.namespace);
+            debug!(
+                "Flushed {} rollup buckets for namespace {}",
+                total_flushed, self.namespace
+            );
         }
 
         Ok(total_flushed)
@@ -382,7 +391,8 @@ impl RollupManager {
 
     /// Get total rollups processed
     pub fn total_rollups(&self) -> u64 {
-        self.total_rollups.load(std::sync::atomic::Ordering::Relaxed)
+        self.total_rollups
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get namespace
@@ -448,12 +458,16 @@ mod tests {
     async fn test_add_data_point() {
         let manager = RollupManager::new("test".to_string(), RollupConfig::default());
 
-        let labels = HashMap::from([
-            ("host".to_string(), "server1".to_string()),
-        ]);
+        let labels = HashMap::from([("host".to_string(), "server1".to_string())]);
 
-        manager.add_data_point("cpu_usage", labels.clone(), 0, 50.0).await.unwrap();
-        manager.add_data_point("cpu_usage", labels.clone(), 1_000_000, 60.0).await.unwrap();
+        manager
+            .add_data_point("cpu_usage", labels.clone(), 0, 50.0)
+            .await
+            .unwrap();
+        manager
+            .add_data_point("cpu_usage", labels.clone(), 1_000_000, 60.0)
+            .await
+            .unwrap();
 
         assert_eq!(manager.total_rollups(), 2);
     }
@@ -462,20 +476,25 @@ mod tests {
     async fn test_query_rollups() {
         let manager = RollupManager::new("test".to_string(), RollupConfig::default());
 
-        let labels = HashMap::from([
-            ("host".to_string(), "server1".to_string()),
-        ]);
+        let labels = HashMap::from([("host".to_string(), "server1".to_string())]);
 
         // Add some data points
         for i in 0..10 {
             manager
-                .add_data_point("memory", labels.clone(), i * 1_000_000_000, (i as f64) * 10.0)
+                .add_data_point(
+                    "memory",
+                    labels.clone(),
+                    i * 1_000_000_000,
+                    (i as f64) * 10.0,
+                )
                 .await
                 .unwrap();
         }
 
         // Query rollups
-        let rollups = manager.query_rollups("memory", 0, 10 * 1_000_000_000, Some(&labels)).await;
+        let rollups = manager
+            .query_rollups("memory", 0, 10 * 1_000_000_000, Some(&labels))
+            .await;
 
         // Should have at least one rollup
         assert!(!rollups.is_empty());
@@ -483,9 +502,7 @@ mod tests {
 
     #[test]
     fn test_rollup_view_creation() {
-        let labels = HashMap::from([
-            ("env".to_string(), "prod".to_string()),
-        ]);
+        let labels = HashMap::from([("env".to_string(), "prod".to_string())]);
 
         let mut view = RollupView::new(
             "requests".to_string(),

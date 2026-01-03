@@ -101,7 +101,10 @@ impl ProtocolHandler for ArrowFlightHandler {
                     .status(StatusCode::NOT_IMPLEMENTED)
                     .header("content-type", "application/grpc")
                     .header("grpc-status", "12") // UNIMPLEMENTED
-                    .header("grpc-message", "Arrow Flight handler not configured for unified port mode")
+                    .header(
+                        "grpc-message",
+                        "Arrow Flight handler not configured for unified port mode",
+                    )
                     .body(Body::empty())
                     .expect("response builder should not fail");
             }
@@ -111,7 +114,10 @@ impl ProtocolHandler for ArrowFlightHandler {
                 .status(StatusCode::NOT_IMPLEMENTED)
                 .header("content-type", "application/grpc")
                 .header("grpc-status", "12")
-                .header("grpc-message", "Arrow Flight multiplexing not yet implemented")
+                .header(
+                    "grpc-message",
+                    "Arrow Flight multiplexing not yet implemented",
+                )
                 .body(Body::empty())
                 .expect("response builder should not fail")
         })
@@ -178,9 +184,7 @@ mod tests {
 
     #[test]
     fn test_arrow_flight_handler_builder() {
-        let handler = ArrowFlightHandlerBuilder::new()
-            .ready()
-            .build();
+        let handler = ArrowFlightHandlerBuilder::new().ready().build();
         assert!(handler.is_ready());
     }
 }

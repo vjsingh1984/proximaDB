@@ -479,8 +479,10 @@ impl CollectionPartition {
                         // Skip tombstones (empty vector + expires_at in past or 0) - they mark deletions
                         // and should not be included in search results
                         let current_time_secs = (current_time / 1_000_000) as i64;
-                        let is_tombstone = vector_record.vector.is_empty() &&
-                            vector_record.expires_at.map_or(false, |e| e <= current_time_secs);
+                        let is_tombstone = vector_record.vector.is_empty()
+                            && vector_record
+                                .expires_at
+                                .map_or(false, |e| e <= current_time_secs);
                         if is_tombstone {
                             // Remove any previous version from results (tombstone shadows it)
                             id_to_latest.remove(vector_id);
@@ -666,10 +668,7 @@ impl GlobalPartitionedMemtable {
 
         debug!(
             "Batch added: {} (collection={}, vectors={}, bytes={})",
-            batch_id,
-            collection_id,
-            vector_count,
-            batch_size
+            batch_id, collection_id, vector_count, batch_size
         );
 
         Ok(sequences)

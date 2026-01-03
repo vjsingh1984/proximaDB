@@ -191,8 +191,7 @@ impl PulsarGraphEngine {
         for shard_id in 0..config.shard_count {
             // Each shard gets its own memory pool for proper isolation
             let shard_memory_pool = Arc::new(GraphMemoryPool::new());
-            let shard_engine =
-                Arc::new(OrionGraphEngine::with_memory_pool(shard_memory_pool));
+            let shard_engine = Arc::new(OrionGraphEngine::with_memory_pool(shard_memory_pool));
             shards.insert(shard_id as u32, shard_engine);
         }
 
@@ -251,7 +250,6 @@ impl PulsarGraphEngine {
         memory_pool: Arc<GraphMemoryPool>,
         shards: Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
     ) -> Result<Self> {
-
         // Initialize hash ring
         let hash_ring = Arc::new(RwLock::new(sharding::ConsistentHashRing::new(
             config.shard_count as u32,
@@ -869,7 +867,9 @@ impl GraphEngine for PulsarGraphEngine {
         // Group edges by source node's shard (consistent with insert_edge behavior)
         let mut shard_batches: HashMap<u32, Vec<Edge>> = HashMap::new();
         for edge in edges {
-            let shard_id = self.get_shard_for_node_sync(&edge.from_node_id).unwrap_or(0);
+            let shard_id = self
+                .get_shard_for_node_sync(&edge.from_node_id)
+                .unwrap_or(0);
             shard_batches.entry(shard_id).or_default().push(edge);
         }
 

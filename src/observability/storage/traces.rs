@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::debug;
 
 /// Trace span for distributed tracing
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,11 +167,15 @@ impl TraceStorage {
                 duration_ns: t.end_time_ns - t.start_time_ns,
                 span_count: t.spans.len(),
                 services: t.services.clone(),
-                root_service: t.spans.iter()
+                root_service: t
+                    .spans
+                    .iter()
                     .find(|s| s.parent_span_id.is_empty())
                     .map(|s| s.service_name.clone())
                     .unwrap_or_default(),
-                root_operation: t.spans.iter()
+                root_operation: t
+                    .spans
+                    .iter()
                     .find(|s| s.parent_span_id.is_empty())
                     .map(|s| s.name.clone())
                     .unwrap_or_default(),
@@ -216,11 +219,15 @@ impl TraceStorage {
                         duration_ns: trace.end_time_ns - trace.start_time_ns,
                         span_count: trace.spans.len(),
                         services: trace.services.clone(),
-                        root_service: trace.spans.iter()
+                        root_service: trace
+                            .spans
+                            .iter()
                             .find(|s| s.parent_span_id.is_empty())
                             .map(|s| s.service_name.clone())
                             .unwrap_or_default(),
-                        root_operation: trace.spans.iter()
+                        root_operation: trace
+                            .spans
+                            .iter()
                             .find(|s| s.parent_span_id.is_empty())
                             .map(|s| s.name.clone())
                             .unwrap_or_default(),
@@ -243,9 +250,8 @@ impl TraceStorage {
 
         for trace in traces.values() {
             // Build parent -> child relationships
-            let span_map: HashMap<_, _> = trace.spans.iter()
-                .map(|s| (s.span_id.clone(), s))
-                .collect();
+            let span_map: HashMap<_, _> =
+                trace.spans.iter().map(|s| (s.span_id.clone(), s)).collect();
 
             for span in &trace.spans {
                 if !span.parent_span_id.is_empty() {
@@ -362,8 +368,30 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        storage.write(&make_span("trace1", "span1", "", "svc-a", "op1", now, now + 1000)).await.unwrap();
-        storage.write(&make_span("trace1", "span2", "span1", "svc-b", "op2", now + 100, now + 500)).await.unwrap();
+        storage
+            .write(&make_span(
+                "trace1",
+                "span1",
+                "",
+                "svc-a",
+                "op1",
+                now,
+                now + 1000,
+            ))
+            .await
+            .unwrap();
+        storage
+            .write(&make_span(
+                "trace1",
+                "span2",
+                "span1",
+                "svc-b",
+                "op2",
+                now + 100,
+                now + 500,
+            ))
+            .await
+            .unwrap();
 
         let spans = storage.query_by_trace_id("trace1").await.unwrap();
         assert_eq!(spans.len(), 2);
@@ -375,9 +403,42 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        storage.write(&make_span("trace1", "span1", "", "frontend", "handle", now, now + 1000)).await.unwrap();
-        storage.write(&make_span("trace1", "span2", "span1", "backend", "process", now + 100, now + 500)).await.unwrap();
-        storage.write(&make_span("trace1", "span3", "span2", "database", "query", now + 200, now + 400)).await.unwrap();
+        storage
+            .write(&make_span(
+                "trace1",
+                "span1",
+                "",
+                "frontend",
+                "handle",
+                now,
+                now + 1000,
+            ))
+            .await
+            .unwrap();
+        storage
+            .write(&make_span(
+                "trace1",
+                "span2",
+                "span1",
+                "backend",
+                "process",
+                now + 100,
+                now + 500,
+            ))
+            .await
+            .unwrap();
+        storage
+            .write(&make_span(
+                "trace1",
+                "span3",
+                "span2",
+                "database",
+                "query",
+                now + 200,
+                now + 400,
+            ))
+            .await
+            .unwrap();
 
         let deps = storage.service_dependencies().await.unwrap();
         assert_eq!(deps.len(), 2);

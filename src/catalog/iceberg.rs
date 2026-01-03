@@ -42,7 +42,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -50,6 +50,7 @@ use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::IcebergCatalogConfig;
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
@@ -57,7 +58,6 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
     CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// Iceberg catalog backend type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -945,10 +945,7 @@ impl Catalog for IcebergCatalog {
             .or_else(|| table.partition_specs.first());
 
         if let Some(spec) = spec_json {
-            let spec_id = spec
-                .get("spec-id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
+            let spec_id = spec.get("spec-id").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
             let fields = spec
                 .get("fields")
@@ -1065,10 +1062,7 @@ impl Catalog for IcebergCatalog {
             .or_else(|| table.sort_orders.first());
 
         if let Some(order) = order_json {
-            let order_id = order
-                .get("order-id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
+            let order_id = order.get("order-id").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
             let fields = order
                 .get("fields")

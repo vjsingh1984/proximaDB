@@ -52,12 +52,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::GlueCatalogConfig;
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth};
@@ -65,7 +66,6 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
     CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// AWS Glue catalog implementation
 ///
@@ -668,7 +668,11 @@ impl Catalog for GlueCatalog {
                 .ok_or_else(|| anyhow!("No storage descriptor"))?;
 
             // Convert Glue columns to CatalogColumn
-            let columns: Vec<CatalogColumn> = sd.columns().iter().map(Self::glue_column_to_column).collect();
+            let columns: Vec<CatalogColumn> = sd
+                .columns()
+                .iter()
+                .map(Self::glue_column_to_column)
+                .collect();
 
             let schema_version = table
                 .parameters()

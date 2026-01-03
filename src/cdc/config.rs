@@ -18,10 +18,10 @@
 //!
 //! This module defines configuration for CDC sources, sinks, and transforms.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 
 /// Main CDC configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -596,7 +596,10 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let config = CdcConfig::new()
-            .with_source(SourceConfig::postgres("pg_source", "postgres://localhost/mydb"))
+            .with_source(SourceConfig::postgres(
+                "pg_source",
+                "postgres://localhost/mydb",
+            ))
             .with_sink(SinkConfig::kafka("kafka_sink", "localhost:9092"))
             .with_transform(TransformConfig::vectorization("text_to_vec"));
 
@@ -618,8 +621,7 @@ mod tests {
 
     #[test]
     fn test_sink_config() {
-        let sink = SinkConfig::kafka("kafka", "localhost:9092")
-            .with_setting("topic", "cdc_events");
+        let sink = SinkConfig::kafka("kafka", "localhost:9092").with_setting("topic", "cdc_events");
 
         assert_eq!(sink.sink_type, SinkType::Kafka);
         assert!(sink.settings.contains_key("topic"));

@@ -217,7 +217,8 @@ impl PushdownResponse {
     /// Add a rejected filter with reason.
     pub fn reject_filter(mut self, filter: Expr, reason: impl Into<String>) -> Self {
         let reason_str = reason.into();
-        self.rejection_reasons.insert(format!("{:?}", filter), reason_str);
+        self.rejection_reasons
+            .insert(format!("{:?}", filter), reason_str);
         self.rejected_filters.push(filter);
         self
     }
@@ -234,7 +235,8 @@ impl PushdownResponse {
 
     /// Get the selectivity estimate (0.0 to 1.0).
     pub fn selectivity(&self, total_rows: u64) -> Option<f64> {
-        self.estimated_rows.map(|est| est as f64 / total_rows as f64)
+        self.estimated_rows
+            .map(|est| est as f64 / total_rows as f64)
     }
 }
 
@@ -291,16 +293,10 @@ pub enum Expr {
     },
 
     /// IS NULL check
-    IsNull {
-        column: String,
-        negated: bool,
-    },
+    IsNull { column: String, negated: bool },
 
     /// Function call (for extensibility)
-    Function {
-        name: String,
-        args: Vec<Expr>,
-    },
+    Function { name: String, args: Vec<Expr> },
 
     /// Vector similarity comparison (for vector search)
     VectorSimilarity {
@@ -311,9 +307,7 @@ pub enum Expr {
     },
 
     /// Subquery (for complex filters)
-    Subquery {
-        query: String,
-    },
+    Subquery { query: String },
 }
 
 impl Expr {
@@ -476,16 +470,14 @@ impl Expr {
             Self::BinaryOp { left, right, .. } => {
                 left.references_column(name) || right.references_column(name)
             }
-            Self::And(exprs) | Self::Or(exprs) => {
-                exprs.iter().any(|e| e.references_column(name))
-            }
+            Self::And(exprs) | Self::Or(exprs) => exprs.iter().any(|e| e.references_column(name)),
             Self::Not(expr) => expr.references_column(name),
-            Self::In { column, .. }
-            | Self::Like { column, .. }
-            | Self::IsNull { column, .. } => column == name,
-            Self::Between { column, low, high, .. } => {
-                column == name || low.references_column(name) || high.references_column(name)
+            Self::In { column, .. } | Self::Like { column, .. } | Self::IsNull { column, .. } => {
+                column == name
             }
+            Self::Between {
+                column, low, high, ..
+            } => column == name || low.references_column(name) || high.references_column(name),
             Self::Function { args, .. } => args.iter().any(|a| a.references_column(name)),
             Self::VectorSimilarity { column, .. } => column == name,
             Self::Subquery { .. } => false,
@@ -519,7 +511,9 @@ impl Expr {
             | Self::Like { column, .. }
             | Self::IsNull { column, .. }
             | Self::VectorSimilarity { column, .. } => columns.push(column.clone()),
-            Self::Between { column, low, high, .. } => {
+            Self::Between {
+                column, low, high, ..
+            } => {
                 columns.push(column.clone());
                 low.collect_columns(columns);
                 high.collect_columns(columns);
@@ -668,7 +662,11 @@ impl std::fmt::Display for LiteralValue {
             Self::Binary(v) => write!(f, "x'{}'", hex::encode(v)),
             Self::Date(v) => write!(f, "DATE '{}'", v),
             Self::Timestamp(v) => write!(f, "TIMESTAMP '{}'", v),
-            Self::Interval { months, days, nanos } => {
+            Self::Interval {
+                months,
+                days,
+                nanos,
+            } => {
                 write!(f, "INTERVAL '{} months {} days {} ns'", months, days, nanos)
             }
             Self::Array(v) => {
@@ -1043,8 +1041,8 @@ mod tests {
         let no_start = GraphTraversalPushdown::new("graph", vec![]);
         assert!(no_start.validate().is_err());
 
-        let bad_direction = GraphTraversalPushdown::new("graph", vec!["n1".to_string()])
-            .with_direction("invalid");
+        let bad_direction =
+            GraphTraversalPushdown::new("graph", vec!["n1".to_string()]).with_direction("invalid");
         assert!(bad_direction.validate().is_err());
     }
 
@@ -1054,8 +1052,7 @@ mod tests {
             .with_projections(vec!["id".to_string(), "name".to_string()])
             .with_limit(100);
 
-        let response = PushdownResponse::accept_all(&request)
-            .with_estimated_rows(50);
+        let response = PushdownResponse::accept_all(&request).with_estimated_rows(50);
 
         assert!(response.has_pushdown());
         assert_eq!(response.accepted_projections.len(), 2);
@@ -1082,6 +1079,9 @@ mod tests {
         assert_eq!(format!("{}", LiteralValue::Null), "NULL");
         assert_eq!(format!("{}", LiteralValue::Boolean(true)), "true");
         assert_eq!(format!("{}", LiteralValue::Int64(42)), "42");
-        assert_eq!(format!("{}", LiteralValue::String("hello".to_string())), "'hello'");
+        assert_eq!(
+            format!("{}", LiteralValue::String("hello".to_string())),
+            "'hello'"
+        );
     }
 }

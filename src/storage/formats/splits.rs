@@ -30,7 +30,6 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -58,10 +57,7 @@ pub struct FileSplit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SplitType {
     /// SST: Block-based split
-    Block {
-        block_id: u32,
-        record_count: u64,
-    },
+    Block { block_id: u32, record_count: u64 },
     /// HELIX: Hilbert curve range
     HilbertRange {
         start_code: u64,
@@ -80,14 +76,9 @@ pub enum SplitType {
         row_count: i64,
     },
     /// RAPTOR: Z-order curve range
-    ZOrderRange {
-        start_code: u64,
-        end_code: u64,
-    },
+    ZOrderRange { start_code: u64, end_code: u64 },
     /// Generic: Byte range
-    ByteRange {
-        estimated_records: usize,
-    },
+    ByteRange { estimated_records: usize },
 }
 
 /// Statistics for split pruning and optimization
@@ -130,15 +121,9 @@ pub enum SpatialBounds {
         order: u8,
     },
     /// SWIFT: AdaCurve bounds
-    AdaCurve {
-        min_code: u64,
-        max_code: u64,
-    },
+    AdaCurve { min_code: u64, max_code: u64 },
     /// RAPTOR: Z-order bounds
-    ZOrder {
-        min_code: u64,
-        max_code: u64,
-    },
+    ZOrder { min_code: u64, max_code: u64 },
     /// NOVA: Zone map bounds (per dimension)
     ZoneMap {
         /// Dimension index -> (min, max)
@@ -310,7 +295,12 @@ impl FileSplit {
     }
 
     /// Check if this split can be pruned by the given predicate bounds
-    pub fn can_prune(&self, column: &str, min: &serde_json::Value, max: &serde_json::Value) -> bool {
+    pub fn can_prune(
+        &self,
+        column: &str,
+        min: &serde_json::Value,
+        max: &serde_json::Value,
+    ) -> bool {
         if let Some(bounds) = self.statistics.column_stats.get(column) {
             // If split's max < predicate's min, split can be pruned
             if let (Some(split_max), Some(_pred_min)) = (&bounds.max, min.as_f64()) {
@@ -396,7 +386,10 @@ impl FileSplit {
         // Try to get from spatial bounds
         if let Some(ref spatial) = self.statistics.spatial_bounds {
             match spatial {
-                SpatialBounds::BoundingBox { min_corner, max_corner } => {
+                SpatialBounds::BoundingBox {
+                    min_corner,
+                    max_corner,
+                } => {
                     // Calculate diagonal as conservative radius estimate
                     let diagonal_sq: f32 = min_corner
                         .iter()
@@ -515,10 +508,9 @@ impl ColumnBounds {
             ScalarPredicate::Equal(value) => {
                 // If value < min or value > max, prune
                 if let (Some(min), Some(max)) = (&self.min, &self.max) {
-                    if let (Some(min_val), Some(max_val)) = (
-                        ScalarValue::from_json(min),
-                        ScalarValue::from_json(max),
-                    ) {
+                    if let (Some(min_val), Some(max_val)) =
+                        (ScalarValue::from_json(min), ScalarValue::from_json(max))
+                    {
                         return value < &min_val || value > &max_val;
                     }
                 }
@@ -571,10 +563,9 @@ impl ColumnBounds {
             ScalarPredicate::Between(low, high) => {
                 // If max < low or min > high, prune
                 if let (Some(min), Some(max)) = (&self.min, &self.max) {
-                    if let (Some(min_val), Some(max_val)) = (
-                        ScalarValue::from_json(min),
-                        ScalarValue::from_json(max),
-                    ) {
+                    if let (Some(min_val), Some(max_val)) =
+                        (ScalarValue::from_json(min), ScalarValue::from_json(max))
+                    {
                         return &max_val < low || &min_val > high;
                     }
                 }
@@ -583,10 +574,9 @@ impl ColumnBounds {
             ScalarPredicate::In(values) => {
                 // If all values are outside [min, max], prune
                 if let (Some(min), Some(max)) = (&self.min, &self.max) {
-                    if let (Some(min_val), Some(max_val)) = (
-                        ScalarValue::from_json(min),
-                        ScalarValue::from_json(max),
-                    ) {
+                    if let (Some(min_val), Some(max_val)) =
+                        (ScalarValue::from_json(min), ScalarValue::from_json(max))
+                    {
                         return values.iter().all(|v| v < &min_val || v > &max_val);
                     }
                 }
@@ -701,13 +691,7 @@ mod tests {
 
     #[test]
     fn test_block_split() {
-        let split = FileSplit::new_block(
-            "/data/file.sst".to_string(),
-            0,
-            0,
-            1024,
-            100,
-        );
+        let split = FileSplit::new_block("/data/file.sst".to_string(), 0, 0, 1024, 100);
 
         assert_eq!(split.split_id, "/data/file.sst:block:0");
         assert_eq!(split.statistics.row_count, Some(100));
@@ -715,13 +699,7 @@ mod tests {
 
     #[test]
     fn test_row_group_split() {
-        let split = FileSplit::new_row_group(
-            "/data/file.parquet".to_string(),
-            0,
-            0,
-            65536,
-            10000,
-        );
+        let split = FileSplit::new_row_group("/data/file.parquet".to_string(), 0, 0, 65536, 10000);
 
         assert!(matches!(split.split_type, SplitType::RowGroup { .. }));
     }
@@ -852,13 +830,21 @@ mod tests {
         );
 
         // Can prune when value is outside range
-        assert!(split.can_prune_scalar("price", &ScalarPredicate::GreaterThan(ScalarValue::Float64(100.0))));
+        assert!(split.can_prune_scalar(
+            "price",
+            &ScalarPredicate::GreaterThan(ScalarValue::Float64(100.0))
+        ));
 
         // Cannot prune when value is within range
-        assert!(!split.can_prune_scalar("price", &ScalarPredicate::GreaterThan(ScalarValue::Float64(50.0))));
+        assert!(!split.can_prune_scalar(
+            "price",
+            &ScalarPredicate::GreaterThan(ScalarValue::Float64(50.0))
+        ));
 
         // Cannot prune unknown column
-        assert!(!split.can_prune_scalar("unknown", &ScalarPredicate::Equal(ScalarValue::Int64(50))));
+        assert!(
+            !split.can_prune_scalar("unknown", &ScalarPredicate::Equal(ScalarValue::Int64(50)))
+        );
     }
 
     #[test]

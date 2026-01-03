@@ -4,16 +4,26 @@
 //! These tests verify the O(log n) centroid-based pruning for vector search.
 
 use proximadb::storage::schema::{
-    // Core types
-    CentroidTree, CentroidTreeConfig, CentroidNode,
-    // Pruning traits
-    VectorPruner, PruningResult,
-    // Header cache integration
-    CachedHeader, RowGroupMeta, EnhancedCachedHeader,
+    BloomChecker,
     // Bloom filter types
-    BloomConsolidator, ConsolidatedBloom, IncrementalBloomBuilder, BloomChecker,
+    BloomConsolidator,
+    // Header cache integration
+    CachedHeader,
+    CentroidNode,
+    // Core types
+    CentroidTree,
+    CentroidTreeConfig,
     // Composite pruner
-    CompositePruner, ScalarPruner, NullScalarPruner,
+    CompositePruner,
+    ConsolidatedBloom,
+    EnhancedCachedHeader,
+    IncrementalBloomBuilder,
+    NullScalarPruner,
+    PruningResult,
+    RowGroupMeta,
+    ScalarPruner,
+    // Pruning traits
+    VectorPruner,
 };
 
 // ============================================================================
@@ -122,10 +132,7 @@ fn test_centroid_tree_pruning() {
 #[test]
 fn test_centroid_tree_prune_all() {
     // Arrange
-    let centroids = vec![
-        vec![0.0, 0.0, 0.0],
-        vec![1.0, 0.0, 0.0],
-    ];
+    let centroids = vec![vec![0.0, 0.0, 0.0], vec![1.0, 0.0, 0.0]];
     let tree = CentroidTree::build(&centroids, 8).unwrap();
 
     // Act: Query very far from all centroids with small threshold
@@ -191,11 +198,7 @@ fn test_quantized_pruning_maintains_recall() {
     // Arrange: Create a larger dataset
     let mut centroids = Vec::new();
     for i in 0..100 {
-        centroids.push(vec![
-            (i % 10) as f32,
-            (i / 10) as f32,
-            0.0,
-        ]);
+        centroids.push(vec![(i % 10) as f32, (i / 10) as f32, 0.0]);
     }
 
     let config = CentroidTreeConfig {
@@ -227,11 +230,7 @@ fn test_quantized_pruning_maintains_recall() {
 #[test]
 fn test_vector_pruner_trait_implementation() {
     // Arrange
-    let centroids = vec![
-        vec![0.0, 0.0],
-        vec![1.0, 1.0],
-        vec![5.0, 5.0],
-    ];
+    let centroids = vec![vec![0.0, 0.0], vec![1.0, 1.0], vec![5.0, 5.0]];
     let tree = CentroidTree::build(&centroids, 8).unwrap();
 
     // Act: Use as trait object
@@ -311,13 +310,19 @@ fn test_enhanced_cached_header_pruning() {
 
     // Add rowgroups - 2 clusters
     for i in 0..3 {
-        let rg = RowGroupMeta::new(i, i as u64 * 1000, 1000, 100)
-            .with_centroid(vec![i as f32 * 0.1, i as f32 * 0.1, 0.0]);
+        let rg = RowGroupMeta::new(i, i as u64 * 1000, 1000, 100).with_centroid(vec![
+            i as f32 * 0.1,
+            i as f32 * 0.1,
+            0.0,
+        ]);
         header.rowgroups.push(rg);
     }
     for i in 3..6 {
-        let rg = RowGroupMeta::new(i, i as u64 * 1000, 1000, 100)
-            .with_centroid(vec![10.0 + (i - 3) as f32 * 0.1, 10.0, 0.0]);
+        let rg = RowGroupMeta::new(i, i as u64 * 1000, 1000, 100).with_centroid(vec![
+            10.0 + (i - 3) as f32 * 0.1,
+            10.0,
+            0.0,
+        ]);
         header.rowgroups.push(rg);
     }
 
@@ -425,8 +430,7 @@ fn test_composite_pruner_with_vector() {
     ];
     let tree = CentroidTree::build(&centroids, 8).unwrap();
 
-    let pruner = CompositePruner::new(6)
-        .with_vector_pruner(std::sync::Arc::new(tree));
+    let pruner = CompositePruner::new(6).with_vector_pruner(std::sync::Arc::new(tree));
 
     // Act: Query near origin with small radius
     let query = vec![1.0, 1.0];
@@ -502,8 +506,14 @@ fn test_centroid_tree_performance_scales() {
     let result = tree.prune(&query, 20.0);
 
     // Assert: Should complete quickly with meaningful pruning
-    assert!(result.has_matches(), "Should find some matches within distance 20");
-    assert!(result.included_indices.len() < 1000, "Should prune some rowgroups");
+    assert!(
+        result.has_matches(),
+        "Should find some matches within distance 20"
+    );
+    assert!(
+        result.included_indices.len() < 1000,
+        "Should prune some rowgroups"
+    );
     assert!(result.stats.computation_ns > 0, "Timing should be recorded");
 }
 
@@ -516,7 +526,11 @@ fn test_centroid_tree_high_dimension() {
     // Arrange: High-dimensional vectors (like BERT embeddings)
     let dim = 768;
     let centroids: Vec<Vec<f32>> = (0..10)
-        .map(|i| (0..dim).map(|j| ((i * dim + j) % 100) as f32 / 100.0).collect())
+        .map(|i| {
+            (0..dim)
+                .map(|j| ((i * dim + j) % 100) as f32 / 100.0)
+                .collect()
+        })
         .collect();
 
     // Act
@@ -552,10 +566,7 @@ fn test_centroid_tree_identical_centroids() {
 #[test]
 fn test_centroid_tree_query_dimension_mismatch_fallback() {
     // Arrange
-    let centroids = vec![
-        vec![0.0, 0.0, 0.0],
-        vec![1.0, 1.0, 1.0],
-    ];
+    let centroids = vec![vec![0.0, 0.0, 0.0], vec![1.0, 1.0, 1.0]];
     let tree = CentroidTree::build(&centroids, 8).unwrap();
 
     // Act: Query with wrong dimension
@@ -574,7 +585,13 @@ fn test_centroid_tree_query_dimension_mismatch_fallback() {
 fn test_centroid_tree_build_many_rowgroups() {
     // Arrange: Build with 100 rowgroups
     let centroids: Vec<Vec<f32>> = (0..100)
-        .map(|i| vec![i as f32 / 10.0, (i as f32 / 10.0).sin(), (i as f32 / 10.0).cos()])
+        .map(|i| {
+            vec![
+                i as f32 / 10.0,
+                (i as f32 / 10.0).sin(),
+                (i as f32 / 10.0).cos(),
+            ]
+        })
         .collect();
 
     // Act
@@ -601,7 +618,10 @@ fn test_centroid_tree_prune_exact_match() {
     let result = tree.prune(&[5.0, 5.0, 5.0], 1.0);
 
     // Assert: Should include at least the exact match (rowgroup 1)
-    assert!(result.has_matches(), "Query at exact centroid should find matches");
+    assert!(
+        result.has_matches(),
+        "Query at exact centroid should find matches"
+    );
     // The exact centroid should be included
     assert!(
         result.included_indices.contains(&1),
@@ -630,9 +650,7 @@ fn test_centroid_tree_prune_all_excluded() {
 #[test]
 fn test_centroid_tree_config_min_leaf_size() {
     // Arrange: Test with custom min_leaf_size
-    let centroids: Vec<Vec<f32>> = (0..20)
-        .map(|i| vec![i as f32, 0.0, 0.0])
-        .collect();
+    let centroids: Vec<Vec<f32>> = (0..20).map(|i| vec![i as f32, 0.0, 0.0]).collect();
 
     let config = CentroidTreeConfig {
         max_depth: 4,
@@ -711,7 +729,10 @@ fn test_centroid_tree_serialization_large() {
     let query = vec![25.0, 5.0, 5.0];
     let original_result = tree.prune(&query, 10.0);
     let restored_result = restored.prune(&query, 10.0);
-    assert_eq!(original_result.included_indices, restored_result.included_indices);
+    assert_eq!(
+        original_result.included_indices,
+        restored_result.included_indices
+    );
 }
 
 // ============================================================================

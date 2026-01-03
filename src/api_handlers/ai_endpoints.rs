@@ -4,20 +4,20 @@
 //! NOTE: This module is not currently registered in `api_handlers::mod` or any router,
 //! so the routes here are unreachable until wiring is added to the network layer.
 
-use crate::ai::{AIExecutiveDashboard, ExecutiveDashboardRequest, AIExecutiveDashboardResponse};
-use crate::ai::natural_language::{NLQueryTranslator, UserContext, TranslationResult};
 use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMResponse};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use crate::ai::natural_language::{NLQueryTranslator, TranslationResult, UserContext};
+use crate::ai::{AIExecutiveDashboard, AIExecutiveDashboardResponse, ExecutiveDashboardRequest};
+use anyhow::Result;
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
 };
-use anyhow::Result;
-use tracing::{info, debug, warn, error};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
 /// AI service state for API handlers
 #[derive(Clone)]
@@ -59,9 +59,15 @@ pub struct APIDashboardRequest {
 /// Create AI API router
 pub fn create_ai_router(ai_state: AIServiceState) -> Router {
     Router::new()
-        .route("/ai/natural-language/query", post(handle_natural_language_query))
+        .route(
+            "/ai/natural-language/query",
+            post(handle_natural_language_query),
+        )
         .route("/ai/executive-dashboard", post(handle_executive_dashboard))
-        .route("/ai/executive-dashboard", get(handle_executive_dashboard_get))
+        .route(
+            "/ai/executive-dashboard",
+            get(handle_executive_dashboard_get),
+        )
         .route("/ai/business-insights", post(handle_business_insights))
         .route("/ai/providers/status", get(handle_llm_providers_status))
         .with_state(ai_state)
@@ -74,27 +80,41 @@ pub async fn handle_natural_language_query(
 ) -> Result<Json<NaturalLanguageQueryResponse>, (StatusCode, String)> {
     let start_time = std::time::Instant::now();
 
-    info!("🤔 Processing natural language query for tenant {}: {}", request.tenant_id, request.query);
+    info!(
+        "🤔 Processing natural language query for tenant {}: {}",
+        request.tenant_id, request.query
+    );
 
     // Build user context
     let user_context = UserContext {
         user_id: request.user_id.clone(),
         tenant_id: Some(request.tenant_id.clone()),
-        accessible_tables: vec!["collections".to_string(), "vectors".to_string(), "tenants".to_string()], // Default tables
+        accessible_tables: vec![
+            "collections".to_string(),
+            "vectors".to_string(),
+            "tenants".to_string(),
+        ], // Default tables
         permissions: vec!["read_data".to_string(), "query_data".to_string()],
         roles: vec!["user".to_string()],
     };
 
     // Translate natural language to SQL
-    match ai_state.nl_translator.translate_to_sql(&request.query, &user_context).await {
+    match ai_state
+        .nl_translator
+        .translate_to_sql(&request.query, &user_context)
+        .await
+    {
         Ok(translation) => {
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
             // Execute SQL and generate summary (placeholder)
             let data_summary = format!("Query processed successfully in {}ms", execution_time_ms);
 
-            info!("✅ Natural language query successful: {} -> SQL in {}ms",
-                  request.query.chars().take(50).collect::<String>(), execution_time_ms);
+            info!(
+                "✅ Natural language query successful: {} -> SQL in {}ms",
+                request.query.chars().take(50).collect::<String>(),
+                execution_time_ms
+            );
 
             Ok(Json(NaturalLanguageQueryResponse {
                 sql: translation.sql,
@@ -105,7 +125,10 @@ pub async fn handle_natural_language_query(
             }))
         }
         Err(e) => {
-            error!("❌ Natural language query failed for tenant {}: {}", request.tenant_id, e);
+            error!(
+                "❌ Natural language query failed for tenant {}: {}",
+                request.tenant_id, e
+            );
             Err((
                 StatusCode::BAD_REQUEST,
                 format!("Natural language query translation failed: {}", e),
@@ -121,19 +144,29 @@ pub async fn handle_executive_dashboard(
 ) -> Result<Json<AIExecutiveDashboardResponse>, (StatusCode, String)> {
     let start_time = std::time::Instant::now();
 
-    info!("📊 Generating executive dashboard for tenant: {}", request.tenant_id);
+    info!(
+        "📊 Generating executive dashboard for tenant: {}",
+        request.tenant_id
+    );
 
     // Build user context
     let user_context = UserContext {
         user_id: request.user_id.clone(),
         tenant_id: Some(request.tenant_id.clone()),
-        accessible_tables: vec!["collections".to_string(), "vectors".to_string(), "tenants".to_string()],
+        accessible_tables: vec![
+            "collections".to_string(),
+            "vectors".to_string(),
+            "tenants".to_string(),
+        ],
         permissions: vec!["read_data".to_string(), "admin".to_string()],
         roles: vec!["executive".to_string(), "admin".to_string()],
     };
 
     // Parse focus areas
-    let focus_areas = request.focus_areas.unwrap_or_default().into_iter()
+    let focus_areas = request
+        .focus_areas
+        .unwrap_or_default()
+        .into_iter()
         .filter_map(|area| match area.as_str() {
             "revenue" => Some(crate::ai::executive_dashboard::FocusArea::Revenue),
             "customers" => Some(crate::ai::executive_dashboard::FocusArea::Customers),
@@ -166,17 +199,28 @@ pub async fn handle_executive_dashboard(
     };
 
     // Generate dashboard
-    match ai_state.ai_dashboard.generate_dashboard(dashboard_request).await {
+    match ai_state
+        .ai_dashboard
+        .generate_dashboard(dashboard_request)
+        .await
+    {
         Ok(dashboard_response) => {
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
-            info!("✅ Executive dashboard generated for tenant {} in {}ms with {} insights",
-                  request.tenant_id, execution_time_ms, dashboard_response.natural_language_insights.len());
+            info!(
+                "✅ Executive dashboard generated for tenant {} in {}ms with {} insights",
+                request.tenant_id,
+                execution_time_ms,
+                dashboard_response.natural_language_insights.len()
+            );
 
             Ok(Json(dashboard_response))
         }
         Err(e) => {
-            error!("❌ Executive dashboard generation failed for tenant {}: {}", request.tenant_id, e);
+            error!(
+                "❌ Executive dashboard generation failed for tenant {}: {}",
+                request.tenant_id, e
+            );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Executive dashboard generation failed: {}", e),
@@ -191,17 +235,33 @@ pub async fn handle_executive_dashboard_get(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<AIExecutiveDashboardResponse>, (StatusCode, String)> {
     // Convert query parameters to dashboard request
-    let tenant_id = params.get("tenant_id")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "tenant_id parameter required".to_string()))?
+    let tenant_id = params
+        .get("tenant_id")
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "tenant_id parameter required".to_string(),
+            )
+        })?
         .clone();
 
-    let user_id = params.get("user_id")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "user_id parameter required".to_string()))?
+    let user_id = params
+        .get("user_id")
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "user_id parameter required".to_string(),
+            )
+        })?
         .clone();
 
-    let time_period = params.get("period").cloned().unwrap_or_else(|| "week".to_string());
+    let time_period = params
+        .get("period")
+        .cloned()
+        .unwrap_or_else(|| "week".to_string());
 
-    let focus_areas = params.get("focus")
+    let focus_areas = params
+        .get("focus")
         .map(|areas| areas.split(',').map(|s| s.trim().to_string()).collect())
         .unwrap_or_default();
 
@@ -209,7 +269,11 @@ pub async fn handle_executive_dashboard_get(
         tenant_id,
         user_id,
         time_period,
-        focus_areas: if focus_areas.is_empty() { None } else { Some(focus_areas) },
+        focus_areas: if focus_areas.is_empty() {
+            None
+        } else {
+            Some(focus_areas)
+        },
         custom_queries: None,
     };
 
@@ -221,7 +285,10 @@ pub async fn handle_business_insights(
     State(ai_state): State<AIServiceState>,
     Json(request): Json<NaturalLanguageQueryRequest>,
 ) -> Result<Json<Vec<crate::ai::business_intelligence::BusinessInsight>>, (StatusCode, String)> {
-    info!("💡 Generating business insights for tenant: {}", request.tenant_id);
+    info!(
+        "💡 Generating business insights for tenant: {}",
+        request.tenant_id
+    );
 
     // Build user context
     let user_context = UserContext {
@@ -233,10 +300,18 @@ pub async fn handle_business_insights(
     };
 
     // Generate insights using BI engine
-    match ai_state.ai_dashboard.bi_engine.generate_executive_dashboard(&user_context).await {
+    match ai_state
+        .ai_dashboard
+        .bi_engine
+        .generate_executive_dashboard(&user_context)
+        .await
+    {
         Ok(dashboard) => {
-            info!("✅ Generated {} business insights for tenant {}",
-                  dashboard.insights.len(), request.tenant_id);
+            info!(
+                "✅ Generated {} business insights for tenant {}",
+                dashboard.insights.len(),
+                request.tenant_id
+            );
             Ok(Json(dashboard.insights))
         }
         Err(e) => {
@@ -273,8 +348,11 @@ pub async fn initialize_ai_service_state() -> Result<AIServiceState> {
     info!("🚀 Initializing AI service state for API endpoints");
 
     // Initialize AI executive dashboard
-    let ai_dashboard = Arc::new(AIExecutiveDashboard::new().await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize AI dashboard: {}", e))?);
+    let ai_dashboard = Arc::new(
+        AIExecutiveDashboard::new()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize AI dashboard: {}", e))?,
+    );
 
     // Get references to components
     let nl_translator = ai_dashboard.nl_translator.clone();
@@ -297,7 +375,10 @@ mod tests {
     #[tokio::test]
     async fn test_ai_service_initialization() {
         let ai_state = initialize_ai_service_state().await;
-        assert!(ai_state.is_ok(), "AI service state should initialize successfully");
+        assert!(
+            ai_state.is_ok(),
+            "AI service state should initialize successfully"
+        );
     }
 
     #[tokio::test]

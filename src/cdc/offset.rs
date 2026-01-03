@@ -19,13 +19,13 @@
 //! This module provides durable offset storage for CDC connectors,
 //! enabling resume capability after restarts or failures.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
-use super::error::{CdcError, CdcResult};
+use super::error::CdcResult;
 
 /// Unique identifier for an offset
 pub type OffsetKey = String;
@@ -312,8 +312,7 @@ mod tests {
 
     #[test]
     fn test_offset_with_partition() {
-        let offset = Offset::new("pg://localhost/mydb", 12345)
-            .with_partition("table_0");
+        let offset = Offset::new("pg://localhost/mydb", 12345).with_partition("table_0");
         assert_eq!(offset.key(), "pg://localhost/mydb:table_0");
     }
 

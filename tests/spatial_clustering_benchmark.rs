@@ -84,10 +84,7 @@ fn compute_centroid(vectors: &[Vec<f32>]) -> Vec<f32> {
 }
 
 /// Create blocks from vectors and compute their centroids
-fn create_blocks_with_centroids(
-    vectors: &[Vec<f32>],
-    block_size: usize,
-) -> Vec<Vec<f32>> {
+fn create_blocks_with_centroids(vectors: &[Vec<f32>], block_size: usize) -> Vec<Vec<f32>> {
     vectors
         .chunks(block_size)
         .map(|chunk| compute_centroid(chunk))
@@ -108,13 +105,20 @@ fn benchmark_pruning_effectiveness_clustered_data() {
 
     // Generate clustered data
     let vectors = generate_clustered_vectors(num_clusters, vectors_per_cluster, dimension);
-    println!("Generated {} clustered vectors ({} clusters x {} vectors)",
-        vectors.len(), num_clusters, vectors_per_cluster);
+    println!(
+        "Generated {} clustered vectors ({} clusters x {} vectors)",
+        vectors.len(),
+        num_clusters,
+        vectors_per_cluster
+    );
 
     // Create blocks and compute centroids
     let centroids = create_blocks_with_centroids(&vectors, block_size);
     let num_blocks = centroids.len();
-    println!("Created {} blocks with {} vectors each", num_blocks, block_size);
+    println!(
+        "Created {} blocks with {} vectors each",
+        num_blocks, block_size
+    );
 
     // Test each curve type
     for curve_type in [CurveType::ZOrder, CurveType::Hilbert, CurveType::AdaCurve] {
@@ -140,7 +144,11 @@ fn benchmark_pruning_effectiveness_clustered_data() {
             .iter()
             .enumerate()
             .map(|(idx, centroid)| {
-                let code = result.spatial_codes.get(idx).cloned().unwrap_or(SpatialCode::Code64(0));
+                let code = result
+                    .spatial_codes
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or(SpatialCode::Code64(0));
                 BlockPruningInfo::with_centroid(idx, code, centroid.clone())
             })
             .collect();
@@ -157,11 +165,16 @@ fn benchmark_pruning_effectiveness_clustered_data() {
             // Compute query's spatial code
             let encoder = SpatialEncoderFactory::create(curve_type, target_dims, 8);
             let query_pca: Vec<f32> = query.iter().take(target_dims).copied().collect();
-            let (min_val, max_val) = query_pca.iter().fold((f32::MAX, f32::MIN), |(min, max), &v| {
-                (min.min(v), max.max(v))
-            });
+            let (min_val, max_val) = query_pca
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(min, max), &v| {
+                    (min.min(v), max.max(v))
+                });
             let range = (max_val - min_val).max(1e-6);
-            let normalized: Vec<f32> = query_pca.iter().map(|&v| ((v - min_val) / range).clamp(0.0, 1.0)).collect();
+            let normalized: Vec<f32> = query_pca
+                .iter()
+                .map(|&v| ((v - min_val) / range).clamp(0.0, 1.0))
+                .collect();
             let query_code = encoder.encode(&normalized);
 
             // Select blocks
@@ -171,8 +184,11 @@ fn benchmark_pruning_effectiveness_clustered_data() {
         }
 
         let avg_pruning_ratio = total_pruned as f32 / (total_queries * num_blocks) as f32 * 100.0;
-        println!("Average pruning ratio: {:.1}% ({} blocks pruned per query)",
-            avg_pruning_ratio, total_pruned / total_queries);
+        println!(
+            "Average pruning ratio: {:.1}% ({} blocks pruned per query)",
+            avg_pruning_ratio,
+            total_pruned / total_queries
+        );
 
         // Target: 70%+ pruning for clustered data
         assert!(
@@ -222,7 +238,11 @@ fn benchmark_pruning_effectiveness_random_data() {
         .iter()
         .enumerate()
         .map(|(idx, centroid)| {
-            let code = result.spatial_codes.get(idx).cloned().unwrap_or(SpatialCode::Code64(0));
+            let code = result
+                .spatial_codes
+                .get(idx)
+                .cloned()
+                .unwrap_or(SpatialCode::Code64(0));
             BlockPruningInfo::with_centroid(idx, code, centroid.clone())
         })
         .collect();
@@ -235,11 +255,16 @@ fn benchmark_pruning_effectiveness_random_data() {
         let query = &vectors[i * 100]; // Sample queries
         let encoder = SpatialEncoderFactory::create(curve_type, target_dims, 8);
         let query_pca: Vec<f32> = query.iter().take(target_dims).copied().collect();
-        let (min_val, max_val) = query_pca.iter().fold((f32::MAX, f32::MIN), |(min, max), &v| {
-            (min.min(v), max.max(v))
-        });
+        let (min_val, max_val) = query_pca
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(min, max), &v| {
+                (min.min(v), max.max(v))
+            });
         let range = (max_val - min_val).max(1e-6);
-        let normalized: Vec<f32> = query_pca.iter().map(|&v| ((v - min_val) / range).clamp(0.0, 1.0)).collect();
+        let normalized: Vec<f32> = query_pca
+            .iter()
+            .map(|&v| ((v - min_val) / range).clamp(0.0, 1.0))
+            .collect();
         let query_code = encoder.encode(&normalized);
 
         let prune_result = pruner.select_blocks(&query_code, query, &blocks);
@@ -249,8 +274,10 @@ fn benchmark_pruning_effectiveness_random_data() {
     let avg_blocks_selected = total_selected as f32 / num_queries as f32;
     let expected_sqrt = (num_blocks as f32).sqrt().ceil().max(3.0);
 
-    println!("Average blocks selected: {:.1} (expected ~{:.0} from sqrt mode)",
-        avg_blocks_selected, expected_sqrt);
+    println!(
+        "Average blocks selected: {:.1} (expected ~{:.0} from sqrt mode)",
+        avg_blocks_selected, expected_sqrt
+    );
 
     // For random data, pruning still works but effectiveness is lower
     println!("\n✅ Random data benchmark passed!");

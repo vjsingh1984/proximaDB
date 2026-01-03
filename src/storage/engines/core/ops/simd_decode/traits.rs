@@ -328,7 +328,11 @@ mod tests {
     #[test]
     fn test_decoder_factory_best_available() {
         let decoder = DecoderFactory::best_available();
-        println!("Best decoder: {} ({:?})", decoder.name(), decoder.supported_features());
+        println!(
+            "Best decoder: {} ({:?})",
+            decoder.name(),
+            decoder.supported_features()
+        );
 
         // Should always return a valid decoder
         assert!(!decoder.name().is_empty());

@@ -78,62 +78,111 @@ pub mod splits;
 
 // Re-exports for convenience
 pub use traits::{
-    // Core traits
-    StorageFormat, InternalFormat, OpenTableFormat, FormatDetector,
-    // Types
-    FormatType, VectorBatch, ReadContext, VectorReadContext, WriteContext, VectorWriteContext,
-    CompactionContext, OptimizeContext, WriteResult, CompactionResult, OptimizeResult,
-    FileEntry, FileStats, ColumnStats, FormatStatistics, Snapshot,
-    CompressionCodec, WriteMode, FilterExpression, ComparisonOp, MergeAction,
-    // Streams
-    RecordBatchStream, VectorBatchStream,
+    ColumnStats,
+    CompactionContext,
+    CompactionResult,
+    ComparisonOp,
+    CompressionCodec,
     // Default implementations
     DefaultFormatDetector,
+    FileEntry,
+    FileStats,
+    FilterExpression,
+    FormatDetector,
+    FormatStatistics,
+    // Types
+    FormatType,
+    InternalFormat,
+    MergeAction,
+    OpenTableFormat,
+    OptimizeContext,
+    OptimizeResult,
+    ReadContext,
+    // Streams
+    RecordBatchStream,
+    Snapshot,
+    // Core traits
+    StorageFormat,
+    VectorBatch,
+    VectorBatchStream,
+    VectorReadContext,
+    VectorWriteContext,
+    WriteContext,
+    WriteMode,
+    WriteResult,
 };
 
 pub use registry::{FormatRegistry, global_registry};
 
 pub use arrow_conversion::{
-    // Schema utilities
-    vector_schema, vector_schema_flat, document_schema, graph_node_schema, graph_edge_schema,
-    // Conversions
-    vector_batch_to_record_batch, record_batch_to_vector_batch,
-    vector_records_to_record_batch, record_batch_to_vector_records,
-    sql_value_to_json, json_to_sql_value, sql_value_to_arrow_type,
+    document_schema,
     filter_to_string,
+    graph_edge_schema,
+    graph_node_schema,
+    json_to_sql_value,
+    record_batch_to_vector_batch,
+    record_batch_to_vector_records,
+    sql_value_to_arrow_type,
+    sql_value_to_json,
+    // Conversions
+    vector_batch_to_record_batch,
+    vector_records_to_record_batch,
+    // Schema utilities
+    vector_schema,
+    vector_schema_flat,
 };
 
 pub use splits::{
+    CacheStatus,
+    ColumnBounds,
     // Core split types
-    FileSplit, SplitType, SplitStatistics, ColumnBounds, SpatialBounds,
-    // Locality and scheduling
-    SplitLocality, StorageTier, CacheStatus,
-    // Split generation
-    SplitGenerator, SplitPlanner,
+    FileSplit,
     // Pruning types
-    ScalarPredicate, ScalarValue, SplitCost,
+    ScalarPredicate,
+    ScalarValue,
+    SpatialBounds,
+    SplitCost,
+    // Split generation
+    SplitGenerator,
+    // Locality and scheduling
+    SplitLocality,
+    SplitPlanner,
+    SplitStatistics,
+    SplitType,
+    StorageTier,
 };
 
 // Re-export open table format implementations
 pub use open::{
+    DeltaLakeConfig,
     // Delta Lake
-    DeltaLakeFormat, DeltaLakeConfig,
+    DeltaLakeFormat,
+    IcebergConfig,
     // Iceberg
-    IcebergFormat, IcebergConfig,
+    IcebergFormat,
     // Common types
-    StorageOptions, TableMetadata,
+    StorageOptions,
+    TableMetadata,
 };
 
 // Re-export internal format adapters
 pub use adapters::{
+    HelixFormatAdapter,
     // Generic adapter
     InternalFormatAdapter,
+    NovaFormatAdapter,
+    RaptorFormatAdapter,
     // Engine-specific type aliases
-    SstFormatAdapter, HelixFormatAdapter, ViperFormatAdapter,
-    NovaFormatAdapter, SwiftFormatAdapter, RaptorFormatAdapter,
+    SstFormatAdapter,
+    SwiftFormatAdapter,
+    ViperFormatAdapter,
+    create_helix_adapter,
+    create_nova_adapter,
+    create_raptor_adapter,
     // Factory functions
-    create_sst_adapter, create_helix_adapter, create_viper_adapter,
-    create_nova_adapter, create_swift_adapter, create_raptor_adapter,
+    create_sst_adapter,
+    create_swift_adapter,
+    create_viper_adapter,
 };
 
 // ============================================================================

@@ -211,10 +211,9 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 
         if let Some(vector_col) = vector_col {
             // For FixedSizeListArray, we need to get the values
-            if let Some(list_array) =
-                vector_col
-                    .as_any()
-                    .downcast_ref::<arrow_array::FixedSizeListArray>()
+            if let Some(list_array) = vector_col
+                .as_any()
+                .downcast_ref::<arrow_array::FixedSizeListArray>()
             {
                 // Get the underlying Float32Array values
                 if let Some(float_array) =

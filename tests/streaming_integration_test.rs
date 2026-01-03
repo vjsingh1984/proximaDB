@@ -18,22 +18,20 @@
 //!
 //! Comprehensive end-to-end tests for the real-time streaming module.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::streaming::{
-    BackpressureLevel, RingBuffer, SessionConfig, SessionState, StreamConfig,
-    StreamCoordinator, StreamId, Watermarks,
+use proximadb::streaming::kafka::{
+    CommitStrategy, DeserializationFormat, DlqConfig, KafkaConsumerConfig, MessageDeserializer,
 };
 use proximadb::streaming::subscriptions::{
-    QueryEvaluator, ScoredResult, SubscriptionConfig, SubscriptionId,
-    SubscriptionManager,
+    QueryEvaluator, ScoredResult, SubscriptionConfig, SubscriptionId, SubscriptionManager,
 };
-use proximadb::streaming::kafka::{
-    CommitStrategy, DeserializationFormat, DlqConfig, KafkaConsumerConfig,
-    MessageDeserializer,
+use proximadb::streaming::{
+    BackpressureLevel, RingBuffer, SessionConfig, SessionState, StreamConfig, StreamCoordinator,
+    StreamId, Watermarks,
 };
 
 // =============================================================================
@@ -323,7 +321,10 @@ async fn test_coordinator_push_and_drain() {
 
     // Push vectors
     let vectors = create_test_vectors(100, 0, 128);
-    let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+    let result = coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     assert_eq!(result.pushed, 100);
     assert_eq!(result.dropped, 0);
@@ -354,7 +355,10 @@ async fn test_coordinator_backpressure_propagation() {
 
     // Fill buffer to trigger backpressure
     let vectors = create_test_vectors(60, 0, 64);
-    let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+    let result = coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     assert!(result.backpressure >= BackpressureLevel::High);
     assert!(result.buffer_percent > 90);
@@ -412,7 +416,10 @@ async fn test_coordinator_session_stats_tracking() {
 
     // Push 100 vectors
     let vectors = create_test_vectors(100, 0, 64);
-    coordinator.push_records(&session_id, vectors).await.unwrap();
+    coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Drain 30
     coordinator.drain_records(&session_id, 30).unwrap();
@@ -467,11 +474,19 @@ async fn test_rate_limiter_recovery() {
 
     // Exhaust rate limit
     let vectors = create_test_vectors(100, 0, 64);
-    coordinator.push_records(&session_id, vectors).await.unwrap();
+    coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Should be rate limited
     let vectors = create_test_vectors(10, 200, 64);
-    assert!(coordinator.push_records(&session_id, vectors).await.is_err());
+    assert!(
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .is_err()
+    );
 
     // Wait for refill
     tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -498,12 +513,7 @@ async fn test_subscription_manager_create_subscription() {
     };
 
     let handle = manager
-        .subscribe(
-            "collection_1".to_string(),
-            vec![0.1; 128],
-            config,
-            None,
-        )
+        .subscribe("collection_1".to_string(), vec![0.1; 128], config, None)
         .await
         .expect("Should create subscription");
 
@@ -746,7 +756,8 @@ fn test_subscription_id_uniqueness() {
     let ids: Vec<SubscriptionId> = (0..100).map(|_| SubscriptionId::new()).collect();
 
     // All IDs should be unique
-    let unique: std::collections::HashSet<_> = ids.iter().map(|id| id.as_str().to_string()).collect();
+    let unique: std::collections::HashSet<_> =
+        ids.iter().map(|id| id.as_str().to_string()).collect();
     assert_eq!(unique.len(), 100);
 }
 
@@ -785,8 +796,16 @@ async fn test_push_latency_under_load() {
     let p99 = latencies[98];
 
     // P99 should be under 10ms for local operations
-    assert!(p99 < Duration::from_millis(10), "P99 latency too high: {:?}", p99);
-    assert!(p50 < Duration::from_millis(1), "P50 latency too high: {:?}", p50);
+    assert!(
+        p99 < Duration::from_millis(10),
+        "P99 latency too high: {:?}",
+        p99
+    );
+    assert!(
+        p50 < Duration::from_millis(1),
+        "P50 latency too high: {:?}",
+        p50
+    );
 }
 
 #[tokio::test]
@@ -809,7 +828,10 @@ async fn test_throughput_measurement() {
 
     for batch in 0..batch_count {
         let vectors = create_test_vectors(batch_size, batch * batch_size, 64);
-        coordinator.push_records(&session_id, vectors).await.unwrap();
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
     }
 
     let elapsed = start.elapsed();
@@ -883,18 +905,16 @@ async fn test_coordinator_with_subscriptions() {
     };
 
     let sub_handle = subscription_manager
-        .subscribe(
-            "searchable".to_string(),
-            vec![0.5; 128],
-            sub_config,
-            None,
-        )
+        .subscribe("searchable".to_string(), vec![0.5; 128], sub_config, None)
         .await
         .unwrap();
 
     // Push vectors
     let vectors = create_test_vectors(100, 0, 128);
-    coordinator.push_records(&session_id, vectors).await.unwrap();
+    coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Both should be active
     assert_eq!(coordinator.session_count(), 1);
@@ -959,7 +979,7 @@ fn test_deserialization_format_variants() {
 // Result Set Tests (Top-K Maintenance)
 // =============================================================================
 
-use proximadb::streaming::subscriptions::{ResultSet, ResultChange};
+use proximadb::streaming::subscriptions::{ResultChange, ResultSet};
 
 #[test]
 fn test_result_set_basic_operations() {
@@ -1039,9 +1059,11 @@ fn test_result_set_top_k_maintenance() {
     assert!(!rs.contains("r1"));
 
     // Should have removal changes
-    assert!(changes
-        .iter()
-        .any(|c| matches!(c, ResultChange::Removed { .. })));
+    assert!(
+        changes
+            .iter()
+            .any(|c| matches!(c, ResultChange::Removed { .. }))
+    );
 }
 
 #[test]
@@ -1361,7 +1383,10 @@ async fn test_subscription_with_coordinator_integration() {
 
     // Create streaming session
     let session_id = coordinator
-        .create_session("live_query_collection".to_string(), SessionConfig::default())
+        .create_session(
+            "live_query_collection".to_string(),
+            SessionConfig::default(),
+        )
         .await
         .unwrap();
 
@@ -1384,11 +1409,17 @@ async fn test_subscription_with_coordinator_integration() {
         .unwrap();
 
     // Activate subscription
-    subscription_manager.activate(&handle.id, vec![]).await.unwrap();
+    subscription_manager
+        .activate(&handle.id, vec![])
+        .await
+        .unwrap();
 
     // Push vectors
     let vectors = create_test_vectors(20, 0, 64);
-    let push_result = coordinator.push_records(&session_id, vectors).await.unwrap();
+    let push_result = coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
     assert_eq!(push_result.pushed, 20);
 
     // Notify subscription manager of inserts
@@ -1428,17 +1459,28 @@ async fn test_subscription_receives_updates() {
 
     // Activate with initial results
     let initial = vec![
-        ScoredResult { vector_id: "v1".to_string(), score: 0.9, position: 0 },
-        ScoredResult { vector_id: "v2".to_string(), score: 0.8, position: 1 },
+        ScoredResult {
+            vector_id: "v1".to_string(),
+            score: 0.9,
+            position: 0,
+        },
+        ScoredResult {
+            vector_id: "v2".to_string(),
+            score: 0.8,
+            position: 1,
+        },
     ];
-    subscription_manager.activate(&handle.id, initial).await.unwrap();
+    subscription_manager
+        .activate(&handle.id, initial)
+        .await
+        .unwrap();
 
     // Insert new vectors that should affect the subscription
-    let new_vectors = vec![
-        ("v3".to_string(), vec![0.95, 0.05, 0.0], 0.0),
-    ];
+    let new_vectors = vec![("v3".to_string(), vec![0.95, 0.05, 0.0], 0.0)];
 
-    let affected = subscription_manager.notify_insert("update_test", new_vectors).await;
+    let affected = subscription_manager
+        .notify_insert("update_test", new_vectors)
+        .await;
     assert!(affected >= 1);
 
     // Small delay to allow processing
@@ -1466,11 +1508,26 @@ async fn test_subscription_removal_notification() {
 
     // Activate with initial results
     let initial = vec![
-        ScoredResult { vector_id: "r1".to_string(), score: 0.9, position: 0 },
-        ScoredResult { vector_id: "r2".to_string(), score: 0.8, position: 1 },
-        ScoredResult { vector_id: "r3".to_string(), score: 0.7, position: 2 },
+        ScoredResult {
+            vector_id: "r1".to_string(),
+            score: 0.9,
+            position: 0,
+        },
+        ScoredResult {
+            vector_id: "r2".to_string(),
+            score: 0.8,
+            position: 1,
+        },
+        ScoredResult {
+            vector_id: "r3".to_string(),
+            score: 0.7,
+            position: 2,
+        },
     ];
-    subscription_manager.activate(&handle.id, initial).await.unwrap();
+    subscription_manager
+        .activate(&handle.id, initial)
+        .await
+        .unwrap();
 
     // Notify removal - returns number of subscriptions notified
     // The manager may return 0 if the removed vector doesn't affect ranking
@@ -1502,7 +1559,10 @@ async fn test_subscription_threshold_filtering() {
         .await
         .unwrap();
 
-    subscription_manager.activate(&handle.id, vec![]).await.unwrap();
+    subscription_manager
+        .activate(&handle.id, vec![])
+        .await
+        .unwrap();
 
     // Insert vectors with varying scores
     // The subscription manager's evaluator will compute similarity
@@ -1512,7 +1572,9 @@ async fn test_subscription_threshold_filtering() {
     ];
 
     // Should process (actual filtering happens in evaluator)
-    let notified = subscription_manager.notify_insert("threshold_test", new_vectors).await;
+    let notified = subscription_manager
+        .notify_insert("threshold_test", new_vectors)
+        .await;
     assert!(notified >= 0); // Manager was notified
 
     subscription_manager.unsubscribe(&handle.id).unwrap();
@@ -1538,17 +1600,33 @@ async fn test_multiple_subscriptions_same_collection() {
 
     // Different query vectors -> different subscriptions
     let handle1 = subscription_manager
-        .subscribe("shared_collection".to_string(), vec![1.0, 0.0, 0.0], config1, None)
+        .subscribe(
+            "shared_collection".to_string(),
+            vec![1.0, 0.0, 0.0],
+            config1,
+            None,
+        )
         .await
         .unwrap();
 
     let handle2 = subscription_manager
-        .subscribe("shared_collection".to_string(), vec![0.0, 1.0, 0.0], config2, None)
+        .subscribe(
+            "shared_collection".to_string(),
+            vec![0.0, 1.0, 0.0],
+            config2,
+            None,
+        )
         .await
         .unwrap();
 
-    subscription_manager.activate(&handle1.id, vec![]).await.unwrap();
-    subscription_manager.activate(&handle2.id, vec![]).await.unwrap();
+    subscription_manager
+        .activate(&handle1.id, vec![])
+        .await
+        .unwrap();
+    subscription_manager
+        .activate(&handle2.id, vec![])
+        .await
+        .unwrap();
 
     // Insert vectors
     let new_vectors = vec![
@@ -1556,7 +1634,9 @@ async fn test_multiple_subscriptions_same_collection() {
         ("v2".to_string(), vec![0.1, 0.9, 0.0], 0.0),
     ];
 
-    let notified = subscription_manager.notify_insert("shared_collection", new_vectors).await;
+    let notified = subscription_manager
+        .notify_insert("shared_collection", new_vectors)
+        .await;
 
     // Both subscriptions should be notified (they're watching same collection)
     assert!(notified >= 2);
@@ -1579,9 +1659,18 @@ async fn test_kafka_consumer_process_batch() {
 
     // Create batch of JSON messages
     let messages = vec![
-        (br#"{"id": "k1", "vector": [0.1, 0.2, 0.3, 0.4], "collection": "kafka_test"}"#.to_vec(), None),
-        (br#"{"id": "k2", "vector": [0.5, 0.6, 0.7, 0.8], "collection": "kafka_test"}"#.to_vec(), None),
-        (br#"{"id": "k3", "vector": [0.9, 1.0, 1.1, 1.2], "collection": "kafka_test"}"#.to_vec(), None),
+        (
+            br#"{"id": "k1", "vector": [0.1, 0.2, 0.3, 0.4], "collection": "kafka_test"}"#.to_vec(),
+            None,
+        ),
+        (
+            br#"{"id": "k2", "vector": [0.5, 0.6, 0.7, 0.8], "collection": "kafka_test"}"#.to_vec(),
+            None,
+        ),
+        (
+            br#"{"id": "k3", "vector": [0.9, 1.0, 1.1, 1.2], "collection": "kafka_test"}"#.to_vec(),
+            None,
+        ),
     ];
 
     let result = consumer.process_messages(messages).await;
@@ -1620,9 +1709,7 @@ async fn test_kafka_consumer_default_collection() {
     let consumer = Arc::new(KafkaVectorConsumer::new(config, coordinator.clone()));
 
     // Message without explicit collection
-    let messages = vec![
-        (br#"{"id": "v1", "vector": [0.1, 0.2, 0.3]}"#.to_vec(), None),
-    ];
+    let messages = vec![(br#"{"id": "v1", "vector": [0.1, 0.2, 0.3]}"#.to_vec(), None)];
 
     let result = consumer.process_messages(messages).await;
 
@@ -1725,10 +1812,22 @@ async fn test_kafka_consumer_multi_collection_routing() {
 
     // Messages for different collections
     let messages = vec![
-        (br#"{"id": "c1v1", "vector": [0.1], "collection": "collection_a"}"#.to_vec(), None),
-        (br#"{"id": "c1v2", "vector": [0.2], "collection": "collection_a"}"#.to_vec(), None),
-        (br#"{"id": "c2v1", "vector": [0.3], "collection": "collection_b"}"#.to_vec(), None),
-        (br#"{"id": "c3v1", "vector": [0.4], "collection": "collection_c"}"#.to_vec(), None),
+        (
+            br#"{"id": "c1v1", "vector": [0.1], "collection": "collection_a"}"#.to_vec(),
+            None,
+        ),
+        (
+            br#"{"id": "c1v2", "vector": [0.2], "collection": "collection_a"}"#.to_vec(),
+            None,
+        ),
+        (
+            br#"{"id": "c2v1", "vector": [0.3], "collection": "collection_b"}"#.to_vec(),
+            None,
+        ),
+        (
+            br#"{"id": "c3v1", "vector": [0.4], "collection": "collection_c"}"#.to_vec(),
+            None,
+        ),
     ];
 
     let result = consumer.process_messages(messages).await;
@@ -1776,12 +1875,18 @@ async fn test_streaming_subscription_end_to_end() {
         .await
         .unwrap();
 
-    subscription_manager.activate(&sub_handle.id, vec![]).await.unwrap();
+    subscription_manager
+        .activate(&sub_handle.id, vec![])
+        .await
+        .unwrap();
 
     // Push vectors (simulating streaming ingestion)
     for batch in 0..5 {
         let vectors = create_test_vectors(50, batch * 50, 64);
-        let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+        let result = coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
         assert_eq!(result.pushed, 50);
     }
 
@@ -1979,8 +2084,7 @@ fn test_query_evaluator_incremental_evaluate() {
     // New vector that should enter top-k
     let new_vectors = vec![("v3".to_string(), vec![0.95, 0.05, 0.0], 0.0)];
 
-    let (results, changes) =
-        evaluator.incremental_evaluate(&query, &current, &new_vectors, 2, 0.0);
+    let (results, changes) = evaluator.incremental_evaluate(&query, &current, &new_vectors, 2, 0.0);
 
     assert_eq!(results.len(), 2);
     // v3 should be in results with high score
@@ -2129,7 +2233,10 @@ async fn test_coordinator_stats_basic() {
         .unwrap();
 
     let vectors = create_test_vectors(50, 0, 64);
-    coordinator.push_records(&session_id, vectors).await.unwrap();
+    coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Updated stats
     let stats = coordinator.stats();
@@ -2152,7 +2259,10 @@ async fn test_coordinator_stats_multiple_sessions() {
             .unwrap();
 
         let vectors = create_test_vectors(100, 0, 64);
-        coordinator.push_records(&session_id, vectors).await.unwrap();
+        coordinator
+            .push_records(&session_id, vectors)
+            .await
+            .unwrap();
     }
 
     let stats = coordinator.stats();
@@ -2348,7 +2458,10 @@ async fn test_integrated_service_push_and_notify() {
         .await
         .unwrap();
 
-    service.activate_subscription(&sub_handle.id, vec![]).await.unwrap();
+    service
+        .activate_subscription(&sub_handle.id, vec![])
+        .await
+        .unwrap();
 
     // Push with notification
     let vectors = create_test_vectors(10, 0, 64);
@@ -2402,7 +2515,10 @@ async fn test_integrated_service_subscription_management() {
     assert!(service.stats().active_subscriptions >= 1);
 
     // Activate
-    service.activate_subscription(&handle.id, vec![]).await.unwrap();
+    service
+        .activate_subscription(&handle.id, vec![])
+        .await
+        .unwrap();
 
     // Unsubscribe
     service.unsubscribe(&handle.id).unwrap();
@@ -2427,7 +2543,12 @@ async fn test_integrated_service_stats() {
     for i in 0..2 {
         let sub_config = SubscriptionConfig::default();
         let _ = service
-            .subscribe(format!("sub_col_{}", i), vec![0.1 * (i as f32); 64], sub_config, None)
+            .subscribe(
+                format!("sub_col_{}", i),
+                vec![0.1 * (i as f32); 64],
+                sub_config,
+                None,
+            )
             .await
             .unwrap();
     }
@@ -2511,7 +2632,10 @@ async fn test_push_result_suggested_delay() {
 
     // Push enough to trigger backpressure
     let vectors = create_test_vectors(60, 0, 64);
-    let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+    let result = coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Should have non-zero delay when backpressure is high
     let delay = result.suggested_delay();
@@ -2534,7 +2658,10 @@ async fn test_push_result_has_drops() {
 
     // Push more than buffer can hold
     let vectors = create_test_vectors(50, 0, 64);
-    let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+    let result = coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Some should be dropped
     assert!(result.has_drops() || result.pushed == 50);
@@ -2554,7 +2681,10 @@ async fn test_push_result_requires_slowdown() {
 
     // Fill buffer significantly
     let vectors = create_test_vectors(60, 0, 64);
-    let result = coordinator.push_records(&session_id, vectors).await.unwrap();
+    let result = coordinator
+        .push_records(&session_id, vectors)
+        .await
+        .unwrap();
 
     // Should require slowdown when buffer is nearly full
     if result.buffer_percent > 90 {

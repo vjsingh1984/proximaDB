@@ -26,7 +26,7 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 use tracing::{debug, trace, warn};
 
-use crate::storage::persistence::filesystem::{FileSystem, FsResult, FilesystemError};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemError, FsResult};
 
 use super::metrics::IoMetrics;
 use super::traits::{ByteRange, IoCostEstimate, IoStrategy};
@@ -288,8 +288,7 @@ impl IoStrategy for ParallelReader {
         // With parallelism, we can do multiple reads at once
         let io_operations = if self.should_parallelize(ranges) {
             // Parallel: ceiling of ranges / max_concurrent
-            (ranges.len() + self.config.max_concurrent_reads - 1)
-                / self.config.max_concurrent_reads
+            (ranges.len() + self.config.max_concurrent_reads - 1) / self.config.max_concurrent_reads
         } else {
             ranges.len()
         };
@@ -313,7 +312,10 @@ pub struct SequentialReader {
 
 impl SequentialReader {
     pub fn new(filesystem: Arc<dyn FileSystem>, metrics: Arc<IoMetrics>) -> Self {
-        Self { filesystem, metrics }
+        Self {
+            filesystem,
+            metrics,
+        }
     }
 }
 

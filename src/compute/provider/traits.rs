@@ -250,7 +250,9 @@ impl CostEstimate {
 
     /// Get total cost with custom weights
     pub fn total_cost_weighted(&self, cpu_weight: f64, io_weight: f64, network_weight: f64) -> f64 {
-        (cpu_weight * self.cpu_cost) + (io_weight * self.io_cost) + (network_weight * self.network_cost)
+        (cpu_weight * self.cpu_cost)
+            + (io_weight * self.io_cost)
+            + (network_weight * self.network_cost)
     }
 
     /// Create an unknown/infinite cost estimate
@@ -599,11 +601,7 @@ pub trait ComputeProvider: Send + Sync + Debug {
     ///
     /// # Returns
     /// Stream of Arrow RecordBatches containing the results
-    async fn execute(
-        &self,
-        plan: &ComputePlan,
-        ctx: &ExecutionContext,
-    ) -> Result<ExecutionResult>;
+    async fn execute(&self, plan: &ComputePlan, ctx: &ExecutionContext) -> Result<ExecutionResult>;
 
     /// Check if this provider can execute the given plan
     ///
@@ -631,7 +629,10 @@ pub trait ComputeProvider: Send + Sync + Debug {
     /// - Plan correctness
     fn validate_plan(&self, plan: &ComputePlan) -> Result<()> {
         if !self.can_execute(plan) {
-            anyhow::bail!("Provider '{}' cannot execute this plan", self.provider_name());
+            anyhow::bail!(
+                "Provider '{}' cannot execute this plan",
+                self.provider_name()
+            );
         }
         Ok(())
     }
@@ -726,8 +727,7 @@ mod tests {
 
     #[test]
     fn test_execution_context_timeout() {
-        let ctx = ExecutionContext::default()
-            .with_timeout(Duration::from_millis(1));
+        let ctx = ExecutionContext::default().with_timeout(Duration::from_millis(1));
 
         // Sleep a bit
         std::thread::sleep(Duration::from_millis(10));

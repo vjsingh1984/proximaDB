@@ -3,7 +3,9 @@
 //! Unified schema replacing VectorRecord for compute engine compatibility.
 //! Provides stable column IDs, schema evolution, and Arrow conversion.
 
-use arrow_schema::{DataType as ArrowDataType, Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit};
+use arrow_schema::{
+    DataType as ArrowDataType, Field, Schema as ArrowSchema, TimeUnit as ArrowTimeUnit,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -89,29 +91,61 @@ pub enum ProximaDataType {
     UInt64,
     Float32,
     Float64,
-    Decimal { precision: u8, scale: i8 },
+    Decimal {
+        precision: u8,
+        scale: i8,
+    },
     String,
     Binary,
     Date,
-    Time { unit: TimeUnit },
-    Timestamp { unit: TimeUnit, timezone: Option<String> },
+    Time {
+        unit: TimeUnit,
+    },
+    Timestamp {
+        unit: TimeUnit,
+        timezone: Option<String>,
+    },
     Uuid,
     Json,
 
     // Complex types
-    List { element: Box<ProximaDataType> },
-    Map { key: Box<ProximaDataType>, value: Box<ProximaDataType> },
-    Struct { fields: Vec<ProximaColumn> },
+    List {
+        element: Box<ProximaDataType>,
+    },
+    Map {
+        key: Box<ProximaDataType>,
+        value: Box<ProximaDataType>,
+    },
+    Struct {
+        fields: Vec<ProximaColumn>,
+    },
 
     // Vector types (ProximaDB extensions)
-    Vector { dimension: u32, element_type: VectorElementType },
-    SparseVector { max_dimension: Option<u32> },
-    BinaryVector { dimension: u32 },
+    Vector {
+        dimension: u32,
+        element_type: VectorElementType,
+    },
+    SparseVector {
+        max_dimension: Option<u32>,
+    },
+    BinaryVector {
+        dimension: u32,
+    },
 
     // Quantized vector types (internal use)
-    QuantizedInt8Vector { dimension: u32, scale_factor: u32, zero_point: i8 },
-    QuantizedPQVector { dimension: u32, segments: u8, bits: u8 },
-    QuantizedBinaryVector { dimension: u32 },
+    QuantizedInt8Vector {
+        dimension: u32,
+        scale_factor: u32,
+        zero_point: i8,
+    },
+    QuantizedPQVector {
+        dimension: u32,
+        segments: u8,
+        bits: u8,
+    },
+    QuantizedBinaryVector {
+        dimension: u32,
+    },
 }
 
 impl PartialEq for ProximaDataType {
@@ -129,38 +163,81 @@ impl PartialEq for ProximaDataType {
             (UInt64, UInt64) => true,
             (Float32, Float32) => true,
             (Float64, Float64) => true,
-            (Decimal { precision: p1, scale: s1 }, Decimal { precision: p2, scale: s2 }) => {
-                p1 == p2 && s1 == s2
-            }
+            (
+                Decimal {
+                    precision: p1,
+                    scale: s1,
+                },
+                Decimal {
+                    precision: p2,
+                    scale: s2,
+                },
+            ) => p1 == p2 && s1 == s2,
             (String, String) => true,
             (Binary, Binary) => true,
             (Date, Date) => true,
             (Time { unit: u1 }, Time { unit: u2 }) => u1 == u2,
-            (Timestamp { unit: u1, timezone: t1 }, Timestamp { unit: u2, timezone: t2 }) => {
-                u1 == u2 && t1 == t2
-            }
+            (
+                Timestamp {
+                    unit: u1,
+                    timezone: t1,
+                },
+                Timestamp {
+                    unit: u2,
+                    timezone: t2,
+                },
+            ) => u1 == u2 && t1 == t2,
             (Uuid, Uuid) => true,
             (Json, Json) => true,
             (List { element: e1 }, List { element: e2 }) => e1 == e2,
             (Map { key: k1, value: v1 }, Map { key: k2, value: v2 }) => k1 == k2 && v1 == v2,
             (Struct { fields: f1 }, Struct { fields: f2 }) => {
                 // Compare by field count and ids (not full equality since ProximaColumn doesn't impl PartialEq)
-                f1.len() == f2.len() && f1.iter().zip(f2.iter()).all(|(a, b)| a.id == b.id && a.name == b.name)
+                f1.len() == f2.len()
+                    && f1
+                        .iter()
+                        .zip(f2.iter())
+                        .all(|(a, b)| a.id == b.id && a.name == b.name)
             }
-            (Vector { dimension: d1, element_type: e1 }, Vector { dimension: d2, element_type: e2 }) => {
-                d1 == d2 && e1 == e2
-            }
+            (
+                Vector {
+                    dimension: d1,
+                    element_type: e1,
+                },
+                Vector {
+                    dimension: d2,
+                    element_type: e2,
+                },
+            ) => d1 == d2 && e1 == e2,
             (SparseVector { max_dimension: m1 }, SparseVector { max_dimension: m2 }) => m1 == m2,
             (BinaryVector { dimension: d1 }, BinaryVector { dimension: d2 }) => d1 == d2,
-            (QuantizedInt8Vector { dimension: d1, scale_factor: s1, zero_point: z1 },
-             QuantizedInt8Vector { dimension: d2, scale_factor: s2, zero_point: z2 }) => {
-                d1 == d2 && s1 == s2 && z1 == z2
+            (
+                QuantizedInt8Vector {
+                    dimension: d1,
+                    scale_factor: s1,
+                    zero_point: z1,
+                },
+                QuantizedInt8Vector {
+                    dimension: d2,
+                    scale_factor: s2,
+                    zero_point: z2,
+                },
+            ) => d1 == d2 && s1 == s2 && z1 == z2,
+            (
+                QuantizedPQVector {
+                    dimension: d1,
+                    segments: s1,
+                    bits: b1,
+                },
+                QuantizedPQVector {
+                    dimension: d2,
+                    segments: s2,
+                    bits: b2,
+                },
+            ) => d1 == d2 && s1 == s2 && b1 == b2,
+            (QuantizedBinaryVector { dimension: d1 }, QuantizedBinaryVector { dimension: d2 }) => {
+                d1 == d2
             }
-            (QuantizedPQVector { dimension: d1, segments: s1, bits: b1 },
-             QuantizedPQVector { dimension: d2, segments: s2, bits: b2 }) => {
-                d1 == d2 && s1 == s2 && b1 == b2
-            }
-            (QuantizedBinaryVector { dimension: d1 }, QuantizedBinaryVector { dimension: d2 }) => d1 == d2,
             _ => false,
         }
     }
@@ -251,7 +328,9 @@ impl ProximaSchema {
                     timezone: None,
                 },
                 nullable: false,
-                default_value: Some(DefaultValue::AutoGenerate(AutoGenerateType::CurrentTimestamp)),
+                default_value: Some(DefaultValue::AutoGenerate(
+                    AutoGenerateType::CurrentTimestamp,
+                )),
                 comment: Some("Record timestamp".to_string()),
                 metadata: HashMap::new(),
                 is_deleted: false,
@@ -341,7 +420,9 @@ impl ProximaSchema {
                     timezone: None,
                 },
                 nullable: false,
-                default_value: Some(DefaultValue::AutoGenerate(AutoGenerateType::CurrentTimestamp)),
+                default_value: Some(DefaultValue::AutoGenerate(
+                    AutoGenerateType::CurrentTimestamp,
+                )),
                 comment: None,
                 metadata: HashMap::new(),
                 is_deleted: false,
@@ -509,16 +590,15 @@ impl ProximaDataType {
             ProximaDataType::Binary => ArrowDataType::Binary,
             ProximaDataType::Date => ArrowDataType::Date32,
             ProximaDataType::Time { unit } => ArrowDataType::Time64(unit.to_arrow_time_unit()),
-            ProximaDataType::Timestamp { unit, timezone } => {
-                ArrowDataType::Timestamp(unit.to_arrow_time_unit(), timezone.clone().map(Into::into))
-            }
+            ProximaDataType::Timestamp { unit, timezone } => ArrowDataType::Timestamp(
+                unit.to_arrow_time_unit(),
+                timezone.clone().map(Into::into),
+            ),
             ProximaDataType::Uuid => ArrowDataType::Utf8, // UUID as string
             ProximaDataType::Json => ArrowDataType::Utf8, // JSON as string
-            ProximaDataType::List { element } => ArrowDataType::List(Arc::new(Field::new(
-                "item",
-                element.to_arrow_type(),
-                true,
-            ))),
+            ProximaDataType::List { element } => {
+                ArrowDataType::List(Arc::new(Field::new("item", element.to_arrow_type(), true)))
+            }
             ProximaDataType::Map { key, value } => ArrowDataType::Map(
                 Arc::new(Field::new(
                     "entries",

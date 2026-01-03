@@ -359,12 +359,7 @@ impl WorkloadRouter {
     }
 
     /// Record query execution for adaptive learning
-    pub async fn record_execution(
-        &self,
-        query_id: &str,
-        used_olap: bool,
-        execution_time_ms: u64,
-    ) {
+    pub async fn record_execution(&self, query_id: &str, used_olap: bool, execution_time_ms: u64) {
         if !self.config.adaptive_learning {
             return;
         }
@@ -527,9 +522,15 @@ mod tests {
         let router = WorkloadRouter::new(RouterConfig::default());
 
         // Route several queries
-        router.route("q1", &QueryCharacteristics::point_lookup("t")).await;
-        router.route("q2", &QueryCharacteristics::point_lookup("t")).await;
-        router.route("q3", &QueryCharacteristics::aggregation("t", 100_000)).await;
+        router
+            .route("q1", &QueryCharacteristics::point_lookup("t"))
+            .await;
+        router
+            .route("q2", &QueryCharacteristics::point_lookup("t"))
+            .await;
+        router
+            .route("q3", &QueryCharacteristics::aggregation("t", 100_000))
+            .await;
 
         let stats = router.stats();
         assert_eq!(stats.oltp_queries, 2);

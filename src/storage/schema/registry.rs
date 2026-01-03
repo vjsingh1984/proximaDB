@@ -348,12 +348,14 @@ impl SchemaRegistry for PersistentSchemaRegistry {
         // Ensure all versions are loaded into cache
         let versions = self.list_schema_files(collection_id).await?;
         for version in versions {
-            if self.cache.get_schema(collection_id, version).await?.is_none() {
+            if self
+                .cache
+                .get_schema(collection_id, version)
+                .await?
+                .is_none()
+            {
                 if let Some(schema) = self.load_schema(collection_id, version).await? {
-                    self.cache
-                        .register_schema(collection_id, schema)
-                        .await
-                        .ok();
+                    self.cache.register_schema(collection_id, schema).await.ok();
                 }
             }
         }
@@ -382,7 +384,9 @@ impl SchemaRegistry for PersistentSchemaRegistry {
         }
 
         // Prune cache
-        self.cache.prune_versions(collection_id, keep_versions).await
+        self.cache
+            .prune_versions(collection_id, keep_versions)
+            .await
     }
 
     async fn has_schema(&self, collection_id: &str) -> Result<bool> {

@@ -8,8 +8,6 @@
 
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 use crate::proto::proximadb_v1::MetricSample;
 
 /// Metric query builder
@@ -408,9 +406,7 @@ mod tests {
 
     #[test]
     fn test_percentile() {
-        let query = MetricQueryBuilder::new()
-            .metric("test")
-            .build();
+        let query = MetricQueryBuilder::new().metric("test").build();
 
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         let p50 = query.calculate_percentile(&values, 0.50);

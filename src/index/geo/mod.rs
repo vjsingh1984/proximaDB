@@ -6,15 +6,15 @@
 // - R-tree style spatial index for efficient queries
 // - Query operators: distance, within, intersects
 
-pub mod types;
 pub mod geohash;
 pub mod index;
 pub mod queries;
+pub mod types;
 
-pub use types::{GeoPoint, GeoBoundingBox, GeoPolygon, GeoCircle, GeoDistanceUnit};
-pub use geohash::{GeoHash, encode_geohash, decode_geohash, geohash_neighbors};
+pub use geohash::{GeoHash, decode_geohash, encode_geohash, geohash_neighbors};
 pub use index::{GeoIndex, GeoIndexConfig, GeoIndexEntry};
-pub use queries::{GeoQuery, GeoQueryResult, GeoQueryBuilder};
+pub use queries::{GeoQuery, GeoQueryBuilder, GeoQueryResult};
+pub use types::{GeoBoundingBox, GeoCircle, GeoDistanceUnit, GeoPoint, GeoPolygon};
 
 #[cfg(test)]
 mod tests {

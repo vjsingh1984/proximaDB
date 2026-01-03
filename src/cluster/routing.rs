@@ -24,8 +24,8 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -405,9 +405,7 @@ impl RoutingService {
         };
 
         let target_node = match &route {
-            Some(r) if r.available => {
-                self.select_node(r, operation).await?
-            }
+            Some(r) if r.available => self.select_node(r, operation).await?,
             _ => {
                 // No specific route, use any available node
                 self.select_any_node(operation).await?
@@ -553,7 +551,12 @@ impl RoutingService {
 
         // Compute shard ID based on partition strategy and context
         let shard_id = self
-            .compute_shard_id_with_context(collection_id, vector_id, context, partition_config.as_ref())
+            .compute_shard_id_with_context(
+                collection_id,
+                vector_id,
+                context,
+                partition_config.as_ref(),
+            )
             .await?;
 
         // Get route for the shard
@@ -712,18 +715,16 @@ impl RoutingService {
         // Find the first boundary that the value is less than
         let shard_number = boundaries
             .iter()
-            .position(|boundary| {
-                match boundary {
-                    serde_json::Value::String(b) => value < b.as_str(),
-                    serde_json::Value::Number(n) => {
-                        if let Ok(v) = value.parse::<f64>() {
-                            n.as_f64().map(|b| v < b).unwrap_or(false)
-                        } else {
-                            false
-                        }
+            .position(|boundary| match boundary {
+                serde_json::Value::String(b) => value < b.as_str(),
+                serde_json::Value::Number(n) => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        n.as_f64().map(|b| v < b).unwrap_or(false)
+                    } else {
+                        false
                     }
-                    _ => false,
                 }
+                _ => false,
             })
             .unwrap_or(boundaries.len()) as u32;
 
@@ -926,11 +927,7 @@ impl RoutingService {
     }
 
     /// Select a node based on operation type and load balancing
-    async fn select_node(
-        &self,
-        route: &ShardRoute,
-        operation: OperationType,
-    ) -> Result<NodeInfo> {
+    async fn select_node(&self, route: &ShardRoute, operation: OperationType) -> Result<NodeInfo> {
         let nodes = self.nodes.read().await;
 
         match operation {
@@ -945,7 +942,8 @@ impl RoutingService {
             OperationType::Read => {
                 if self.config.enable_read_replicas && !route.replicas.is_empty() {
                     // Try to use a replica
-                    self.select_from_nodes(&route.replicas, &nodes).await
+                    self.select_from_nodes(&route.replicas, &nodes)
+                        .await
                         .or_else(|_| {
                             // Fall back to primary
                             nodes
@@ -987,18 +985,14 @@ impl RoutingService {
                 *counter += 1;
                 &healthy_nodes[idx]
             }
-            LoadBalancingStrategy::LeastLoaded => {
-                healthy_nodes
-                    .iter()
-                    .min_by(|a, b| a.info.load.partial_cmp(&b.info.load).unwrap())
-                    .unwrap()
-            }
-            LoadBalancingStrategy::LeastLatency => {
-                healthy_nodes
-                    .iter()
-                    .min_by(|a, b| a.last_latency_ms.partial_cmp(&b.last_latency_ms).unwrap())
-                    .unwrap()
-            }
+            LoadBalancingStrategy::LeastLoaded => healthy_nodes
+                .iter()
+                .min_by(|a, b| a.info.load.partial_cmp(&b.info.load).unwrap())
+                .unwrap(),
+            LoadBalancingStrategy::LeastLatency => healthy_nodes
+                .iter()
+                .min_by(|a, b| a.last_latency_ms.partial_cmp(&b.last_latency_ms).unwrap())
+                .unwrap(),
             LoadBalancingStrategy::Random => {
                 use rand::Rng;
                 let idx = rand::thread_rng().gen_range(0..healthy_nodes.len());
@@ -1032,11 +1026,9 @@ impl RoutingService {
         let healthy_nodes: Vec<_> = nodes
             .values()
             .filter(|n| n.info.health == NodeHealth::Healthy)
-            .filter(|n| {
-                match operation {
-                    OperationType::Admin => n.info.role == NodeRole::Leader,
-                    _ => true,
-                }
+            .filter(|n| match operation {
+                OperationType::Admin => n.info.role == NodeRole::Leader,
+                _ => true,
             })
             .collect();
 
@@ -1128,9 +1120,18 @@ mod tests {
     async fn test_shard_id_computation() {
         let service = RoutingService::new(RoutingConfig::default()).unwrap();
 
-        let shard1 = service.compute_shard_id("collection1", Some("vec1")).await.unwrap();
-        let shard2 = service.compute_shard_id("collection1", Some("vec1")).await.unwrap();
-        let shard3 = service.compute_shard_id("collection1", Some("vec2")).await.unwrap();
+        let shard1 = service
+            .compute_shard_id("collection1", Some("vec1"))
+            .await
+            .unwrap();
+        let shard2 = service
+            .compute_shard_id("collection1", Some("vec1"))
+            .await
+            .unwrap();
+        let shard3 = service
+            .compute_shard_id("collection1", Some("vec2"))
+            .await
+            .unwrap();
 
         // Same input should produce same shard
         assert_eq!(shard1.id(), shard2.id());
@@ -1202,8 +1203,8 @@ mod tests {
         let partition_context = RouteContext::new().with_partition_key("key-1");
         assert!(partition_context.has_hints());
 
-        let filter_context = RouteContext::new()
-            .with_filter_hint("field", serde_json::json!("value"));
+        let filter_context =
+            RouteContext::new().with_filter_hint("field", serde_json::json!("value"));
         assert!(filter_context.has_hints());
     }
 
@@ -1269,14 +1270,20 @@ mod tests {
             track_metadata_bounds: true,
         };
 
-        service.register_partition_config("my_collection", config, 8).await.unwrap();
+        service
+            .register_partition_config("my_collection", config, 8)
+            .await
+            .unwrap();
 
         let cached = service.get_partition_config("my_collection").await;
         assert!(cached.is_some());
 
         let cached_config = cached.unwrap();
         assert_eq!(cached_config.shard_count, 8);
-        assert!(matches!(cached_config.config.strategy, PartitionStrategy::Tenant));
+        assert!(matches!(
+            cached_config.config.strategy,
+            PartitionStrategy::Tenant
+        ));
     }
 
     #[tokio::test]
@@ -1288,13 +1295,19 @@ mod tests {
             ..Default::default()
         };
 
-        service.register_partition_config("collection1", config, 4).await.unwrap();
+        service
+            .register_partition_config("collection1", config, 4)
+            .await
+            .unwrap();
 
         // Should be cached
         assert!(service.get_partition_config("collection1").await.is_some());
 
         // Invalidate
-        service.invalidate_partition_config("collection1").await.unwrap();
+        service
+            .invalidate_partition_config("collection1")
+            .await
+            .unwrap();
 
         // Should be gone
         assert!(service.get_partition_config("collection1").await.is_none());
@@ -1306,9 +1319,18 @@ mod tests {
 
         let config = PartitionConfig::default();
 
-        service.register_partition_config("collection1", config.clone(), 4).await.unwrap();
-        service.register_partition_config("collection2", config.clone(), 8).await.unwrap();
-        service.register_partition_config("collection3", config, 16).await.unwrap();
+        service
+            .register_partition_config("collection1", config.clone(), 4)
+            .await
+            .unwrap();
+        service
+            .register_partition_config("collection2", config.clone(), 8)
+            .await
+            .unwrap();
+        service
+            .register_partition_config("collection3", config, 16)
+            .await
+            .unwrap();
 
         let collections = service.list_partition_configs().await;
         assert_eq!(collections.len(), 3);
@@ -1326,12 +1348,18 @@ mod tests {
         let service = RoutingService::new(RoutingConfig::default()).unwrap();
 
         // Same key should always produce same shard
-        let shard1 = service.compute_shard_from_key("collection", "tenant-123", 8).unwrap();
-        let shard2 = service.compute_shard_from_key("collection", "tenant-123", 8).unwrap();
+        let shard1 = service
+            .compute_shard_from_key("collection", "tenant-123", 8)
+            .unwrap();
+        let shard2 = service
+            .compute_shard_from_key("collection", "tenant-123", 8)
+            .unwrap();
         assert_eq!(shard1.id(), shard2.id());
 
         // Different keys should produce different shards (with high probability)
-        let shard3 = service.compute_shard_from_key("collection", "tenant-456", 8).unwrap();
+        let shard3 = service
+            .compute_shard_from_key("collection", "tenant-456", 8)
+            .unwrap();
         // Note: Could theoretically be the same due to hash collision, but very unlikely
         assert_ne!(shard1.id(), shard3.id());
     }
@@ -1341,16 +1369,24 @@ mod tests {
         let service = RoutingService::new(RoutingConfig::default()).unwrap();
 
         let boundaries = vec![
-            serde_json::json!("e"),  // Shard 0: < "e"
-            serde_json::json!("m"),  // Shard 1: "e" <= x < "m"
-            serde_json::json!("t"),  // Shard 2: "m" <= x < "t"
-                                      // Shard 3: >= "t"
+            serde_json::json!("e"), // Shard 0: < "e"
+            serde_json::json!("m"), // Shard 1: "e" <= x < "m"
+            serde_json::json!("t"), // Shard 2: "m" <= x < "t"
+                                    // Shard 3: >= "t"
         ];
 
-        let shard_a = service.compute_shard_from_range("collection", "apple", &boundaries, 4).unwrap();
-        let shard_h = service.compute_shard_from_range("collection", "hello", &boundaries, 4).unwrap();
-        let shard_p = service.compute_shard_from_range("collection", "python", &boundaries, 4).unwrap();
-        let shard_z = service.compute_shard_from_range("collection", "zebra", &boundaries, 4).unwrap();
+        let shard_a = service
+            .compute_shard_from_range("collection", "apple", &boundaries, 4)
+            .unwrap();
+        let shard_h = service
+            .compute_shard_from_range("collection", "hello", &boundaries, 4)
+            .unwrap();
+        let shard_p = service
+            .compute_shard_from_range("collection", "python", &boundaries, 4)
+            .unwrap();
+        let shard_z = service
+            .compute_shard_from_range("collection", "zebra", &boundaries, 4)
+            .unwrap();
 
         // "apple" < "e" -> shard 0
         assert!(shard_a.id().ends_with("_0000"));
@@ -1367,9 +1403,15 @@ mod tests {
         let service = RoutingService::new(RoutingConfig::default()).unwrap();
 
         // All vectors for the same tenant should go to shards in the same group
-        let shard1 = service.compute_tenant_hash_shard("collection", "tenant-1", Some("vec-1"), 4, 16).unwrap();
-        let shard2 = service.compute_tenant_hash_shard("collection", "tenant-1", Some("vec-2"), 4, 16).unwrap();
-        let shard3 = service.compute_tenant_hash_shard("collection", "tenant-1", Some("vec-3"), 4, 16).unwrap();
+        let shard1 = service
+            .compute_tenant_hash_shard("collection", "tenant-1", Some("vec-1"), 4, 16)
+            .unwrap();
+        let shard2 = service
+            .compute_tenant_hash_shard("collection", "tenant-1", Some("vec-2"), 4, 16)
+            .unwrap();
+        let shard3 = service
+            .compute_tenant_hash_shard("collection", "tenant-1", Some("vec-3"), 4, 16)
+            .unwrap();
 
         // Extract shard numbers
         let num1: u32 = shard1.id().split('_').last().unwrap().parse().unwrap();
@@ -1402,17 +1444,26 @@ mod tests {
             partition_key_fields: vec![],
             track_metadata_bounds: true,
         };
-        service.register_partition_config("my_collection", config, 8).await.unwrap();
+        service
+            .register_partition_config("my_collection", config, 8)
+            .await
+            .unwrap();
 
         // Route with tenant context
         let context = RouteContext::new().with_tenant_id("tenant-123");
-        let decision = service.route_with_context("my_collection", OperationType::Read, None, &context).await.unwrap();
+        let decision = service
+            .route_with_context("my_collection", OperationType::Read, None, &context)
+            .await
+            .unwrap();
 
         assert!(decision.shard_id.is_some());
         assert_eq!(decision.target_node.node_id, "node-1");
 
         // Same tenant should route to same shard
-        let decision2 = service.route_with_context("my_collection", OperationType::Read, None, &context).await.unwrap();
+        let decision2 = service
+            .route_with_context("my_collection", OperationType::Read, None, &context)
+            .await
+            .unwrap();
         assert_eq!(decision.shard_id, decision2.shard_id);
     }
 
@@ -1430,12 +1481,23 @@ mod tests {
         service.register_node(node, 100).await.unwrap();
 
         // Route without context
-        let decision1 = service.route_request("my_collection", OperationType::Read, Some("vec-1"), None).await.unwrap();
+        let decision1 = service
+            .route_request("my_collection", OperationType::Read, Some("vec-1"), None)
+            .await
+            .unwrap();
         assert!(decision1.shard_id.is_some());
 
         // Route with context
         let context = RouteContext::new().with_tenant_id("tenant-123");
-        let decision2 = service.route_request("my_collection", OperationType::Read, Some("vec-1"), Some(&context)).await.unwrap();
+        let decision2 = service
+            .route_request(
+                "my_collection",
+                OperationType::Read,
+                Some("vec-1"),
+                Some(&context),
+            )
+            .await
+            .unwrap();
         assert!(decision2.shard_id.is_some());
 
         // Without partition config, both should use hash-based routing

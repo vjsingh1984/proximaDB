@@ -136,11 +136,7 @@ impl BlockFormatWriter {
     }
 
     /// Write records to a file using the configured format
-    pub fn write_records<P: AsRef<Path>>(
-        &self,
-        path: P,
-        records: &[VectorRecord],
-    ) -> Result<()> {
+    pub fn write_records<P: AsRef<Path>>(&self, path: P, records: &[VectorRecord]) -> Result<()> {
         match self.format {
             BlockFormat::ProximaBlocks => {
                 // ProximaBlocks uses existing SST writer path
@@ -152,7 +148,11 @@ impl BlockFormatWriter {
                 let mut writer = ArrowBlockWriter::new(&path, config)?;
                 writer.write_block(records)?;
                 writer.finalize()?;
-                info!("Wrote {} records to Arrow block: {}", records.len(), path.as_ref().display());
+                info!(
+                    "Wrote {} records to Arrow block: {}",
+                    records.len(),
+                    path.as_ref().display()
+                );
                 Ok(())
             }
         }
@@ -195,7 +195,11 @@ impl BlockFormatReader {
         match self.format {
             BlockFormat::ProximaBlocks => {
                 // ProximaBlocks uses existing SST reader path
-                debug!("ProximaBlocks lookup for {} in {}", vector_id, path.as_ref().display());
+                debug!(
+                    "ProximaBlocks lookup for {} in {}",
+                    vector_id,
+                    path.as_ref().display()
+                );
                 Ok(None) // Caller handles ProximaBlocks reading
             }
             BlockFormat::ArrowBlock => {
@@ -247,7 +251,10 @@ mod tests {
 
     #[test]
     fn test_format_parsing() {
-        assert_eq!(BlockFormat::from_str("ProximaBlocks"), BlockFormat::ProximaBlocks);
+        assert_eq!(
+            BlockFormat::from_str("ProximaBlocks"),
+            BlockFormat::ProximaBlocks
+        );
         assert_eq!(BlockFormat::from_str("ArrowBlock"), BlockFormat::ArrowBlock);
         assert_eq!(BlockFormat::from_str("arrow"), BlockFormat::ArrowBlock);
         assert_eq!(BlockFormat::from_str("unknown"), BlockFormat::ProximaBlocks);

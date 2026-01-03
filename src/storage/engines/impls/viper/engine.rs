@@ -602,7 +602,9 @@ impl ViperEngine {
     /// - HNSW-based approximate nearest neighbor search
     /// - IVF partition pruning
     /// - Hybrid vector + metadata queries
-    pub fn axis_manager(&self) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
         self.axis_manager.as_ref()
     }
 
@@ -610,7 +612,9 @@ impl ViperEngine {
     ///
     /// This helper converts our internal FilterExpression type to AXIS's
     /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(filter_expression: Option<&crate::core::search::FilterExpression>) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+    fn convert_filter_to_axis(
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
         use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
 
@@ -2197,19 +2201,22 @@ impl UnifiedStorageEngine for ViperEngine {
                     );
 
                     // Convert AXIS results to OptimizedSearchRecord
-                    let results: Vec<crate::core::search::results::OptimizedSearchRecord> = axis_results
-                        .results
-                        .into_iter()
-                        .take(k)
-                        .map(|scored| crate::core::search::results::OptimizedSearchRecord {
-                            id: scored.vector_id.to_string(),
-                            vector_id: Some(scored.vector_id.to_string()),
-                            score: scored.similarity,
-                            similarity: Some(scored.similarity),
-                            vector: None, // AXIS doesn't return vectors by default
-                            ..Default::default()
-                        })
-                        .collect();
+                    let results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                        axis_results
+                            .results
+                            .into_iter()
+                            .take(k)
+                            .map(
+                                |scored| crate::core::search::results::OptimizedSearchRecord {
+                                    id: scored.vector_id.to_string(),
+                                    vector_id: Some(scored.vector_id.to_string()),
+                                    score: scored.similarity,
+                                    similarity: Some(scored.similarity),
+                                    vector: None, // AXIS doesn't return vectors by default
+                                    ..Default::default()
+                                },
+                            )
+                            .collect();
 
                     // If we got results, return them
                     if !results.is_empty() {

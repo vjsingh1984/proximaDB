@@ -32,11 +32,11 @@
 //! └───────────────────────────────────────────────────────────────┘
 //! ```
 
-pub mod two_phase_commit;
-pub mod isolation;
 pub mod coordinator;
+pub mod isolation;
+pub mod two_phase_commit;
 
 // Re-exports
-pub use two_phase_commit::{TwoPhaseCommitProtocol, PrepareResult, CommitResult, TransactionState};
+pub use coordinator::{Transaction, TransactionConfig, TransactionCoordinator, TransactionStats};
 pub use isolation::{IsolationLevel, IsolationManager, ReadSnapshot, WriteSet};
-pub use coordinator::{TransactionCoordinator, Transaction, TransactionConfig, TransactionStats};
+pub use two_phase_commit::{CommitResult, PrepareResult, TransactionState, TwoPhaseCommitProtocol};

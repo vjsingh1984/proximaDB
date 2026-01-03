@@ -47,9 +47,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use proximadb::query::facade::{
-    ExecutionMetrics, FacadeConfig, QueryContext, QueryRequest,
-    QueryResult, QueryResultData, QueryStrategy, QueryType, UnifiedQueryFacade,
-    VectorMatch,
+    ExecutionMetrics, FacadeConfig, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy, QueryType, UnifiedQueryFacade, VectorMatch,
 };
 
 // ================================================================================
@@ -129,9 +128,10 @@ impl MockVectorStrategyWithExplain {
 
     fn explain(&self, request: &QueryRequest) -> ExplainPlanResponse {
         let (top_k, _vector_dim) = match &request.content {
-            proximadb::query::facade::QueryContent::Vector { query_vector, top_k } => {
-                (*top_k, query_vector.len())
-            }
+            proximadb::query::facade::QueryContent::Vector {
+                query_vector,
+                top_k,
+            } => (*top_k, query_vector.len()),
             _ => (10, 0),
         };
 
@@ -140,8 +140,14 @@ impl MockVectorStrategyWithExplain {
             execution_strategy: self.name.clone(),
             orchestration_steps: vec![
                 "Parse vector search request".to_string(),
-                format!("Select HNSW index for collection '{}'", request.target.as_deref().unwrap_or("default")),
-                format!("Execute approximate nearest neighbor search (top_k={})", top_k),
+                format!(
+                    "Select HNSW index for collection '{}'",
+                    request.target.as_deref().unwrap_or("default")
+                ),
+                format!(
+                    "Execute approximate nearest neighbor search (top_k={})",
+                    top_k
+                ),
                 "Apply post-filters if specified".to_string(),
                 "Return ranked results".to_string(),
             ],
@@ -435,8 +441,8 @@ mod tests {
     async fn test_vector_search_explain_plan_schema() {
         let (_, vector_strategy, _, _) = create_test_facade_with_explain();
 
-        let request = QueryRequest::vector_search(vec![0.1, 0.2, 0.3, 0.4], 10)
-            .with_target("products");
+        let request =
+            QueryRequest::vector_search(vec![0.1, 0.2, 0.3, 0.4], 10).with_target("products");
 
         let plan = vector_strategy.explain(&request);
 
@@ -516,9 +522,8 @@ mod tests {
     async fn test_federated_query_explain_plan_schema() {
         let (_, _, sql_strategy, _) = create_test_facade_with_explain();
 
-        let request = QueryRequest::federated(
-            "SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2]', 10)"
-        );
+        let request =
+            QueryRequest::federated("SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2]', 10)");
 
         let plan = sql_strategy.explain(&request);
 
@@ -545,7 +550,10 @@ mod tests {
         // All plans should have the same top-level fields
         for plan in &plans {
             // Required string fields should not be empty
-            assert!(!plan.query_type.is_empty(), "query_type should not be empty");
+            assert!(
+                !plan.query_type.is_empty(),
+                "query_type should not be empty"
+            );
             assert!(
                 !plan.execution_strategy.is_empty(),
                 "execution_strategy should not be empty"
@@ -575,7 +583,10 @@ mod tests {
         let request = QueryRequest::vector_search(vec![0.1, 0.2, 0.3], 5);
 
         // Verify facade selects vector strategy
-        let result = facade.execute(request.clone().with_metrics()).await.unwrap();
+        let result = facade
+            .execute(request.clone().with_metrics())
+            .await
+            .unwrap();
         let metrics = result.metrics.unwrap();
         assert_eq!(metrics.strategy_name, "vector_hnsw");
 
@@ -592,7 +603,10 @@ mod tests {
         let request = QueryRequest::sql("SELECT * FROM products WHERE id = 1");
 
         // Verify facade selects SQL strategy
-        let result = facade.execute(request.clone().with_metrics()).await.unwrap();
+        let result = facade
+            .execute(request.clone().with_metrics())
+            .await
+            .unwrap();
         let metrics = result.metrics.unwrap();
         assert_eq!(metrics.strategy_name, "sql_executor");
 
@@ -609,7 +623,10 @@ mod tests {
         let request = QueryRequest::graph("MATCH (n:Person) RETURN n LIMIT 10");
 
         // Verify facade selects graph strategy
-        let result = facade.execute(request.clone().with_metrics()).await.unwrap();
+        let result = facade
+            .execute(request.clone().with_metrics())
+            .await
+            .unwrap();
         let metrics = result.metrics.unwrap();
         assert_eq!(metrics.strategy_name, "graph_orion");
 
@@ -656,12 +673,12 @@ mod tests {
         let (_, vector_strategy, sql_strategy, graph_strategy) = create_test_facade_with_explain();
 
         // Simulate REST request
-        let rest_request = QueryRequest::vector_search(vec![0.1, 0.2, 0.3, 0.4], 10)
-            .with_target("products");
+        let rest_request =
+            QueryRequest::vector_search(vec![0.1, 0.2, 0.3, 0.4], 10).with_target("products");
 
         // Simulate gRPC request (identical structure)
-        let grpc_request = QueryRequest::vector_search(vec![0.1, 0.2, 0.3, 0.4], 10)
-            .with_target("products");
+        let grpc_request =
+            QueryRequest::vector_search(vec![0.1, 0.2, 0.3, 0.4], 10).with_target("products");
 
         // Generate explain plans
         let rest_plan = generate_explain_plan(
@@ -680,7 +697,10 @@ mod tests {
         .unwrap();
 
         // Plans should be identical
-        assert_eq!(rest_plan, grpc_plan, "REST and gRPC explain plans should match");
+        assert_eq!(
+            rest_plan, grpc_plan,
+            "REST and gRPC explain plans should match"
+        );
     }
 
     /// Test 11: Explain plan cost estimation varies by query complexity
@@ -723,8 +743,7 @@ mod tests {
         let (_, vector_strategy, sql_strategy, graph_strategy) = create_test_facade_with_explain();
 
         // Vector search steps should mention index and search
-        let vector_plan =
-            vector_strategy.explain(&QueryRequest::vector_search(vec![0.1], 10));
+        let vector_plan = vector_strategy.explain(&QueryRequest::vector_search(vec![0.1], 10));
         let vector_steps_text = vector_plan.orchestration_steps.join(" ");
         assert!(
             vector_steps_text.contains("index") || vector_steps_text.contains("HNSW"),
@@ -762,8 +781,7 @@ mod tests {
         let (_, vector_strategy, sql_strategy, graph_strategy) = create_test_facade_with_explain();
 
         // Vector hints
-        let vector_plan =
-            vector_strategy.explain(&QueryRequest::vector_search(vec![0.1], 10));
+        let vector_plan = vector_strategy.explain(&QueryRequest::vector_search(vec![0.1], 10));
         let vector_hints = vector_plan.hints.unwrap();
         assert!(vector_hints.vector.is_some());
         assert!(vector_hints.sql.is_none());
@@ -777,8 +795,7 @@ mod tests {
         assert!(sql_hints.graph.is_none());
 
         // Graph hints
-        let graph_plan =
-            graph_strategy.explain(&QueryRequest::graph("MATCH (n) RETURN n"));
+        let graph_plan = graph_strategy.explain(&QueryRequest::graph("MATCH (n) RETURN n"));
         let graph_hints = graph_plan.hints.unwrap();
         assert!(graph_hints.graph.is_some());
         assert!(graph_hints.vector.is_none());
@@ -790,8 +807,7 @@ mod tests {
     async fn test_explain_preserves_target_info() {
         let (_, vector_strategy, _, _) = create_test_facade_with_explain();
 
-        let request = QueryRequest::vector_search(vec![0.1, 0.2], 10)
-            .with_target("my_collection");
+        let request = QueryRequest::vector_search(vec![0.1, 0.2], 10).with_target("my_collection");
 
         let plan = vector_strategy.explain(&request);
 
@@ -809,8 +825,7 @@ mod tests {
         let (_, vector_strategy, sql_strategy, graph_strategy) = create_test_facade_with_explain();
 
         // Minimal vector search
-        let vector_plan =
-            vector_strategy.explain(&QueryRequest::vector_search(vec![0.0], 1));
+        let vector_plan = vector_strategy.explain(&QueryRequest::vector_search(vec![0.0], 1));
         assert!(!vector_plan.query_type.is_empty());
         assert!(vector_plan.estimated_total_cost > 0.0);
 

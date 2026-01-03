@@ -13,7 +13,6 @@ use crate::storage::engines::core::formats::columnar::{
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{CompactionParameters, CompactionResult};
 
-
 /// Handles all compaction operations for NOVA engine
 pub struct NovaCompactionOperations {
     filesystem: Arc<FilesystemFactory>,

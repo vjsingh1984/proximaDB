@@ -71,8 +71,8 @@ pub mod postgres;
 // Re-export main connector types (only when feature is enabled)
 #[cfg(feature = "experimental-cdc-connectors")]
 pub use mongodb::{
-    ChangeStreamOperation, DocumentKey, FullDocumentOption, MongoChangeEvent, MongoCollectionConfig,
-    MongoDbConfig, MongoDbConnector, UpdateDescription,
+    ChangeStreamOperation, DocumentKey, FullDocumentOption, MongoChangeEvent,
+    MongoCollectionConfig, MongoDbConfig, MongoDbConnector, UpdateDescription,
 };
 #[cfg(feature = "experimental-cdc-connectors")]
 pub use mysql::{BinlogPosition, GtidMode, MySqlConfig, MySqlConnector, MySqlTableConfig};

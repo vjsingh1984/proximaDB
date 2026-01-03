@@ -104,7 +104,10 @@ impl ClosenessCentrality {
     /// Compute single-source shortest path distances using BFS
     ///
     /// This method reuses the CSR storage directly for efficient neighbor access.
-    fn compute_distances(&self, source_idx: usize) -> Result<HashMap<usize, usize>, ProximaDBError> {
+    fn compute_distances(
+        &self,
+        source_idx: usize,
+    ) -> Result<HashMap<usize, usize>, ProximaDBError> {
         let mut distances: HashMap<usize, usize> = HashMap::new();
         let mut queue = VecDeque::new();
 
@@ -112,9 +115,10 @@ impl ClosenessCentrality {
         queue.push_back(source_idx);
 
         // BFS using CSR storage
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         while let Some(current_idx) = queue.pop_front() {
             let current_distance = distances[&current_idx];
@@ -139,9 +143,10 @@ impl GraphAlgorithm for ClosenessCentrality {
     type Output = CentralityScores;
 
     fn execute(&self, _input: NoInput) -> Result<CentralityScores, ProximaDBError> {
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
 
@@ -180,7 +185,10 @@ impl GraphAlgorithm for ClosenessCentrality {
             };
 
             // Map index to node ID
-            let node_id = index_to_node.get(node_idx).cloned().unwrap_or_else(|| node_idx.to_string());
+            let node_id = index_to_node
+                .get(node_idx)
+                .cloned()
+                .unwrap_or_else(|| node_idx.to_string());
             scores.insert(node_id, closeness);
         }
 
@@ -203,9 +211,10 @@ impl ParallelAlgorithm for ClosenessCentrality {
         _input: NoInput,
         _thread_pool: &rayon::ThreadPool,
     ) -> Result<CentralityScores, ProximaDBError> {
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
 
@@ -231,13 +240,17 @@ impl ParallelAlgorithm for ClosenessCentrality {
                     if self.normalized {
                         (reachable_count as f64) / (total_distance as f64)
                     } else {
-                        (reachable_count as f64) / (total_distance as f64) * ((node_count - 1) as f64)
+                        (reachable_count as f64) / (total_distance as f64)
+                            * ((node_count - 1) as f64)
                     }
                 } else {
                     0.0
                 };
 
-                let node_id = index_to_node.get(node_idx).cloned().unwrap_or_else(|| node_idx.to_string());
+                let node_id = index_to_node
+                    .get(node_idx)
+                    .cloned()
+                    .unwrap_or_else(|| node_idx.to_string());
                 Some((node_id, closeness))
             })
             .collect();
@@ -301,16 +314,20 @@ impl HarmonicCentrality {
     }
 
     /// Compute single-source shortest path distances using BFS
-    fn compute_distances(&self, source_idx: usize) -> Result<HashMap<usize, usize>, ProximaDBError> {
+    fn compute_distances(
+        &self,
+        source_idx: usize,
+    ) -> Result<HashMap<usize, usize>, ProximaDBError> {
         let mut distances: HashMap<usize, usize> = HashMap::new();
         let mut queue = VecDeque::new();
 
         distances.insert(source_idx, 0);
         queue.push_back(source_idx);
 
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         while let Some(current_idx) = queue.pop_front() {
             let current_distance = distances[&current_idx];
@@ -334,9 +351,10 @@ impl GraphAlgorithm for HarmonicCentrality {
     type Output = CentralityScores;
 
     fn execute(&self, _input: NoInput) -> Result<CentralityScores, ProximaDBError> {
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
 
@@ -375,7 +393,10 @@ impl GraphAlgorithm for HarmonicCentrality {
                 harmonic_sum
             };
 
-            let node_id = index_to_node.get(node_idx).cloned().unwrap_or_else(|| node_idx.to_string());
+            let node_id = index_to_node
+                .get(node_idx)
+                .cloned()
+                .unwrap_or_else(|| node_idx.to_string());
             scores.insert(node_id, harmonic_centrality);
         }
 
@@ -398,9 +419,10 @@ impl ParallelAlgorithm for HarmonicCentrality {
         _input: NoInput,
         _thread_pool: &rayon::ThreadPool,
     ) -> Result<CentralityScores, ProximaDBError> {
-        let csr_out = self.engine.csr_outgoing.read().map_err(|_| {
-            ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
-        })?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         let node_count = csr_out.node_count();
 
@@ -432,7 +454,10 @@ impl ParallelAlgorithm for HarmonicCentrality {
                     harmonic_sum
                 };
 
-                let node_id = index_to_node.get(node_idx).cloned().unwrap_or_else(|| node_idx.to_string());
+                let node_id = index_to_node
+                    .get(node_idx)
+                    .cloned()
+                    .unwrap_or_else(|| node_idx.to_string());
                 Some((node_id, harmonic_centrality))
             })
             .collect();
@@ -477,7 +502,10 @@ mod tests {
         let engine = Arc::new(OrionGraphEngine::new());
         let closeness = ClosenessCentrality::new(engine, true);
 
-        assert_eq!(closeness.estimated_complexity(), AlgorithmComplexity::QuadraticVertices);
+        assert_eq!(
+            closeness.estimated_complexity(),
+            AlgorithmComplexity::QuadraticVertices
+        );
         assert_eq!(closeness.name(), "ClosenessCentrality");
     }
 
@@ -486,7 +514,10 @@ mod tests {
         let engine = Arc::new(OrionGraphEngine::new());
         let harmonic = HarmonicCentrality::new(engine, true);
 
-        assert_eq!(harmonic.estimated_complexity(), AlgorithmComplexity::QuadraticVertices);
+        assert_eq!(
+            harmonic.estimated_complexity(),
+            AlgorithmComplexity::QuadraticVertices
+        );
         assert_eq!(harmonic.name(), "HarmonicCentrality");
     }
 

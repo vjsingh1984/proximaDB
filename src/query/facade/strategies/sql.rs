@@ -32,14 +32,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray, BooleanArray};
+use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
 use crate::query::facade::{
-    ExecutionMetrics, QueryContent, QueryContext,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy, QueryType,
 };
 use crate::query::federated::FederatedQueryContext;
 
@@ -210,7 +210,11 @@ impl QueryStrategy for SqlStrategy {
         let query_result = self.to_facade_result(result, execution_time_ms);
 
         info!(
-            results = query_result.metrics.as_ref().map(|m| m.results_returned).unwrap_or(0),
+            results = query_result
+                .metrics
+                .as_ref()
+                .map(|m| m.results_returned)
+                .unwrap_or(0),
             time_ms = execution_time_ms,
             "SQL query completed"
         );
@@ -236,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_batches_to_rows_with_data() {
-        use arrow::array::{StringArray, Int64Array};
+        use arrow::array::{Int64Array, StringArray};
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
@@ -249,7 +253,8 @@ mod tests {
                 Arc::new(StringArray::from(vec!["Alice", "Bob"])),
                 Arc::new(Int64Array::from(vec![30, 25])),
             ],
-        ).unwrap();
+        )
+        .unwrap();
 
         let rows = SqlStrategy::batches_to_rows(&[batch]);
 
@@ -264,16 +269,17 @@ mod tests {
     fn test_batches_to_rows_with_nulls() {
         use arrow::array::Int64Array;
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("value", DataType::Int64, true),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "value",
+            DataType::Int64,
+            true,
+        )]));
 
         let batch = RecordBatch::try_new(
             schema,
-            vec![
-                Arc::new(Int64Array::from(vec![Some(42), None, Some(99)])),
-            ],
-        ).unwrap();
+            vec![Arc::new(Int64Array::from(vec![Some(42), None, Some(99)]))],
+        )
+        .unwrap();
 
         let rows = SqlStrategy::batches_to_rows(&[batch]);
 
@@ -287,16 +293,17 @@ mod tests {
     fn test_batches_to_rows_with_floats() {
         use arrow::array::Float64Array;
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("score", DataType::Float64, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "score",
+            DataType::Float64,
+            false,
+        )]));
 
         let batch = RecordBatch::try_new(
             schema,
-            vec![
-                Arc::new(Float64Array::from(vec![0.95, 0.87, 0.72])),
-            ],
-        ).unwrap();
+            vec![Arc::new(Float64Array::from(vec![0.95, 0.87, 0.72]))],
+        )
+        .unwrap();
 
         let rows = SqlStrategy::batches_to_rows(&[batch]);
 
@@ -313,16 +320,17 @@ mod tests {
     fn test_batches_to_rows_with_booleans() {
         use arrow::array::BooleanArray;
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("active", DataType::Boolean, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "active",
+            DataType::Boolean,
+            false,
+        )]));
 
         let batch = RecordBatch::try_new(
             schema,
-            vec![
-                Arc::new(BooleanArray::from(vec![true, false, true])),
-            ],
-        ).unwrap();
+            vec![Arc::new(BooleanArray::from(vec![true, false, true]))],
+        )
+        .unwrap();
 
         let rows = SqlStrategy::batches_to_rows(&[batch]);
 
@@ -340,9 +348,8 @@ mod tests {
 
     #[test]
     fn test_strategy_can_handle_federated() {
-        let request = QueryRequest::federated(
-            "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 10)"
-        );
+        let request =
+            QueryRequest::federated("SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 10)");
         assert_eq!(request.query_type, QueryType::Federated);
     }
 

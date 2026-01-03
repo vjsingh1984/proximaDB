@@ -19,7 +19,7 @@
 //!
 //! Supports all bit widths from 1-64 for i64 output and 1-32 for i32 output.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::traits::{CpuFeatures, SimdDecoder};
 
@@ -130,7 +130,10 @@ impl SimdDecoder for ScalarDecoder {
             bail!("bits_per_value must be > 0");
         }
         if bits_per_value > 32 {
-            bail!("bits_per_value must be <= 32 for i32 output, got {}", bits_per_value);
+            bail!(
+                "bits_per_value must be <= 32 for i32 output, got {}",
+                bits_per_value
+            );
         }
 
         let bits = bits_per_value as usize;
@@ -324,7 +327,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 8);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 8, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 8, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -341,7 +346,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 4);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 4, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 4, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -358,7 +365,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 1);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 1, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 1, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -375,7 +384,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 17);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 17, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 17, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -392,7 +403,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 32);
 
         let mut output = vec![0i64; values.len()];
-        let count = decoder.decode_bitpacked_i64(&packed, 32, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i64(&packed, 32, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -408,7 +421,9 @@ mod tests {
         let packed = create_bitpacked_data(&values, 20);
 
         let mut output = vec![0i32; values.len()];
-        let count = decoder.decode_bitpacked_i32(&packed, 20, &mut output).unwrap();
+        let count = decoder
+            .decode_bitpacked_i32(&packed, 20, &mut output)
+            .unwrap();
 
         assert_eq!(count, values.len());
         for (i, &expected) in values.iter().enumerate() {
@@ -423,14 +438,26 @@ mod tests {
         let mut output = vec![0i64; 10];
 
         // 0 bits is invalid
-        assert!(decoder.decode_bitpacked_i64(&[0u8; 10], 0, &mut output).is_err());
+        assert!(
+            decoder
+                .decode_bitpacked_i64(&[0u8; 10], 0, &mut output)
+                .is_err()
+        );
 
         // 65 bits is invalid for i64
-        assert!(decoder.decode_bitpacked_i64(&[0u8; 100], 65, &mut output).is_err());
+        assert!(
+            decoder
+                .decode_bitpacked_i64(&[0u8; 100], 65, &mut output)
+                .is_err()
+        );
 
         // 33 bits is invalid for i32
         let mut output_i32 = vec![0i32; 10];
-        assert!(decoder.decode_bitpacked_i32(&[0u8; 100], 33, &mut output_i32).is_err());
+        assert!(
+            decoder
+                .decode_bitpacked_i32(&[0u8; 100], 33, &mut output_i32)
+                .is_err()
+        );
     }
 
     #[test]
@@ -457,12 +484,18 @@ mod tests {
 
         // Test multiple bit widths
         for bits in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 16, 20, 24, 28, 32] {
-            let max_val = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+            let max_val = if bits >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            };
             let values: Vec<u64> = (0..16).map(|i| (i * max_val / 16)).collect();
             let packed = create_bitpacked_data(&values, bits);
 
             let mut output = vec![0i64; values.len()];
-            let count = decoder.decode_bitpacked_i64(&packed, bits, &mut output).unwrap();
+            let count = decoder
+                .decode_bitpacked_i64(&packed, bits, &mut output)
+                .unwrap();
 
             assert_eq!(count, values.len(), "Count mismatch for {} bits", bits);
             for (i, &expected) in values.iter().enumerate() {

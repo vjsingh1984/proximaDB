@@ -161,8 +161,8 @@ impl HealthAggregator {
             if dep.response_times.len() > dep.max_response_samples {
                 dep.response_times.remove(0);
             }
-            dep.info.avg_response_time_ms = dep.response_times.iter().sum::<u64>()
-                / dep.response_times.len() as u64;
+            dep.info.avg_response_time_ms =
+                dep.response_times.iter().sum::<u64>() / dep.response_times.len() as u64;
         }
         drop(deps);
         self.update_overall_health();

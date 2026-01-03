@@ -122,9 +122,7 @@ pub mod transform;
 pub use config::{CdcConfig, SinkConfig, SourceConfig, TransformConfig};
 pub use coordinator::{CdcCoordinator, CoordinatorHandle};
 pub use error::{CdcError, CdcResult};
-pub use event::{
-    ChangeEvent, ConnectorType, Operation, RecordState, SourceInfo, TransactionInfo,
-};
+pub use event::{ChangeEvent, ConnectorType, Operation, RecordState, SourceInfo, TransactionInfo};
 pub use metrics::CdcMetrics;
 pub use offset::{FileOffsetStore, MemoryOffsetStore, Offset, OffsetStore};
 pub use sinks::{CdcSink, KafkaConfig, KafkaSink, SinkError, WebhookConfig, WebhookSink};

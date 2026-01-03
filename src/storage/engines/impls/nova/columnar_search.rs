@@ -548,7 +548,9 @@ impl NovaColumnarSearch {
         let use_binary_filter = nova_file.quantized_columns.binary_column.is_some();
 
         if !use_binary_filter {
-            debug!("Binary column not available, falling back to full vector scan for initial candidates");
+            debug!(
+                "Binary column not available, falling back to full vector scan for initial candidates"
+            );
         }
 
         // Compute binary sketch of query (used if binary filtering available)
@@ -574,18 +576,22 @@ impl NovaColumnarSearch {
                     DistanceMetric::Cosine => "cosine",
                     DistanceMetric::DotProduct => "dot_product",
                     _ => "euclidean", // Default fallback
-                }.to_string();
+                }
+                .to_string();
 
                 // Calculate dynamic threshold with expansion factor for safety margin
                 let current_threshold = if candidates.len() >= max_candidates {
                     // Use the worst (k-th) candidate's distance with 50% expansion
                     // This ensures we don't prune too aggressively
-                    let kth_best = candidates.peek().map(|c: &SearchCandidate| 1.0 - c.similarity).unwrap_or(f32::MAX);
+                    let kth_best = candidates
+                        .peek()
+                        .map(|c: &SearchCandidate| 1.0 - c.similarity)
+                        .unwrap_or(f32::MAX);
                     kth_best * 1.5
                 } else {
                     // Initial generous threshold based on distance metric
                     match distance_metric {
-                        DistanceMetric::Cosine => 2.0, // Cosine distance range: [0, 2]
+                        DistanceMetric::Cosine => 2.0,      // Cosine distance range: [0, 2]
                         DistanceMetric::DotProduct => 10.0, // Generous for dot product
                         _ => {
                             // Euclidean: sqrt(dimensions) is a reasonable upper bound for normalized vectors
@@ -600,7 +606,10 @@ impl NovaColumnarSearch {
                     metric_name,
                     current_threshold,
                 ) {
-                    debug!("Skipping row group {} via zone map pruning (threshold={:.4})", rg_idx, current_threshold);
+                    debug!(
+                        "Skipping row group {} via zone map pruning (threshold={:.4})",
+                        rg_idx, current_threshold
+                    );
                     row_groups_pruned += 1;
                     continue;
                 }
@@ -632,9 +641,11 @@ impl NovaColumnarSearch {
                 } else {
                     // Full vector mode: compute actual distance
                     if !record.vector.is_empty() {
-                        let distance = self
-                            .distance_compute
-                            .calculate_distance(query_vector, &record.vector, &distance_metric);
+                        let distance = self.distance_compute.calculate_distance(
+                            query_vector,
+                            &record.vector,
+                            &distance_metric,
+                        );
                         distance.normalized_score
                     } else {
                         0.0

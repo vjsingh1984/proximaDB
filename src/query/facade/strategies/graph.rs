@@ -35,10 +35,10 @@ use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
 use crate::graph::service::GraphOperationsService;
-use crate::proto::proximadb_v1::{TraversalRequest, TraversalAlgorithm};
+use crate::proto::proximadb_v1::{TraversalAlgorithm, TraversalRequest};
 use crate::query::facade::{
-    ExecutionMetrics, GraphQueryResult, QueryContent, QueryContext,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
+    ExecutionMetrics, GraphQueryResult, QueryContent, QueryContext, QueryRequest, QueryResult,
+    QueryResultData, QueryStrategy, QueryType,
 };
 
 /// Graph Strategy - Real implementation wrapping GraphOperationsService
@@ -109,7 +109,13 @@ impl GraphStrategy {
             let rest = &query[id_start + 3..];
             let rest = rest.trim_start();
 
-            let quote_char = if rest.starts_with('"') { '"' } else if rest.starts_with('\'') { '\'' } else { return None };
+            let quote_char = if rest.starts_with('"') {
+                '"'
+            } else if rest.starts_with('\'') {
+                '\''
+            } else {
+                return None;
+            };
 
             let value_start = rest.find(quote_char)?;
             let value = &rest[value_start + 1..];
@@ -125,7 +131,9 @@ impl GraphStrategy {
         let upper = query.to_uppercase();
         if let Some(from_pos) = upper.find(" FROM ") {
             let rest = &query[from_pos + 6..];
-            let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
+            let name_end = rest
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(rest.len());
             if name_end > 0 {
                 return Some(rest[..name_end].trim().to_string());
             }
@@ -143,7 +151,10 @@ impl GraphStrategy {
             if let Some(bracket_end) = bracket_rest.find(']') {
                 let edge_type = &bracket_rest[..bracket_end];
                 // Handle type with properties like :KNOWS {weight: 1}
-                let type_name = edge_type.split(|c| c == ' ' || c == '{').next().unwrap_or(edge_type);
+                let type_name = edge_type
+                    .split(|c| c == ' ' || c == '{')
+                    .next()
+                    .unwrap_or(edge_type);
                 if !type_name.is_empty() {
                     types.push(type_name.to_string());
                 }
@@ -177,12 +188,16 @@ impl GraphStrategy {
             max_frontier: None,
         };
 
-        self.graph_ops.traverse(graph_id, request).await
+        self.graph_ops
+            .traverse(graph_id, request)
+            .await
             .map_err(|e| anyhow!("Graph traversal failed: {}", e))
     }
 
     /// Convert proto PropertyValue to JSON
-    fn property_value_to_json(value: &crate::proto::proximadb_v1::PropertyValue) -> serde_json::Value {
+    fn property_value_to_json(
+        value: &crate::proto::proximadb_v1::PropertyValue,
+    ) -> serde_json::Value {
         use crate::proto::proximadb_v1::property_value::Value;
 
         match &value.value {
@@ -198,13 +213,17 @@ impl GraphStrategy {
                 serde_json::Value::String(encoded)
             }
             Some(Value::ArrayValue(arr)) => {
-                let items: Vec<serde_json::Value> = arr.values.iter()
+                let items: Vec<serde_json::Value> = arr
+                    .values
+                    .iter()
                     .map(Self::property_value_to_json)
                     .collect();
                 serde_json::Value::Array(items)
             }
             Some(Value::ObjectValue(obj)) => {
-                let map: serde_json::Map<String, serde_json::Value> = obj.fields.iter()
+                let map: serde_json::Map<String, serde_json::Value> = obj
+                    .fields
+                    .iter()
                     .map(|(k, v)| (k.clone(), Self::property_value_to_json(v)))
                     .collect();
                 serde_json::Value::Object(map)
@@ -224,9 +243,13 @@ impl GraphStrategy {
         let edges_count = response.edges.len();
 
         // Convert nodes to JSON format
-        let nodes_json: Vec<serde_json::Value> = response.nodes.into_iter()
+        let nodes_json: Vec<serde_json::Value> = response
+            .nodes
+            .into_iter()
             .map(|n| {
-                let props: serde_json::Map<String, serde_json::Value> = n.properties.iter()
+                let props: serde_json::Map<String, serde_json::Value> = n
+                    .properties
+                    .iter()
                     .map(|(k, v)| (k.clone(), Self::property_value_to_json(v)))
                     .collect();
                 serde_json::json!({
@@ -238,9 +261,13 @@ impl GraphStrategy {
             .collect();
 
         // Convert edges to JSON format
-        let edges_json: Vec<serde_json::Value> = response.edges.into_iter()
+        let edges_json: Vec<serde_json::Value> = response
+            .edges
+            .into_iter()
             .map(|e| {
-                let props: serde_json::Map<String, serde_json::Value> = e.properties.iter()
+                let props: serde_json::Map<String, serde_json::Value> = e
+                    .properties
+                    .iter()
                     .map(|(k, v)| (k.clone(), Self::property_value_to_json(v)))
                     .collect();
                 serde_json::json!({
@@ -255,15 +282,21 @@ impl GraphStrategy {
             .collect();
 
         // Convert paths to JSON format
-        let paths_json: Vec<serde_json::Value> = response.paths.into_iter()
+        let paths_json: Vec<serde_json::Value> = response
+            .paths
+            .into_iter()
             .map(|p| {
                 let entity_ids: Vec<&String> = p.entities.iter().map(|e| &e.id).collect();
-                let relations_json: Vec<serde_json::Value> = p.relations.iter()
-                    .map(|r| serde_json::json!({
-                        "source": r.source_entity_id,
-                        "target": r.target_entity_id,
-                        "type": r.relation_type,
-                    }))
+                let relations_json: Vec<serde_json::Value> = p
+                    .relations
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "source": r.source_entity_id,
+                            "target": r.target_entity_id,
+                            "type": r.relation_type,
+                        })
+                    })
                     .collect();
                 serde_json::json!({
                     "entities": entity_ids,
@@ -323,7 +356,9 @@ impl QueryStrategy for GraphStrategy {
         );
 
         // Try to parse as simple traversal
-        if let Some((graph_id, start_node, max_depth, edge_types)) = self.parse_simple_traversal(&query) {
+        if let Some((graph_id, start_node, max_depth, edge_types)) =
+            self.parse_simple_traversal(&query)
+        {
             debug!(
                 graph = %graph_id,
                 start_node = %start_node,
@@ -332,14 +367,26 @@ impl QueryStrategy for GraphStrategy {
                 "Executing simple traversal"
             );
 
-            let response = self.execute_traversal(&graph_id, &start_node, max_depth, edge_types).await?;
+            let response = self
+                .execute_traversal(&graph_id, &start_node, max_depth, edge_types)
+                .await?;
 
             let execution_time_ms = start.elapsed().as_millis() as u64;
             let result = self.to_facade_result(response, execution_time_ms);
 
             info!(
-                nodes = result.metrics.as_ref().and_then(|m| m.extra.get("nodes_returned")).and_then(|v| v.as_u64()).unwrap_or(0),
-                edges = result.metrics.as_ref().and_then(|m| m.extra.get("edges_returned")).and_then(|v| v.as_u64()).unwrap_or(0),
+                nodes = result
+                    .metrics
+                    .as_ref()
+                    .and_then(|m| m.extra.get("nodes_returned"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                edges = result
+                    .metrics
+                    .as_ref()
+                    .and_then(|m| m.extra.get("edges_returned"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
                 time_ms = execution_time_ms,
                 "Graph traversal completed"
             );

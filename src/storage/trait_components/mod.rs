@@ -48,21 +48,22 @@ mod writer;
 
 // Re-export all sub-traits
 pub use capabilities::{
-    EngineCapabilities, FlushThresholds, CompactionHeuristics, EngineBundle, CapabilityFactory,
-    SstCapabilities, HelixCapabilities, ViperCapabilities, SwiftCapabilities, NovaCapabilities, RaptorCapabilities,
+    CapabilityFactory, CompactionHeuristics, EngineBundle, EngineCapabilities, FlushThresholds,
+    HelixCapabilities, NovaCapabilities, RaptorCapabilities, SstCapabilities, SwiftCapabilities,
+    ViperCapabilities,
 };
 pub use compactor::StorageCompactor;
 pub use extractor::{
-    ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionFactory, ExtractionMode,
-    ExtractionRequest, ExtractionResult, ExtractionScope, ExtractionStats, ExtractedVector,
+    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionFactory,
+    ExtractionMode, ExtractionRequest, ExtractionResult, ExtractionScope, ExtractionStats,
     QuantizedVector, VectorExtractor,
 };
 pub use identity::StorageIdentity;
 pub use lifecycle::StorageLifecycle;
 pub use metrics::StorageMetrics;
 pub use path_resolver::{
-    CollectionPathResolver, StorageAssignment, MetadataProviderResolver,
-    ConfigFallbackResolver, CachedResolver, CompositeResolver,
+    CachedResolver, CollectionPathResolver, CompositeResolver, ConfigFallbackResolver,
+    MetadataProviderResolver, StorageAssignment,
 };
 pub use reader::StorageReader;
 pub use scan::StorageScan;

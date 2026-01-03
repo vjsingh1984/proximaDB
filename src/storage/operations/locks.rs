@@ -10,7 +10,7 @@ use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, RwLock, Semaphore};
 use tracing::{debug, info};
 
 /// Global lock manager for coordinating background operations
-/// 
+///
 /// Implements a sophisticated locking system that:
 /// - Prevents data corruption during concurrent operations
 /// - Maximizes parallelism where operations don't conflict
@@ -19,13 +19,13 @@ use tracing::{debug, info};
 pub struct GlobalLockManager {
     /// Collection-level locks for flush operations
     collection_locks: Arc<RwLock<HashMap<String, Arc<CollectionLock>>>>,
-    
+
     /// Level-range locks for compaction operations  
     level_locks: Arc<RwLock<HashMap<String, HashMap<LevelRange, Arc<Semaphore>>>>>,
-    
+
     /// Global re-quantization lock (exclusive when active)
     requantization_lock: Arc<tokio::sync::Mutex<()>>,
-    
+
     /// Lock acquisition timeout settings
     timeout_config: LockTimeoutConfig,
 }
@@ -34,10 +34,10 @@ pub struct GlobalLockManager {
 struct CollectionLock {
     /// Flush operations (multiple concurrent allowed)
     flush_semaphore: Arc<Semaphore>,
-    
+
     /// Compaction operations (exclusive within level ranges)
     compaction_rwlock: Arc<RwLock<()>>,
-    
+
     /// Operation tracking for diagnostics
     active_operations: Arc<RwLock<Vec<ActiveLockInfo>>>,
 }
@@ -68,7 +68,7 @@ struct LockTimeoutConfig {
 impl Default for LockTimeoutConfig {
     fn default() -> Self {
         Self {
-            flush_timeout: std::time::Duration::from_secs(30),      // Flush should be fast
+            flush_timeout: std::time::Duration::from_secs(30), // Flush should be fast
             compaction_timeout: std::time::Duration::from_secs(300), // Compaction can be longer
             requantization_timeout: std::time::Duration::from_secs(600), // Re-quantization is expensive
         }
@@ -79,7 +79,7 @@ impl GlobalLockManager {
     /// Create new global lock manager
     pub fn new() -> Result<Self> {
         info!("🔒 Initializing GlobalLockManager");
-        
+
         Ok(Self {
             collection_locks: Arc::new(RwLock::new(HashMap::new())),
             level_locks: Arc::new(RwLock::new(HashMap::new())),
@@ -101,9 +101,15 @@ impl GlobalLockManager {
         // Acquire flush semaphore (allows multiple concurrent flushes) - use acquire_owned for owned permit
         let permit = tokio::time::timeout(
             self.timeout_config.flush_timeout,
-            collection_lock.flush_semaphore.clone().acquire_owned()
-        ).await
-        .map_err(|_| anyhow::anyhow!("Timeout acquiring flush lock for collection: {}", collection_id))?
+            collection_lock.flush_semaphore.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Timeout acquiring flush lock for collection: {}",
+                collection_id
+            )
+        })?
         .map_err(|_| anyhow::anyhow!("Failed to acquire flush lock (semaphore closed)"))?;
 
         // Record lock acquisition
@@ -132,10 +138,15 @@ impl GlobalLockManager {
         start_level: u32,
         end_level: u32,
     ) -> Result<CompactionLockGuard> {
-        debug!("🔒 Acquiring compaction lock for collection: {} levels {}-{}",
-               collection_id, start_level, end_level);
+        debug!(
+            "🔒 Acquiring compaction lock for collection: {} levels {}-{}",
+            collection_id, start_level, end_level
+        );
 
-        let level_range = LevelRange { start_level, end_level };
+        let level_range = LevelRange {
+            start_level,
+            end_level,
+        };
 
         // 1. Get or create level locks for this collection
         let mut level_locks = self.level_locks.write().await;
@@ -155,16 +166,28 @@ impl GlobalLockManager {
                 // Wait for exclusive access to this level range (just wait, we don't keep this permit)
                 let _permit = tokio::time::timeout(
                     self.timeout_config.compaction_timeout,
-                    semaphore.clone().acquire_owned()
-                ).await
-                .map_err(|_| anyhow::anyhow!("Timeout acquiring compaction lock for levels {}-{}", start_level, end_level))?
-                .map_err(|_| anyhow::anyhow!("Failed to acquire compaction lock (semaphore closed)"))?;
+                    semaphore.clone().acquire_owned(),
+                )
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "Timeout acquiring compaction lock for levels {}-{}",
+                        start_level,
+                        end_level
+                    )
+                })?
+                .map_err(|_| {
+                    anyhow::anyhow!("Failed to acquire compaction lock (semaphore closed)")
+                })?;
             }
         }
 
         // 3. Create semaphore for this level range (exclusive access) and acquire owned permit
         let level_semaphore = Arc::new(Semaphore::new(1)); // Only one compaction per level range
-        let permit = level_semaphore.clone().acquire_owned().await
+        let permit = level_semaphore
+            .clone()
+            .acquire_owned()
+            .await
             .map_err(|_| anyhow::anyhow!("Failed to acquire initial compaction permit"))?;
 
         collection_level_locks.insert(level_range.clone(), level_semaphore);
@@ -172,7 +195,7 @@ impl GlobalLockManager {
 
         // 4. Get collection lock for tracking
         let collection_lock = self.get_or_create_collection_lock(collection_id).await;
-        
+
         // 5. Record lock acquisition
         {
             let mut active_ops = collection_lock.active_operations.write().await;
@@ -183,7 +206,10 @@ impl GlobalLockManager {
             });
         }
 
-        info!("✅ Compaction lock acquired for collection: {} levels {}-{}", collection_id, start_level, end_level);
+        info!(
+            "✅ Compaction lock acquired for collection: {} levels {}-{}",
+            collection_id, start_level, end_level
+        );
 
         Ok(CompactionLockGuard {
             _permit: permit,
@@ -199,21 +225,20 @@ impl GlobalLockManager {
 
         let guard = tokio::time::timeout(
             self.timeout_config.requantization_timeout,
-            self.requantization_lock.clone().lock_owned()
-        ).await
+            self.requantization_lock.clone().lock_owned(),
+        )
+        .await
         .map_err(|_| anyhow::anyhow!("Timeout acquiring re-quantization lock"))?;
 
         info!("✅ Global re-quantization lock acquired");
 
-        Ok(RequantizationLockGuard {
-            _guard: guard,
-        })
+        Ok(RequantizationLockGuard { _guard: guard })
     }
 
     /// Get or create collection lock
     async fn get_or_create_collection_lock(&self, collection_id: &str) -> Arc<CollectionLock> {
         let mut locks = self.collection_locks.write().await;
-        
+
         if let Some(lock) = locks.get(collection_id) {
             lock.clone()
         } else {
@@ -222,7 +247,7 @@ impl GlobalLockManager {
                 compaction_rwlock: Arc::new(RwLock::new(())),
                 active_operations: Arc::new(RwLock::new(Vec::new())),
             });
-            
+
             locks.insert(collection_id.to_string(), new_lock.clone());
             new_lock
         }
@@ -232,7 +257,7 @@ impl GlobalLockManager {
     pub async fn get_lock_status(&self) -> LockStatus {
         let collection_locks = self.collection_locks.read().await;
         let level_locks = self.level_locks.read().await;
-        
+
         LockStatus {
             collections_with_locks: collection_locks.len(),
             total_level_locks: level_locks.values().map(|v| v.len()).sum(),
@@ -241,9 +266,13 @@ impl GlobalLockManager {
     }
 
     /// Determine if two operation types conflict (for testing)
-    pub fn operations_conflict(&self, op1: super::OperationType, op2: super::OperationType) -> bool {
+    pub fn operations_conflict(
+        &self,
+        op1: super::OperationType,
+        op2: super::OperationType,
+    ) -> bool {
         use super::OperationType::*;
-        
+
         match (op1, op2) {
             // Flushes conflict with major compactions
             (Flush, MajorCompaction) | (MajorCompaction, Flush) => true,
@@ -269,8 +298,11 @@ pub struct FlushLockGuard {
 
 impl Drop for FlushLockGuard {
     fn drop(&mut self) {
-        debug!("🔓 Releasing flush lock for collection: {}", self.collection_id);
-        
+        debug!(
+            "🔓 Releasing flush lock for collection: {}",
+            self.collection_id
+        );
+
         // Remove from active operations tracking
         let collection_lock = self.collection_lock.clone();
         tokio::spawn(async move {
@@ -290,14 +322,21 @@ pub struct CompactionLockGuard {
 
 impl Drop for CompactionLockGuard {
     fn drop(&mut self) {
-        debug!("🔓 Releasing compaction lock for collection: {} levels {}-{}", 
-               self.collection_id, self.level_range.start_level, self.level_range.end_level);
-        
+        debug!(
+            "🔓 Releasing compaction lock for collection: {} levels {}-{}",
+            self.collection_id, self.level_range.start_level, self.level_range.end_level
+        );
+
         // Remove from active operations tracking
         let collection_lock = self.collection_lock.clone();
         tokio::spawn(async move {
             let mut active_ops = collection_lock.active_operations.write().await;
-            active_ops.retain(|op| !matches!(op.operation_type, super::OperationType::MinorCompaction | super::OperationType::MajorCompaction));
+            active_ops.retain(|op| {
+                !matches!(
+                    op.operation_type,
+                    super::OperationType::MinorCompaction | super::OperationType::MajorCompaction
+                )
+            });
         });
     }
 }
@@ -328,7 +367,7 @@ mod lock_tests {
     async fn test_lock_manager_creation() {
         let lock_manager = GlobalLockManager::new().unwrap();
         let status = lock_manager.get_lock_status().await;
-        
+
         assert_eq!(status.collections_with_locks, 0);
         assert!(!status.requantization_locked);
     }
@@ -336,14 +375,23 @@ mod lock_tests {
     #[tokio::test]
     async fn test_flush_lock_acquisition() {
         let lock_manager = GlobalLockManager::new().unwrap();
-        
+
         // Test single flush lock
-        let _guard1 = lock_manager.acquire_flush_lock("test_collection").await.unwrap();
-        
+        let _guard1 = lock_manager
+            .acquire_flush_lock("test_collection")
+            .await
+            .unwrap();
+
         // Test multiple concurrent flush locks (should succeed)
-        let _guard2 = lock_manager.acquire_flush_lock("test_collection").await.unwrap();
-        let _guard3 = lock_manager.acquire_flush_lock("test_collection").await.unwrap();
-        
+        let _guard2 = lock_manager
+            .acquire_flush_lock("test_collection")
+            .await
+            .unwrap();
+        let _guard3 = lock_manager
+            .acquire_flush_lock("test_collection")
+            .await
+            .unwrap();
+
         let status = lock_manager.get_lock_status().await;
         assert_eq!(status.collections_with_locks, 1);
     }
@@ -351,20 +399,20 @@ mod lock_tests {
     #[tokio::test]
     async fn test_lock_conflict_prevention() {
         let lock_manager = GlobalLockManager::new().unwrap();
-        
+
         // Test that operations conflict correctly
         assert!(lock_manager.operations_conflict(
-            super::super::OperationType::Flush, 
+            super::super::OperationType::Flush,
             super::super::OperationType::MajorCompaction
         ));
-        
+
         assert!(lock_manager.operations_conflict(
-            super::super::OperationType::Requantization, 
+            super::super::OperationType::Requantization,
             super::super::OperationType::Flush
         ));
-        
+
         assert!(!lock_manager.operations_conflict(
-            super::super::OperationType::Flush, 
+            super::super::OperationType::Flush,
             super::super::OperationType::MinorCompaction
         ));
     }
@@ -372,11 +420,14 @@ mod lock_tests {
     #[tokio::test]
     async fn test_concurrent_operations() {
         let lock_manager = GlobalLockManager::new().unwrap();
-        
+
         // Test that non-conflicting operations can run concurrently
-        let _flush_guard = lock_manager.acquire_flush_lock("collection1").await.unwrap();
+        let _flush_guard = lock_manager
+            .acquire_flush_lock("collection1")
+            .await
+            .unwrap();
         // TODO: Test minor compaction can run concurrently
-        
+
         assert!(true); // Placeholder until compaction locks implemented
     }
 }

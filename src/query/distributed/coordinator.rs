@@ -142,10 +142,7 @@ impl DistributedQueryCoordinator {
         Self {
             local_executor: ParallelExecutor::new(config.max_concurrent_remote_queries),
             planner: QueryPlanner::new(config.prefer_local_execution),
-            remote_executor: RemoteExecutor::new(
-                config.remote_query_timeout,
-                config.max_retries,
-            ),
+            remote_executor: RemoteExecutor::new(config.remote_query_timeout, config.max_retries),
             aggregator: ResultAggregator::new(AggregationStrategy::default()),
             config,
             local_node_id,
@@ -206,15 +203,9 @@ impl DistributedQueryCoordinator {
 
         // Execute based on distribution
         let results = match plan.strategy {
-            DistributionStrategy::LocalOnly => {
-                self.execute_local_only(query, &plan).await?
-            }
-            DistributionStrategy::Distributed => {
-                self.execute_distributed(query, &plan).await?
-            }
-            DistributionStrategy::Broadcast => {
-                self.execute_broadcast(query, &plan).await?
-            }
+            DistributionStrategy::LocalOnly => self.execute_local_only(query, &plan).await?,
+            DistributionStrategy::Distributed => self.execute_distributed(query, &plan).await?,
+            DistributionStrategy::Broadcast => self.execute_broadcast(query, &plan).await?,
         };
 
         // Update statistics
@@ -251,21 +242,18 @@ impl DistributedQueryCoordinator {
         let shard_info = self.get_shard_info_for_query(query).await?;
 
         // Use planner to create distribution plan
-        self.planner.plan(
-            query,
-            &self.local_node_id,
-            &nodes,
-            &shard_info,
-        )
+        self.planner
+            .plan(query, &self.local_node_id, &nodes, &shard_info)
     }
 
     /// Get available nodes from cluster
     async fn get_available_nodes(&self) -> Result<Vec<NodeInfo>> {
         if let Some(ref cluster_mgr) = self.cluster_manager {
             let nodes = cluster_mgr.node_registry().list_nodes().await;
-            Ok(nodes.into_iter().filter(|n| {
-                n.health == crate::cluster::NodeHealth::Healthy
-            }).collect())
+            Ok(nodes
+                .into_iter()
+                .filter(|n| n.health == crate::cluster::NodeHealth::Healthy)
+                .collect())
         } else {
             // Single-node mode
             Ok(vec![NodeInfo {
@@ -289,11 +277,18 @@ impl DistributedQueryCoordinator {
             for component in &query.components {
                 if let Some(collection) = component.collection_name() {
                     let shards = shard_mgr.get_collection_shards(&collection).await;
-                    let info: Vec<ShardInfo> = shards.iter().map(|s| ShardInfo {
-                        shard_id: s.id.id().to_string(),
-                        primary_node: s.primary_node().map(String::from),
-                        replica_nodes: s.replica_nodes().iter().map(|s| s.to_string()).collect(),
-                    }).collect();
+                    let info: Vec<ShardInfo> = shards
+                        .iter()
+                        .map(|s| ShardInfo {
+                            shard_id: s.id.id().to_string(),
+                            primary_node: s.primary_node().map(String::from),
+                            replica_nodes: s
+                                .replica_nodes()
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect(),
+                        })
+                        .collect();
                     shard_info.insert(collection, info);
                 }
             }
@@ -352,10 +347,8 @@ impl DistributedQueryCoordinator {
         };
 
         // Wait for both local and remote
-        let (local_results, remote_results) = tokio::try_join!(
-            local_results_future,
-            remote_results_future
-        )?;
+        let (local_results, remote_results) =
+            tokio::try_join!(local_results_future, remote_results_future)?;
 
         // Update stats
         {
@@ -379,7 +372,8 @@ impl DistributedQueryCoordinator {
         all_subqueries.extend(plan.remote_subqueries.clone());
 
         // Execute on all nodes in parallel
-        let results = self.remote_executor
+        let results = self
+            .remote_executor
             .execute_parallel(&all_subqueries)
             .await?;
 
@@ -415,11 +409,14 @@ impl DistributedQueryCoordinator {
         let cache_key = self.compute_cache_key(query);
         let mut cache = self.result_cache.write().await;
 
-        cache.insert(cache_key, CachedResult {
-            result: results.to_vec(),
-            cached_at: Instant::now(),
-            ttl: Duration::from_secs(self.config.cache_ttl_seconds),
-        });
+        cache.insert(
+            cache_key,
+            CachedResult {
+                result: results.to_vec(),
+                cached_at: Instant::now(),
+                ttl: Duration::from_secs(self.config.cache_ttl_seconds),
+            },
+        );
 
         // Evict expired entries
         cache.retain(|_, v| v.is_valid());

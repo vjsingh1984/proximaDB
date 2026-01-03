@@ -25,7 +25,7 @@ pub use self::hash::{FastHash, HashBuilder};
 pub use self::skiplist::{SkipList, SkipListIterator};
 pub use self::storage_path::StoragePath;
 pub use self::tracing::{
-    create_request_context, extract_or_generate_request_id, RequestContext, REQUEST_ID_HEADER,
-    REQUEST_ID_METADATA_KEY,
+    REQUEST_ID_HEADER, REQUEST_ID_METADATA_KEY, RequestContext, create_request_context,
+    extract_or_generate_request_id,
 };
 pub use self::uuid::{Uuid, UuidGenerator};

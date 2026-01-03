@@ -9,15 +9,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Schema};
 use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::catalog::types::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType,
-    CatalogTableSchema, CatalogTableStatistics,
+    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogTableSchema,
+    CatalogTableStatistics,
 };
 use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::network::arrow_ipc::codec::ArrowProtoCodec;
@@ -142,10 +142,7 @@ pub struct CatalogBulkWriteService {
 
 impl CatalogBulkWriteService {
     /// Create a new catalog bulk write service
-    pub fn new(
-        catalog_manager: Arc<CatalogManager>,
-        config: CatalogBulkWriteConfig,
-    ) -> Self {
+    pub fn new(catalog_manager: Arc<CatalogManager>, config: CatalogBulkWriteConfig) -> Self {
         Self {
             catalog_manager,
             router: BulkWriteRouter::new(),
@@ -214,7 +211,8 @@ impl CatalogBulkWriteService {
             Err(e) => {
                 return Err(anyhow!(
                     "Table '{}' does not exist and auto_create_tables is disabled: {}",
-                    table_fqn, e
+                    table_fqn,
+                    e
                 ));
             }
         };
@@ -253,7 +251,9 @@ impl CatalogBulkWriteService {
                         );
                     }
                     Err(e) => {
-                        result.warnings.push(format!("Failed to auto-create index: {}", e));
+                        result
+                            .warnings
+                            .push(format!("Failed to auto-create index: {}", e));
                     }
                 }
             }
@@ -263,7 +263,9 @@ impl CatalogBulkWriteService {
         if self.config.update_statistics {
             let stats = self.compute_statistics(&table_id, result.records_written);
             if let Err(e) = catalog.update_statistics(&table_id, stats).await {
-                result.warnings.push(format!("Failed to update statistics: {}", e));
+                result
+                    .warnings
+                    .push(format!("Failed to update statistics: {}", e));
             } else {
                 result.statistics_updated = true;
             }
@@ -283,7 +285,9 @@ impl CatalogBulkWriteService {
 
     /// Check if the given batch size would trigger direct write path
     pub fn should_use_direct_write(&self, records: &[VectorRecord]) -> bool {
-        self.router.should_use_direct_write(records).use_direct_write
+        self.router
+            .should_use_direct_write(records)
+            .use_direct_write
     }
 
     /// Get write routing decision for a batch
@@ -318,7 +322,8 @@ impl CatalogBulkWriteService {
     /// Add records to an active transaction
     pub fn add_to_transaction(&self, txn_id: &str, record_count: u64) -> Result<()> {
         let mut txns = self.active_transactions.write();
-        let txn = txns.get_mut(txn_id)
+        let txn = txns
+            .get_mut(txn_id)
             .ok_or_else(|| anyhow!("Transaction not found: {}", txn_id))?;
 
         if txn.committed {
@@ -332,7 +337,8 @@ impl CatalogBulkWriteService {
     /// Commit a transaction
     pub fn commit_transaction(&self, txn_id: &str) -> Result<CatalogBulkWriteResult> {
         let mut txns = self.active_transactions.write();
-        let txn = txns.get_mut(txn_id)
+        let txn = txns
+            .get_mut(txn_id)
             .ok_or_else(|| anyhow!("Transaction not found: {}", txn_id))?;
 
         if txn.committed {
@@ -359,7 +365,10 @@ impl CatalogBulkWriteService {
 
     /// Rollback a transaction
     pub fn rollback_transaction(&self, txn_id: &str) -> Result<()> {
-        let txn = self.active_transactions.write().remove(txn_id)
+        let txn = self
+            .active_transactions
+            .write()
+            .remove(txn_id)
             .ok_or_else(|| anyhow!("Transaction not found: {}", txn_id))?;
 
         if txn.committed {
@@ -449,7 +458,9 @@ impl CatalogBulkWriteService {
         arrow_schema: &Arc<Schema>,
     ) -> Result<()> {
         for field in arrow_schema.fields() {
-            let catalog_col = catalog_schema.columns.iter()
+            let catalog_col = catalog_schema
+                .columns
+                .iter()
                 .find(|c| c.name == *field.name());
 
             if let Some(col) = catalog_col {
@@ -470,7 +481,11 @@ impl CatalogBulkWriteService {
     }
 
     /// Check if two catalog types are compatible
-    fn types_compatible(&self, catalog_type: &CatalogDataType, arrow_type: &CatalogDataType) -> bool {
+    fn types_compatible(
+        &self,
+        catalog_type: &CatalogDataType,
+        arrow_type: &CatalogDataType,
+    ) -> bool {
         if catalog_type == arrow_type {
             return true;
         }
@@ -478,22 +493,32 @@ impl CatalogBulkWriteService {
         // Allow numeric promotions
         matches!(
             (catalog_type, arrow_type),
-            (CatalogDataType::Int8, CatalogDataType::Int16 | CatalogDataType::Int32 | CatalogDataType::Int64)
-            | (CatalogDataType::Int16, CatalogDataType::Int32 | CatalogDataType::Int64)
-            | (CatalogDataType::Int32, CatalogDataType::Int64)
-            | (CatalogDataType::Float32, CatalogDataType::Float64)
+            (
+                CatalogDataType::Int8,
+                CatalogDataType::Int16 | CatalogDataType::Int32 | CatalogDataType::Int64
+            ) | (
+                CatalogDataType::Int16,
+                CatalogDataType::Int32 | CatalogDataType::Int64
+            ) | (CatalogDataType::Int32, CatalogDataType::Int64)
+                | (CatalogDataType::Float32, CatalogDataType::Float64)
         )
     }
 
     /// Find vector column in schema
     fn find_vector_column(&self, schema: &CatalogTableSchema) -> Option<String> {
-        schema.columns.iter()
+        schema
+            .columns
+            .iter()
             .find(|c| matches!(c.data_type, CatalogDataType::Vector))
             .map(|c| c.name.clone())
     }
 
     /// Compute statistics for a table
-    fn compute_statistics(&self, _table: &TableIdentifier, new_records: u64) -> CatalogTableStatistics {
+    fn compute_statistics(
+        &self,
+        _table: &TableIdentifier,
+        new_records: u64,
+    ) -> CatalogTableStatistics {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

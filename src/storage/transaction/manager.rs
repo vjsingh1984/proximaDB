@@ -16,13 +16,13 @@
 
 //! Multi-Model Transaction Manager with 2PC Support
 
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 use super::context::{TransactionContext, TransactionId, TransactionState, TransactionStats};
 use super::isolation::{ConflictResolution, IsolationLevel, Lock, LockMode};
@@ -169,7 +169,10 @@ impl MultiModelTransactionManager {
     }
 
     /// Begin a new transaction
-    pub fn begin(&self, isolation_level: Option<IsolationLevel>) -> Result<Arc<TransactionContext>> {
+    pub fn begin(
+        &self,
+        isolation_level: Option<IsolationLevel>,
+    ) -> Result<Arc<TransactionContext>> {
         // Check capacity
         let active_count = self.active_transactions.read().len();
         if active_count >= self.config.max_concurrent_transactions {
@@ -188,7 +191,9 @@ impl MultiModelTransactionManager {
         ));
 
         // Register transaction
-        self.active_transactions.write().insert(tx_id.clone(), ctx.clone());
+        self.active_transactions
+            .write()
+            .insert(tx_id.clone(), ctx.clone());
         self.participants.write().insert(tx_id, HashMap::new());
 
         // Update stats
@@ -222,14 +227,18 @@ impl MultiModelTransactionManager {
             tx_id.clone(),
             parent_id.clone(),
             isolation,
-            parent.remaining_time().unwrap_or(self.config.default_timeout),
+            parent
+                .remaining_time()
+                .unwrap_or(self.config.default_timeout),
         ));
 
         // Register as child
         parent.add_child(tx_id.clone());
 
         // Register transaction
-        self.active_transactions.write().insert(tx_id.clone(), ctx.clone());
+        self.active_transactions
+            .write()
+            .insert(tx_id.clone(), ctx.clone());
         self.participants.write().insert(tx_id, HashMap::new());
 
         Ok(ctx)
@@ -306,12 +315,7 @@ impl MultiModelTransactionManager {
     }
 
     /// Acquire a lock for a transaction
-    fn acquire_lock(
-        &self,
-        tx_id: &TransactionId,
-        resource: &str,
-        mode: LockMode,
-    ) -> Result<Lock> {
+    fn acquire_lock(&self, tx_id: &TransactionId, resource: &str, mode: LockMode) -> Result<Lock> {
         let start = Instant::now();
         let ctx = self.get_transaction(tx_id)?;
 
@@ -450,19 +454,19 @@ impl MultiModelTransactionManager {
                     }
                 } else {
                     // At least one participant voted NO
-                    self.abort_with_reason(tx_id, "Participant voted NO during prepare").await
+                    self.abort_with_reason(tx_id, "Participant voted NO during prepare")
+                        .await
                 }
             }
-            Err(e) => {
-                self.abort_with_reason(tx_id, &e.to_string()).await
-            }
+            Err(e) => self.abort_with_reason(tx_id, &e.to_string()).await,
         }
     }
 
     /// Prepare phase of 2PC
     async fn prepare_phase(&self, tx_id: &TransactionId) -> Result<bool> {
         let participants = {
-            self.participants.read()
+            self.participants
+                .read()
                 .get(tx_id)
                 .cloned()
                 .unwrap_or_default()
@@ -511,7 +515,8 @@ impl MultiModelTransactionManager {
     /// Commit phase of 2PC
     async fn commit_phase(&self, tx_id: &TransactionId) -> Result<()> {
         let participants = {
-            self.participants.read()
+            self.participants
+                .read()
                 .get(tx_id)
                 .cloned()
                 .unwrap_or_default()
@@ -574,7 +579,8 @@ impl MultiModelTransactionManager {
     /// Rollback all participants
     async fn rollback_all_participants(&self, tx_id: &TransactionId) -> Result<()> {
         let participants = {
-            self.participants.read()
+            self.participants
+                .read()
                 .get(tx_id)
                 .cloned()
                 .unwrap_or_default()
@@ -640,12 +646,10 @@ impl MultiModelTransactionManager {
                             conflicting_with: other_id.clone(),
                         })
                     }
-                    ConflictResolution::WaitAndRetry => {
-                        Err(ProximaDBError::TransactionConflict {
-                            transaction: tx_id.clone(),
-                            conflicting_with: other_id.clone(),
-                        })
-                    }
+                    ConflictResolution::WaitAndRetry => Err(ProximaDBError::TransactionConflict {
+                        transaction: tx_id.clone(),
+                        conflicting_with: other_id.clone(),
+                    }),
                 };
             }
         }
@@ -662,7 +666,12 @@ impl MultiModelTransactionManager {
         start: Instant,
     ) -> TransactionResult {
         let ctx = self.active_transactions.read().get(tx_id).cloned();
-        let participants = self.participants.read().get(tx_id).cloned().unwrap_or_default();
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
         let (final_state, operation_count) = if let Some(c) = ctx {
             (c.state(), c.write_set().operations().len())
@@ -778,11 +787,11 @@ impl MultiModelTransactionManager {
             return Err(ProximaDBError::TransactionNotActive { id: tx_id.clone() });
         }
 
-        let operations = ctx.rollback_to_savepoint(name).ok_or_else(|| {
-            ProximaDBError::SavepointNotFound {
-                name: name.to_string(),
-            }
-        })?;
+        let operations =
+            ctx.rollback_to_savepoint(name)
+                .ok_or_else(|| ProximaDBError::SavepointNotFound {
+                    name: name.to_string(),
+                })?;
 
         // Collect rollback info
         let rollbacks: Vec<_> = operations
@@ -806,7 +815,9 @@ impl MultiModelTransactionManager {
         for tx_id in tx_ids {
             if let Ok(ctx) = self.get_transaction(&tx_id) {
                 ctx.set_state(TransactionState::TimedOut);
-                let _ = self.abort_with_reason(&tx_id, "Transaction timed out").await;
+                let _ = self
+                    .abort_with_reason(&tx_id, "Transaction timed out")
+                    .await;
                 self.stats.write().total_timed_out += 1;
             }
         }

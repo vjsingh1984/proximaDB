@@ -340,8 +340,8 @@ fn main() {
     println!();
     println!("For now, demonstrating that ORION engine works without feature flags...");
 
-    use proximadb::graph::{GraphEngineFactory, GraphEngineType, GraphEngineConfig};
     use proximadb::graph::engines::GraphEngine;
+    use proximadb::graph::{GraphEngineConfig, GraphEngineFactory, GraphEngineType};
 
     match GraphEngineFactory::create_engine(GraphEngineType::Orion, GraphEngineConfig::default()) {
         Ok(engine) => {

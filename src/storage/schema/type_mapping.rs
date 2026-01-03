@@ -81,7 +81,9 @@ impl TypeMapper {
                 dimension: dimension.unwrap_or(0),
                 element_type: super::proxima_schema::VectorElementType::Float32,
             },
-            31 => ProximaDataType::SparseVector { max_dimension: None },
+            31 => ProximaDataType::SparseVector {
+                max_dimension: None,
+            },
             32 => ProximaDataType::BinaryVector {
                 dimension: dimension.unwrap_or(0),
             },
@@ -136,13 +138,7 @@ impl TypeMapper {
             ProximaDataType::Struct { fields } => {
                 let field_strs: Vec<String> = fields
                     .iter()
-                    .map(|f| {
-                        format!(
-                            "{}: {}",
-                            f.name,
-                            Self::proxima_to_spark_sql(&f.data_type)
-                        )
-                    })
+                    .map(|f| format!("{}: {}", f.name, Self::proxima_to_spark_sql(&f.data_type)))
                     .collect();
                 format!("STRUCT<{}>", field_strs.join(", "))
             }
@@ -202,9 +198,7 @@ impl TypeMapper {
             ProximaDataType::Struct { fields } => {
                 let field_strs: Vec<String> = fields
                     .iter()
-                    .map(|f| {
-                        format!("{} {}", f.name, Self::proxima_to_trino_sql(&f.data_type))
-                    })
+                    .map(|f| format!("{} {}", f.name, Self::proxima_to_trino_sql(&f.data_type)))
                     .collect();
                 format!("ROW({})", field_strs.join(", "))
             }
@@ -325,10 +319,7 @@ pub struct TypeCoercion;
 
 impl TypeCoercion {
     /// Get the common type for two types (for UNION, CASE, etc.)
-    pub fn common_type(
-        left: &ProximaDataType,
-        right: &ProximaDataType,
-    ) -> Option<ProximaDataType> {
+    pub fn common_type(left: &ProximaDataType, right: &ProximaDataType) -> Option<ProximaDataType> {
         use ProximaDataType::*;
 
         if left == right {
@@ -387,9 +378,10 @@ impl TypeCoercion {
 
         // Direct numeric casts
         match (from, to) {
-            (ProximaDataType::Int8 | ProximaDataType::Int16 | ProximaDataType::Int32, ProximaDataType::Int64) => {
-                Some("CAST(? AS BIGINT)".to_string())
-            }
+            (
+                ProximaDataType::Int8 | ProximaDataType::Int16 | ProximaDataType::Int32,
+                ProximaDataType::Int64,
+            ) => Some("CAST(? AS BIGINT)".to_string()),
             (ProximaDataType::Float32, ProximaDataType::Float64) => {
                 Some("CAST(? AS DOUBLE)".to_string())
             }

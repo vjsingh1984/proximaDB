@@ -514,10 +514,7 @@ pub async fn mtls_auth_middleware<B>(
 
     // Extract client certificate from request extensions
     // The certificate is set by the TLS layer when using mTLS
-    let client_cert_info = request
-        .extensions()
-        .get::<ClientCertificateInfo>()
-        .cloned();
+    let client_cert_info = request.extensions().get::<ClientCertificateInfo>().cloned();
 
     let cert_info = client_cert_info.ok_or_else(|| {
         warn!("mTLS authentication failed: no client certificate provided");
@@ -574,7 +571,10 @@ pub async fn mtls_auth_middleware<B>(
                 StatusCode::FORBIDDEN,
                 Json(AuthErrorResponse {
                     error: "certificate_cn_not_allowed".to_string(),
-                    message: format!("Certificate CN '{}' is not in the allowed list", common_name),
+                    message: format!(
+                        "Certificate CN '{}' is not in the allowed list",
+                        common_name
+                    ),
                     code: 403,
                 }),
             ));
@@ -719,18 +719,18 @@ pub async fn hybrid_auth_middleware<B>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
     use axum::http::{Method, Request, Uri};
     use axum::middleware;
     use axum::routing::get;
-    use axum::Router;
     use hyper::body::to_bytes;
     use std::collections::HashMap;
     use tower::ServiceExt;
 
-    use crate::network::auth::jwt::{Claims, JwtService, TokenType};
     use crate::network::auth::config::JwtAlgorithm;
+    use crate::network::auth::jwt::{Claims, JwtService, TokenType};
     use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::unified_auth::{
         ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
@@ -984,7 +984,9 @@ mod tests {
         let jwt_service = JwtService::new(crate::network::auth::config::JwtConfig {
             secret: Some(cfg.authentication.jwt.secret.clone()),
             expiration_secs: cfg.authentication.jwt.access_token_expiration_minutes * 60,
-            refresh_expiration_secs: cfg.authentication.jwt.refresh_token_expiration_days * 24 * 3600,
+            refresh_expiration_secs: cfg.authentication.jwt.refresh_token_expiration_days
+                * 24
+                * 3600,
             issuer: cfg.authentication.jwt.issuer.clone(),
             audience: cfg.authentication.jwt.audience.clone(),
             algorithm: JwtAlgorithm::HS256,
@@ -1000,7 +1002,10 @@ mod tests {
 
         let request = Request::builder()
             .uri("/api/v1/search")
-            .header("Authorization", format!("Bearer {}", token_pair.access_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", token_pair.access_token),
+            )
             .body(Body::empty())
             .unwrap();
 
@@ -1098,7 +1103,9 @@ mod tests {
         let bad_jwt_service = JwtService::new(crate::network::auth::config::JwtConfig {
             secret: Some(cfg.authentication.jwt.secret.clone()),
             expiration_secs: cfg.authentication.jwt.access_token_expiration_minutes * 60,
-            refresh_expiration_secs: cfg.authentication.jwt.refresh_token_expiration_days * 24 * 3600,
+            refresh_expiration_secs: cfg.authentication.jwt.refresh_token_expiration_days
+                * 24
+                * 3600,
             issuer: "unexpected-issuer".to_string(),
             audience: cfg.authentication.jwt.audience.clone(),
             algorithm: JwtAlgorithm::HS256,

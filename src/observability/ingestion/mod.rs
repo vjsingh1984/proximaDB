@@ -13,14 +13,14 @@ pub mod parser;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::proto::proximadb_v1::{IngestionFormat, LogEntry, MetricSample};
 
-use super::storage::ObservabilityStorage;
-use super::IngestResult;
 use self::buffer::RingBuffer;
 use self::parser::LogParser;
+use super::IngestResult;
+use super::storage::ObservabilityStorage;
 
 /// Observability ingester with high-throughput processing
 pub struct ObservabilityIngester {

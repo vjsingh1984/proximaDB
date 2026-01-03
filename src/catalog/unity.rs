@@ -11,13 +11,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::UnityCatalogConfig;
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth};
@@ -25,7 +26,6 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
     CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// Databricks Unity Catalog implementation
 ///
@@ -111,10 +111,7 @@ impl UnityCatalog {
             reqwest::header::AUTHORIZATION,
             format!("Bearer {}", config.token).parse()?,
         );
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            "application/json".parse()?,
-        );
+        headers.insert(reqwest::header::CONTENT_TYPE, "application/json".parse()?);
 
         let http_client = reqwest::Client::builder()
             .default_headers(headers)
@@ -370,9 +367,8 @@ impl Catalog for UnityCatalog {
         let catalog_name = self.unity_catalog_name();
         let path = format!("/schemas?catalog_name={}", catalog_name);
 
-        let response: UnityListResponse<UnitySchemaInfo> = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: UnityListResponse<UnitySchemaInfo> =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let namespaces: Vec<CatalogNamespace> = response
             .items
@@ -411,9 +407,7 @@ impl Catalog for UnityCatalog {
 
         let path = format!("/schemas/{}.{}", catalog_name, schema_name);
 
-        let schema: UnitySchemaInfo = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let schema: UnitySchemaInfo = self.api_request(reqwest::Method::GET, &path, None).await?;
 
         Ok(CatalogNamespace {
             name: schema_name.clone(),
@@ -473,7 +467,9 @@ impl Catalog for UnityCatalog {
                     format!(
                         "vector:{}:metric={}",
                         col.properties.get("dimension").unwrap_or(&"0".to_string()),
-                        col.properties.get("metric").unwrap_or(&"cosine".to_string())
+                        col.properties
+                            .get("metric")
+                            .unwrap_or(&"cosine".to_string())
                     )
                 } else {
                     col.comment.clone()
@@ -552,9 +548,8 @@ impl Catalog for UnityCatalog {
             catalog_name, schema_name
         );
 
-        let response: UnityListResponse<UnityTableInfo> = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let response: UnityListResponse<UnityTableInfo> =
+            self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let tables: Vec<TableIdentifier> = response
             .items
@@ -598,9 +593,7 @@ impl Catalog for UnityCatalog {
             catalog_name, schema_name, identifier.name
         );
 
-        let table: UnityTableInfo = self
-            .api_request(reqwest::Method::GET, &path, None)
-            .await?;
+        let table: UnityTableInfo = self.api_request(reqwest::Method::GET, &path, None).await?;
 
         let columns: Vec<CatalogColumn> = table
             .columns
@@ -651,10 +644,7 @@ impl Catalog for UnityCatalog {
             self.drop_table(from, false).await?;
         } else {
             // Same schema: use PATCH
-            let path = format!(
-                "/tables/{}.{}.{}",
-                catalog_name, from_schema, from.name
-            );
+            let path = format!("/tables/{}.{}.{}", catalog_name, from_schema, from.name);
 
             let body = serde_json::json!({
                 "name": to.name,

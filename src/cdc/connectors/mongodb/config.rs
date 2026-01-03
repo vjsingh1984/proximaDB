@@ -16,8 +16,8 @@
 
 //! MongoDB connector configuration
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// MongoDB connector configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,12 +118,14 @@ impl MongoDbConfig {
     }
 
     /// Get collection configuration
-    pub fn get_collection(&self, database: &str, collection: &str) -> Option<&MongoCollectionConfig> {
+    pub fn get_collection(
+        &self,
+        database: &str,
+        collection: &str,
+    ) -> Option<&MongoCollectionConfig> {
         self.collections
             .iter()
-            .find(|c| {
-                c.database.as_deref() == Some(database) || c.database.is_none()
-            })
+            .find(|c| c.database.as_deref() == Some(database) || c.database.is_none())
             .filter(|c| c.name == collection)
     }
 
@@ -318,8 +320,14 @@ mod tests {
     #[test]
     fn test_full_document_options() {
         assert_eq!(FullDocumentOption::Default.as_str(), None);
-        assert_eq!(FullDocumentOption::UpdateLookup.as_str(), Some("updateLookup"));
-        assert_eq!(FullDocumentOption::WhenAvailable.as_str(), Some("whenAvailable"));
+        assert_eq!(
+            FullDocumentOption::UpdateLookup.as_str(),
+            Some("updateLookup")
+        );
+        assert_eq!(
+            FullDocumentOption::WhenAvailable.as_str(),
+            Some("whenAvailable")
+        );
         assert_eq!(FullDocumentOption::Required.as_str(), Some("required"));
     }
 
@@ -344,8 +352,7 @@ mod tests {
             }
         });
 
-        let coll = MongoCollectionConfig::new("events")
-            .with_pipeline_stage(stage.clone());
+        let coll = MongoCollectionConfig::new("events").with_pipeline_stage(stage.clone());
 
         assert_eq!(coll.pipeline.len(), 1);
         assert_eq!(coll.pipeline[0], stage);
@@ -356,8 +363,7 @@ mod tests {
         let coll = MongoCollectionConfig::new("test");
         assert_eq!(coll.key_field, "_id");
 
-        let coll = MongoCollectionConfig::new("test")
-            .with_key_field("custom_id");
+        let coll = MongoCollectionConfig::new("test").with_key_field("custom_id");
         assert_eq!(coll.key_field, "custom_id");
     }
 }

@@ -29,7 +29,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Exact search required",
             "Baseline comparison",
         ]),
-
         // Path 2: HNSW + ZoneMap + FP32
         OptimizationPath::new(
             "helix_hnsw_zonemap",
@@ -43,11 +42,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 3.5,
             memory_factor: 1.3,
         })
-        .with_use_cases(vec![
-            "High-dimensional vectors",
-            "Spatially clustered data",
-        ]),
-
+        .with_use_cases(vec!["High-dimensional vectors", "Spatially clustered data"]),
         // Path 3: Progressive(Binary→INT8→PQ→FP32)
         OptimizationPath::new(
             "helix_full_progressive",
@@ -77,7 +72,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Memory-constrained systems",
             "Batch search workloads",
         ]),
-
         // Path 4: HilbertPrune + Progressive
         OptimizationPath::new(
             "helix_hilbert_progressive",
@@ -103,7 +97,6 @@ pub fn paths() -> Vec<OptimizationPath> {
             "Well-clustered data",
             "When Hilbert ordering is effective",
         ]),
-
         // Path 5: PCA + HilbertPrune + FP32
         OptimizationPath::new(
             "helix_pca_hilbert",
@@ -120,11 +113,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 2.0,
             memory_factor: 1.0,
         })
-        .with_use_cases(vec![
-            "High-dimensional data",
-            "When PCA is well-trained",
-        ]),
-
+        .with_use_cases(vec!["High-dimensional data", "When PCA is well-trained"]),
         // Path 6: IVF + ZoneMap + INT8
         OptimizationPath::new(
             "helix_ivf_zonemap_int8",
@@ -144,11 +133,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             throughput_multiplier: 3.0,
             memory_factor: 0.9,
         })
-        .with_use_cases(vec![
-            "Large collections",
-            "Production workloads",
-        ]),
-
+        .with_use_cases(vec!["Large collections", "Production workloads"]),
         // Path 7: LSH + Progressive
         OptimizationPath::new(
             "helix_lsh_progressive",
@@ -168,11 +153,7 @@ pub fn paths() -> Vec<OptimizationPath> {
             },
         )
         .with_expectation(PathExpectation::fast_approximate())
-        .with_use_cases(vec![
-            "Very fast approximate search",
-            "Binary-friendly data",
-        ]),
-
+        .with_use_cases(vec!["Very fast approximate search", "Binary-friendly data"]),
         // Path 8: Full Progressive (5-stage)
         OptimizationPath::new(
             "helix_5stage_progressive",

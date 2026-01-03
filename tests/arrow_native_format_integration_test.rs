@@ -29,8 +29,8 @@ use arrow_schema::{DataType, Field, Schema};
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::SqlValue;
 use proximadb::storage::formats::{
-    CacheStatus, FileSplit, ScalarPredicate, ScalarValue, SplitLocality, SplitPlanner,
-    SplitType, SpatialBounds, StorageTier,
+    CacheStatus, FileSplit, ScalarPredicate, ScalarValue, SpatialBounds, SplitLocality,
+    SplitPlanner, SplitType, StorageTier,
 };
 use proximadb::storage::schema::{
     BloomConsolidator, CentroidTree, CentroidTreeConfig, IncrementalBloomBuilder,
@@ -44,10 +44,10 @@ use proximadb::storage::schema::{
 fn test_centroid_tree_construction() {
     // Create centroids for rowgroups
     let centroids: Vec<Vec<f32>> = vec![
-        vec![0.0, 0.0, 0.0],   // Rowgroup 0: near origin
-        vec![1.0, 0.0, 0.0],   // Rowgroup 1
-        vec![0.0, 1.0, 0.0],   // Rowgroup 2
-        vec![0.0, 0.0, 1.0],   // Rowgroup 3
+        vec![0.0, 0.0, 0.0],    // Rowgroup 0: near origin
+        vec![1.0, 0.0, 0.0],    // Rowgroup 1
+        vec![0.0, 1.0, 0.0],    // Rowgroup 2
+        vec![0.0, 0.0, 1.0],    // Rowgroup 3
         vec![10.0, 10.0, 10.0], // Rowgroup 4: far from origin
     ];
 
@@ -68,9 +68,9 @@ fn test_centroid_tree_empty() {
 #[test]
 fn test_centroid_tree_pruning() {
     let centroids: Vec<Vec<f32>> = vec![
-        vec![0.0, 0.0, 0.0],   // Rowgroup 0: near origin
-        vec![1.0, 0.0, 0.0],   // Rowgroup 1
-        vec![0.0, 1.0, 0.0],   // Rowgroup 2
+        vec![0.0, 0.0, 0.0],    // Rowgroup 0: near origin
+        vec![1.0, 0.0, 0.0],    // Rowgroup 1
+        vec![0.0, 1.0, 0.0],    // Rowgroup 2
         vec![10.0, 10.0, 10.0], // Rowgroup 3: far from origin
     ];
 
@@ -141,7 +141,10 @@ fn test_centroid_tree_serialization() {
 fn test_bloom_consolidator_empty() {
     let consolidator = BloomConsolidator::new(1000, 0.01);
     let bloom = consolidator.build().expect("Should build empty bloom");
-    assert!(bloom.is_empty(), "Empty consolidator should produce empty bloom");
+    assert!(
+        bloom.is_empty(),
+        "Empty consolidator should produce empty bloom"
+    );
 }
 
 #[test]
@@ -187,11 +190,14 @@ fn test_consolidated_bloom_serialization() {
     let bloom = builder.build().expect("Should build bloom");
     let bytes = bloom.serialize().expect("Should serialize");
 
-    let restored =
-        proximadb::storage::schema::ConsolidatedBloom::deserialize(&bytes).expect("Should deserialize");
+    let restored = proximadb::storage::schema::ConsolidatedBloom::deserialize(&bytes)
+        .expect("Should deserialize");
 
     assert_eq!(restored.num_items(), bloom.num_items());
-    assert!(restored.might_contain("item:25"), "Should find item after roundtrip");
+    assert!(
+        restored.might_contain("item:25"),
+        "Should find item after roundtrip"
+    );
 }
 
 // ============================================================================
@@ -200,7 +206,13 @@ fn test_consolidated_bloom_serialization() {
 
 #[test]
 fn test_file_split_block_creation() {
-    let split = FileSplit::new_block("/data/collection/segment_001.sst".to_string(), 0, 0, 65536, 1000);
+    let split = FileSplit::new_block(
+        "/data/collection/segment_001.sst".to_string(),
+        0,
+        0,
+        65536,
+        1000,
+    );
 
     assert_eq!(split.split_id, "/data/collection/segment_001.sst:block:0");
     assert_eq!(split.offset, 0);
@@ -315,19 +327,28 @@ fn test_split_scalar_predicate_pruning() {
     // Test pruning with GreaterThan predicate
     // If we're looking for price > 100, and max is 100, we can prune
     assert!(
-        split.can_prune_scalar("price", &ScalarPredicate::GreaterThan(ScalarValue::Float64(100.0))),
+        split.can_prune_scalar(
+            "price",
+            &ScalarPredicate::GreaterThan(ScalarValue::Float64(100.0))
+        ),
         "Should prune when looking for values greater than max"
     );
 
     // If we're looking for price > 50, we cannot prune (some values may match)
     assert!(
-        !split.can_prune_scalar("price", &ScalarPredicate::GreaterThan(ScalarValue::Float64(50.0))),
+        !split.can_prune_scalar(
+            "price",
+            &ScalarPredicate::GreaterThan(ScalarValue::Float64(50.0))
+        ),
         "Should NOT prune when values may exist in range"
     );
 
     // If we're looking for price < 10, and min is 10, we can prune
     assert!(
-        split.can_prune_scalar("price", &ScalarPredicate::LessThan(ScalarValue::Float64(10.0))),
+        split.can_prune_scalar(
+            "price",
+            &ScalarPredicate::LessThan(ScalarValue::Float64(10.0))
+        ),
         "Should prune when looking for values less than min"
     );
 }
@@ -388,7 +409,10 @@ fn test_split_planner_load_balancing() {
 fn test_split_planner_empty_input() {
     let planner = SplitPlanner::default();
     let partitions = planner.plan_splits(vec![], 4);
-    assert!(partitions.is_empty(), "Empty input should produce empty output");
+    assert!(
+        partitions.is_empty(),
+        "Empty input should produce empty output"
+    );
 }
 
 // ============================================================================
@@ -407,7 +431,10 @@ fn test_split_cost_estimation() {
     // Row group split cost (columnar is more efficient)
     let rg_split = FileSplit::new_row_group("/f.parquet".to_string(), 0, 0, 65536, 1000);
     let rg_cost = rg_split.split_cost();
-    assert!((rg_cost.decode_complexity - 0.8).abs() < 0.01, "Columnar should be more efficient");
+    assert!(
+        (rg_cost.decode_complexity - 0.8).abs() < 0.01,
+        "Columnar should be more efficient"
+    );
 }
 
 #[test]
@@ -441,7 +468,7 @@ fn test_split_locality_cost_multiplier() {
 #[test]
 fn test_simd_decode_availability() {
     use proximadb::storage::engines::core::ops::simd_decode::{
-        best_decoder, has_simd_support, detected_features,
+        best_decoder, detected_features, has_simd_support,
     };
 
     // Get the best decoder (will be Scalar, AVX2, or NEON depending on platform)
@@ -478,7 +505,9 @@ fn test_delta_decode_functions() {
         assert!(
             (expected - actual).abs() < 1e-6,
             "Delta decode mismatch at {}: expected {}, got {}",
-            i, expected, actual
+            i,
+            expected,
+            actual
         );
     }
 }
@@ -502,7 +531,9 @@ fn test_fused_quantization_decode() {
         assert!(
             (e - a).abs() < 1e-4,
             "INT8->FP32 mismatch at {}: expected {}, got {}",
-            i, e, a
+            i,
+            e,
+            a
         );
     }
 }
@@ -537,9 +568,16 @@ fn test_vector_record_creation() {
         vector: vec![1.0, 2.0, 3.0, 4.0],
         metadata: {
             let mut meta = HashMap::new();
-            meta.insert("category".to_string(), SqlValue {
-                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("science".to_string())),
-            });
+            meta.insert(
+                "category".to_string(),
+                SqlValue {
+                    value: Some(
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "science".to_string(),
+                        ),
+                    ),
+                },
+            );
             meta
         },
         timestamp: Some(1234567890),
@@ -574,9 +612,14 @@ fn test_vector_record_to_arrow_roundtrip() {
             vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32],
             metadata: {
                 let mut meta = HashMap::new();
-                meta.insert("index".to_string(), SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i as i64)),
-                });
+                meta.insert(
+                    "index".to_string(),
+                    SqlValue {
+                        value: Some(
+                            proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i as i64),
+                        ),
+                    },
+                );
                 meta
             },
             timestamp: Some(i as i64),
@@ -697,8 +740,13 @@ fn test_split_based_query_planning() {
     // Create splits for a collection
     let mut splits = Vec::new();
     for i in 0..10 {
-        let mut split =
-            FileSplit::new_block(format!("/data/segment_{}.sst", i / 2), i % 2, i as u64 * 65536, 65536, 1000);
+        let mut split = FileSplit::new_block(
+            format!("/data/segment_{}.sst", i / 2),
+            i % 2,
+            i as u64 * 65536,
+            65536,
+            1000,
+        );
 
         // Add statistics for pruning
         split.statistics.column_stats.insert(
@@ -727,10 +775,7 @@ fn test_split_based_query_planning() {
         !pruned_splits.is_empty(),
         "Should have at least one matching split"
     );
-    assert!(
-        pruned_splits.len() < 10,
-        "Should have pruned some splits"
-    );
+    assert!(pruned_splits.len() < 10, "Should have pruned some splits");
 }
 
 #[test]
@@ -788,7 +833,10 @@ fn test_bloom_with_centroid_combined_pruning() {
     let id_might_exist = bloom.might_contain(target_id);
 
     // Combined result
-    assert!(vector_candidates.has_matches(), "Should have vector matches");
+    assert!(
+        vector_candidates.has_matches(),
+        "Should have vector matches"
+    );
     assert!(id_might_exist, "ID should exist in bloom filter");
 
     // Check for non-existent ID

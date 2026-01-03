@@ -13,11 +13,11 @@
 
 use anyhow::Result;
 use arrow_flight::{
-    flight_service_server::FlightService, Action, ActionType, Criteria, Empty, FlightData,
-    FlightDescriptor, FlightInfo, HandshakeRequest, HandshakeResponse, PutResult, SchemaResult,
-    Ticket,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
+    flight_service_server::FlightService,
 };
-use futures::{stream, Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -26,7 +26,9 @@ use crate::api_handlers::unified_handlers::UnifiedHandlers;
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
 
 use super::codec::{ArrowProtoCodec, WriteMode};
-use super::file_export::{ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression};
+use super::file_export::{
+    ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
+};
 
 // Type aliases using tonic from arrow-flight's dependency tree
 // This avoids conflicts with the main codebase's tonic 0.10
@@ -178,7 +180,9 @@ impl ProximaFlightService {
             .await?;
 
         // Convert results to Arrow RecordBatch
-        let search_results = response.results.as_ref()
+        let search_results = response
+            .results
+            .as_ref()
             .map(|r| &r.results)
             .filter(|results| !results.is_empty());
 
@@ -248,7 +252,12 @@ impl FlightService for ProximaFlightService {
         // Get collections to list
         let collections = if let Some(cid) = collection_id {
             // Get specific collection
-            match self.unified_handlers.collection_service.collection(&cid).await {
+            match self
+                .unified_handlers
+                .collection_service
+                .collection(&cid)
+                .await
+            {
                 Ok(Some(c)) => vec![c],
                 Ok(None) => {
                     return Err(TonicStatus::not_found(format!(
@@ -278,9 +287,7 @@ impl FlightService for ProximaFlightService {
             let files = self
                 .file_export_handler
                 .list_arrow_files(&collection, None, Some(100))
-                .map_err(|e| {
-                    TonicStatus::internal(format!("Failed to list arrow files: {}", e))
-                })?;
+                .map_err(|e| TonicStatus::internal(format!("Failed to list arrow files: {}", e)))?;
 
             if !files.is_empty() {
                 let flight_info = self
@@ -309,9 +316,8 @@ impl FlightService for ProximaFlightService {
         let descriptor = request.into_inner();
 
         // Parse request from descriptor
-        let file_request = ArrowFileRequest::from_descriptor(&descriptor).map_err(|e| {
-            TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e))
-        })?;
+        let file_request = ArrowFileRequest::from_descriptor(&descriptor)
+            .map_err(|e| TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e)))?;
 
         debug!(
             collection_id = %file_request.collection_id,
@@ -403,7 +409,8 @@ impl FlightService for ProximaFlightService {
                 write_options,
             )
             .map_err(|e| TonicStatus::internal(format!("Failed to create schema writer: {}", e)))?;
-            writer.finish()
+            writer
+                .finish()
                 .map_err(|e| TonicStatus::internal(format!("Failed to write schema: {}", e)))?;
         }
 
@@ -412,10 +419,7 @@ impl FlightService for ProximaFlightService {
         }))
     }
 
-    async fn do_get(
-        &self,
-        request: TonicRequest<Ticket>,
-    ) -> TonicResult<Self::DoGetStream> {
+    async fn do_get(&self, request: TonicRequest<Ticket>) -> TonicResult<Self::DoGetStream> {
         let ticket = request.into_inner();
 
         // Check if this is an arrow file export ticket
@@ -445,11 +449,11 @@ impl FlightService for ProximaFlightService {
 
             // Convert batches to FlightData stream with compression
             // Use the new compression-aware encoder for all batches
-            let flight_data = ArrowProtoCodec::batches_to_flight_data_with_compression(
-                &batches,
-                compression,
-            )
-            .map_err(|e| TonicStatus::internal(format!("Failed to encode batches: {}", e)))?;
+            let flight_data =
+                ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to encode batches: {}", e))
+                    })?;
 
             let stream = stream::iter(flight_data.into_iter().map(Ok));
 
@@ -539,13 +543,12 @@ impl FlightService for ProximaFlightService {
             app_metadata: result_bytes.into(),
         };
 
-        Ok(TonicResponse::new(Box::pin(stream::once(async move { Ok(put_result) })) as Self::DoPutStream))
+        Ok(TonicResponse::new(
+            Box::pin(stream::once(async move { Ok(put_result) })) as Self::DoPutStream,
+        ))
     }
 
-    async fn do_action(
-        &self,
-        request: TonicRequest<Action>,
-    ) -> TonicResult<Self::DoActionStream> {
+    async fn do_action(&self, request: TonicRequest<Action>) -> TonicResult<Self::DoActionStream> {
         let action = request.into_inner();
 
         match action.r#type.as_str() {
@@ -644,8 +647,7 @@ impl FlightService for ProximaFlightService {
 mod tests {
     use super::*;
     use crate::network::arrow_ipc::file_export::{
-        ArrowFileExportHandler, ArrowFileInfo, ArrowFileRequest, ArrowFileTicket,
-        ExportFileFormat,
+        ArrowFileExportHandler, ArrowFileInfo, ArrowFileRequest, ArrowFileTicket, ExportFileFormat,
     };
 
     #[test]

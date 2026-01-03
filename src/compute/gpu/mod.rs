@@ -47,11 +47,6 @@ pub mod distance;
 // Re-export from hardware_capabilities for convenience
 // All platform detection is centralized in hardware_capabilities module
 pub use crate::core::hardware_capabilities::{
-    get_best_distance_backend,
-    get_best_simd_backend,
-    should_use_gpu_for_workload,
-    GpuBackend,
-    GpuDevice,
-    HardwareBackend,
-    SimdCapabilities,
+    GpuBackend, GpuDevice, HardwareBackend, SimdCapabilities, get_best_distance_backend,
+    get_best_simd_backend, should_use_gpu_for_workload,
 };

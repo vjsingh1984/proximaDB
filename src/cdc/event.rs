@@ -602,7 +602,8 @@ mod tests {
         let source = test_source();
         let state = RecordState::with_vector(vec![0.1, 0.2, 0.3]);
 
-        let event = ChangeEvent::new_insert(source, "users".to_string(), "user_1".to_string(), state);
+        let event =
+            ChangeEvent::new_insert(source, "users".to_string(), "user_1".to_string(), state);
 
         assert!(event.is_insert());
         assert!(!event.is_update());
@@ -637,7 +638,8 @@ mod tests {
         let source = test_source();
         let before = RecordState::with_vector(vec![0.1, 0.2]);
 
-        let event = ChangeEvent::new_delete(source, "items".to_string(), "item_1".to_string(), before);
+        let event =
+            ChangeEvent::new_delete(source, "items".to_string(), "item_1".to_string(), before);
 
         assert!(event.is_delete());
         assert!(event.before.is_some());

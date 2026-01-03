@@ -101,10 +101,10 @@
 //! ```
 
 // Sub-modules
-mod traits;
 pub mod bitpacked_scalar;
 pub mod delta_simd;
 pub mod fused_quantization;
+mod traits;
 
 // Platform-specific modules
 #[cfg(target_arch = "x86_64")]
@@ -114,8 +114,8 @@ pub mod bitpacked_avx2;
 pub mod bitpacked_neon;
 
 // Re-exports for convenient access
-pub use traits::{CpuFeatures, DecoderFactory, SimdDecoder};
 pub use bitpacked_scalar::ScalarDecoder;
+pub use traits::{CpuFeatures, DecoderFactory, SimdDecoder};
 
 #[cfg(target_arch = "x86_64")]
 pub use bitpacked_avx2::Avx2Decoder;
@@ -124,19 +124,12 @@ pub use bitpacked_avx2::Avx2Decoder;
 pub use bitpacked_neon::NeonDecoder;
 
 // Delta decode functions
-pub use delta_simd::{
-    delta_decode_f32,
-    delta_decode_i32_prefix_sum,
-    delta_decode_i64_prefix_sum,
-};
+pub use delta_simd::{delta_decode_f32, delta_decode_i32_prefix_sum, delta_decode_i64_prefix_sum};
 
 // Fused quantization functions
 pub use fused_quantization::{
-    QuantizationParams,
-    fused_decode_binary_to_f32,
-    fused_decode_int4_to_f32,
-    fused_decode_int8_to_f32,
-    progressive_decode_binary_int8_f32,
+    QuantizationParams, fused_decode_binary_to_f32, fused_decode_int4_to_f32,
+    fused_decode_int8_to_f32, progressive_decode_binary_int8_f32,
 };
 
 /// Get the best available decoder for the current platform
@@ -172,7 +165,11 @@ mod tests {
     fn test_best_decoder_returns_valid() {
         let decoder = best_decoder();
         assert!(!decoder.name().is_empty());
-        println!("Best decoder: {} ({:?})", decoder.name(), decoder.supported_features());
+        println!(
+            "Best decoder: {} ({:?})",
+            decoder.name(),
+            decoder.supported_features()
+        );
     }
 
     #[test]
@@ -255,7 +252,8 @@ mod tests {
 
             assert_eq!(simd_count, scalar_count, "Count mismatch for {} bits", bits);
             assert_eq!(
-                simd_output, scalar_output,
+                simd_output,
+                scalar_output,
                 "Output mismatch for {} bits using {} vs Scalar",
                 bits,
                 simd_decoder.name()
@@ -282,7 +280,9 @@ mod tests {
             assert!(
                 (expected - actual).abs() < 1e-6,
                 "Delta decode mismatch at {}: expected {}, got {}",
-                i, expected, actual
+                i,
+                expected,
+                actual
             );
         }
     }
@@ -302,7 +302,9 @@ mod tests {
             assert!(
                 (e - a).abs() < 1e-4,
                 "INT8->FP32 mismatch at {}: expected {}, got {}",
-                i, e, a
+                i,
+                e,
+                a
             );
         }
     }

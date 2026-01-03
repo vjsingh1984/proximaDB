@@ -368,7 +368,10 @@ impl CsrStorage {
     /// Trigger rebuild if needed (lazy rebuild for read path)
     pub fn rebuild_if_needed(&mut self) -> Result<()> {
         if self.needs_rebuild {
-            tracing::debug!("Lazy rebuild triggered: {} temp edges", self.temp_edge_count);
+            tracing::debug!(
+                "Lazy rebuild triggered: {} temp edges",
+                self.temp_edge_count
+            );
             self.rebuild()?;
         }
         Ok(())

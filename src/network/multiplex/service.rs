@@ -9,8 +9,8 @@
 //! to the appropriate protocol handler based on request characteristics.
 
 use super::traits::{
-    BoxResponseFuture, DetectedProtocol, DetectionResult, MultiplexError, ProtocolDetector,
-    ProtocolHandler, SharedDetector, SharedHandler,
+    BoxResponseFuture, DetectedProtocol, DetectionResult, MultiplexError, SharedDetector,
+    SharedHandler,
 };
 use axum::body::Body;
 use hyper::http::{Request, Response};
@@ -202,7 +202,9 @@ impl Service<Request<Body>> for MultiplexService {
         for (key, value) in request.headers().iter() {
             detection_builder = detection_builder.header(key, value);
         }
-        let detection_request = detection_builder.body(()).expect("building detection request should not fail");
+        let detection_request = detection_builder
+            .body(())
+            .expect("building detection request should not fail");
 
         // Detect protocol
         let detection = self.detect_protocol(&detection_request);
@@ -271,6 +273,7 @@ impl MultiplexStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::multiplex::traits::{ProtocolDetector, ProtocolHandler};
 
     // Mock detector for testing
     struct MockDetector {

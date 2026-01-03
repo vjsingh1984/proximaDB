@@ -19,8 +19,8 @@
 //! This module provides incremental evaluation of vectors against
 //! subscription queries, detecting score changes and maintaining result sets.
 
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 use super::subscription::ScoredResult;
 
@@ -298,7 +298,10 @@ impl PartialOrd for HeapEntry {
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering for min-heap behavior (keep highest scores)
-        other.score.partial_cmp(&self.score).unwrap_or(Ordering::Equal)
+        other
+            .score
+            .partial_cmp(&self.score)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -382,7 +385,8 @@ mod tests {
         // New vector that should enter top-k
         let new_vectors = vec![("v3".to_string(), vec![0.95, 0.05, 0.0], 0.0)];
 
-        let (results, changes) = evaluator.incremental_evaluate(&query, &current, &new_vectors, 2, 0.0);
+        let (results, changes) =
+            evaluator.incremental_evaluate(&query, &current, &new_vectors, 2, 0.0);
 
         assert_eq!(results.len(), 2);
         // v3 should be in results with high score
@@ -396,10 +400,8 @@ mod tests {
         let evaluator = QueryEvaluator::new();
         let vectors = create_test_vectors();
 
-        let queries: Vec<(&[f32], usize, f32)> = vec![
-            (&[1.0, 0.0, 0.0], 2, 0.0),
-            (&[0.0, 1.0, 0.0], 2, 0.0),
-        ];
+        let queries: Vec<(&[f32], usize, f32)> =
+            vec![(&[1.0, 0.0, 0.0], 2, 0.0), (&[0.0, 1.0, 0.0], 2, 0.0)];
 
         let results = evaluator.batch_evaluate(&queries, &vectors);
 
@@ -465,9 +467,14 @@ mod tests {
         // New vector with higher score
         let new_vectors = vec![("v2".to_string(), vec![1.0, 0.0, 0.0], 0.0)];
 
-        let (_results, changes) = evaluator.incremental_evaluate(&query, &current, &new_vectors, 2, 0.0);
+        let (_results, changes) =
+            evaluator.incremental_evaluate(&query, &current, &new_vectors, 2, 0.0);
 
         // Should detect v2 addition and v1 position change
-        assert!(changes.iter().any(|c| c.vector_id == "v2" && c.old_score.is_none()));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.vector_id == "v2" && c.old_score.is_none())
+        );
     }
 }

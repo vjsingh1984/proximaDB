@@ -78,10 +78,10 @@
 //! let connector = MongoDbConnector::new(config, offset_store).await?;
 //! ```
 
+mod change_event;
 mod config;
 mod connector;
-mod change_event;
 
-pub use config::{MongoDbConfig, MongoCollectionConfig, FullDocumentOption};
+pub use change_event::{ChangeStreamOperation, DocumentKey, MongoChangeEvent, UpdateDescription};
+pub use config::{FullDocumentOption, MongoCollectionConfig, MongoDbConfig};
 pub use connector::MongoDbConnector;
-pub use change_event::{MongoChangeEvent, ChangeStreamOperation, DocumentKey, UpdateDescription};

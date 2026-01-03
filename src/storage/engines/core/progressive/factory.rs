@@ -110,7 +110,11 @@ impl ProgressivePipelineFactory {
         &self,
         engine_type: ProgressiveEngineType,
     ) -> ProgressiveSearchCoordinator {
-        let default_stages = vec![PipelineStage::Binary, PipelineStage::INT8, PipelineStage::FP32];
+        let default_stages = vec![
+            PipelineStage::Binary,
+            PipelineStage::INT8,
+            PipelineStage::FP32,
+        ];
         self.create_pipeline(engine_type, &default_stages, 0.7)
     }
 
@@ -143,15 +147,12 @@ impl ProgressivePipelineFactory {
 
         for stage in stages {
             let boxed_stage: Box<dyn ProgressiveSearchStage> = match stage {
-                PipelineStage::Binary => {
-                    Box::new(SstBinaryStage::new(hamming_threshold, self.quantization_engine.clone()))
-                }
-                PipelineStage::INT8 => {
-                    Box::new(SstInt8Stage::new(self.distance_compute.clone()))
-                }
-                PipelineStage::FP32 => {
-                    Box::new(SstFp32Stage::new(self.distance_compute.clone()))
-                }
+                PipelineStage::Binary => Box::new(SstBinaryStage::new(
+                    hamming_threshold,
+                    self.quantization_engine.clone(),
+                )),
+                PipelineStage::INT8 => Box::new(SstInt8Stage::new(self.distance_compute.clone())),
+                PipelineStage::FP32 => Box::new(SstFp32Stage::new(self.distance_compute.clone())),
                 // FP16 and PQ stages not yet implemented for SST, use FP32 as fallback
                 PipelineStage::FP16 | PipelineStage::PQ4 | PipelineStage::PQ8 => {
                     Box::new(SstFp32Stage::new(self.distance_compute.clone()))
@@ -174,15 +175,12 @@ impl ProgressivePipelineFactory {
 
         for stage in stages {
             let boxed_stage: Box<dyn ProgressiveSearchStage> = match stage {
-                PipelineStage::Binary => {
-                    Box::new(HelixBinaryStage::new(hamming_threshold, self.quantization_engine.clone()))
-                }
-                PipelineStage::INT8 => {
-                    Box::new(HelixInt8Stage::new(self.distance_compute.clone()))
-                }
-                PipelineStage::FP32 => {
-                    Box::new(HelixFp32Stage::new(self.distance_compute.clone()))
-                }
+                PipelineStage::Binary => Box::new(HelixBinaryStage::new(
+                    hamming_threshold,
+                    self.quantization_engine.clone(),
+                )),
+                PipelineStage::INT8 => Box::new(HelixInt8Stage::new(self.distance_compute.clone())),
+                PipelineStage::FP32 => Box::new(HelixFp32Stage::new(self.distance_compute.clone())),
                 PipelineStage::FP16 | PipelineStage::PQ4 | PipelineStage::PQ8 => {
                     Box::new(HelixFp32Stage::new(self.distance_compute.clone()))
                 }
@@ -204,15 +202,12 @@ impl ProgressivePipelineFactory {
 
         for stage in stages {
             let boxed_stage: Box<dyn ProgressiveSearchStage> = match stage {
-                PipelineStage::Binary => {
-                    Box::new(ViperBinaryStage::new(hamming_threshold, self.quantization_engine.clone()))
-                }
-                PipelineStage::INT8 => {
-                    Box::new(ViperInt8Stage::new(self.distance_compute.clone()))
-                }
-                PipelineStage::FP32 => {
-                    Box::new(ViperFp32Stage::new(self.distance_compute.clone()))
-                }
+                PipelineStage::Binary => Box::new(ViperBinaryStage::new(
+                    hamming_threshold,
+                    self.quantization_engine.clone(),
+                )),
+                PipelineStage::INT8 => Box::new(ViperInt8Stage::new(self.distance_compute.clone())),
+                PipelineStage::FP32 => Box::new(ViperFp32Stage::new(self.distance_compute.clone())),
                 PipelineStage::FP16 | PipelineStage::PQ4 | PipelineStage::PQ8 => {
                     Box::new(ViperFp32Stage::new(self.distance_compute.clone()))
                 }
@@ -234,15 +229,12 @@ impl ProgressivePipelineFactory {
 
         for stage in stages {
             let boxed_stage: Box<dyn ProgressiveSearchStage> = match stage {
-                PipelineStage::Binary => {
-                    Box::new(SwiftBinaryStage::new(hamming_threshold, self.quantization_engine.clone()))
-                }
-                PipelineStage::INT8 => {
-                    Box::new(SwiftInt8Stage::new(self.distance_compute.clone()))
-                }
-                PipelineStage::FP32 => {
-                    Box::new(SwiftFp32Stage::new(self.distance_compute.clone()))
-                }
+                PipelineStage::Binary => Box::new(SwiftBinaryStage::new(
+                    hamming_threshold,
+                    self.quantization_engine.clone(),
+                )),
+                PipelineStage::INT8 => Box::new(SwiftInt8Stage::new(self.distance_compute.clone())),
+                PipelineStage::FP32 => Box::new(SwiftFp32Stage::new(self.distance_compute.clone())),
                 PipelineStage::FP16 | PipelineStage::PQ4 | PipelineStage::PQ8 => {
                     Box::new(SwiftFp32Stage::new(self.distance_compute.clone()))
                 }
@@ -264,15 +256,12 @@ impl ProgressivePipelineFactory {
 
         for stage in stages {
             let boxed_stage: Box<dyn ProgressiveSearchStage> = match stage {
-                PipelineStage::Binary => {
-                    Box::new(NovaBinaryStage::new(hamming_threshold, self.quantization_engine.clone()))
-                }
-                PipelineStage::INT8 => {
-                    Box::new(NovaInt8Stage::new(self.distance_compute.clone()))
-                }
-                PipelineStage::FP32 => {
-                    Box::new(NovaFp32Stage::new(self.distance_compute.clone()))
-                }
+                PipelineStage::Binary => Box::new(NovaBinaryStage::new(
+                    hamming_threshold,
+                    self.quantization_engine.clone(),
+                )),
+                PipelineStage::INT8 => Box::new(NovaInt8Stage::new(self.distance_compute.clone())),
+                PipelineStage::FP32 => Box::new(NovaFp32Stage::new(self.distance_compute.clone())),
                 PipelineStage::FP16 | PipelineStage::PQ4 | PipelineStage::PQ8 => {
                     Box::new(NovaFp32Stage::new(self.distance_compute.clone()))
                 }
@@ -294,9 +283,10 @@ impl ProgressivePipelineFactory {
 
         for stage in stages {
             let boxed_stage: Box<dyn ProgressiveSearchStage> = match stage {
-                PipelineStage::Binary => {
-                    Box::new(RaptorBinaryStage::new(hamming_threshold, self.quantization_engine.clone()))
-                }
+                PipelineStage::Binary => Box::new(RaptorBinaryStage::new(
+                    hamming_threshold,
+                    self.quantization_engine.clone(),
+                )),
                 PipelineStage::INT8 => {
                     Box::new(RaptorInt8Stage::new(self.distance_compute.clone()))
                 }

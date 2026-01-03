@@ -9,20 +9,25 @@
 //! - **Streaming results**: Memory-efficient result streaming
 //! - **Parallel execution**: Execute independent branches concurrently
 
-use std::sync::Arc;
-use std::collections::HashMap;
 use anyhow::Result;
-use arrow::array::{ArrayRef, RecordBatch, StringArray, Float32Array, Int64Array};
-use arrow::datatypes::{Schema, Field, DataType};
+use arrow::array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::optimizer::{QueryPlan, PlanNode, PlanNodeType, JoinType, ObservabilityQueryType};
-use crate::storage::multimodel::{MultiModelStorageFacade, ModelType};
-use crate::storage::traits::{StorageQueryContext, DocumentStorageOperations, ObservabilityStorageOperations, MetricAggregationParams};
+use super::optimizer::{JoinType, ObservabilityQueryType, PlanNode, PlanNodeType, QueryPlan};
 use crate::core::search::SearchParams;
-use crate::proto::proximadb_v1::{Collection, DocumentFilter, DocFilterCondition, DocFilterOperator, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{
+    Collection, DocFilterCondition, DocFilterOperator, DocumentFilter, SqlValue, sql_value,
+};
+use crate::storage::multimodel::{ModelType, MultiModelStorageFacade};
+use crate::storage::traits::{
+    DocumentStorageOperations, MetricAggregationParams, ObservabilityStorageOperations,
+    StorageQueryContext,
+};
 
 /// Execution result containing Arrow record batches
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExecutionResult {
     /// Result batches
     pub batches: Vec<RecordBatch>,
@@ -144,52 +149,83 @@ impl FederatedExecutor {
     }
 
     /// Execute a single plan node
-    fn execute_node<'a>(&'a self, node: &'a PlanNode) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + 'a>> {
+    fn execute_node<'a>(
+        &'a self,
+        node: &'a PlanNode,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + 'a>>
+    {
         Box::pin(async move {
-        match &node.node_type {
-            PlanNodeType::Scan { target, model_type, predicates } => {
-                self.execute_scan(target, model_type, predicates).await
+            match &node.node_type {
+                PlanNodeType::Scan {
+                    target,
+                    model_type,
+                    predicates,
+                } => self.execute_scan(target, model_type, predicates).await,
+                PlanNodeType::VectorSearch {
+                    collection,
+                    top_k,
+                    query_vector_source: _,
+                } => self.execute_vector_search(collection, *top_k).await,
+                PlanNodeType::GraphTraversal {
+                    cypher,
+                    start_nodes,
+                } => {
+                    self.execute_graph_traversal(cypher, start_nodes.as_ref())
+                        .await
+                }
+                PlanNodeType::DocumentQuery { collection, filter } => {
+                    self.execute_document_query(collection, filter.as_ref())
+                        .await
+                }
+                PlanNodeType::ObservabilityQuery {
+                    namespace,
+                    query_type,
+                    time_range: _,
+                } => {
+                    self.execute_observability_query(namespace, query_type)
+                        .await
+                }
+                PlanNodeType::HashJoin {
+                    left,
+                    right,
+                    join_keys,
+                    join_type,
+                } => {
+                    self.execute_hash_join(left, right, join_keys, join_type)
+                        .await
+                }
+                PlanNodeType::NestedLoopJoin {
+                    outer,
+                    inner,
+                    correlation,
+                } => {
+                    self.execute_nested_loop_join(outer, inner, correlation)
+                        .await
+                }
+                PlanNodeType::IndexJoin {
+                    left,
+                    right,
+                    index_lookup,
+                } => self.execute_index_join(left, right, index_lookup).await,
+                PlanNodeType::Filter { input, predicate } => {
+                    self.execute_filter(input, predicate).await
+                }
+                PlanNodeType::Project { input, columns } => {
+                    self.execute_project(input, columns).await
+                }
+                PlanNodeType::Sort { input, order_by } => self.execute_sort(input, order_by).await,
+                PlanNodeType::Limit {
+                    input,
+                    limit,
+                    offset,
+                } => self.execute_limit(input, *limit, *offset).await,
+                PlanNodeType::Aggregate {
+                    input,
+                    group_by,
+                    aggregates,
+                } => self.execute_aggregate(input, group_by, aggregates).await,
+                PlanNodeType::Union { inputs, all } => self.execute_union(inputs, *all).await,
             }
-            PlanNodeType::VectorSearch { collection, top_k, query_vector_source: _ } => {
-                self.execute_vector_search(collection, *top_k).await
-            }
-            PlanNodeType::GraphTraversal { cypher, start_nodes } => {
-                self.execute_graph_traversal(cypher, start_nodes.as_ref()).await
-            }
-            PlanNodeType::DocumentQuery { collection, filter } => {
-                self.execute_document_query(collection, filter.as_ref()).await
-            }
-            PlanNodeType::ObservabilityQuery { namespace, query_type, time_range: _ } => {
-                self.execute_observability_query(namespace, query_type).await
-            }
-            PlanNodeType::HashJoin { left, right, join_keys, join_type } => {
-                self.execute_hash_join(left, right, join_keys, join_type).await
-            }
-            PlanNodeType::NestedLoopJoin { outer, inner, correlation } => {
-                self.execute_nested_loop_join(outer, inner, correlation).await
-            }
-            PlanNodeType::IndexJoin { left, right, index_lookup } => {
-                self.execute_index_join(left, right, index_lookup).await
-            }
-            PlanNodeType::Filter { input, predicate } => {
-                self.execute_filter(input, predicate).await
-            }
-            PlanNodeType::Project { input, columns } => {
-                self.execute_project(input, columns).await
-            }
-            PlanNodeType::Sort { input, order_by } => {
-                self.execute_sort(input, order_by).await
-            }
-            PlanNodeType::Limit { input, limit, offset } => {
-                self.execute_limit(input, *limit, *offset).await
-            }
-            PlanNodeType::Aggregate { input, group_by, aggregates } => {
-                self.execute_aggregate(input, group_by, aggregates).await
-            }
-            PlanNodeType::Union { inputs, all } => {
-                self.execute_union(inputs, *all).await
-            }
-        }
         })
     }
 
@@ -253,10 +289,7 @@ impl FederatedExecutor {
                     ..Default::default()
                 });
 
-                let query_context = StorageQueryContext::new(
-                    search_params,
-                    collection_config,
-                );
+                let query_context = StorageQueryContext::new(search_params, collection_config);
 
                 // Execute the search through the storage engine
                 match engine.search_vectors_unified(&query_context).await {
@@ -283,20 +316,24 @@ impl FederatedExecutor {
         }
 
         // Placeholder result when no vector store is configured
-        let ids: Vec<&str> = (0..top_k.min(10)).map(|i| match i {
-            0 => "vec_1",
-            1 => "vec_2",
-            2 => "vec_3",
-            3 => "vec_4",
-            4 => "vec_5",
-            5 => "vec_6",
-            6 => "vec_7",
-            7 => "vec_8",
-            8 => "vec_9",
-            _ => "vec_10",
-        }).collect();
+        let ids: Vec<&str> = (0..top_k.min(10))
+            .map(|i| match i {
+                0 => "vec_1",
+                1 => "vec_2",
+                2 => "vec_3",
+                3 => "vec_4",
+                4 => "vec_5",
+                5 => "vec_6",
+                6 => "vec_7",
+                7 => "vec_8",
+                8 => "vec_9",
+                _ => "vec_10",
+            })
+            .collect();
 
-        let scores: Vec<f32> = (0..top_k.min(10)).map(|i| 0.95 - (i as f32 * 0.05)).collect();
+        let scores: Vec<f32> = (0..top_k.min(10))
+            .map(|i| 0.95 - (i as f32 * 0.05))
+            .collect();
 
         let batch = RecordBatch::try_new(
             schema.clone(),
@@ -361,10 +398,15 @@ impl FederatedExecutor {
 
                 if !nodes.is_empty() {
                     let node_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
-                    let labels: Vec<Option<String>> = nodes.iter().map(|n| n.labels.first().cloned()).collect();
-                    let props: Vec<String> = nodes.iter().map(|n| {
-                        serde_json::to_string(&n.properties).unwrap_or_else(|_| "{}".to_string())
-                    }).collect();
+                    let labels: Vec<Option<String>> =
+                        nodes.iter().map(|n| n.labels.first().cloned()).collect();
+                    let props: Vec<String> = nodes
+                        .iter()
+                        .map(|n| {
+                            serde_json::to_string(&n.properties)
+                                .unwrap_or_else(|_| "{}".to_string())
+                        })
+                        .collect();
 
                     let batch = RecordBatch::try_new(
                         schema.clone(),
@@ -419,7 +461,7 @@ impl FederatedExecutor {
                                 operator: DocFilterOperator::Eq as i32,
                                 value: Some(SqlValue {
                                     value: Some(sql_value::Value::StringValue(
-                                        parts[1].trim().trim_matches('"').to_string()
+                                        parts[1].trim().trim_matches('"').to_string(),
                                     )),
                                 }),
                                 values: vec![],
@@ -439,13 +481,20 @@ impl FederatedExecutor {
             let limit = self.config.batch_size;
             let offset = 0;
 
-            match doc_store.query_documents(collection, doc_filter, limit, offset).await {
+            match doc_store
+                .query_documents(collection, doc_filter, limit, offset)
+                .await
+            {
                 Ok(documents) => {
                     if !documents.is_empty() {
                         let ids: Vec<String> = documents.iter().map(|d| d.id.clone()).collect();
-                        let docs: Vec<String> = documents.iter().map(|d| {
-                            serde_json::to_string(&d.document).unwrap_or_else(|_| "{}".to_string())
-                        }).collect();
+                        let docs: Vec<String> = documents
+                            .iter()
+                            .map(|d| {
+                                serde_json::to_string(&d.document)
+                                    .unwrap_or_else(|_| "{}".to_string())
+                            })
+                            .collect();
 
                         let batch = RecordBatch::try_new(
                             schema.clone(),
@@ -515,35 +564,41 @@ impl FederatedExecutor {
 
             match query_type {
                 ObservabilityQueryType::Logs => {
-                    match obs_store.query_logs(
-                        namespace,
-                        hour_ago_ns,
-                        now_ns,
-                        None, // No filter
-                        1000, // Limit
-                    ).await {
+                    match obs_store
+                        .query_logs(
+                            namespace,
+                            hour_ago_ns,
+                            now_ns,
+                            None, // No filter
+                            1000, // Limit
+                        )
+                        .await
+                    {
                         Ok(result) => {
                             if !result.logs.is_empty() {
                                 use crate::proto::proximadb_v1::Severity;
-                                let timestamps: Vec<i64> = result.logs.iter()
-                                    .map(|l| l.timestamp_ns)
-                                    .collect();
+                                let timestamps: Vec<i64> =
+                                    result.logs.iter().map(|l| l.timestamp_ns).collect();
                                 // Convert severity enum to string
-                                let levels: Vec<String> = result.logs.iter()
+                                let levels: Vec<String> = result
+                                    .logs
+                                    .iter()
                                     .map(|l| {
-                                        match Severity::try_from(l.severity).unwrap_or(Severity::Info) {
+                                        match Severity::try_from(l.severity)
+                                            .unwrap_or(Severity::Info)
+                                        {
                                             Severity::Debug => "DEBUG",
                                             Severity::Info => "INFO",
                                             Severity::Warn => "WARN",
                                             Severity::Error => "ERROR",
                                             Severity::Fatal => "FATAL",
                                             _ => "UNKNOWN",
-                                        }.to_string()
+                                        }
+                                        .to_string()
                                     })
                                     .collect();
-                                let messages: Vec<String> = result.logs.iter()
-                                    .map(|l| l.message.clone())
-                                    .collect();
+                                let messages: Vec<String> =
+                                    result.logs.iter().map(|l| l.message.clone()).collect();
 
                                 let batch = RecordBatch::try_new(
                                     schema.clone(),
@@ -583,7 +638,9 @@ impl FederatedExecutor {
                             let mut values = Vec::new();
 
                             for series in &result.series {
-                                let series_name = series.labels.get("__name__")
+                                let series_name = series
+                                    .labels
+                                    .get("__name__")
                                     .cloned()
                                     .unwrap_or_else(|| "metric".to_string());
                                 for point in &series.points {
@@ -612,27 +669,28 @@ impl FederatedExecutor {
                     }
                 }
                 ObservabilityQueryType::Traces => {
-                    match obs_store.query_traces(
-                        namespace,
-                        hour_ago_ns,
-                        now_ns,
-                        None, // No specific trace ID
-                        None, // No specific service name
-                        100,  // Limit
-                    ).await {
+                    match obs_store
+                        .query_traces(
+                            namespace,
+                            hour_ago_ns,
+                            now_ns,
+                            None, // No specific trace ID
+                            None, // No specific service name
+                            100,  // Limit
+                        )
+                        .await
+                    {
                         Ok(traces) => {
                             if !traces.is_empty() {
                                 // TraceData represents a single span, not a trace with multiple spans
-                                let trace_ids: Vec<String> = traces.iter()
-                                    .map(|t| t.trace_id.clone())
-                                    .collect();
-                                let span_ids: Vec<String> = traces.iter()
-                                    .map(|t| t.span_id.clone())
-                                    .collect();
-                                let operations: Vec<String> = traces.iter()
-                                    .map(|t| t.name.clone())
-                                    .collect();
-                                let durations: Vec<i64> = traces.iter()
+                                let trace_ids: Vec<String> =
+                                    traces.iter().map(|t| t.trace_id.clone()).collect();
+                                let span_ids: Vec<String> =
+                                    traces.iter().map(|t| t.span_id.clone()).collect();
+                                let operations: Vec<String> =
+                                    traces.iter().map(|t| t.name.clone()).collect();
+                                let durations: Vec<i64> = traces
+                                    .iter()
                                     .map(|t| t.end_time_ns - t.start_time_ns)
                                     .collect();
 
@@ -664,7 +722,10 @@ impl FederatedExecutor {
                 vec![
                     Arc::new(Int64Array::from(vec![1704067200_i64, 1704067201_i64])) as ArrayRef,
                     Arc::new(StringArray::from(vec!["INFO", "ERROR"])) as ArrayRef,
-                    Arc::new(StringArray::from(vec!["Request received", "Connection failed"])) as ArrayRef,
+                    Arc::new(StringArray::from(vec![
+                        "Request received",
+                        "Connection failed",
+                    ])) as ArrayRef,
                 ],
             )?,
             ObservabilityQueryType::Metrics => RecordBatch::try_new(
@@ -757,7 +818,8 @@ impl FederatedExecutor {
         _index_lookup: &str,
     ) -> Result<ExecutionResult> {
         // Similar to hash join but uses index
-        self.execute_hash_join(left, right, &[], &JoinType::Inner).await
+        self.execute_hash_join(left, right, &[], &JoinType::Inner)
+            .await
     }
 
     /// Execute filter
@@ -855,11 +917,7 @@ impl FederatedExecutor {
     }
 
     /// Execute union
-    async fn execute_union(
-        &self,
-        inputs: &[PlanNode],
-        _all: bool,
-    ) -> Result<ExecutionResult> {
+    async fn execute_union(&self, inputs: &[PlanNode], _all: bool) -> Result<ExecutionResult> {
         let mut all_batches = Vec::new();
         let mut schema = None;
 

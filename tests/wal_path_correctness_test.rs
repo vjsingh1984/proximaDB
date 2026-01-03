@@ -21,8 +21,7 @@
 
 use proximadb::graph::engines::GraphEngine;
 use proximadb::storage::persistence::write_ahead_log::{
-    is_global_metadata_provider_available,
-    wait_for_global_metadata_provider,
+    is_global_metadata_provider_available, wait_for_global_metadata_provider,
 };
 use std::time::Duration;
 
@@ -45,7 +44,10 @@ async fn test_global_metadata_provider_availability() {
 
     // If initially not available, wait should return false after timeout
     if !initially_available {
-        assert!(!result, "Should return false if provider not set within timeout");
+        assert!(
+            !result,
+            "Should return false if provider not set within timeout"
+        );
     }
 
     tracing::info!("Global metadata provider availability check passed");
@@ -74,7 +76,9 @@ async fn test_graph_wal_path_with_persistence() {
     let mut properties = HashMap::new();
     properties.insert(
         "name".to_string(),
-        PropertyValue { value: Some(Value::StringValue("test_node".to_string())) }
+        PropertyValue {
+            value: Some(Value::StringValue("test_node".to_string())),
+        },
     );
 
     let ts = now_ms();
@@ -89,7 +93,11 @@ async fn test_graph_wal_path_with_persistence() {
 
     // Insert node (should write to WAL)
     let result = engine.insert_node(node).await;
-    assert!(result.is_ok(), "Node insert should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Node insert should succeed: {:?}",
+        result.err()
+    );
 
     // Verify WAL file was created in the expected location
     let wal_path = storage_path.join("wal");
@@ -104,7 +112,7 @@ async fn test_graph_wal_path_with_persistence() {
 #[tokio::test]
 async fn test_delete_operations_write_to_wal() {
     use proximadb::graph::engines::orion::OrionGraphEngine;
-    use proximadb::graph::{Node, Edge};
+    use proximadb::graph::{Edge, Node};
     use std::collections::HashMap;
     use tempfile::tempdir;
 
@@ -136,8 +144,14 @@ async fn test_delete_operations_write_to_wal() {
         updated_at_ms: ts,
     };
 
-    engine.insert_node(node1).await.expect("Failed to insert node1");
-    engine.insert_node(node2).await.expect("Failed to insert node2");
+    engine
+        .insert_node(node1)
+        .await
+        .expect("Failed to insert node1");
+    engine
+        .insert_node(node2)
+        .await
+        .expect("Failed to insert node2");
 
     // Create an edge
     let edge = Edge {
@@ -151,17 +165,34 @@ async fn test_delete_operations_write_to_wal() {
         updated_at_ms: ts,
     };
 
-    engine.insert_edge(edge).await.expect("Failed to insert edge");
+    engine
+        .insert_edge(edge)
+        .await
+        .expect("Failed to insert edge");
 
     // Delete the edge (should write to WAL)
     let deleted_edge = engine.delete_edge(&"edge1".to_string()).await;
-    assert!(deleted_edge.is_ok(), "Edge delete should succeed: {:?}", deleted_edge.err());
-    assert!(deleted_edge.unwrap().is_some(), "Deleted edge should be returned");
+    assert!(
+        deleted_edge.is_ok(),
+        "Edge delete should succeed: {:?}",
+        deleted_edge.err()
+    );
+    assert!(
+        deleted_edge.unwrap().is_some(),
+        "Deleted edge should be returned"
+    );
 
     // Delete a node (should write to WAL)
     let deleted_node = engine.delete_node(&"node2".to_string()).await;
-    assert!(deleted_node.is_ok(), "Node delete should succeed: {:?}", deleted_node.err());
-    assert!(deleted_node.unwrap().is_some(), "Deleted node should be returned");
+    assert!(
+        deleted_node.is_ok(),
+        "Node delete should succeed: {:?}",
+        deleted_node.err()
+    );
+    assert!(
+        deleted_node.unwrap().is_some(),
+        "Deleted node should be returned"
+    );
 
     tracing::info!("Delete operations WAL test passed");
 }
@@ -187,7 +218,9 @@ async fn test_update_operations_write_to_wal() {
     let mut properties = HashMap::new();
     properties.insert(
         "name".to_string(),
-        PropertyValue { value: Some(Value::StringValue("original".to_string())) }
+        PropertyValue {
+            value: Some(Value::StringValue("original".to_string())),
+        },
     );
 
     let node = Node {
@@ -199,17 +232,24 @@ async fn test_update_operations_write_to_wal() {
         updated_at_ms: ts,
     };
 
-    engine.insert_node(node).await.expect("Failed to insert node");
+    engine
+        .insert_node(node)
+        .await
+        .expect("Failed to insert node");
 
     // Update the node (should write to WAL)
     let mut updated_properties = HashMap::new();
     updated_properties.insert(
         "name".to_string(),
-        PropertyValue { value: Some(Value::StringValue("updated".to_string())) }
+        PropertyValue {
+            value: Some(Value::StringValue("updated".to_string())),
+        },
     );
     updated_properties.insert(
         "new_field".to_string(),
-        PropertyValue { value: Some(Value::IntValue(42)) }
+        PropertyValue {
+            value: Some(Value::IntValue(42)),
+        },
     );
 
     let ts_updated = now_ms();
@@ -223,7 +263,11 @@ async fn test_update_operations_write_to_wal() {
     };
 
     let result = engine.update_node(updated_node).await;
-    assert!(result.is_ok(), "Node update should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Node update should succeed: {:?}",
+        result.err()
+    );
 
     // Verify the update was applied
     let retrieved = engine.get_node(&"update_node".to_string());
@@ -232,7 +276,11 @@ async fn test_update_operations_write_to_wal() {
     assert!(retrieved_node.is_some(), "Node should exist after update");
 
     let node = retrieved_node.unwrap();
-    assert_eq!(node.labels.len(), 2, "Node should have 2 labels after update");
+    assert_eq!(
+        node.labels.len(),
+        2,
+        "Node should have 2 labels after update"
+    );
 
     tracing::info!("Update operations WAL test passed");
 }

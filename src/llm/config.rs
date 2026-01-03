@@ -133,9 +133,11 @@ impl EmbeddingProvider {
     /// Get the embedding dimension
     pub fn dimension(&self) -> usize {
         match self {
-            Self::SentenceTransformers { dimension, model_name, .. } => {
-                dimension.unwrap_or_else(|| Self::infer_dimension(model_name))
-            }
+            Self::SentenceTransformers {
+                dimension,
+                model_name,
+                ..
+            } => dimension.unwrap_or_else(|| Self::infer_dimension(model_name)),
             Self::OpenAI { model_name, .. } => match model_name.as_str() {
                 "text-embedding-3-small" => 1536,
                 "text-embedding-3-large" => 3072,
@@ -147,9 +149,11 @@ impl EmbeddingProvider {
                 "embed-english-light-v3.0" | "embed-multilingual-light-v3.0" => 384,
                 _ => 1024,
             },
-            Self::Ollama { dimension, model_name, .. } => {
-                dimension.unwrap_or_else(|| Self::infer_ollama_dimension(model_name))
-            }
+            Self::Ollama {
+                dimension,
+                model_name,
+                ..
+            } => dimension.unwrap_or_else(|| Self::infer_ollama_dimension(model_name)),
         }
     }
 

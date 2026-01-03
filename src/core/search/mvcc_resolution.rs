@@ -57,10 +57,7 @@ impl MvccResolver {
                     // Treat as append-only
                     append_only_records.push(record);
                 } else {
-                    id_groups
-                        .entry(id.clone())
-                        .or_default()
-                        .push(record);
+                    id_groups.entry(id.clone()).or_default().push(record);
                 }
             } else {
                 // No ID = append-only

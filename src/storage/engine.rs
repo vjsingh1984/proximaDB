@@ -192,7 +192,8 @@ impl StorageEngine {
         info!("✅ Metadata provider propagated to WAL manager");
 
         // CRITICAL: Also set on WAL Registry so ALL pool instances get it
-        let registry = crate::storage::persistence::write_ahead_log::get_write_ahead_log_manager_registry();
+        let registry =
+            crate::storage::persistence::write_ahead_log::get_write_ahead_log_manager_registry();
         registry.set_metadata_provider(provider).await;
         info!("✅ Metadata provider propagated to WAL Registry (pool)");
     }
@@ -251,7 +252,10 @@ impl StorageEngine {
                 }
             }
             Err(e) => {
-                tracing::warn!("⚠️ STORAGE_ENGINE: Failed to flush memtable to storage: {}", e);
+                tracing::warn!(
+                    "⚠️ STORAGE_ENGINE: Failed to flush memtable to storage: {}",
+                    e
+                );
             }
         }
 
@@ -274,9 +278,12 @@ impl StorageEngine {
     /// This method is called during graceful shutdown to ensure all in-memory
     /// vector data is persisted to SST files before the database closes.
     /// This enables fast recovery on restart without needing to replay WAL.
-    pub async fn flush_memtable_to_storage(&self) -> crate::storage::Result<crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult> {
+    pub async fn flush_memtable_to_storage(
+        &self,
+    ) -> crate::storage::Result<
+        crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
+    > {
         use crate::storage::persistence::write_ahead_log::flush_coordinator::WALFlushCoordinator;
-        
 
         // Create a temporary flush coordinator for shutdown
         let flush_coordinator = WALFlushCoordinator::new();
@@ -287,7 +294,9 @@ impl StorageEngine {
             let engine_key = entry.key();
             let engine = entry.value();
             // SST engines use "sst" as engine type
-            flush_coordinator.register_storage_engine("sst", engine.clone()).await;
+            flush_coordinator
+                .register_storage_engine("sst", engine.clone())
+                .await;
             tracing::debug!("Registered SST engine '{}' for shutdown flush", engine_key);
         }
 
@@ -324,7 +333,8 @@ impl StorageEngine {
             Err(e) => {
                 error!("❌ STORAGE_ENGINE: Failed to get recovery manager: {}", e);
                 return Err(crate::storage::StorageError::WalError(format!(
-                    "Failed to get recovery manager: {}", e
+                    "Failed to get recovery manager: {}",
+                    e
                 )));
             }
         };
@@ -832,7 +842,6 @@ impl StorageEngine {
         Ok(())
     }
 
-
     /// Extract unique collection IDs and their metadata from recovered WAL entries
     /// This method is called by SharedServices during initialization to restore collection metadata
     pub async fn recovered_collections_metadata(
@@ -1270,6 +1279,9 @@ mod tests {
         let result = storage.recover_from_wal().await;
 
         // The method should exist and return Result<()>
-        assert!(result.is_ok() || result.is_err(), "Method returns Result type");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "Method returns Result type"
+        );
     }
 }

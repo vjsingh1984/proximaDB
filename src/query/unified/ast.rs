@@ -508,7 +508,10 @@ mod tests {
             .with_fusion(FusionStrategy::Intersection);
 
         assert_eq!(query.components.len(), 2);
-        assert!(matches!(query.fusion_strategy, FusionStrategy::Intersection));
+        assert!(matches!(
+            query.fusion_strategy,
+            FusionStrategy::Intersection
+        ));
     }
 
     #[test]

@@ -340,11 +340,11 @@ impl ProximaBlockMetadata {
     pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
         use std::io::Write;
         let mut buffer = Vec::new();
-        
+
         // Version 1
         buffer.write_all(b"PBMB")?;
         buffer.write_all(&1u32.to_le_bytes())?;
-        
+
         // Basic fields
         buffer.write_all(&self.record_count.to_le_bytes())?;
         buffer.write_all(&self.size_bytes.to_le_bytes())?;
@@ -355,14 +355,14 @@ impl ProximaBlockMetadata {
         buffer.write_all(&[if self.has_updates { 1u8 } else { 0u8 }])?;
         buffer.write_all(&self.version_range.0.to_le_bytes())?;
         buffer.write_all(&self.version_range.1.to_le_bytes())?;
-        
+
         // Column Stats
         buffer.write_all(&(self.column_stats.len() as u32).to_le_bytes())?;
         for (name, stat) in &self.column_stats {
             let name_bytes = name.as_bytes();
             buffer.write_all(&(name_bytes.len() as u32).to_le_bytes())?;
             buffer.write_all(name_bytes)?;
-            
+
             // Serialize stat fields
             let stat_name_bytes = stat.name.as_bytes();
             buffer.write_all(&(stat_name_bytes.len() as u32).to_le_bytes())?;
@@ -371,21 +371,27 @@ impl ProximaBlockMetadata {
             buffer.write_all(&stat.distinct_count.to_le_bytes())?;
             buffer.write_all(&stat.avg_size_bytes.to_le_bytes())?;
             buffer.write_all(&[if stat.bloom_filter_enabled { 1u8 } else { 0u8 }])?;
-            
+
             // JSON values using safe serializer
-            crate::core::search::json_value_serde::serialize_json_value(&stat.min_value.clone().unwrap_or(serde_json::Value::Null), &mut buffer)?;
-            crate::core::search::json_value_serde::serialize_json_value(&stat.max_value.clone().unwrap_or(serde_json::Value::Null), &mut buffer)?;
+            crate::core::search::json_value_serde::serialize_json_value(
+                &stat.min_value.clone().unwrap_or(serde_json::Value::Null),
+                &mut buffer,
+            )?;
+            crate::core::search::json_value_serde::serialize_json_value(
+                &stat.max_value.clone().unwrap_or(serde_json::Value::Null),
+                &mut buffer,
+            )?;
         }
-        
+
         // Quantization stats (safe for bincode as no JSON)
         let q_stats = bincode::serialize(&self.quantization_stats)?;
         buffer.write_all(&(q_stats.len() as u32).to_le_bytes())?;
         buffer.write_all(&q_stats)?;
-        
+
         // Checksums
         buffer.write_all(&self.data_checksum.to_le_bytes())?;
         buffer.write_all(&self.metadata_checksum.to_le_bytes())?;
-        
+
         Ok(buffer)
     }
 
@@ -393,108 +399,121 @@ impl ProximaBlockMetadata {
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
-        
+
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
         if &magic != b"PBMB" {
             // Fallback for old bincode format if needed, but for now strict
-             return Err(anyhow::anyhow!("Invalid ProximaBlockMetadata magic"));
+            return Err(anyhow::anyhow!("Invalid ProximaBlockMetadata magic"));
         }
-        
+
         let mut u32_buf = [0u8; 4];
         cursor.read_exact(&mut u32_buf)?;
         let _version = u32::from_le_bytes(u32_buf);
-        
+
         cursor.read_exact(&mut u32_buf)?;
         let record_count = u32::from_le_bytes(u32_buf);
-        
+
         let mut u64_buf = [0u8; 8];
         cursor.read_exact(&mut u64_buf)?;
         let size_bytes = u64::from_le_bytes(u64_buf);
-        
+
         cursor.read_exact(&mut u64_buf)?;
         let compressed_size = u64::from_le_bytes(u64_buf);
-        
+
         let mut i64_buf = [0u8; 8];
         cursor.read_exact(&mut i64_buf)?;
         let timestamp = i64::from_le_bytes(i64_buf);
-        
+
         let mut u8_buf = [0u8; 1];
         cursor.read_exact(&mut u8_buf)?;
         let compaction_level = u8_buf[0];
-        
+
         cursor.read_exact(&mut u8_buf)?;
         let has_deletes = u8_buf[0] != 0;
-        
+
         cursor.read_exact(&mut u8_buf)?;
         let has_updates = u8_buf[0] != 0;
-        
+
         cursor.read_exact(&mut i64_buf)?;
         let v_start = i64::from_le_bytes(i64_buf);
         cursor.read_exact(&mut i64_buf)?;
         let v_end = i64::from_le_bytes(i64_buf);
-        
+
         // Column Stats
         cursor.read_exact(&mut u32_buf)?;
         let col_count = u32::from_le_bytes(u32_buf);
         let mut column_stats = HashMap::new();
-        
+
         for _ in 0..col_count {
             cursor.read_exact(&mut u32_buf)?;
             let name_len = u32::from_le_bytes(u32_buf) as usize;
             let mut name_bytes = vec![0u8; name_len];
             cursor.read_exact(&mut name_bytes)?;
             let key_name = String::from_utf8(name_bytes)?;
-            
+
             cursor.read_exact(&mut u32_buf)?;
             let stat_name_len = u32::from_le_bytes(u32_buf) as usize;
             let mut stat_name_bytes = vec![0u8; stat_name_len];
             cursor.read_exact(&mut stat_name_bytes)?;
             let stat_name = String::from_utf8(stat_name_bytes)?;
-            
+
             cursor.read_exact(&mut u32_buf)?;
             let null_count = u32::from_le_bytes(u32_buf);
-            
+
             cursor.read_exact(&mut u32_buf)?;
             let distinct_count = u32::from_le_bytes(u32_buf);
-            
+
             cursor.read_exact(&mut u64_buf)?;
             let avg_size_bytes = u64::from_le_bytes(u64_buf);
-            
+
             cursor.read_exact(&mut u8_buf)?;
             let bloom_filter_enabled = u8_buf[0] != 0;
-            
-            let min_value = crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
-            let max_value = crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
-            
-            // Convert Null to None
-            let min_value = if let Some(serde_json::Value::Null) = min_value { None } else { min_value };
-            let max_value = if let Some(serde_json::Value::Null) = max_value { None } else { max_value };
 
-            column_stats.insert(key_name, ColumnStatistics {
-                name: stat_name,
-                null_count,
-                distinct_count,
-                min_value,
-                max_value,
-                avg_size_bytes,
-                bloom_filter_enabled,
-            });
+            let min_value =
+                crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+            let max_value =
+                crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+
+            // Convert Null to None
+            let min_value = if let Some(serde_json::Value::Null) = min_value {
+                None
+            } else {
+                min_value
+            };
+            let max_value = if let Some(serde_json::Value::Null) = max_value {
+                None
+            } else {
+                max_value
+            };
+
+            column_stats.insert(
+                key_name,
+                ColumnStatistics {
+                    name: stat_name,
+                    null_count,
+                    distinct_count,
+                    min_value,
+                    max_value,
+                    avg_size_bytes,
+                    bloom_filter_enabled,
+                },
+            );
         }
-        
+
         // Quantization stats
         cursor.read_exact(&mut u32_buf)?;
         let q_len = u32::from_le_bytes(u32_buf) as usize;
         let mut q_bytes = vec![0u8; q_len];
         cursor.read_exact(&mut q_bytes)?;
         let quantization_stats = bincode::deserialize(&q_bytes)?;
-        
+
         cursor.read_exact(&mut u64_buf)?;
         let data_checksum = u64::from_le_bytes(u64_buf);
-        
+
         cursor.read_exact(&mut u32_buf)?;
         let metadata_checksum = u32::from_le_bytes(u32_buf);
-        
+
         Ok(Self {
             record_count,
             size_bytes,
@@ -1413,9 +1432,6 @@ impl ProximaDataBlock {
 
     /// Serialize directly to a buffer (avoids intermediate allocations)
     fn serialize_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
-        
-        
-        
         use std::io::Write;
 
         trace!("[ENCODE] Starting optimized serialization");
@@ -1513,8 +1529,6 @@ impl ProximaDataBlock {
 
     /// Serialize with bloom filter generation in parallel (sync)
     pub fn serialize_with_bloom_sync(&self) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
-        
-
         let (serialized_block, bloom_filter) = rayon::join(
             || self.serialize_with_config(&self.compression_config),
             || self.generate_bloom(),
@@ -2138,7 +2152,11 @@ impl ProximaDataBlock {
 
         // Metadata values are stored with type tags: [type_tag:1][value_bytes:N]
         // Skip the type tag byte (index 0) to get the actual payload
-        let payload = if val_bytes.len() > 1 { &val_bytes[1..] } else { &[] };
+        let payload = if val_bytes.len() > 1 {
+            &val_bytes[1..]
+        } else {
+            &[]
+        };
 
         // Try to get type from collection config for filterable columns
         if let Some(config) = collection_config {
@@ -2271,7 +2289,9 @@ impl ProximaDataBlock {
         if val_len == 8 {
             // 8 bytes: could be f64 or i64 - check if it looks like valid UTF-8 string first
             if let Ok(s) = std::str::from_utf8(val_bytes) {
-                if s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                if s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                {
                     // Looks like a string identifier (e.g., "inactive", "category")
                     return SqlValue {
                         value: Some(Value::StringValue(s.to_string())),
@@ -3221,7 +3241,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        
+
         use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
@@ -3400,7 +3420,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        
+
         use crate::core::compression::{CompressionContext, compress};
 
         const GROUP_SIZE: usize = 32;
@@ -3618,7 +3638,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        
+
         use crate::core::compression::{CompressionContext, compress};
 
         const GROUP_SIZE: usize = 32;
@@ -3803,7 +3823,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        
+
         use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
@@ -3964,7 +3984,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
-        
+
         use crate::core::compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
         use crate::storage::engines::core::ops::proximacodec::{

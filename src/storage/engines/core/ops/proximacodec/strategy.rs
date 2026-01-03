@@ -305,7 +305,9 @@ pub trait CodecSelectionStrategy: Send + Sync {
     fn supports_type(&self, type_id: TypeId) -> bool {
         // Default: support all types
         match type_id {
-            TypeId::F32 | TypeId::F64 | TypeId::I64 | TypeId::I32 | TypeId::U64 | TypeId::U32 => true,
+            TypeId::F32 | TypeId::F64 | TypeId::I64 | TypeId::I32 | TypeId::U64 | TypeId::U32 => {
+                true
+            }
         }
     }
 
@@ -513,7 +515,11 @@ impl StrategyRegistry {
     }
 
     /// Register a strategy for a specific domain
-    pub fn register(mut self, domain: DataDomain, strategy: Box<dyn CodecSelectionStrategy>) -> Self {
+    pub fn register(
+        mut self,
+        domain: DataDomain,
+        strategy: Box<dyn CodecSelectionStrategy>,
+    ) -> Self {
         self.strategies.push((domain, strategy));
         self
     }

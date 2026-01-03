@@ -6,9 +6,9 @@
 // - $.items[*] - All array elements
 // - $.items[?(@.price > 10)] - Filter expressions
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
-use crate::proto::proximadb_v1::{sql_value::Value as SqlValueVariant, SqlObject, SqlValue};
+use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as SqlValueVariant};
 
 /// Parsed path segment
 #[derive(Debug, Clone)]
@@ -215,24 +215,18 @@ impl JsonPath {
 
             current = match segment {
                 PathSegment::Root => current, // Already at root
-                PathSegment::Property(name) => {
-                    current
-                        .into_iter()
-                        .filter_map(|v| self.get_property(&v, name))
-                        .collect()
-                }
-                PathSegment::Index(idx) => {
-                    current
-                        .into_iter()
-                        .filter_map(|v| self.get_index(&v, *idx))
-                        .collect()
-                }
-                PathSegment::Wildcard => {
-                    current
-                        .into_iter()
-                        .flat_map(|v| self.get_all_elements(&v))
-                        .collect()
-                }
+                PathSegment::Property(name) => current
+                    .into_iter()
+                    .filter_map(|v| self.get_property(&v, name))
+                    .collect(),
+                PathSegment::Index(idx) => current
+                    .into_iter()
+                    .filter_map(|v| self.get_index(&v, *idx))
+                    .collect(),
+                PathSegment::Wildcard => current
+                    .into_iter()
+                    .flat_map(|v| self.get_all_elements(&v))
+                    .collect(),
                 PathSegment::Recursive => {
                     // Collect all nested values
                     let mut all = Vec::new();

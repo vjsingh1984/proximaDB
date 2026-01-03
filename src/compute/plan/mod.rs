@@ -482,16 +482,10 @@ pub enum Expr {
     },
 
     /// Unary operation
-    Unary {
-        op: UnaryOp,
-        expr: Box<Expr>,
-    },
+    Unary { op: UnaryOp, expr: Box<Expr> },
 
     /// Function call
-    Function {
-        name: String,
-        args: Vec<Expr>,
-    },
+    Function { name: String, args: Vec<Expr> },
 
     /// CASE expression
     Case {
@@ -531,10 +525,7 @@ pub enum Expr {
     },
 
     /// CAST expression
-    Cast {
-        expr: Box<Expr>,
-        data_type: String,
-    },
+    Cast { expr: Box<Expr>, data_type: String },
 
     /// Array literal
     Array(Vec<Expr>),
@@ -555,9 +546,9 @@ pub enum LiteralValue {
     Float(f64),
     String(String),
     Bytes(Vec<u8>),
-    Date(String),        // ISO format
-    Timestamp(String),   // ISO format
-    Interval(String),    // Duration string
+    Date(String),      // ISO format
+    Timestamp(String), // ISO format
+    Interval(String),  // Duration string
 }
 
 /// Binary operators
@@ -747,7 +738,10 @@ pub enum Partitioning {
     /// Round-robin distribution
     RoundRobin { partitions: usize },
     /// Hash partitioning on columns
-    Hash { columns: Vec<String>, partitions: usize },
+    Hash {
+        columns: Vec<String>,
+        partitions: usize,
+    },
     /// Range partitioning
     Range { column: String, partitions: usize },
     /// Single partition (gather)
@@ -950,10 +944,7 @@ mod tests {
 
     #[test]
     fn test_compute_plan_creation() {
-        let plan = ComputePlan::new(
-            "test",
-            PlanNode::table_scan("users"),
-        );
+        let plan = ComputePlan::new("test", PlanNode::table_scan("users"));
 
         assert_eq!(plan.id, "test");
         assert_eq!(plan.referenced_tables(), vec!["users"]);
@@ -1003,7 +994,9 @@ mod tests {
             .and(Expr::col("name").ne(Expr::lit_str("admin")));
 
         match expr {
-            Expr::Binary { op: BinaryOp::And, .. } => {}
+            Expr::Binary {
+                op: BinaryOp::And, ..
+            } => {}
             _ => panic!("Expected AND expression"),
         }
     }
@@ -1034,8 +1027,7 @@ mod tests {
     fn test_plan_serialization() {
         let plan = ComputePlan::new(
             "test",
-            PlanNode::table_scan("users")
-                .filter(Expr::col("active").eq(Expr::lit_bool(true))),
+            PlanNode::table_scan("users").filter(Expr::col("active").eq(Expr::lit_bool(true))),
         );
 
         let json = serde_json::to_string(&plan).unwrap();

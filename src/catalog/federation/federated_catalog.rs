@@ -5,9 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arrow_schema::Schema as ArrowSchema;
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
@@ -115,7 +114,9 @@ impl ConstraintSupport {
 
     /// Check if all specified constraints are supported
     pub fn supports_all(&self, constraints: &[&str]) -> bool {
-        constraints.iter().all(|c| self.get_level(c) != ConstraintLevel::None)
+        constraints
+            .iter()
+            .all(|c| self.get_level(c) != ConstraintLevel::None)
     }
 }
 
@@ -163,7 +164,12 @@ impl FederatedTableInfo {
         if self.namespace.is_empty() {
             format!("{}.{}", self.catalog, self.name)
         } else {
-            format!("{}.{}.{}", self.catalog, self.namespace.join("."), self.name)
+            format!(
+                "{}.{}.{}",
+                self.catalog,
+                self.namespace.join("."),
+                self.name
+            )
         }
     }
 }
@@ -193,7 +199,7 @@ impl Default for FederatedCatalogConfig {
             enable_cross_catalog: true,
             default_catalog: Some("internal".to_string()),
             enable_metadata_cache: true,
-            cache_ttl_seconds: 300,  // 5 minutes
+            cache_ttl_seconds: 300, // 5 minutes
             max_cache_entries: 10000,
         }
     }
@@ -391,12 +397,16 @@ impl FederatedCatalog {
 
         // Check external catalogs
         if let Some(external) = self.get_external(catalog) {
-            return self.resolve_external(&external, catalog, namespace, table).await;
+            return self
+                .resolve_external(&external, catalog, namespace, table)
+                .await;
         }
 
         // Try catalog manager
         if let Ok(std_catalog) = self.catalog_manager.get_catalog(catalog).await {
-            return self.resolve_standard(&std_catalog, catalog, namespace, table).await;
+            return self
+                .resolve_standard(&std_catalog, catalog, namespace, table)
+                .await;
         }
 
         Err(anyhow!("Catalog '{}' not found", catalog))
@@ -433,7 +443,10 @@ impl FederatedCatalog {
             });
         }
 
-        Err(anyhow!("Table '{}' not found in internal catalog", lookup_path))
+        Err(anyhow!(
+            "Table '{}' not found in internal catalog",
+            lookup_path
+        ))
     }
 
     /// Resolve in external catalog
@@ -455,7 +468,10 @@ impl FederatedCatalog {
             is_internal: false,
             external_type: Some(catalog.catalog_type()),
             constraint_support: catalog.constraint_support(),
-            properties: catalog.get_table_properties(&namespace_str, table).await.unwrap_or_default(),
+            properties: catalog
+                .get_table_properties(&namespace_str, table)
+                .await
+                .unwrap_or_default(),
             location: catalog.get_table_location(&namespace_str, table).await.ok(),
         })
     }
@@ -520,7 +536,9 @@ impl FederatedCatalog {
                 for ns in namespaces {
                     if let Ok(table_names) = catalog.list_tables(&ns).await {
                         for table in table_names {
-                            if let Ok(info) = self.resolve_external(catalog, name, &[&ns], &table).await {
+                            if let Ok(info) =
+                                self.resolve_external(catalog, name, &[&ns], &table).await
+                            {
                                 tables.push(info);
                             }
                         }
@@ -560,7 +578,10 @@ impl FederatedCatalog {
                 for ns in namespaces {
                     if let Ok(table_names) = external.list_tables(&ns).await {
                         for table in table_names {
-                            if let Ok(info) = self.resolve_external(&external, catalog, &[&ns], &table).await {
+                            if let Ok(info) = self
+                                .resolve_external(&external, catalog, &[&ns], &table)
+                                .await
+                            {
                                 tables.push(info);
                             }
                         }

@@ -291,7 +291,10 @@ impl MetadataFilterAnalyzer {
         let metadata: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(v) => v,
             Err(e) => {
-                trace!("Failed to parse metadata JSON: {}. Treating as non-match.", e);
+                trace!(
+                    "Failed to parse metadata JSON: {}. Treating as non-match.",
+                    e
+                );
                 return Ok(false);
             }
         };
@@ -308,21 +311,19 @@ impl MetadataFilterAnalyzer {
                 }
             }
 
-            FilterCondition::Range(_, min, max) => {
-                match field_value {
-                    Some(actual) => Ok(self.value_in_range(actual, min, max)),
-                    None => Ok(false),
-                }
-            }
+            FilterCondition::Range(_, min, max) => match field_value {
+                Some(actual) => Ok(self.value_in_range(actual, min, max)),
+                None => Ok(false),
+            },
 
-            FilterCondition::In(_, values) => {
-                match field_value {
-                    Some(actual) => Ok(values.iter().any(|v| self.values_equal(actual, v))),
-                    None => Ok(false),
-                }
-            }
+            FilterCondition::In(_, values) => match field_value {
+                Some(actual) => Ok(values.iter().any(|v| self.values_equal(actual, v))),
+                None => Ok(false),
+            },
 
-            FilterCondition::IsNull(_) => Ok(field_value.is_none() || field_value == Some(&serde_json::Value::Null)),
+            FilterCondition::IsNull(_) => {
+                Ok(field_value.is_none() || field_value == Some(&serde_json::Value::Null))
+            }
 
             FilterCondition::IsNotNull(_) => {
                 Ok(field_value.is_some() && field_value != Some(&serde_json::Value::Null))
@@ -337,7 +338,10 @@ impl MetadataFilterAnalyzer {
             match bincode::deserialize(bytes) {
                 Ok(v) => v,
                 Err(e) => {
-                    trace!("Failed to deserialize binary metadata: {}. Treating as non-match.", e);
+                    trace!(
+                        "Failed to deserialize binary metadata: {}. Treating as non-match.",
+                        e
+                    );
                     return Ok(false);
                 }
             };
@@ -346,28 +350,24 @@ impl MetadataFilterAnalyzer {
         let field_value = metadata.get(column_name);
 
         match filter {
-            FilterCondition::Equals(_, expected) => {
-                match field_value {
-                    Some(actual) => Ok(self.values_equal(actual, expected)),
-                    None => Ok(false),
-                }
-            }
+            FilterCondition::Equals(_, expected) => match field_value {
+                Some(actual) => Ok(self.values_equal(actual, expected)),
+                None => Ok(false),
+            },
 
-            FilterCondition::Range(_, min, max) => {
-                match field_value {
-                    Some(actual) => Ok(self.value_in_range(actual, min, max)),
-                    None => Ok(false),
-                }
-            }
+            FilterCondition::Range(_, min, max) => match field_value {
+                Some(actual) => Ok(self.value_in_range(actual, min, max)),
+                None => Ok(false),
+            },
 
-            FilterCondition::In(_, values) => {
-                match field_value {
-                    Some(actual) => Ok(values.iter().any(|v| self.values_equal(actual, v))),
-                    None => Ok(false),
-                }
-            }
+            FilterCondition::In(_, values) => match field_value {
+                Some(actual) => Ok(values.iter().any(|v| self.values_equal(actual, v))),
+                None => Ok(false),
+            },
 
-            FilterCondition::IsNull(_) => Ok(field_value.is_none() || field_value == Some(&serde_json::Value::Null)),
+            FilterCondition::IsNull(_) => {
+                Ok(field_value.is_none() || field_value == Some(&serde_json::Value::Null))
+            }
 
             FilterCondition::IsNotNull(_) => {
                 Ok(field_value.is_some() && field_value != Some(&serde_json::Value::Null))
@@ -402,7 +402,10 @@ impl MetadataFilterAnalyzer {
 
             // Array comparison (deep equality)
             (serde_json::Value::Array(a), serde_json::Value::Array(e)) => {
-                a.len() == e.len() && a.iter().zip(e.iter()).all(|(av, ev)| self.values_equal(av, ev))
+                a.len() == e.len()
+                    && a.iter()
+                        .zip(e.iter())
+                        .all(|(av, ev)| self.values_equal(av, ev))
             }
 
             // Object comparison (deep equality)
@@ -415,12 +418,14 @@ impl MetadataFilterAnalyzer {
             // Type mismatch - try numeric coercion
             (serde_json::Value::Number(a), serde_json::Value::String(e)) => {
                 e.parse::<f64>().map_or(false, |e_num| {
-                    a.as_f64().map_or(false, |a_num| (a_num - e_num).abs() < 1e-9)
+                    a.as_f64()
+                        .map_or(false, |a_num| (a_num - e_num).abs() < 1e-9)
                 })
             }
             (serde_json::Value::String(a), serde_json::Value::Number(e)) => {
                 a.parse::<f64>().map_or(false, |a_num| {
-                    e.as_f64().map_or(false, |e_num| (a_num - e_num).abs() < 1e-9)
+                    e.as_f64()
+                        .map_or(false, |e_num| (a_num - e_num).abs() < 1e-9)
                 })
             }
 
@@ -636,24 +641,16 @@ mod tests {
         let json = r#"{"price": 99.99, "quantity": 5}"#;
 
         // Float comparison
-        let filter_float = FilterCondition::Equals(
-            "price".to_string(),
-            serde_json::json!(99.99),
-        );
+        let filter_float = FilterCondition::Equals("price".to_string(), serde_json::json!(99.99));
         assert!(analyzer.check_filter_json(json, &filter_float).unwrap());
 
         // Integer comparison
-        let filter_int = FilterCondition::Equals(
-            "quantity".to_string(),
-            serde_json::json!(5),
-        );
+        let filter_int = FilterCondition::Equals("quantity".to_string(), serde_json::json!(5));
         assert!(analyzer.check_filter_json(json, &filter_int).unwrap());
 
         // Non-matching number
-        let filter_no_match = FilterCondition::Equals(
-            "price".to_string(),
-            serde_json::json!(100.0),
-        );
+        let filter_no_match =
+            FilterCondition::Equals("price".to_string(), serde_json::json!(100.0));
         assert!(!analyzer.check_filter_json(json, &filter_no_match).unwrap());
     }
 
@@ -717,7 +714,11 @@ mod tests {
         // Numeric value in list
         let filter_num_in = FilterCondition::In(
             "tier".to_string(),
-            vec![serde_json::json!(1), serde_json::json!(2), serde_json::json!(3)],
+            vec![
+                serde_json::json!(1),
+                serde_json::json!(2),
+                serde_json::json!(3),
+            ],
         );
         assert!(analyzer.check_filter_json(json, &filter_num_in).unwrap());
     }
@@ -731,14 +732,26 @@ mod tests {
 
         // Explicit null value
         let filter_is_null = FilterCondition::IsNull("name".to_string());
-        assert!(analyzer.check_filter_json(json_with_null, &filter_is_null).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json_with_null, &filter_is_null)
+                .unwrap()
+        );
 
         // Missing field treated as null
-        assert!(analyzer.check_filter_json(json_without_field, &filter_is_null).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json_without_field, &filter_is_null)
+                .unwrap()
+        );
 
         // Non-null field should not match IsNull
         let filter_value_null = FilterCondition::IsNull("value".to_string());
-        assert!(!analyzer.check_filter_json(json_with_null, &filter_value_null).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json_with_null, &filter_value_null)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -753,7 +766,11 @@ mod tests {
 
         // Null value should not match IsNotNull
         let filter_empty_not_null = FilterCondition::IsNotNull("empty".to_string());
-        assert!(!analyzer.check_filter_json(json, &filter_empty_not_null).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_empty_not_null)
+                .unwrap()
+        );
 
         // Missing field should not match IsNotNull
         let filter_missing = FilterCondition::IsNotNull("nonexistent".to_string());
@@ -766,10 +783,7 @@ mod tests {
 
         // String "100" should match number 100
         let json = r#"{"amount": "100"}"#;
-        let filter = FilterCondition::Equals(
-            "amount".to_string(),
-            serde_json::json!(100),
-        );
+        let filter = FilterCondition::Equals("amount".to_string(), serde_json::json!(100));
         assert!(analyzer.check_filter_json(json, &filter).unwrap());
 
         // Number 100 should match string "100"

@@ -14,6 +14,7 @@ rust-version = "1.88"
 [workspace]
 members = [
     ".",
+    "clients/rust",
 ]
 
 [[bin]]
@@ -180,6 +181,7 @@ async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
 nom = "7"
+hostname = "0.3"  # Get hostname for leader election
 
 # Multi-model storage (Document + Observability)
 tantivy = "0.22"  # Full-text search for documents
@@ -240,6 +242,9 @@ executive_intel = []
 simd-experimental = []
 distributed = []
 standalone = []
+# Cluster mode - enables distributed consensus (Raft), replication, and health services
+# Used for multi-node deployments with leader election and data replication
+cluster = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
@@ -513,6 +518,16 @@ path = "benches/bench_19_comprehensive_optimization.rs"
 name = "bench_20_facade_routing"
 harness = false
 path = "benches/bench_20_facade_routing.rs"
+
+[[bench]]
+name = "bench_21_query_cache"
+harness = false
+path = "benches/bench_21_query_cache.rs"
+
+[[bench]]
+name = "streaming_search_bench"
+harness = false
+path = "benches/streaming_search_bench.rs"
 
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY

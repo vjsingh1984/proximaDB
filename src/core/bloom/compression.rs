@@ -139,10 +139,8 @@ impl CompressedBloom {
 
         while i + 2 < self.compressed_data.len() {
             // Read run length (2 bytes)
-            let run_length = u16::from_le_bytes([
-                self.compressed_data[i],
-                self.compressed_data[i + 1],
-            ]);
+            let run_length =
+                u16::from_le_bytes([self.compressed_data[i], self.compressed_data[i + 1]]);
             i += 2;
 
             // Read byte value
@@ -170,8 +168,7 @@ impl CompressedBloom {
         Ok(positions.iter().all(|&pos| {
             let byte_index = pos / 8;
             let bit_index = pos % 8;
-            byte_index < decompressed.len()
-                && (decompressed[byte_index] & (1 << bit_index)) != 0
+            byte_index < decompressed.len() && (decompressed[byte_index] & (1 << bit_index)) != 0
         }))
     }
 
@@ -253,8 +250,11 @@ mod tests {
         let compressed = CompressedBloom::compress(&sparse_data, 3);
 
         // Should compress well (ratio << 1.0)
-        assert!(compressed.compression_ratio < 0.1,
-            "Expected compression ratio < 0.1, got {}", compressed.compression_ratio);
+        assert!(
+            compressed.compression_ratio < 0.1,
+            "Expected compression ratio < 0.1, got {}",
+            compressed.compression_ratio
+        );
         assert!(compressed.is_compressed());
 
         // Decompress and verify

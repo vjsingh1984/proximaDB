@@ -46,13 +46,15 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::core::search::results::OptimizedSearchRecord;
-    use crate::core::search::SearchParams;
     use crate::core::SstConfig;
+    use crate::core::search::SearchParams;
+    use crate::core::search::results::OptimizedSearchRecord;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, SqlValue, StorageAssignment, StorageConfig, VectorRecord,
     };
-    use crate::storage::engines::impls::sst::compaction::{Compaction, CompactionPriority, CompactionTask};
+    use crate::storage::engines::impls::sst::compaction::{
+        Compaction, CompactionPriority, CompactionTask,
+    };
     use crate::storage::engines::impls::sst::core::SstEngine;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
@@ -158,9 +160,12 @@ mod tests {
         sst_config.compaction_threshold = 2;
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-        let engine =
-            SstEngine::new_with_config(sst_config.clone(), filesystem.clone(), distance_compute.clone())
-                .await?;
+        let engine = SstEngine::new_with_config(
+            sst_config.clone(),
+            filesystem.clone(),
+            distance_compute.clone(),
+        )
+        .await?;
 
         info!("SST engine with ArrowBlock format created successfully");
 
@@ -190,7 +195,10 @@ mod tests {
         // =========================================================================
         // Phase 1: Flush multiple batches to create multiple .arrow files
         // =========================================================================
-        info!("Phase 1: Flushing {} batches to create multiple .arrow files", num_batches);
+        info!(
+            "Phase 1: Flushing {} batches to create multiple .arrow files",
+            num_batches
+        );
 
         let mut all_vectors: Vec<VectorRecord> = Vec::new();
         let mut flush_file_paths: Vec<String> = Vec::new();
@@ -229,7 +237,8 @@ mod tests {
             assert_eq!(
                 flush_result.entries_flushed.unwrap_or(0),
                 vectors_per_batch as u64,
-                "Should flush all vectors in batch {}", batch_idx
+                "Should flush all vectors in batch {}",
+                batch_idx
             );
 
             info!(
@@ -254,7 +263,10 @@ mod tests {
             .filter(|f| f.name.ends_with(".arrow"))
             .collect();
 
-        info!("Found {} Arrow files before compaction:", arrow_files_before.len());
+        info!(
+            "Found {} Arrow files before compaction:",
+            arrow_files_before.len()
+        );
         for file in &arrow_files_before {
             info!("  - {} ({} bytes)", file.name, file.metadata.size);
             // Store file paths for compaction input
@@ -272,12 +284,18 @@ mod tests {
             .iter()
             .filter(|f| f.name.ends_with(".sst") && !f.name.ends_with(".arrow"))
             .collect();
-        info!("Found {} SST files before compaction (should be 0 for ArrowBlock format)", sst_files_before.len());
+        info!(
+            "Found {} SST files before compaction (should be 0 for ArrowBlock format)",
+            sst_files_before.len()
+        );
 
         // =========================================================================
         // Phase 3: Trigger compaction
         // =========================================================================
-        info!("Phase 3: Triggering compaction on {} Arrow files", flush_file_paths.len());
+        info!(
+            "Phase 3: Triggering compaction on {} Arrow files",
+            flush_file_paths.len()
+        );
 
         // Create compaction manager with ArrowBlock configuration
         let compaction_manager = Compaction::new(sst_config.clone()).await?;
@@ -297,7 +315,11 @@ mod tests {
             compression_config: None,
         };
 
-        info!("Compaction task: {} input files -> {:?}", input_files.len(), output_file);
+        info!(
+            "Compaction task: {} input files -> {:?}",
+            input_files.len(),
+            output_file
+        );
 
         // Perform compaction
         let compaction_stats = compaction_manager
@@ -328,7 +350,10 @@ mod tests {
             .filter(|f| f.name.ends_with(".arrow"))
             .collect();
 
-        info!("Found {} Arrow files after compaction:", arrow_files_after.len());
+        info!(
+            "Found {} Arrow files after compaction:",
+            arrow_files_after.len()
+        );
         for file in &arrow_files_after {
             info!("  - {} ({} bytes)", file.name, file.metadata.size);
         }
@@ -338,15 +363,16 @@ mod tests {
         // Check for any new arrow files that weren't in the original set
         let new_arrow_files: Vec<_> = arrow_files_after
             .iter()
-            .filter(|f| {
-                !arrow_files_before.iter().any(|bf| bf.name == f.name)
-            })
+            .filter(|f| !arrow_files_before.iter().any(|bf| bf.name == f.name))
             .collect();
 
         // After compaction, either:
         // 1. New arrow files should be created (compacted output)
         // 2. Or if input files were deleted and replaced, we should still have arrow files
-        info!("New Arrow files after compaction: {}", new_arrow_files.len());
+        info!(
+            "New Arrow files after compaction: {}",
+            new_arrow_files.len()
+        );
 
         // Verify no .sst files were created during compaction
         let sst_files_after: Vec<_> = files_after
@@ -470,12 +496,18 @@ mod tests {
                             info!("  Contains {} rows", total_rows);
                         }
                         Err(e) => {
-                            info!("Could not read {} as Arrow IPC (may have been deleted during compaction): {}", arrow_file.name, e);
+                            info!(
+                                "Could not read {} as Arrow IPC (may have been deleted during compaction): {}",
+                                arrow_file.name, e
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    info!("File {} not accessible (may have been deleted during compaction): {}", arrow_file.name, e);
+                    info!(
+                        "File {} not accessible (may have been deleted during compaction): {}",
+                        arrow_file.name, e
+                    );
                 }
             }
         }
@@ -531,8 +563,14 @@ mod tests {
         info!("Summary:");
         info!("  - {} batches flushed", num_batches);
         info!("  - {} total vectors", all_vectors.len());
-        info!("  - {} .arrow files created before compaction", arrow_files_before.len());
-        info!("  - {} .arrow files after compaction", arrow_files_after.len());
+        info!(
+            "  - {} .arrow files created before compaction",
+            arrow_files_before.len()
+        );
+        info!(
+            "  - {} .arrow files after compaction",
+            arrow_files_after.len()
+        );
         info!("  - All searches returned correct results after compaction");
         info!("  - Arrow IPC format verified");
 
@@ -648,7 +686,10 @@ mod tests {
             .filter(|f| f.name.ends_with(".arrow"))
             .collect();
 
-        info!("Created {} arrow files before compaction", arrow_files.len());
+        info!(
+            "Created {} arrow files before compaction",
+            arrow_files.len()
+        );
 
         // Trigger compaction
         let compaction_manager = Compaction::new(sst_config.clone()).await?;
@@ -714,7 +755,10 @@ mod tests {
             );
         }
 
-        info!("Metadata preservation test passed - all {} vectors found with correct IDs", vectors.len());
+        info!(
+            "Metadata preservation test passed - all {} vectors found with correct IDs",
+            vectors.len()
+        );
 
         Ok(())
     }
@@ -826,7 +870,10 @@ mod tests {
             .filter(|f| f.name.ends_with(".arrow"))
             .collect();
 
-        info!("Created {} arrow files before compaction", arrow_files.len());
+        info!(
+            "Created {} arrow files before compaction",
+            arrow_files.len()
+        );
 
         // Trigger compaction
         let compaction_manager = Compaction::new(sst_config.clone()).await?;

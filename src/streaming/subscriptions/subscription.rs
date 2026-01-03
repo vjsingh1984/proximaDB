@@ -241,7 +241,9 @@ impl Subscription {
             result_count: self.current_results.len(),
             updates_sent: self.updates_sent,
             age_ms: self.created_at.elapsed().as_millis() as u64,
-            last_update_ms: self.last_update_sent.map(|t| t.elapsed().as_millis() as u64),
+            last_update_ms: self
+                .last_update_sent
+                .map(|t| t.elapsed().as_millis() as u64),
         }
     }
 
@@ -348,7 +350,8 @@ impl PartialOrd for ScoredResult {
 impl Ord for ScoredResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Sort by score descending, then by vector_id for stability
-        other.score
+        other
+            .score
             .partial_cmp(&self.score)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| self.vector_id.cmp(&other.vector_id))

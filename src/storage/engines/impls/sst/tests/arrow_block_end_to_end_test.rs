@@ -124,8 +124,9 @@ mod tests {
         let mut vectors = Vec::new();
 
         for i in 0..num_vectors {
-            let values: Vec<f32> =
-                (0..dimension).map(|j| (i * dimension + j) as f32 / 1000.0).collect();
+            let values: Vec<f32> = (0..dimension)
+                .map(|j| (i * dimension + j) as f32 / 1000.0)
+                .collect();
 
             let mut metadata = HashMap::new();
             metadata.insert(
@@ -228,7 +229,12 @@ mod tests {
 
         // Read and batch lookup
         let reader = ArrowBlockReader::open(&arrow_path)?;
-        let ids = vec!["batch_vec_10", "batch_vec_50", "batch_vec_99", "nonexistent"];
+        let ids = vec![
+            "batch_vec_10",
+            "batch_vec_50",
+            "batch_vec_99",
+            "nonexistent",
+        ];
         let results = reader.lookup_batch(&ids)?;
 
         // Should find 3 out of 4 IDs

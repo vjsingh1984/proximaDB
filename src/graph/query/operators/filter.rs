@@ -151,9 +151,18 @@ impl FilterOperator {
     /// Helper to evaluate nested expressions (recursively)
     fn evaluate_expression(&self, expr: &FilterExpression, tuple: &ResultTuple) -> Result<bool> {
         match expr {
-            FilterExpression::Property { variable, property, operator, value } => {
-                let query_value = tuple.get(variable).ok_or_else(|| anyhow::anyhow!("Variable not found"))?;
-                let node = query_value.as_node().ok_or_else(|| anyhow::anyhow!("Not a node"))?;
+            FilterExpression::Property {
+                variable,
+                property,
+                operator,
+                value,
+            } => {
+                let query_value = tuple
+                    .get(variable)
+                    .ok_or_else(|| anyhow::anyhow!("Variable not found"))?;
+                let node = query_value
+                    .as_node()
+                    .ok_or_else(|| anyhow::anyhow!("Not a node"))?;
                 let prop_value = node.properties.get(property);
 
                 if let Some(actual) = prop_value {
@@ -263,7 +272,7 @@ mod tests {
     use super::*;
     use crate::graph::engines::GraphEngine;
     use crate::graph::query::operators::scan::NodeScanOperator;
-    use crate::proto::proximadb_v1::{property_value::Value, Node, PropertyValue};
+    use crate::proto::proximadb_v1::{Node, PropertyValue, property_value::Value};
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -282,7 +291,10 @@ mod tests {
 
     #[async_trait]
     impl GraphEngine for MockEngine {
-        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, crate::core::error::ProximaDBError> {
+        fn get_nodes_by_label(
+            &self,
+            _label: &str,
+        ) -> Result<Vec<Arc<Node>>, crate::core::error::ProximaDBError> {
             Ok(self.nodes.clone())
         }
 
@@ -291,19 +303,87 @@ mod tests {
         }
 
         // Stub implementations
-        async fn insert_node(&self, node: Node) -> Result<Arc<Node>, crate::core::error::ProximaDBError> { Ok(Arc::new(node)) }
-        fn get_node(&self, _id: &String) -> Result<Option<Arc<Node>>, crate::core::error::ProximaDBError> { Ok(None) }
-        async fn update_node(&self, node: Node) -> Result<Arc<Node>, crate::core::error::ProximaDBError> { Ok(Arc::new(node)) }
-        async fn delete_node(&self, _id: &String) -> Result<Option<Arc<Node>>, crate::core::error::ProximaDBError> { Ok(None) }
-        async fn insert_edge(&self, edge: crate::proto::proximadb_v1::Edge) -> Result<Arc<crate::proto::proximadb_v1::Edge>, crate::core::error::ProximaDBError> { Ok(Arc::new(edge)) }
-        fn get_edge(&self, _id: &String) -> Result<Option<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError> { Ok(None) }
-        async fn update_edge(&self, edge: crate::proto::proximadb_v1::Edge) -> Result<Arc<crate::proto::proximadb_v1::Edge>, crate::core::error::ProximaDBError> { Ok(Arc::new(edge)) }
-        async fn delete_edge(&self, _id: &String) -> Result<Option<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError> { Ok(None) }
-        fn get_neighbors(&self, _node_id: &String, _edge_type: Option<&str>) -> Result<Vec<Arc<Node>>, crate::core::error::ProximaDBError> { Ok(vec![]) }
-        fn get_outgoing_edges(&self, _node_id: &String, _edge_type: Option<&str>) -> Result<Vec<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError> { Ok(vec![]) }
-        fn get_incoming_edges(&self, _node_id: &String, _edge_type: Option<&str>) -> Result<Vec<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError> { Ok(vec![]) }
-        fn node_count(&self) -> Result<usize, crate::core::error::ProximaDBError> { Ok(self.nodes.len()) }
-        fn edge_count(&self) -> Result<usize, crate::core::error::ProximaDBError> { Ok(0) }
+        async fn insert_node(
+            &self,
+            node: Node,
+        ) -> Result<Arc<Node>, crate::core::error::ProximaDBError> {
+            Ok(Arc::new(node))
+        }
+        fn get_node(
+            &self,
+            _id: &String,
+        ) -> Result<Option<Arc<Node>>, crate::core::error::ProximaDBError> {
+            Ok(None)
+        }
+        async fn update_node(
+            &self,
+            node: Node,
+        ) -> Result<Arc<Node>, crate::core::error::ProximaDBError> {
+            Ok(Arc::new(node))
+        }
+        async fn delete_node(
+            &self,
+            _id: &String,
+        ) -> Result<Option<Arc<Node>>, crate::core::error::ProximaDBError> {
+            Ok(None)
+        }
+        async fn insert_edge(
+            &self,
+            edge: crate::proto::proximadb_v1::Edge,
+        ) -> Result<Arc<crate::proto::proximadb_v1::Edge>, crate::core::error::ProximaDBError>
+        {
+            Ok(Arc::new(edge))
+        }
+        fn get_edge(
+            &self,
+            _id: &String,
+        ) -> Result<Option<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError>
+        {
+            Ok(None)
+        }
+        async fn update_edge(
+            &self,
+            edge: crate::proto::proximadb_v1::Edge,
+        ) -> Result<Arc<crate::proto::proximadb_v1::Edge>, crate::core::error::ProximaDBError>
+        {
+            Ok(Arc::new(edge))
+        }
+        async fn delete_edge(
+            &self,
+            _id: &String,
+        ) -> Result<Option<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError>
+        {
+            Ok(None)
+        }
+        fn get_neighbors(
+            &self,
+            _node_id: &String,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Node>>, crate::core::error::ProximaDBError> {
+            Ok(vec![])
+        }
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &String,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError>
+        {
+            Ok(vec![])
+        }
+        fn get_incoming_edges(
+            &self,
+            _node_id: &String,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<crate::proto::proximadb_v1::Edge>>, crate::core::error::ProximaDBError>
+        {
+            Ok(vec![])
+        }
+        fn node_count(&self) -> Result<usize, crate::core::error::ProximaDBError> {
+            Ok(self.nodes.len())
+        }
+        fn edge_count(&self) -> Result<usize, crate::core::error::ProximaDBError> {
+            Ok(0)
+        }
     }
 
     fn create_test_node(id: &str, age: i64) -> Node {

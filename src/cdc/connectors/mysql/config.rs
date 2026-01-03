@@ -16,8 +16,8 @@
 
 //! MySQL connector configuration
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// MySQL connector configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

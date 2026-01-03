@@ -197,8 +197,9 @@ impl EmbeddingPipeline {
                         .filter_map(|v| v.as_str())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    serde_json::Value::Object(obj) => serde_json::to_string(obj)
-                        .unwrap_or_default(),
+                    serde_json::Value::Object(obj) => {
+                        serde_json::to_string(obj).unwrap_or_default()
+                    }
                     serde_json::Value::Null => continue,
                 };
                 texts.push(text);
@@ -225,9 +226,9 @@ impl EmbeddingPipeline {
             EmbeddingProvider::VertexAI => self.mock_embedding(text, 768),
             EmbeddingProvider::Bedrock => self.mock_embedding(text, 1536),
             EmbeddingProvider::AzureOpenAI => self.mock_embedding(text, 1536),
-            EmbeddingProvider::Custom => {
-                Err(CdcError::Embedding("Custom provider not configured".to_string()))
-            }
+            EmbeddingProvider::Custom => Err(CdcError::Embedding(
+                "Custom provider not configured".to_string(),
+            )),
         }
     }
 
@@ -453,10 +454,8 @@ mod tests {
 
     #[test]
     fn test_multiple_fields() {
-        let pipeline = EmbeddingPipeline::local(vec![
-            "title".to_string(),
-            "description".to_string(),
-        ]);
+        let pipeline =
+            EmbeddingPipeline::local(vec!["title".to_string(), "description".to_string()]);
         let event = create_test_event();
 
         let result = pipeline.process(event).unwrap();
@@ -465,10 +464,8 @@ mod tests {
 
     #[test]
     fn test_text_extraction() {
-        let pipeline = EmbeddingPipeline::local(vec![
-            "title".to_string(),
-            "description".to_string(),
-        ]);
+        let pipeline =
+            EmbeddingPipeline::local(vec!["title".to_string(), "description".to_string()]);
 
         let mut metadata = HashMap::new();
         metadata.insert("title".to_string(), serde_json::json!("Hello"));
@@ -508,7 +505,11 @@ mod tests {
     fn test_process_batch() {
         let pipeline = EmbeddingPipeline::local(vec!["title".to_string()]);
 
-        let events = vec![create_test_event(), create_test_event(), create_test_event()];
+        let events = vec![
+            create_test_event(),
+            create_test_event(),
+            create_test_event(),
+        ];
 
         let results = pipeline.process_batch(events).unwrap();
         assert_eq!(results.len(), 3);
@@ -559,10 +560,8 @@ mod tests {
 
     #[test]
     fn test_openai_pipeline() {
-        let pipeline = EmbeddingPipeline::openai(
-            "text-embedding-3-small",
-            vec!["title".to_string()],
-        );
+        let pipeline =
+            EmbeddingPipeline::openai("text-embedding-3-small", vec!["title".to_string()]);
 
         assert_eq!(pipeline.provider(), EmbeddingProvider::OpenAI);
 

@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tracing::{debug, trace};
 
-use super::types::{CatalogIndex, CatalogNamespace, CatalogTableSchema, CatalogTableStatistics};
 use super::TableIdentifier;
+use super::types::{CatalogIndex, CatalogNamespace, CatalogTableSchema, CatalogTableStatistics};
 
 /// Cache entry with TTL tracking
 #[derive(Debug, Clone)]
@@ -79,7 +79,8 @@ pub struct CacheStats {
 impl CacheStats {
     pub fn hit_rate(&self) -> f64 {
         let total_hits = self.namespace_hits + self.table_hits + self.index_hits + self.stats_hits;
-        let total_misses = self.namespace_misses + self.table_misses + self.index_misses + self.stats_misses;
+        let total_misses =
+            self.namespace_misses + self.table_misses + self.index_misses + self.stats_misses;
         let total = total_hits + total_misses;
         if total == 0 {
             0.0
@@ -156,7 +157,11 @@ impl CatalogCache {
     // ========================
 
     /// Get a table schema from cache
-    pub fn get_table(&self, catalog: &str, identifier: &TableIdentifier) -> Option<CatalogTableSchema> {
+    pub fn get_table(
+        &self,
+        catalog: &str,
+        identifier: &TableIdentifier,
+    ) -> Option<CatalogTableSchema> {
         let key = format_table_key(catalog, identifier);
         let mut cache = self.tables.write();
 
@@ -178,7 +183,12 @@ impl CatalogCache {
     }
 
     /// Put a table schema in cache
-    pub fn put_table(&self, catalog: &str, identifier: &TableIdentifier, schema: CatalogTableSchema) {
+    pub fn put_table(
+        &self,
+        catalog: &str,
+        identifier: &TableIdentifier,
+        schema: CatalogTableSchema,
+    ) {
         let key = format_table_key(catalog, identifier);
         let mut cache = self.tables.write();
 
@@ -230,7 +240,11 @@ impl CatalogCache {
     // ========================
 
     /// Get indexes from cache
-    pub fn get_indexes(&self, catalog: &str, identifier: &TableIdentifier) -> Option<Vec<CatalogIndex>> {
+    pub fn get_indexes(
+        &self,
+        catalog: &str,
+        identifier: &TableIdentifier,
+    ) -> Option<Vec<CatalogIndex>> {
         let key = format_table_key(catalog, identifier);
         let mut cache = self.indexes.write();
 
@@ -249,7 +263,12 @@ impl CatalogCache {
     }
 
     /// Put indexes in cache
-    pub fn put_indexes(&self, catalog: &str, identifier: &TableIdentifier, indexes: Vec<CatalogIndex>) {
+    pub fn put_indexes(
+        &self,
+        catalog: &str,
+        identifier: &TableIdentifier,
+        indexes: Vec<CatalogIndex>,
+    ) {
         let key = format_table_key(catalog, identifier);
         let mut cache = self.indexes.write();
 
@@ -262,7 +281,11 @@ impl CatalogCache {
     // ========================
 
     /// Get statistics from cache
-    pub fn get_statistics(&self, catalog: &str, identifier: &TableIdentifier) -> Option<CatalogTableStatistics> {
+    pub fn get_statistics(
+        &self,
+        catalog: &str,
+        identifier: &TableIdentifier,
+    ) -> Option<CatalogTableStatistics> {
         let key = format_table_key(catalog, identifier);
         let mut cache = self.statistics.write();
 
@@ -281,7 +304,12 @@ impl CatalogCache {
     }
 
     /// Put statistics in cache
-    pub fn put_statistics(&self, catalog: &str, identifier: &TableIdentifier, stats: CatalogTableStatistics) {
+    pub fn put_statistics(
+        &self,
+        catalog: &str,
+        identifier: &TableIdentifier,
+        stats: CatalogTableStatistics,
+    ) {
         let key = format_table_key(catalog, identifier);
         let mut cache = self.statistics.write();
 
@@ -442,7 +470,9 @@ mod tests {
         cache.put_table("default", &identifier, CatalogTableSchema::default());
         assert!(cache.get_table("default", &identifier).is_some());
 
-        cache.invalidate_table_in_catalog("default", &identifier).await;
+        cache
+            .invalidate_table_in_catalog("default", &identifier)
+            .await;
         assert!(cache.get_table("default", &identifier).is_none());
     }
 

@@ -104,35 +104,17 @@ impl Vote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GraphOperation {
     /// Insert a node
-    InsertNode {
-        shard_id: ShardId,
-        node: Node,
-    },
+    InsertNode { shard_id: ShardId, node: Node },
     /// Update a node's properties
-    UpdateNode {
-        shard_id: ShardId,
-        node: Node,
-    },
+    UpdateNode { shard_id: ShardId, node: Node },
     /// Delete a node
-    DeleteNode {
-        shard_id: ShardId,
-        node_id: String,
-    },
+    DeleteNode { shard_id: ShardId, node_id: String },
     /// Insert an edge
-    InsertEdge {
-        shard_id: ShardId,
-        edge: Edge,
-    },
+    InsertEdge { shard_id: ShardId, edge: Edge },
     /// Update an edge's properties
-    UpdateEdge {
-        shard_id: ShardId,
-        edge: Edge,
-    },
+    UpdateEdge { shard_id: ShardId, edge: Edge },
     /// Delete an edge
-    DeleteEdge {
-        shard_id: ShardId,
-        edge_id: String,
-    },
+    DeleteEdge { shard_id: ShardId, edge_id: String },
 }
 
 impl GraphOperation {
@@ -374,10 +356,7 @@ pub struct TwoPhaseCommitCoordinator {
 
 impl TwoPhaseCommitCoordinator {
     /// Create a new 2PC coordinator
-    pub fn new(
-        shards: HashMap<ShardId, Arc<dyn GraphEngine>>,
-        default_timeout: Duration,
-    ) -> Self {
+    pub fn new(shards: HashMap<ShardId, Arc<dyn GraphEngine>>, default_timeout: Duration) -> Self {
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             shards: Arc::new(shards),
@@ -394,9 +373,9 @@ impl TwoPhaseCommitCoordinator {
         // Clone participants before releasing lock
         let participants = {
             let transactions = self.transactions.read().await;
-            let tx = transactions
-                .get(tx_id)
-                .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
+            let tx = transactions.get(tx_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
+            })?;
             tx.participants.clone()
         };
 
@@ -427,9 +406,9 @@ impl TwoPhaseCommitCoordinator {
         // Clone operations before releasing lock
         let operations = {
             let transactions = self.transactions.read().await;
-            let tx = transactions
-                .get(tx_id)
-                .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
+            let tx = transactions.get(tx_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
+            })?;
             tx.operations.clone()
         };
 
@@ -443,10 +422,9 @@ impl TwoPhaseCommitCoordinator {
 
         // Apply operations to each shard
         for op in &operations {
-            let shard = self
-                .shards
-                .get(op.shard_id())
-                .ok_or_else(|| ProximaDBError::Internal(format!("Shard {} not found", op.shard_id())))?;
+            let shard = self.shards.get(op.shard_id()).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Shard {} not found", op.shard_id()))
+            })?;
 
             // Apply operation to shard
             match op {
@@ -609,8 +587,7 @@ mod tests {
         let mut shards = HashMap::new();
         shards.insert("shard1".to_string(), orion as Arc<dyn GraphEngine>);
 
-        let coordinator =
-            TwoPhaseCommitCoordinator::new(shards, Duration::from_secs(30));
+        let coordinator = TwoPhaseCommitCoordinator::new(shards, Duration::from_secs(30));
 
         let tx_id = coordinator
             .begin_transaction(vec!["shard1".to_string()])
@@ -653,8 +630,7 @@ mod tests {
         let mut shards = HashMap::new();
         shards.insert("shard1".to_string(), orion as Arc<dyn GraphEngine>);
 
-        let coordinator =
-            TwoPhaseCommitCoordinator::new(shards, Duration::from_secs(30));
+        let coordinator = TwoPhaseCommitCoordinator::new(shards, Duration::from_secs(30));
 
         let tx_id = coordinator
             .begin_transaction(vec!["shard1".to_string()])
@@ -674,7 +650,10 @@ mod tests {
             node,
         };
 
-        coordinator.execute_operation(tx_id.clone(), op).await.unwrap();
+        coordinator
+            .execute_operation(tx_id.clone(), op)
+            .await
+            .unwrap();
 
         // Commit transaction
         coordinator.commit(tx_id.clone()).await.unwrap();

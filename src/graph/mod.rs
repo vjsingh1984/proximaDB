@@ -68,7 +68,9 @@ pub mod service_algorithms;
 pub use engines::orion::OrionGraphEngine;
 pub use engines::pulsar::PulsarGraphEngine;
 pub use engines::quasar::QuasarGraphEngine;
-pub use engines::{EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType};
+pub use engines::{
+    EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType,
+};
 pub use hybrid::HybridQueryEngine;
 pub use monitoring::GraphMonitor;
 pub use query::{PatternMatcher, QueryPlanner};
@@ -78,8 +80,8 @@ pub use service::GraphOperationsService as GraphService;
 
 // Algorithm types for high-level API
 pub use service_algorithms::{
-    CentralityAlgorithm, CentralityConfig, CentralityResult, CommunityAlgorithm,
-    CommunityConfig, CommunityResult,
+    CentralityAlgorithm, CentralityConfig, CentralityResult, CommunityAlgorithm, CommunityConfig,
+    CommunityResult,
 };
 
 // Canonical types for REST/gRPC parity
@@ -291,9 +293,7 @@ impl GraphMemoryPool {
                     .entry(key.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
                 let mut map = map_lock.write().unwrap();
-                map.entry(num)
-                    .or_default()
-                    .push(node.id.clone());
+                map.entry(num).or_default().push(node.id.clone());
             }
         }
     }
@@ -344,9 +344,7 @@ impl GraphMemoryPool {
                     .entry(key.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
                 let mut map = map_lock.write().unwrap();
-                map.entry(num)
-                    .or_default()
-                    .push(edge.id.clone());
+                map.entry(num).or_default().push(edge.id.clone());
             }
         }
 

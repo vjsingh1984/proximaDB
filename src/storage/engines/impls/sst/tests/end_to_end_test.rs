@@ -501,7 +501,10 @@ mod tests {
         let fs = filesystem.get_filesystem(&format!("file://{}", data_path))?;
         let files = fs.list(&format!("file://{}", data_path)).await?;
 
-        let arrow_files: Vec<_> = files.iter().filter(|f| f.name.ends_with(".arrow")).collect();
+        let arrow_files: Vec<_> = files
+            .iter()
+            .filter(|f| f.name.ends_with(".arrow"))
+            .collect();
 
         assert!(
             !arrow_files.is_empty(),
@@ -566,7 +569,10 @@ mod tests {
         let arrow_reader = arrow_ipc::reader::FileReader::try_new(file, None)?;
 
         let schema = arrow_reader.schema();
-        info!("📊 Arrow schema verified with {} fields:", schema.fields().len());
+        info!(
+            "📊 Arrow schema verified with {} fields:",
+            schema.fields().len()
+        );
         for field in schema.fields() {
             info!("  - {}: {:?}", field.name(), field.data_type());
         }

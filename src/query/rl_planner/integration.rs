@@ -8,10 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
-use super::{
-    ExecutionAction, ExecutionLog, PlannerState,
-    RLPlanner, RLPlannerConfig, StageLog,
-};
+use super::{ExecutionAction, ExecutionLog, PlannerState, RLPlanner, RLPlannerConfig, StageLog};
 use crate::query::unified_query_optimizer::{
     ExecutionStep, Index, SearchExecutionMethod, UnifiedExecutionPlan, UnifiedQueryContext,
 };
@@ -62,12 +59,7 @@ impl RLPlannerIntegration {
                     .map(|c| c.dimension)
                     .unwrap_or(128),
             )
-            .top_k(
-                context
-                    .search_params
-                    .and_then(|p| p.top_k)
-                    .unwrap_or(10) as u32,
-            )
+            .top_k(context.search_params.and_then(|p| p.top_k).unwrap_or(10) as u32)
             .collection_size(context.total_vectors as u64)
             .storage_engine(storage_engine)
             .available_indexes(available_indexes)
@@ -211,11 +203,7 @@ impl RLPlannerIntegration {
     }
 
     /// Convert RL action to execution plan modifications
-    pub fn apply_action_to_plan(
-        &self,
-        action: &ExecutionAction,
-        plan: &mut UnifiedExecutionPlan,
-    ) {
+    pub fn apply_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
             match step {
@@ -299,7 +287,11 @@ impl RLPlannerIntegration {
 
         debug!(
             "🎯 RL feedback: latency={:.1}ms, recall={:.3}, throughput={:.1}qps, reward={:.3}, action={}",
-            latency_ms, recall, throughput_qps, reward, action.describe()
+            latency_ms,
+            recall,
+            throughput_qps,
+            reward,
+            action.describe()
         );
     }
 
@@ -328,9 +320,7 @@ impl RLPlannerIntegration {
     }
 
     /// Get action statistics for monitoring
-    pub async fn get_action_stats(
-        &self,
-    ) -> std::collections::HashMap<String, (f64, u64)> {
+    pub async fn get_action_stats(&self) -> std::collections::HashMap<String, (f64, u64)> {
         let planner = self.planner.read().await;
         planner.get_action_stats().await
     }
@@ -403,7 +393,8 @@ impl Default for RLPlannerIntegration {
 }
 
 /// Global RL planner integration instance
-static RL_PLANNER: once_cell::sync::OnceCell<RLPlannerIntegration> = once_cell::sync::OnceCell::new();
+static RL_PLANNER: once_cell::sync::OnceCell<RLPlannerIntegration> =
+    once_cell::sync::OnceCell::new();
 
 /// Initialize global RL planner
 pub fn init_rl_planner(config: RLPlannerConfig) {

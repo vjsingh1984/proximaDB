@@ -117,8 +117,7 @@ impl IoCostEstimate {
     pub fn new(io_operations: usize, bytes_to_read: u64) -> Self {
         // Estimate latency: base latency + per-byte latency
         // Base: 100us per operation, Per-byte: 1us per 10KB
-        let estimated_latency_us =
-            (io_operations as u64 * 100) + (bytes_to_read / 10_240);
+        let estimated_latency_us = (io_operations as u64 * 100) + (bytes_to_read / 10_240);
 
         Self {
             io_operations,

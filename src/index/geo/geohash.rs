@@ -4,7 +4,7 @@
 // geographic coordinates into a short string. Adjacent geohashes
 // share common prefixes, enabling efficient range queries.
 
-use super::types::{GeoPoint, GeoBoundingBox};
+use super::types::{GeoBoundingBox, GeoPoint};
 
 /// Base32 alphabet for geohash encoding
 const BASE32: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
@@ -178,14 +178,14 @@ pub fn geohash_neighbors(hash: &str) -> Vec<String> {
 
     // Calculate neighbor centers
     let offsets = [
-        (0.0, height),      // North
-        (width, height),    // Northeast
-        (width, 0.0),       // East
-        (width, -height),   // Southeast
-        (0.0, -height),     // South
-        (-width, -height),  // Southwest
-        (-width, 0.0),      // West
-        (-width, height),   // Northwest
+        (0.0, height),     // North
+        (width, height),   // Northeast
+        (width, 0.0),      // East
+        (width, -height),  // Southeast
+        (0.0, -height),    // South
+        (-width, -height), // Southwest
+        (-width, 0.0),     // West
+        (-width, height),  // Northwest
     ];
 
     offsets
@@ -334,10 +334,7 @@ mod tests {
 
     #[test]
     fn test_bbox_geohashes() {
-        let bbox = GeoBoundingBox::new(
-            GeoPoint::new(37.7, -122.5),
-            GeoPoint::new(37.8, -122.4),
-        );
+        let bbox = GeoBoundingBox::new(GeoPoint::new(37.7, -122.5), GeoPoint::new(37.8, -122.4));
 
         let hashes = geohashes_in_bbox(&bbox, 5);
         assert!(!hashes.is_empty());
@@ -351,11 +348,11 @@ mod tests {
 
     #[test]
     fn test_precision_for_area() {
-        assert_eq!(precision_for_area(100.0), 4);   // 100km -> precision 4 (~39km cells)
-        assert_eq!(precision_for_area(5.0), 5);    // 5km >= 4.9km -> precision 5
-        assert_eq!(precision_for_area(2.0), 6);    // 2km (between 1.2 and 4.9) -> precision 6
-        assert_eq!(precision_for_area(1.0), 7);    // 1km < 1.2km -> precision 7 (~153m cells)
-        assert_eq!(precision_for_area(0.1), 8);    // 100m -> precision 8 (~38m cells)
+        assert_eq!(precision_for_area(100.0), 4); // 100km -> precision 4 (~39km cells)
+        assert_eq!(precision_for_area(5.0), 5); // 5km >= 4.9km -> precision 5
+        assert_eq!(precision_for_area(2.0), 6); // 2km (between 1.2 and 4.9) -> precision 6
+        assert_eq!(precision_for_area(1.0), 7); // 1km < 1.2km -> precision 7 (~153m cells)
+        assert_eq!(precision_for_area(0.1), 8); // 100m -> precision 8 (~38m cells)
     }
 
     #[test]

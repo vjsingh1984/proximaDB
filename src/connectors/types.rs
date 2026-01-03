@@ -94,7 +94,11 @@ impl TableInfo {
 
     /// Get column names.
     pub fn column_names(&self) -> Vec<&str> {
-        self.schema.fields().iter().map(|f| f.name().as_str()).collect()
+        self.schema
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str())
+            .collect()
     }
 
     /// Check if a column exists.
@@ -290,11 +294,7 @@ impl ColumnStatistics {
     }
 
     /// Set min/max values.
-    pub fn with_min_max(
-        mut self,
-        min: impl Into<String>,
-        max: impl Into<String>,
-    ) -> Self {
+    pub fn with_min_max(mut self, min: impl Into<String>, max: impl Into<String>) -> Self {
         self.min_value = Some(min.into());
         self.max_value = Some(max.into());
         self
@@ -353,7 +353,8 @@ impl ColumnStatistics {
         // Take max of distinct counts
         if let Some(other_distinct) = other.distinct_count {
             self.distinct_count = Some(
-                self.distinct_count.map_or(other_distinct, |d| d.max(other_distinct))
+                self.distinct_count
+                    .map_or(other_distinct, |d| d.max(other_distinct)),
             );
         }
 
@@ -712,7 +713,13 @@ mod tests {
     fn test_histogram() {
         // Use zero-padded strings for proper string comparison
         let histogram = Histogram::equi_width(
-            vec!["000".to_string(), "025".to_string(), "050".to_string(), "075".to_string(), "100".to_string()],
+            vec![
+                "000".to_string(),
+                "025".to_string(),
+                "050".to_string(),
+                "075".to_string(),
+                "100".to_string(),
+            ],
             vec![100, 200, 300, 400],
         );
 
@@ -727,13 +734,12 @@ mod tests {
 
     #[test]
     fn test_statistics_merge() {
-        let mut stats1 = TableStatistics::new(1000, 10000)
-            .with_column_stats(
-                "id",
-                ColumnStatistics::new()
-                    .with_distinct_count(1000)
-                    .with_min_max("0001", "5000"),
-            );
+        let mut stats1 = TableStatistics::new(1000, 10000).with_column_stats(
+            "id",
+            ColumnStatistics::new()
+                .with_distinct_count(1000)
+                .with_min_max("0001", "5000"),
+        );
 
         let stats2 = TableStatistics::new(1000, 10000)
             .with_column_stats(

@@ -511,7 +511,10 @@ impl OrionGraphEngine {
             persistence.write_edge_operation(edge.clone()).await?;
             tracing::debug!("write_edge_operation completed successfully");
         } else {
-            tracing::warn!("Persistence is None - WAL writes disabled for edge {}", edge.id);
+            tracing::warn!(
+                "Persistence is None - WAL writes disabled for edge {}",
+                edge.id
+            );
         }
 
         let edge_arc = self.memory_pool.insert_edge(edge.clone());
@@ -549,7 +552,10 @@ impl GraphEngine for OrionGraphEngine {
             persistence.write_node_operation(node.clone()).await?;
             tracing::debug!("write_node_operation completed successfully");
         } else {
-            tracing::warn!("Persistence is None - WAL writes disabled for node {}", node.id);
+            tracing::warn!(
+                "Persistence is None - WAL writes disabled for node {}",
+                node.id
+            );
         }
 
         // Insert into memory pool
@@ -580,10 +586,15 @@ impl GraphEngine for OrionGraphEngine {
         // This ensures durability - method only returns after WAL write completes
         if let Some(persistence) = &self.persistence {
             tracing::debug!("Persistence is enabled, calling write_update_node_operation");
-            persistence.write_update_node_operation(node.clone()).await?;
+            persistence
+                .write_update_node_operation(node.clone())
+                .await?;
             tracing::debug!("write_update_node_operation completed successfully");
         } else {
-            tracing::warn!("Persistence is None - WAL writes disabled for node update {}", node_id);
+            tracing::warn!(
+                "Persistence is None - WAL writes disabled for node update {}",
+                node_id
+            );
         }
 
         // Remove old node from indexes
@@ -616,7 +627,10 @@ impl GraphEngine for OrionGraphEngine {
             persistence.write_delete_node_operation(id).await?;
             tracing::debug!("write_delete_node_operation completed successfully");
         } else {
-            tracing::warn!("Persistence is None - WAL writes disabled for node delete {}", id);
+            tracing::warn!(
+                "Persistence is None - WAL writes disabled for node delete {}",
+                id
+            );
         }
 
         let removed = self.memory_pool.remove_node(id);
@@ -700,7 +714,10 @@ impl GraphEngine for OrionGraphEngine {
             persistence.write_edge_operation(edge.clone()).await?;
             tracing::debug!("write_edge_operation completed successfully");
         } else {
-            tracing::warn!("Persistence is None - WAL writes disabled for edge {}", edge.id);
+            tracing::warn!(
+                "Persistence is None - WAL writes disabled for edge {}",
+                edge.id
+            );
         }
 
         let edge_arc = self.memory_pool.insert_edge(edge.clone());
@@ -822,15 +839,9 @@ impl GraphEngine for OrionGraphEngine {
                 .expect("CSR incoming write lock poisoned");
 
             for edge in edges.iter() {
-                let from_index = *self
-                    .node_to_index
-                    .get(&edge.from_node_id)
-                    .ok_or_else(|| {
-                        ProximaDBError::InvalidInput(format!(
-                            "Node {} not found",
-                            edge.from_node_id
-                        ))
-                    })?;
+                let from_index = *self.node_to_index.get(&edge.from_node_id).ok_or_else(|| {
+                    ProximaDBError::InvalidInput(format!("Node {} not found", edge.from_node_id))
+                })?;
                 let to_index = *self.node_to_index.get(&edge.to_node_id).ok_or_else(|| {
                     ProximaDBError::InvalidInput(format!("Node {} not found", edge.to_node_id))
                 })?;
@@ -845,8 +856,11 @@ impl GraphEngine for OrionGraphEngine {
             let temp_count = csr_out.temp_edge_count();
 
             if temp_count >= COMPACTION_THRESHOLD {
-                tracing::info!("Background compaction triggered: {} temp edges >= threshold {}",
-                    temp_count, COMPACTION_THRESHOLD);
+                tracing::info!(
+                    "Background compaction triggered: {} temp edges >= threshold {}",
+                    temp_count,
+                    COMPACTION_THRESHOLD
+                );
 
                 // Spawn background compaction task (non-blocking)
                 let csr_out_clone = Arc::clone(&self.csr_outgoing);
@@ -937,7 +951,10 @@ impl GraphEngine for OrionGraphEngine {
             persistence.write_delete_edge_operation(id).await?;
             tracing::debug!("write_delete_edge_operation completed successfully");
         } else {
-            tracing::warn!("Persistence is None - WAL writes disabled for edge delete {}", id);
+            tracing::warn!(
+                "Persistence is None - WAL writes disabled for edge delete {}",
+                id
+            );
         }
 
         let removed = self.memory_pool.remove_edge(id);

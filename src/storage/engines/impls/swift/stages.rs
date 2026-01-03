@@ -228,10 +228,7 @@ impl ProgressiveSearchStage for SwiftInt8Stage {
         mut candidates: Vec<ScoredCandidate>,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<ScoredCandidate>> {
-        debug!(
-            "SwiftInt8Stage: Processing {} candidates",
-            candidates.len()
-        );
+        debug!("SwiftInt8Stage: Processing {} candidates", candidates.len());
 
         for candidate in &mut candidates {
             if let Some(ref int8_data) = candidate.int8_data {
@@ -241,17 +238,15 @@ impl ProgressiveSearchStage for SwiftInt8Stage {
                     .map(|&x| x as f32 / self.scale_factor)
                     .collect();
 
-                let result = self.distance_compute.calculate_distance(
-                    query,
-                    &int8_as_f32,
-                    &distance_metric,
-                );
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, &int8_as_f32, &distance_metric);
                 candidate.score = result.rank_value;
             } else if let Some(ref vector) = candidate.vector {
                 // Fall back to FP32 if INT8 not available
-                let result = self
-                    .distance_compute
-                    .calculate_distance(query, vector, &distance_metric);
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, vector, &distance_metric);
                 candidate.score = result.rank_value;
             } else {
                 candidate.score = f32::MAX;
@@ -316,16 +311,13 @@ impl ProgressiveSearchStage for SwiftFp32Stage {
 
         for candidate in &mut candidates {
             if let Some(ref vector) = candidate.vector {
-                let result = self
-                    .distance_compute
-                    .calculate_distance(query, vector, &distance_metric);
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query, vector, &distance_metric);
                 candidate.score = result.rank_value;
             } else {
                 // No FP32 vector available - this shouldn't happen in final stage
-                tracing::warn!(
-                    "SwiftFP32Stage: No vector for candidate {}",
-                    candidate.id
-                );
+                tracing::warn!("SwiftFP32Stage: No vector for candidate {}", candidate.id);
                 candidate.score = f32::MAX;
             }
         }
@@ -371,16 +363,20 @@ impl SwiftCandidateLoader {
             if let Some(block) = superblock.blocks.get(block_idx) {
                 // Load records from block
                 for record in &block.records {
-                    let mut candidate = ScoredCandidate::with_vector(
-                        record.id.clone(),
-                        record.vector.clone(),
-                    );
+                    let mut candidate =
+                        ScoredCandidate::with_vector(record.id.clone(), record.vector.clone());
 
                     // Add quantized data if available
                     if let Some(ref quantized) = block.quantized_vectors {
                         // Try to find matching quantized data by record index
                         // Note: This assumes quantized_vectors aligns with records
-                        if let Some(quantized_vec) = quantized.get(block.records.iter().position(|r| r.id == record.id).unwrap_or(0)) {
+                        if let Some(quantized_vec) = quantized.get(
+                            block
+                                .records
+                                .iter()
+                                .position(|r| r.id == record.id)
+                                .unwrap_or(0),
+                        ) {
                             // Quantized vectors in SWIFT are stored as Vec<u8>
                             // Interpret based on quantization type
                             candidate.binary_data = Some(quantized_vec.clone());
@@ -480,10 +476,7 @@ impl SwiftProgressivePipelineBuilder {
     }
 
     /// Build the progressive search coordinator
-    pub fn build(
-        self,
-    ) -> crate::storage::engines::core::progressive::ProgressiveSearchCoordinator
-    {
+    pub fn build(self) -> crate::storage::engines::core::progressive::ProgressiveSearchCoordinator {
         use crate::storage::engines::core::progressive::ProgressiveSearchCoordinator;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
@@ -503,9 +496,8 @@ impl SwiftProgressivePipelineBuilder {
         }
 
         // Always include FP32 final stage
-        coordinator = coordinator.add_stage(Box::new(SwiftFp32Stage::new(
-            self.distance_compute.clone(),
-        )));
+        coordinator =
+            coordinator.add_stage(Box::new(SwiftFp32Stage::new(self.distance_compute.clone())));
 
         coordinator
     }
@@ -559,13 +551,11 @@ mod tests {
         let quantization_engine = create_test_quantization_engine();
         let distance_compute = create_test_distance_compute();
 
-        let coordinator = SwiftProgressivePipelineBuilder::new(
-            quantization_engine,
-            distance_compute,
-        )
-        .with_binary_threshold(0.25)
-        .with_int8_scale(120.0)
-        .build();
+        let coordinator =
+            SwiftProgressivePipelineBuilder::new(quantization_engine, distance_compute)
+                .with_binary_threshold(0.25)
+                .with_int8_scale(120.0)
+                .build();
 
         // Pipeline should have 3 stages: Binary, INT8, FP32
         assert_eq!(coordinator.stage_count(), 3);
@@ -576,12 +566,10 @@ mod tests {
         let quantization_engine = create_test_quantization_engine();
         let distance_compute = create_test_distance_compute();
 
-        let coordinator = SwiftProgressivePipelineBuilder::new(
-            quantization_engine,
-            distance_compute,
-        )
-        .without_binary()
-        .build();
+        let coordinator =
+            SwiftProgressivePipelineBuilder::new(quantization_engine, distance_compute)
+                .without_binary()
+                .build();
 
         // Pipeline should have 2 stages: INT8, FP32
         assert_eq!(coordinator.stage_count(), 2);
@@ -603,9 +591,8 @@ mod tests {
         assert!(stage.can_skip(&candidates));
 
         // Candidate with binary data - cannot skip
-        let candidates_with_binary = vec![
-            ScoredCandidate::new("id1".to_string()).with_binary(vec![0xFF]),
-        ];
+        let candidates_with_binary =
+            vec![ScoredCandidate::new("id1".to_string()).with_binary(vec![0xFF])];
         assert!(!stage.can_skip(&candidates_with_binary));
     }
 

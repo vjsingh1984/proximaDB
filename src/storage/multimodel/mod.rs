@@ -48,29 +48,19 @@ pub mod transaction;
 
 // Re-exports
 pub use facade::MultiModelStorageFacade;
-pub use stores::{
-    DocumentStore,
-    GraphStore,
-    ObservabilityStore,
-    RDBMSStore,
-    VectorStore,
-};
-pub use traits::{
-    MultiModelStorageEngine,
-    ModelType,
-    StoreCapabilities,
-};
 pub use htap::{
-    ReplicationCoordinator, ReplicationConfig, ReplicationStats,
-    WorkloadRouter, QueryCharacteristics, WorkloadType, RoutingDecision,
+    QueryCharacteristics, ReplicationConfig, ReplicationCoordinator, ReplicationStats,
+    RoutingDecision, WorkloadRouter, WorkloadType,
 };
 pub use observability::{
-    TimePartitioner, PartitionConfig, Partition, PartitionRange, PartitionGranularity,
-    RollupManager, RollupConfig, RollupInterval, RollupView, AggregationFunction,
-    CardinalityLimiter, CardinalityConfig, LabelStats, CheckResult, LimitAction,
+    AggregationFunction, CardinalityConfig, CardinalityLimiter, CheckResult, LabelStats,
+    LimitAction, Partition, PartitionConfig, PartitionGranularity, PartitionRange, RollupConfig,
+    RollupInterval, RollupManager, RollupView, TimePartitioner,
 };
+pub use stores::{DocumentStore, GraphStore, ObservabilityStore, RDBMSStore, VectorStore};
+pub use traits::{ModelType, MultiModelStorageEngine, StoreCapabilities};
 pub use transaction::{
-    TransactionCoordinator, Transaction, TransactionConfig, TransactionStats,
-    TwoPhaseCommitProtocol, PrepareResult, CommitResult, TransactionState,
-    IsolationLevel, IsolationManager, ReadSnapshot, WriteSet,
+    CommitResult, IsolationLevel, IsolationManager, PrepareResult, ReadSnapshot, Transaction,
+    TransactionConfig, TransactionCoordinator, TransactionState, TransactionStats,
+    TwoPhaseCommitProtocol, WriteSet,
 };

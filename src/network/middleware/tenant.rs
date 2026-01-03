@@ -42,10 +42,10 @@
 //! ```
 
 use axum::{
+    body::Body,
     http::{Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    body::Body,
 };
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -134,7 +134,7 @@ impl Default for TenantExtractorConfig {
     fn default() -> Self {
         Self {
             default_tenant: Some("default".to_string()),
-            require_tenant: false, // Allow single-tenant mode by default
+            require_tenant: false,  // Allow single-tenant mode by default
             validate_tenant: false, // Disable validation by default (enable in production)
             system_tenants: vec!["system".to_string(), "admin".to_string()],
         }
@@ -207,7 +207,10 @@ impl TenantExtractor {
     }
 
     /// Set TenantManager for validation
-    pub fn with_tenant_manager(mut self, manager: Arc<crate::storage::tenant::TenantManager>) -> Self {
+    pub fn with_tenant_manager(
+        mut self,
+        manager: Arc<crate::storage::tenant::TenantManager>,
+    ) -> Self {
         self.tenant_manager = Some(manager);
         self
     }
@@ -260,7 +263,10 @@ impl TenantExtractor {
             match manager.get_tenant(tenant_id) {
                 Ok(tenant) => {
                     // Check tenant status
-                    matches!(tenant.status, crate::storage::tenant::context::TenantStatus::Active)
+                    matches!(
+                        tenant.status,
+                        crate::storage::tenant::context::TenantStatus::Active
+                    )
                 }
                 Err(e) => {
                     // Tenant not found or lookup failed
@@ -298,7 +304,8 @@ pub async fn tenant_middleware(
                 return (
                     StatusCode::FORBIDDEN,
                     format!("Tenant '{}' is not valid or not active", tenant_id),
-                ).into_response();
+                )
+                    .into_response();
             }
 
             // Inject tenant context into request extensions

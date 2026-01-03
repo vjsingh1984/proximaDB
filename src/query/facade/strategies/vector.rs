@@ -35,12 +35,10 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
-use crate::proto::proximadb_v1::{
-    IncludeFields, SearchQuery, VectorSearchRequest,
-};
+use crate::proto::proximadb_v1::{IncludeFields, SearchQuery, VectorSearchRequest};
 use crate::query::facade::{
-    ExecutionMetrics, QueryContent, QueryContext,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType, VectorMatch,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy, QueryType, VectorMatch,
 };
 use crate::services::{CollectionService, VectorOps};
 
@@ -61,10 +59,7 @@ pub struct VectorSearchStrategy {
 
 impl VectorSearchStrategy {
     /// Create a new VectorSearchStrategy
-    pub fn new(
-        vector_ops: Arc<VectorOps>,
-        collection_service: Arc<CollectionService>,
-    ) -> Self {
+    pub fn new(vector_ops: Arc<VectorOps>, collection_service: Arc<CollectionService>) -> Self {
         Self {
             vector_ops,
             collection_service,
@@ -79,12 +74,12 @@ impl VectorSearchStrategy {
     }
 
     /// Convert facade QueryRequest to proto VectorSearchRequest
-    fn to_proto_request(
-        &self,
-        request: &QueryRequest,
-    ) -> Result<VectorSearchRequest> {
+    fn to_proto_request(&self, request: &QueryRequest) -> Result<VectorSearchRequest> {
         let (query_vector, top_k) = match &request.content {
-            QueryContent::Vector { query_vector, top_k } => (query_vector.clone(), *top_k),
+            QueryContent::Vector {
+                query_vector,
+                top_k,
+            } => (query_vector.clone(), *top_k),
             _ => return Err(anyhow!("VectorSearchStrategy requires Vector content")),
         };
 
@@ -122,10 +117,7 @@ impl VectorSearchStrategy {
         execution_time_ms: u64,
     ) -> QueryResult {
         // Extract results from the nested structure
-        let search_records = response
-            .results
-            .map(|r| r.results)
-            .unwrap_or_default();
+        let search_records = response.results.map(|r| r.results).unwrap_or_default();
 
         let matches: Vec<VectorMatch> = search_records
             .into_iter()
@@ -139,9 +131,7 @@ impl VectorSearchStrategy {
                     let map: serde_json::Map<String, serde_json::Value> = r
                         .metadata
                         .into_iter()
-                        .filter_map(|(key, value)| {
-                            sql_value_to_json(value).map(|v| (key, v))
-                        })
+                        .filter_map(|(key, value)| sql_value_to_json(value).map(|v| (key, v)))
                         .collect();
                     if map.is_empty() {
                         None
@@ -180,11 +170,9 @@ fn sql_value_to_json(value: crate::proto::proximadb_v1::SqlValue) -> Option<serd
     value.value.map(|v| match v {
         Value::StringValue(s) => serde_json::Value::String(s),
         Value::Int64Value(i) => serde_json::Value::Number(i.into()),
-        Value::NumberValue(f) => {
-            serde_json::Number::from_f64(f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
+        Value::NumberValue(f) => serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         Value::BoolValue(b) => serde_json::Value::Bool(b),
         Value::NullValue(_) => serde_json::Value::Null,
         Value::BytesValue(bytes) => {
@@ -230,9 +218,10 @@ impl QueryStrategy for VectorSearchStrategy {
         let start = Instant::now();
 
         // Get target collection for validation
-        let collection_id = request.target.as_deref().ok_or_else(|| {
-            anyhow!("VectorSearchStrategy requires a target collection")
-        })?;
+        let collection_id = request
+            .target
+            .as_deref()
+            .ok_or_else(|| anyhow!("VectorSearchStrategy requires a target collection"))?;
 
         // Verify collection exists
         let _collection = self
@@ -356,11 +345,15 @@ mod tests {
 
     #[test]
     fn test_query_request_with_target() {
-        let request = QueryRequest::vector_search(vec![0.1, 0.2, 0.3], 5)
-            .with_target("my_collection");
+        let request =
+            QueryRequest::vector_search(vec![0.1, 0.2, 0.3], 5).with_target("my_collection");
 
         assert_eq!(request.target, Some("my_collection".to_string()));
-        if let QueryContent::Vector { query_vector, top_k } = &request.content {
+        if let QueryContent::Vector {
+            query_vector,
+            top_k,
+        } = &request.content
+        {
             assert_eq!(query_vector.len(), 3);
             assert_eq!(*top_k, 5);
         } else {

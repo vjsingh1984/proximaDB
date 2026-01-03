@@ -57,16 +57,13 @@ impl ProjectOperator {
         let schema = projections
             .iter()
             .map(|spec| {
-                let name = spec
-                    .alias
-                    .clone()
-                    .unwrap_or_else(|| {
-                        if let Some(ref prop) = spec.property {
-                            format!("{}.{}", spec.source, prop)
-                        } else {
-                            spec.source.clone()
-                        }
-                    });
+                let name = spec.alias.clone().unwrap_or_else(|| {
+                    if let Some(ref prop) = spec.property {
+                        format!("{}.{}", spec.source, prop)
+                    } else {
+                        spec.source.clone()
+                    }
+                });
 
                 ColumnSpec {
                     name,
@@ -126,16 +123,13 @@ impl PhysicalOperator for ProjectOperator {
             for spec in &self.projections {
                 let value = self.extract_value(&input_tuple, spec)?;
 
-                let output_name = spec
-                    .alias
-                    .clone()
-                    .unwrap_or_else(|| {
-                        if let Some(ref prop) = spec.property {
-                            format!("{}.{}", spec.source, prop)
-                        } else {
-                            spec.source.clone()
-                        }
-                    });
+                let output_name = spec.alias.clone().unwrap_or_else(|| {
+                    if let Some(ref prop) = spec.property {
+                        format!("{}.{}", spec.source, prop)
+                    } else {
+                        spec.source.clone()
+                    }
+                });
 
                 output_tuple.set(output_name, value);
             }

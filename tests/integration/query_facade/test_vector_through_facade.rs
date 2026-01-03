@@ -27,16 +27,15 @@
 //! - Error handling for invalid requests
 //! - Metrics inclusion in responses
 
-use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 
-use proximadb::query::facade::{
-    ExecutionMetrics, FacadeConfig, QueryContext, QueryFacadeAdapter,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
-    UnifiedQueryFacade, VectorMatch,
-};
 use proximadb::proto::proximadb_v1::{SearchQuery, VectorSearchRequest};
+use proximadb::query::facade::{
+    ExecutionMetrics, FacadeConfig, QueryContext, QueryFacadeAdapter, QueryRequest, QueryResult,
+    QueryResultData, QueryStrategy, QueryType, UnifiedQueryFacade, VectorMatch,
+};
 
 // ================================================================================
 // MOCK STRATEGIES FOR TESTING
@@ -110,18 +109,15 @@ impl QueryStrategy for MockVectorSearchStrategy {
 
         // Validate request content
         let (_query_vector, top_k) = match &request.content {
-            proximadb::query::facade::QueryContent::Vector { query_vector, top_k } => {
-                (query_vector, *top_k)
-            }
+            proximadb::query::facade::QueryContent::Vector {
+                query_vector,
+                top_k,
+            } => (query_vector, *top_k),
             _ => return Err(anyhow::anyhow!("Expected vector content")),
         };
 
         // Return limited results based on top_k
-        let limited_results: Vec<VectorMatch> = self.results
-            .iter()
-            .take(top_k)
-            .cloned()
-            .collect();
+        let limited_results: Vec<VectorMatch> = self.results.iter().take(top_k).cloned().collect();
 
         Ok(QueryResult {
             data: QueryResultData::VectorResults(limited_results.clone()),
@@ -148,9 +144,7 @@ impl QueryStrategy for MockVectorSearchStrategy {
 
 /// Create a test facade with mock vector strategy
 fn create_test_facade() -> UnifiedQueryFacade {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockVectorSearchStrategy::new()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockVectorSearchStrategy::new())];
     UnifiedQueryFacade::new(strategies, FacadeConfig::default())
 }
 
@@ -162,18 +156,16 @@ fn create_test_adapter() -> QueryFacadeAdapter {
 
 /// Create a facade with custom results
 fn create_facade_with_results(results: Vec<VectorMatch>) -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockVectorSearchStrategy::with_results(results)),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockVectorSearchStrategy::with_results(results))];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
 
 /// Create a facade that simulates errors
 fn create_error_facade() -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockVectorSearchStrategy::with_error()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockVectorSearchStrategy::with_error())];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }

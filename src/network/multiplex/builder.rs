@@ -9,7 +9,9 @@
 //! following the Builder pattern for complex object construction.
 
 use super::service::{MultiplexConfig, MultiplexService};
-use super::traits::{DetectedProtocol, ProtocolDetector, ProtocolHandler, SharedDetector, SharedHandler};
+use super::traits::{
+    DetectedProtocol, ProtocolDetector, ProtocolHandler, SharedDetector, SharedHandler,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -290,7 +292,11 @@ mod tests {
             .with_fallback(DetectedProtocol::Rest)
             .build();
 
-        assert!(service.supported_protocols().contains(&DetectedProtocol::Rest));
+        assert!(
+            service
+                .supported_protocols()
+                .contains(&DetectedProtocol::Rest)
+        );
     }
 
     #[test]

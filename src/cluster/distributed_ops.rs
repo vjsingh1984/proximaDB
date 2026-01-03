@@ -13,10 +13,14 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::routing::RoutingService;
-use super::shard::{Shard, ShardId, ShardManager, ShardState};
-use super::node_registry::NodeRegistry;
 use super::consensus::RaftConsensus;
+use super::node_registry::NodeRegistry;
+use super::routing::RoutingService;
+use super::rpc::{
+    ForwardWriteRequest, NodeEndpoint, SearchFanout, SearchParams, ShardSearchRequest,
+    WriteRecord as RpcWriteRecord,
+};
+use super::shard::{Shard, ShardId, ShardManager, ShardState};
 
 /// Configuration for distributed operations
 #[derive(Debug, Clone)]
@@ -252,6 +256,8 @@ pub struct DistributedCollectionOps {
     local_node_id: String,
     /// Statistics
     stats: Arc<RwLock<DistributedOpsStats>>,
+    /// RPC fanout for distributed search and write operations
+    fanout: Option<Arc<dyn SearchFanout>>,
 }
 
 /// Statistics for distributed operations
@@ -283,7 +289,47 @@ impl DistributedCollectionOps {
             consensus,
             local_node_id,
             stats: Arc::new(RwLock::new(DistributedOpsStats::default())),
+            fanout: None,
         }
+    }
+
+    /// Create a new distributed operations coordinator with RPC fanout support
+    ///
+    /// This constructor enables actual distributed search and write operations
+    /// by providing a SearchFanout implementation for RPC calls to remote nodes.
+    pub fn with_fanout(
+        config: DistributedOpsConfig,
+        shard_manager: Arc<ShardManager>,
+        routing_service: Arc<RoutingService>,
+        node_registry: Arc<NodeRegistry>,
+        consensus: Arc<RwLock<RaftConsensus>>,
+        local_node_id: String,
+        fanout: Arc<dyn SearchFanout>,
+    ) -> Self {
+        Self {
+            config,
+            shard_manager,
+            routing_service,
+            node_registry,
+            consensus,
+            local_node_id,
+            stats: Arc::new(RwLock::new(DistributedOpsStats::default())),
+            fanout: Some(fanout),
+        }
+    }
+
+    /// Set the fanout implementation for RPC operations
+    ///
+    /// This allows setting or updating the fanout after creation, useful for
+    /// dependency injection patterns where the fanout might not be available
+    /// at construction time.
+    pub fn set_fanout(&mut self, fanout: Arc<dyn SearchFanout>) {
+        self.fanout = Some(fanout);
+    }
+
+    /// Get a reference to the current fanout implementation, if any
+    pub fn fanout(&self) -> Option<&Arc<dyn SearchFanout>> {
+        self.fanout.as_ref()
     }
 
     /// Execute a distributed search across shards
@@ -294,7 +340,10 @@ impl DistributedCollectionOps {
         let start = Instant::now();
 
         // Get shards for the collection
-        let mut shards = self.shard_manager.get_collection_shards(&request.collection).await;
+        let mut shards = self
+            .shard_manager
+            .get_collection_shards(&request.collection)
+            .await;
         let total_shards = shards.len();
 
         // Filter shards if specified
@@ -328,7 +377,10 @@ impl DistributedCollectionOps {
         let shards = pruned_shards;
 
         if shards.is_empty() {
-            return Err(anyhow!("No active shards found for collection '{}'", request.collection));
+            return Err(anyhow!(
+                "No active shards found for collection '{}'",
+                request.collection
+            ));
         }
 
         let shards_queried = shards.len();
@@ -336,9 +388,11 @@ impl DistributedCollectionOps {
 
         // Execute search on each shard
         let results = if self.config.parallel_queries {
-            self.parallel_shard_search(&shards, &request, &mut shard_timings).await?
+            self.parallel_shard_search(&shards, &request, &mut shard_timings)
+                .await?
         } else {
-            self.sequential_shard_search(&shards, &request, &mut shard_timings).await?
+            self.sequential_shard_search(&shards, &request, &mut shard_timings)
+                .await?
         };
 
         // Merge and sort results
@@ -371,29 +425,39 @@ impl DistributedCollectionOps {
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_ops));
         let request = Arc::new(request.clone());
+        let fanout = self.fanout.clone();
+        let timeout_ms = self.config.operation_timeout_ms;
+        let node_registry = self.node_registry.clone();
 
-        let futures: Vec<_> = shards.iter().map(|shard| {
-            let shard = shard.clone();
-            let request = request.clone();
-            let semaphore = semaphore.clone();
-            let routing = self.routing_service.clone();
-            let local_node = self.local_node_id.clone();
+        let futures: Vec<_> = shards
+            .iter()
+            .map(|shard| {
+                let shard = shard.clone();
+                let request = request.clone();
+                let semaphore = semaphore.clone();
+                let local_node = self.local_node_id.clone();
+                let fanout = fanout.clone();
+                let node_registry = node_registry.clone();
 
-            async move {
-                let _permit = semaphore.acquire().await.unwrap();
-                let shard_start = Instant::now();
+                async move {
+                    let _permit = semaphore.acquire().await.unwrap();
+                    let shard_start = Instant::now();
 
-                let result = Self::search_single_shard(
-                    &shard,
-                    &request,
-                    &routing,
-                    &local_node,
-                ).await;
+                    let result = Self::search_single_shard(
+                        &shard,
+                        &request,
+                        &local_node,
+                        fanout.as_deref(),
+                        &node_registry,
+                        timeout_ms,
+                    )
+                    .await;
 
-                let elapsed = shard_start.elapsed().as_millis() as u64;
-                (shard.id.id().to_string(), elapsed, result)
-            }
-        }).collect();
+                    let elapsed = shard_start.elapsed().as_millis() as u64;
+                    (shard.id.id().to_string(), elapsed, result)
+                }
+            })
+            .collect();
 
         let results = join_all(futures).await;
 
@@ -426,16 +490,26 @@ impl DistributedCollectionOps {
             match Self::search_single_shard(
                 shard,
                 request,
-                &self.routing_service,
                 &self.local_node_id,
-            ).await {
+                self.fanout.as_deref(),
+                &self.node_registry,
+                self.config.operation_timeout_ms,
+            )
+            .await
+            {
                 Ok(r) => {
                     results.push(r);
-                    timings.insert(shard.id.id().to_string(), shard_start.elapsed().as_millis() as u64);
+                    timings.insert(
+                        shard.id.id().to_string(),
+                        shard_start.elapsed().as_millis() as u64,
+                    );
                 }
                 Err(e) => {
                     warn!("Shard {} search failed: {}", shard.id, e);
-                    timings.insert(shard.id.id().to_string(), shard_start.elapsed().as_millis() as u64);
+                    timings.insert(
+                        shard.id.id().to_string(),
+                        shard_start.elapsed().as_millis() as u64,
+                    );
                 }
             }
         }
@@ -444,15 +518,20 @@ impl DistributedCollectionOps {
     }
 
     /// Search a single shard
+    ///
+    /// If the shard is local, executes the search on the local engine.
+    /// If the shard is remote, uses the SearchFanout RPC to forward the request.
     async fn search_single_shard(
         shard: &Shard,
         request: &DistributedSearchRequest,
-        _routing: &RoutingService,
         local_node: &str,
+        fanout: Option<&dyn SearchFanout>,
+        node_registry: &NodeRegistry,
+        timeout_ms: u64,
     ) -> Result<Vec<SearchResult>> {
         // Check if shard is on local node
-        let is_local = shard.primary_node() == Some(local_node) ||
-            shard.replica_nodes().contains(&local_node);
+        let is_local =
+            shard.primary_node() == Some(local_node) || shard.replica_nodes().contains(&local_node);
 
         if is_local {
             // Execute search locally
@@ -460,14 +539,106 @@ impl DistributedCollectionOps {
             debug!("Executing local search on shard {}", shard.id);
             Ok(Vec::new()) // Placeholder - would call local engine
         } else {
-            // Forward to remote node
-            let target_node = shard.primary_node()
-                .ok_or_else(|| anyhow!("No primary node for shard {}", shard.id))?;
-
-            debug!("Forwarding search to node {} for shard {}", target_node, shard.id);
-            // In a real implementation, this would make an RPC call
-            Ok(Vec::new()) // Placeholder - would make RPC call
+            // Forward to remote node via RPC
+            Self::search_remote_shard(shard, request, fanout, node_registry, timeout_ms).await
         }
+    }
+
+    /// Execute search on a remote shard via RPC
+    ///
+    /// This method requires node address resolution. If the address cannot be
+    /// determined from the shard's primary node ID, an error is returned.
+    async fn search_remote_shard(
+        shard: &Shard,
+        request: &DistributedSearchRequest,
+        fanout: Option<&dyn SearchFanout>,
+        node_registry: &NodeRegistry,
+        timeout_ms: u64,
+    ) -> Result<Vec<SearchResult>> {
+        // Get the target node ID
+        let target_node = shard
+            .primary_node()
+            .ok_or_else(|| anyhow!("No primary node for shard {}", shard.id))?;
+
+        // Look up the node address from the node registry
+        let node_info = node_registry.get_node(target_node).await.ok_or_else(|| {
+            anyhow!(
+                "Node {} not found in registry for shard {}",
+                target_node,
+                shard.id
+            )
+        })?;
+
+        // Check if we have a fanout implementation
+        let fanout = fanout.ok_or_else(|| {
+            anyhow!(
+                "No SearchFanout implementation available for remote search to shard {}",
+                shard.id
+            )
+        })?;
+
+        // Create the endpoint for the target node
+        let endpoint = NodeEndpoint::new(target_node, &node_info.address);
+
+        // Build the shard search request
+        let rpc_request = ShardSearchRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            collection: request.collection.clone(),
+            shard_id: shard.id.id().to_string(),
+            vector: request.vector.clone(),
+            top_k: request.top_k as u32,
+            filter: request.filter.as_ref().map(|f| f.to_string()),
+            params: SearchParams::default(),
+            timeout: std::time::Duration::from_millis(timeout_ms),
+            include_vectors: false,
+            tenant_id: request
+                .query_context
+                .as_ref()
+                .and_then(|c| c.tenant_id.clone()),
+            domain_id: request
+                .query_context
+                .as_ref()
+                .and_then(|c| c.domain_id.clone()),
+        };
+
+        debug!(
+            "Forwarding search to node {} ({}) for shard {}",
+            target_node, node_info.address, shard.id
+        );
+
+        // Execute the RPC call
+        let response = fanout
+            .shard_search(&endpoint, rpc_request)
+            .await
+            .map_err(|e| anyhow!("RPC search failed for shard {}: {}", shard.id, e))?;
+
+        // Log the response metrics
+        let result_count = response.results.len();
+        let vectors_scanned = response.vectors_scanned;
+        let latency = response.latency;
+
+        // Convert RPC results to SearchResult
+        let results: Vec<SearchResult> = response
+            .results
+            .into_iter()
+            .map(|r| SearchResult {
+                id: r.id,
+                distance: r.score,
+                shard_id: shard.id.id().to_string(),
+                metadata: r
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| serde_json::from_str(m).ok())
+                    .unwrap_or_default(),
+            })
+            .collect();
+
+        debug!(
+            "Received {} results from shard {} (scanned {} vectors in {:?})",
+            result_count, shard.id, vectors_scanned, latency
+        );
+
+        Ok(results)
     }
 
     /// Merge search results from multiple shards
@@ -537,10 +708,7 @@ impl DistributedCollectionOps {
     /// Check if a shard might contain data matching the query context
     fn shard_matches_context(&self, shard: &Shard, context: &QueryContext) -> bool {
         // Use the Shard's may_contain_data method for tenant/domain checks
-        if !shard.may_contain_data(
-            context.tenant_id.as_deref(),
-            context.domain_id.as_deref(),
-        ) {
+        if !shard.may_contain_data(context.tenant_id.as_deref(), context.domain_id.as_deref()) {
             return false;
         }
 
@@ -590,10 +758,16 @@ impl DistributedCollectionOps {
         let start = Instant::now();
 
         // Get shards for the collection
-        let shards = self.shard_manager.get_collection_shards(&request.collection).await;
+        let shards = self
+            .shard_manager
+            .get_collection_shards(&request.collection)
+            .await;
 
         if shards.is_empty() {
-            return Err(anyhow!("No shards found for collection '{}'", request.collection));
+            return Err(anyhow!(
+                "No shards found for collection '{}'",
+                request.collection
+            ));
         }
 
         // Log tenant context for distributed writes
@@ -620,23 +794,29 @@ impl DistributedCollectionOps {
         let mut records_written = 0;
 
         for (shard_id, shard_records) in partitioned {
-            let shard = shards.iter().find(|s| s.id == shard_id)
+            let shard = shards
+                .iter()
+                .find(|s| s.id == shard_id)
                 .ok_or_else(|| anyhow!("Shard {} not found", shard_id))?;
 
             // Write to primary and replicas based on consistency level
-            let replicas_acked = self.write_to_shard_with_consistency(
-                shard,
-                &shard_records,
-                self.config.write_consistency,
-            ).await?;
+            let replicas_acked = self
+                .write_to_shard_with_consistency(
+                    shard,
+                    &shard_records,
+                    self.config.write_consistency,
+                )
+                .await?;
 
             // Update shard metadata bounds after successful write
-            let records_metadata: Vec<HashMap<String, serde_json::Value>> = shard_records
-                .iter()
-                .map(|r| r.metadata.clone())
-                .collect();
+            let records_metadata: Vec<HashMap<String, serde_json::Value>> =
+                shard_records.iter().map(|r| r.metadata.clone()).collect();
 
-            if let Err(e) = self.shard_manager.update_shard_metadata_bounds(&shard_id, &records_metadata).await {
+            if let Err(e) = self
+                .shard_manager
+                .update_shard_metadata_bounds(&shard_id, &records_metadata)
+                .await
+            {
                 warn!(
                     shard_id = %shard_id,
                     error = %e,
@@ -728,7 +908,10 @@ impl DistributedCollectionOps {
                 shards[shard_idx].id.clone()
             };
 
-            partitioned.entry(shard_id).or_default().push(enriched_record);
+            partitioned
+                .entry(shard_id)
+                .or_default()
+                .push(enriched_record);
         }
 
         partitioned
@@ -739,8 +922,8 @@ impl DistributedCollectionOps {
         shards.first().map_or(false, |s| {
             matches!(
                 s.partition_config.as_ref().map(|c| &c.strategy),
-                Some(super::shard::PartitionStrategy::Tenant) |
-                Some(super::shard::PartitionStrategy::TenantHash { .. })
+                Some(super::shard::PartitionStrategy::Tenant)
+                    | Some(super::shard::PartitionStrategy::TenantHash { .. })
             )
         })
     }
@@ -825,6 +1008,9 @@ impl DistributedCollectionOps {
     }
 
     /// Write to a shard with specified consistency level
+    ///
+    /// This method handles writing to both local and remote shards.
+    /// For remote writes, it uses the SearchFanout's forward_write RPC.
     async fn write_to_shard_with_consistency(
         &self,
         shard: &Shard,
@@ -840,31 +1026,62 @@ impl DistributedCollectionOps {
         };
 
         // Write to primary first
-        let primary_node = shard.primary_node()
+        let primary_node = shard
+            .primary_node()
             .ok_or_else(|| anyhow!("No primary for shard {}", shard.id))?;
 
         let is_local_primary = primary_node == self.local_node_id;
 
-        if is_local_primary {
-            debug!("Writing {} records to local primary shard {}", records.len(), shard.id);
+        let primary_acks = if is_local_primary {
+            debug!(
+                "Writing {} records to local primary shard {}",
+                records.len(),
+                shard.id
+            );
             // In a real implementation, write to local engine
+            1
         } else {
-            debug!("Forwarding {} records to primary {} for shard {}", records.len(), primary_node, shard.id);
-            // In a real implementation, make RPC call
+            // Forward write to remote primary via RPC
+            self.forward_write_to_node(shard, &primary_node, records, consistency)
+                .await?
+        };
+
+        // If we got enough acks from the primary (or it handled replication),
+        // we may already have satisfied the consistency requirement
+        if primary_acks >= required_acks {
+            return Ok(primary_acks);
         }
 
-        // Replicate to replicas
-        let mut acks = 1; // Primary counts as 1
+        // Replicate to additional replicas if needed
+        let mut acks = primary_acks;
 
         for replica_node in shard.replica_nodes() {
             if replica_node == self.local_node_id {
                 debug!("Writing to local replica shard {}", shard.id);
                 // Write locally
-            } else {
-                debug!("Replicating to replica {} for shard {}", replica_node, shard.id);
-                // Make RPC call
+                acks += 1;
+            } else if replica_node != primary_node {
+                // Forward to remote replica
+                debug!(
+                    "Replicating to replica {} for shard {}",
+                    replica_node, shard.id
+                );
+                match self
+                    .forward_write_to_node(shard, &replica_node, records, ConsistencyLevel::One)
+                    .await
+                {
+                    Ok(replica_acks) => {
+                        acks += replica_acks;
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to replicate to replica {} for shard {}: {}",
+                            replica_node, shard.id, e
+                        );
+                        // Continue trying other replicas
+                    }
+                }
             }
-            acks += 1;
 
             if acks >= required_acks {
                 break; // We have enough acks
@@ -874,11 +1091,111 @@ impl DistributedCollectionOps {
         if acks < required_acks {
             return Err(anyhow!(
                 "Insufficient replicas acknowledged: {} of {} required",
-                acks, required_acks
+                acks,
+                required_acks
             ));
         }
 
         Ok(acks)
+    }
+
+    /// Forward write to a remote node via RPC
+    async fn forward_write_to_node(
+        &self,
+        shard: &Shard,
+        target_node: &str,
+        records: &[WriteRecord],
+        consistency: ConsistencyLevel,
+    ) -> Result<usize> {
+        // Look up the node address from the node registry
+        let node_info = self
+            .node_registry
+            .get_node(target_node)
+            .await
+            .ok_or_else(|| {
+                anyhow!(
+                    "Node {} not found in registry for shard {}",
+                    target_node,
+                    shard.id
+                )
+            })?;
+
+        // Check if we have a fanout implementation
+        let fanout = self.fanout.as_ref().ok_or_else(|| {
+            anyhow!(
+                "No SearchFanout implementation available for remote write to shard {}",
+                shard.id
+            )
+        })?;
+
+        // Create the endpoint for the target node
+        let endpoint = NodeEndpoint::new(target_node, &node_info.address);
+
+        // Convert WriteRecord to RPC WriteRecord
+        let rpc_records: Vec<RpcWriteRecord> = records
+            .iter()
+            .map(|r| RpcWriteRecord {
+                id: r.id.clone(),
+                vector: r.vector.clone(),
+                metadata: r.metadata.clone(),
+            })
+            .collect();
+
+        // Build the forward write request
+        let rpc_request = ForwardWriteRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            collection: shard.collection_id.clone(),
+            shard_id: shard.id.id().to_string(),
+            records: rpc_records,
+            consistency: Self::convert_consistency_level(consistency),
+            timeout: std::time::Duration::from_millis(self.config.operation_timeout_ms),
+            tenant_id: None,
+            domain_id: None,
+        };
+
+        debug!(
+            "Forwarding {} records to node {} ({}) for shard {}",
+            records.len(),
+            target_node,
+            node_info.address,
+            shard.id
+        );
+
+        // Execute the RPC call
+        let response = fanout
+            .forward_write(&endpoint, rpc_request)
+            .await
+            .map_err(|e| anyhow!("RPC write failed for shard {}: {}", shard.id, e))?;
+
+        // Check for errors
+        if let Some(error) = response.error {
+            return Err(anyhow!(
+                "Remote write to shard {} failed: {}",
+                shard.id,
+                error
+            ));
+        }
+
+        debug!(
+            "Wrote {} records to shard {} on node {}, {} replicas acknowledged in {:?}",
+            response.records_written,
+            shard.id,
+            target_node,
+            response.replicas_acked,
+            response.latency
+        );
+
+        Ok(response.replicas_acked as usize)
+    }
+
+    /// Convert local ConsistencyLevel to RPC ConsistencyLevel
+    fn convert_consistency_level(level: ConsistencyLevel) -> super::rpc::ConsistencyLevel {
+        match level {
+            ConsistencyLevel::One => super::rpc::ConsistencyLevel::One,
+            ConsistencyLevel::Quorum => super::rpc::ConsistencyLevel::Quorum,
+            ConsistencyLevel::All => super::rpc::ConsistencyLevel::All,
+            ConsistencyLevel::LocalQuorum => super::rpc::ConsistencyLevel::LocalQuorum,
+        }
     }
 
     /// Get statistics for distributed operations
@@ -953,13 +1270,22 @@ pub struct RebalanceResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::{ShardConfig, RoutingConfig, NodeRegistryConfig, ConsensusConfig};
+    use crate::cluster::rpc::{
+        ForwardWriteResponse, RpcResult, ShardSearchResponse, ShardSearchResult as RpcSearchResult,
+    };
+    use crate::cluster::{ConsensusConfig, NodeRegistryConfig, RoutingConfig, ShardConfig};
+    use async_trait::async_trait;
+    use futures::Stream;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     async fn create_test_coordinator() -> DistributedCollectionOps {
         let shard_manager = Arc::new(ShardManager::new(ShardConfig::default()).unwrap());
         let routing_service = Arc::new(RoutingService::new(RoutingConfig::default()).unwrap());
         let node_registry = Arc::new(NodeRegistry::new(NodeRegistryConfig::default()).unwrap());
-        let consensus = Arc::new(RwLock::new(RaftConsensus::new(ConsensusConfig::default()).unwrap()));
+        let consensus = Arc::new(RwLock::new(
+            RaftConsensus::new(ConsensusConfig::default()).unwrap(),
+        ));
 
         DistributedCollectionOps::new(
             DistributedOpsConfig::default(),
@@ -1027,14 +1353,12 @@ mod tests {
                     metadata: HashMap::new(),
                 },
             ],
-            vec![
-                SearchResult {
-                    id: "r3".to_string(),
-                    distance: 0.3,
-                    shard_id: "shard2".to_string(),
-                    metadata: HashMap::new(),
-                },
-            ],
+            vec![SearchResult {
+                id: "r3".to_string(),
+                distance: 0.3,
+                shard_id: "shard2".to_string(),
+                metadata: HashMap::new(),
+            }],
         ];
 
         let merged = coordinator.merge_search_results(shard_results, 2);
@@ -1179,13 +1503,11 @@ mod tests {
         // Test that DistributedWriteRequest can be created with tenant context
         let request = DistributedWriteRequest {
             collection: "test-collection".to_string(),
-            records: vec![
-                WriteRecord {
-                    id: "rec1".to_string(),
-                    vector: vec![1.0, 2.0, 3.0],
-                    metadata: HashMap::new(),
-                },
-            ],
+            records: vec![WriteRecord {
+                id: "rec1".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: HashMap::new(),
+            }],
             routing_key: None,
             tenant_id: Some("tenant-1".to_string()),
             domain_id: Some("domain-1".to_string()),
@@ -1212,5 +1534,481 @@ mod tests {
         let ctx = request.query_context.as_ref().unwrap();
         assert_eq!(ctx.tenant_id, Some("tenant-1".to_string()));
         assert_eq!(ctx.domain_id, Some("domain-1".to_string()));
+    }
+
+    // =========================================================================
+    // Mock SearchFanout for testing RPC integration
+    // =========================================================================
+
+    /// Mock implementation of SearchFanout for testing
+    struct MockSearchFanout {
+        search_call_count: AtomicUsize,
+        write_call_count: AtomicUsize,
+        /// Simulated search results to return
+        search_results: Vec<RpcSearchResult>,
+        /// Whether to simulate a failure
+        should_fail: bool,
+    }
+
+    impl MockSearchFanout {
+        fn new() -> Self {
+            Self {
+                search_call_count: AtomicUsize::new(0),
+                write_call_count: AtomicUsize::new(0),
+                search_results: vec![
+                    RpcSearchResult {
+                        id: "remote-result-1".to_string(),
+                        score: 0.1,
+                        vector: None,
+                        metadata: Some(r#"{"key": "value1"}"#.to_string()),
+                    },
+                    RpcSearchResult {
+                        id: "remote-result-2".to_string(),
+                        score: 0.2,
+                        vector: None,
+                        metadata: Some(r#"{"key": "value2"}"#.to_string()),
+                    },
+                ],
+                should_fail: false,
+            }
+        }
+
+        fn with_failure() -> Self {
+            Self {
+                should_fail: true,
+                ..Self::new()
+            }
+        }
+
+        fn search_calls(&self) -> usize {
+            self.search_call_count.load(Ordering::SeqCst)
+        }
+
+        fn write_calls(&self) -> usize {
+            self.write_call_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl SearchFanout for MockSearchFanout {
+        async fn shard_search(
+            &self,
+            _target: &NodeEndpoint,
+            req: ShardSearchRequest,
+        ) -> RpcResult<ShardSearchResponse> {
+            self.search_call_count.fetch_add(1, Ordering::SeqCst);
+
+            if self.should_fail {
+                return Err(crate::cluster::rpc::RpcError::connection(
+                    "Simulated failure",
+                ));
+            }
+
+            Ok(ShardSearchResponse {
+                request_id: req.request_id,
+                shard_id: req.shard_id,
+                results: self.search_results.clone(),
+                vectors_scanned: 1000,
+                latency: std::time::Duration::from_millis(5),
+                truncated: false,
+            })
+        }
+
+        async fn shard_search_stream(
+            &self,
+            _target: &NodeEndpoint,
+            _req: ShardSearchRequest,
+        ) -> RpcResult<Pin<Box<dyn Stream<Item = RpcResult<RpcSearchResult>> + Send>>> {
+            unimplemented!("Streaming not needed for tests")
+        }
+
+        async fn forward_write(
+            &self,
+            _target: &NodeEndpoint,
+            req: ForwardWriteRequest,
+        ) -> RpcResult<ForwardWriteResponse> {
+            self.write_call_count.fetch_add(1, Ordering::SeqCst);
+
+            if self.should_fail {
+                return Err(crate::cluster::rpc::RpcError::connection(
+                    "Simulated failure",
+                ));
+            }
+
+            Ok(ForwardWriteResponse {
+                request_id: req.request_id,
+                records_written: req.records.len() as u32,
+                replicas_acked: 3,
+                latency: std::time::Duration::from_millis(10),
+                error: None,
+            })
+        }
+
+        async fn forward_write_batch(
+            &self,
+            _target: &NodeEndpoint,
+            requests: Vec<ForwardWriteRequest>,
+        ) -> RpcResult<Vec<ForwardWriteResponse>> {
+            Ok(requests
+                .into_iter()
+                .map(|req| ForwardWriteResponse {
+                    request_id: req.request_id,
+                    records_written: req.records.len() as u32,
+                    replicas_acked: 3,
+                    latency: std::time::Duration::from_millis(10),
+                    error: None,
+                })
+                .collect())
+        }
+    }
+
+    async fn create_test_coordinator_with_fanout(
+        fanout: Arc<dyn SearchFanout>,
+    ) -> DistributedCollectionOps {
+        let shard_manager = Arc::new(ShardManager::new(ShardConfig::default()).unwrap());
+        let routing_service = Arc::new(RoutingService::new(RoutingConfig::default()).unwrap());
+        let node_registry = Arc::new(NodeRegistry::new(NodeRegistryConfig::default()).unwrap());
+        let consensus = Arc::new(RwLock::new(
+            RaftConsensus::new(ConsensusConfig::default()).unwrap(),
+        ));
+
+        DistributedCollectionOps::with_fanout(
+            DistributedOpsConfig::default(),
+            shard_manager,
+            routing_service,
+            node_registry,
+            consensus,
+            "local-node-1".to_string(),
+            fanout,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_coordinator_with_fanout_creation() {
+        let fanout = Arc::new(MockSearchFanout::new());
+        let coordinator = create_test_coordinator_with_fanout(fanout.clone()).await;
+
+        // Verify fanout is set
+        assert!(coordinator.fanout().is_some());
+
+        let stats = coordinator.get_stats().await;
+        assert_eq!(stats.total_searches, 0);
+        assert_eq!(stats.total_writes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_set_fanout() {
+        let mut coordinator = create_test_coordinator().await;
+
+        // Initially no fanout
+        assert!(coordinator.fanout().is_none());
+
+        // Set fanout
+        let fanout = Arc::new(MockSearchFanout::new());
+        coordinator.set_fanout(fanout);
+
+        // Now has fanout
+        assert!(coordinator.fanout().is_some());
+    }
+
+    /// Helper to create a node registry with test nodes pre-registered
+    async fn create_node_registry_with_nodes() -> Arc<NodeRegistry> {
+        let registry = Arc::new(NodeRegistry::new(NodeRegistryConfig::default()).unwrap());
+
+        // Register a remote test node
+        registry
+            .register_node(super::super::node_registry::NodeInfo {
+                node_id: "remote-node-1".to_string(),
+                address: "192.168.1.100:5679".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // Register local test node
+        registry
+            .register_node(super::super::node_registry::NodeInfo {
+                node_id: "local-node-1".to_string(),
+                address: "127.0.0.1:5679".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        registry
+    }
+
+    #[tokio::test]
+    async fn test_remote_shard_search_uses_rpc() {
+        let fanout = Arc::new(MockSearchFanout::new());
+        let node_registry = create_node_registry_with_nodes().await;
+
+        // Create a shard that is on a remote node
+        let mut shard = Shard::new("test-collection", 0);
+        shard.state = ShardState::Active;
+        // Add a placement with a remote node
+        shard.placements.push(super::super::shard::ShardPlacement {
+            node_id: "remote-node-1".to_string(),
+            is_primary: true,
+            priority: 0,
+            lag_ms: None,
+        });
+
+        // Create a search request
+        let request = DistributedSearchRequest {
+            collection: "test-collection".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            top_k: 10,
+            filter: None,
+            routing_key: None,
+            include_shards: None,
+            exclude_shards: None,
+            query_context: None,
+        };
+
+        // Execute remote search
+        let result = DistributedCollectionOps::search_remote_shard(
+            &shard,
+            &request,
+            Some(fanout.as_ref()),
+            &node_registry,
+            30000,
+        )
+        .await;
+
+        // Verify RPC was called
+        assert!(result.is_ok());
+        assert_eq!(fanout.search_calls(), 1);
+
+        // Verify results were converted correctly
+        let results = result.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "remote-result-1");
+        assert_eq!(results[0].distance, 0.1);
+    }
+
+    #[tokio::test]
+    async fn test_remote_shard_search_without_fanout_fails() {
+        let node_registry = create_node_registry_with_nodes().await;
+
+        // Create a shard that is on a remote node
+        let mut shard = Shard::new("test-collection", 0);
+        shard.state = ShardState::Active;
+        shard.placements.push(super::super::shard::ShardPlacement {
+            node_id: "remote-node-1".to_string(),
+            is_primary: true,
+            priority: 0,
+            lag_ms: None,
+        });
+
+        let request = DistributedSearchRequest {
+            collection: "test-collection".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            top_k: 10,
+            filter: None,
+            routing_key: None,
+            include_shards: None,
+            exclude_shards: None,
+            query_context: None,
+        };
+
+        // Execute remote search without fanout
+        let result = DistributedCollectionOps::search_remote_shard(
+            &shard,
+            &request,
+            None,
+            &node_registry,
+            30000,
+        )
+        .await;
+
+        // Should fail because no fanout
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No SearchFanout implementation"));
+    }
+
+    #[tokio::test]
+    async fn test_remote_shard_search_with_rpc_failure() {
+        let fanout = Arc::new(MockSearchFanout::with_failure());
+        let node_registry = create_node_registry_with_nodes().await;
+
+        // Create a shard that is on a remote node
+        let mut shard = Shard::new("test-collection", 0);
+        shard.state = ShardState::Active;
+        shard.placements.push(super::super::shard::ShardPlacement {
+            node_id: "remote-node-1".to_string(),
+            is_primary: true,
+            priority: 0,
+            lag_ms: None,
+        });
+
+        let request = DistributedSearchRequest {
+            collection: "test-collection".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            top_k: 10,
+            filter: None,
+            routing_key: None,
+            include_shards: None,
+            exclude_shards: None,
+            query_context: None,
+        };
+
+        // Execute remote search that will fail
+        let result = DistributedCollectionOps::search_remote_shard(
+            &shard,
+            &request,
+            Some(fanout.as_ref()),
+            &node_registry,
+            30000,
+        )
+        .await;
+
+        // Should fail with RPC error
+        assert!(result.is_err());
+        assert_eq!(fanout.search_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_forward_write_to_node_uses_rpc() {
+        let fanout = Arc::new(MockSearchFanout::new());
+        let coordinator = create_test_coordinator_with_fanout(fanout.clone()).await;
+
+        // Register the remote node in the coordinator's registry
+        coordinator
+            .node_registry
+            .register_node(super::super::node_registry::NodeInfo {
+                node_id: "remote-node-1".to_string(),
+                address: "192.168.1.100:5679".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // Create a shard that is on a remote node
+        let mut shard = Shard::new("test-collection", 0);
+        shard.state = ShardState::Active;
+        shard.placements.push(super::super::shard::ShardPlacement {
+            node_id: "remote-node-1".to_string(),
+            is_primary: true,
+            priority: 0,
+            lag_ms: None,
+        });
+
+        let records = vec![
+            WriteRecord {
+                id: "rec1".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                metadata: HashMap::new(),
+            },
+            WriteRecord {
+                id: "rec2".to_string(),
+                vector: vec![4.0, 5.0, 6.0],
+                metadata: HashMap::new(),
+            },
+        ];
+
+        // Execute forward write
+        let result = coordinator
+            .forward_write_to_node(&shard, "remote-node-1", &records, ConsistencyLevel::Quorum)
+            .await;
+
+        // Verify RPC was called and succeeded
+        assert!(result.is_ok());
+        assert_eq!(fanout.write_calls(), 1);
+        assert_eq!(result.unwrap(), 3); // replicas_acked from mock
+    }
+
+    #[tokio::test]
+    async fn test_forward_write_without_fanout_fails() {
+        let coordinator = create_test_coordinator().await;
+
+        // Create a shard that is on a remote node
+        let mut shard = Shard::new("test-collection", 0);
+        shard.state = ShardState::Active;
+        shard.placements.push(super::super::shard::ShardPlacement {
+            node_id: "remote-node-1".to_string(),
+            is_primary: true,
+            priority: 0,
+            lag_ms: None,
+        });
+
+        let records = vec![WriteRecord {
+            id: "rec1".to_string(),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata: HashMap::new(),
+        }];
+
+        // Execute forward write without fanout
+        let result = coordinator
+            .forward_write_to_node(&shard, "remote-node-1", &records, ConsistencyLevel::Quorum)
+            .await;
+
+        // Should fail because no fanout
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No SearchFanout implementation"));
+    }
+
+    #[tokio::test]
+    async fn test_consistency_level_conversion() {
+        assert_eq!(
+            DistributedCollectionOps::convert_consistency_level(ConsistencyLevel::One),
+            super::super::rpc::ConsistencyLevel::One
+        );
+        assert_eq!(
+            DistributedCollectionOps::convert_consistency_level(ConsistencyLevel::Quorum),
+            super::super::rpc::ConsistencyLevel::Quorum
+        );
+        assert_eq!(
+            DistributedCollectionOps::convert_consistency_level(ConsistencyLevel::All),
+            super::super::rpc::ConsistencyLevel::All
+        );
+        assert_eq!(
+            DistributedCollectionOps::convert_consistency_level(ConsistencyLevel::LocalQuorum),
+            super::super::rpc::ConsistencyLevel::LocalQuorum
+        );
+    }
+
+    #[tokio::test]
+    async fn test_local_shard_search_does_not_use_rpc() {
+        let fanout = Arc::new(MockSearchFanout::new());
+        let node_registry = create_node_registry_with_nodes().await;
+
+        // Create a shard that is on the local node
+        let mut shard = Shard::new("test-collection", 0);
+        shard.state = ShardState::Active;
+        shard.placements.push(super::super::shard::ShardPlacement {
+            node_id: "local-node-1".to_string(),
+            is_primary: true,
+            priority: 0,
+            lag_ms: None,
+        });
+
+        let request = DistributedSearchRequest {
+            collection: "test-collection".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            top_k: 10,
+            filter: None,
+            routing_key: None,
+            include_shards: None,
+            exclude_shards: None,
+            query_context: None,
+        };
+
+        // Execute search on local shard
+        let result = DistributedCollectionOps::search_single_shard(
+            &shard,
+            &request,
+            "local-node-1",
+            Some(fanout.as_ref()),
+            &node_registry,
+            30000,
+        )
+        .await;
+
+        // Should succeed locally without RPC
+        assert!(result.is_ok());
+        assert_eq!(fanout.search_calls(), 0); // No RPC call
     }
 }

@@ -321,8 +321,12 @@ impl PlannerState {
     /// Check if progressive quantization is beneficial
     pub fn should_use_progressive_quantization(&self) -> bool {
         self.collection_size > 5000
-            && (self.available_quantization.contains(&QuantizationLevel::Binary)
-                || self.available_quantization.contains(&QuantizationLevel::INT8))
+            && (self
+                .available_quantization
+                .contains(&QuantizationLevel::Binary)
+                || self
+                    .available_quantization
+                    .contains(&QuantizationLevel::INT8))
     }
 }
 
@@ -435,12 +439,7 @@ mod tests {
 
         // All features should be normalized roughly to [0, 1]
         for (i, &f) in features.iter().enumerate() {
-            assert!(
-                f >= 0.0 && f <= 10.0,
-                "Feature {} = {} out of range",
-                i,
-                f
-            );
+            assert!(f >= 0.0 && f <= 10.0, "Feature {} = {} out of range", i, f);
         }
     }
 

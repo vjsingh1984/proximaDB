@@ -10,15 +10,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::info;
 
-use crate::catalog::types::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType,
-    CatalogSchemaEvolution, CatalogTableSchema,
-    SchemaChange,
-};
 use crate::catalog::CatalogManager;
+use crate::catalog::types::{
+    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
+    CatalogTableSchema, SchemaChange,
+};
 
 /// DDL Statement types
 #[derive(Debug, Clone)]
@@ -98,8 +97,13 @@ pub enum SqlDataType {
     BigInt,
     Float,
     Double,
-    Decimal { precision: u32, scale: u32 },
-    Varchar { max_length: Option<u32> },
+    Decimal {
+        precision: u32,
+        scale: u32,
+    },
+    Varchar {
+        max_length: Option<u32>,
+    },
     Text,
     Binary,
     Blob,
@@ -110,11 +114,17 @@ pub enum SqlDataType {
     Uuid,
     Json,
     /// Vector type: VECTOR(dimension)
-    Vector { dimension: u32 },
+    Vector {
+        dimension: u32,
+    },
     /// Sparse vector: SPARSE_VECTOR(dimension)
-    SparseVector { dimension: u32 },
+    SparseVector {
+        dimension: u32,
+    },
     /// Binary vector: BINARY_VECTOR(dimension)
-    BinaryVector { dimension: u32 },
+    BinaryVector {
+        dimension: u32,
+    },
 }
 
 /// ALTER TABLE change types
@@ -127,17 +137,32 @@ pub enum AlterTableChange {
     /// RENAME COLUMN old_name TO new_name
     RenameColumn { old_name: String, new_name: String },
     /// ALTER COLUMN column_name SET DATA TYPE type
-    ChangeType { column_name: String, new_type: SqlDataType },
+    ChangeType {
+        column_name: String,
+        new_type: SqlDataType,
+    },
     /// ALTER COLUMN column_name SET NOT NULL / DROP NOT NULL
     SetNullable { column_name: String, nullable: bool },
     /// ALTER COLUMN column_name SET DEFAULT value / DROP DEFAULT
-    SetDefault { column_name: String, default_value: Option<String> },
+    SetDefault {
+        column_name: String,
+        default_value: Option<String>,
+    },
     /// COMMENT ON COLUMN column_name IS 'comment'
-    SetComment { column_name: String, comment: String },
+    SetComment {
+        column_name: String,
+        comment: String,
+    },
     /// Move column position: FIRST or AFTER another_column
-    MoveColumn { column_name: String, position: ColumnPosition },
+    MoveColumn {
+        column_name: String,
+        position: ColumnPosition,
+    },
     /// ADD CONSTRAINT
-    AddConstraint { constraint_name: Option<String>, constraint: TableConstraint },
+    AddConstraint {
+        constraint_name: Option<String>,
+        constraint: TableConstraint,
+    },
     /// DROP CONSTRAINT
     DropConstraint { constraint_name: String },
 }
@@ -176,7 +201,10 @@ pub enum IndexType {
     /// Full-text search index
     FullText,
     /// HNSW vector index (default for vector columns)
-    Hnsw { m: Option<u32>, ef_construction: Option<u32> },
+    Hnsw {
+        m: Option<u32>,
+        ef_construction: Option<u32>,
+    },
     /// IVF vector index
     Ivf { nlist: Option<u32> },
     /// Product quantization
@@ -245,29 +273,67 @@ impl DdlService {
     /// Execute a DDL statement
     pub async fn execute(&self, statement: DdlStatement) -> Result<DdlResult> {
         match statement {
-            DdlStatement::CreateTable { table_name, columns, if_not_exists, properties } => {
-                self.create_table(&table_name, columns, if_not_exists, properties).await
+            DdlStatement::CreateTable {
+                table_name,
+                columns,
+                if_not_exists,
+                properties,
+            } => {
+                self.create_table(&table_name, columns, if_not_exists, properties)
+                    .await
             }
-            DdlStatement::DropTable { table_name, if_exists, purge } => {
-                self.drop_table(&table_name, if_exists, purge).await
+            DdlStatement::DropTable {
+                table_name,
+                if_exists,
+                purge,
+            } => self.drop_table(&table_name, if_exists, purge).await,
+            DdlStatement::AlterTable {
+                table_name,
+                changes,
+            } => self.alter_table(&table_name, changes).await,
+            DdlStatement::CreateIndex {
+                index_name,
+                table_name,
+                columns,
+                index_type,
+                if_not_exists,
+            } => {
+                self.create_index(&index_name, &table_name, columns, index_type, if_not_exists)
+                    .await
             }
-            DdlStatement::AlterTable { table_name, changes } => {
-                self.alter_table(&table_name, changes).await
+            DdlStatement::DropIndex {
+                index_name,
+                table_name,
+                if_exists,
+            } => self.drop_index(&index_name, &table_name, if_exists).await,
+            DdlStatement::CreateNamespace {
+                namespace,
+                if_not_exists,
+                properties,
+            } => {
+                self.create_namespace(&namespace, if_not_exists, properties)
+                    .await
             }
-            DdlStatement::CreateIndex { index_name, table_name, columns, index_type, if_not_exists } => {
-                self.create_index(&index_name, &table_name, columns, index_type, if_not_exists).await
-            }
-            DdlStatement::DropIndex { index_name, table_name, if_exists } => {
-                self.drop_index(&index_name, &table_name, if_exists).await
-            }
-            DdlStatement::CreateNamespace { namespace, if_not_exists, properties } => {
-                self.create_namespace(&namespace, if_not_exists, properties).await
-            }
-            DdlStatement::DropNamespace { namespace, if_exists, cascade } => {
-                self.drop_namespace(&namespace, if_exists, cascade).await
-            }
-            DdlStatement::CreateCollection { collection_name, dimension, engine, if_not_exists, properties } => {
-                self.create_collection(&collection_name, dimension, engine, if_not_exists, properties).await
+            DdlStatement::DropNamespace {
+                namespace,
+                if_exists,
+                cascade,
+            } => self.drop_namespace(&namespace, if_exists, cascade).await,
+            DdlStatement::CreateCollection {
+                collection_name,
+                dimension,
+                engine,
+                if_not_exists,
+                properties,
+            } => {
+                self.create_collection(
+                    &collection_name,
+                    dimension,
+                    engine,
+                    if_not_exists,
+                    properties,
+                )
+                .await
             }
         }
     }
@@ -301,7 +367,10 @@ impl DdlService {
         catalog.create_table(&table_id, schema).await?;
 
         info!(table = %table_name, "Created table");
-        Ok(DdlResult::success(format!("Created table '{}'", table_name)))
+        Ok(DdlResult::success(format!(
+            "Created table '{}'",
+            table_name
+        )))
     }
 
     async fn drop_table(
@@ -325,7 +394,10 @@ impl DdlService {
         catalog.drop_table(&table_id, purge).await?;
 
         info!(table = %table_name, purge = purge, "Dropped table");
-        Ok(DdlResult::success(format!("Dropped table '{}'", table_name)))
+        Ok(DdlResult::success(format!(
+            "Dropped table '{}'",
+            table_name
+        )))
     }
 
     async fn alter_table(
@@ -347,7 +419,10 @@ impl DdlService {
         catalog.evolve_schema(&table_id, evolution).await?;
 
         info!(table = %table_name, "Altered table");
-        Ok(DdlResult::success(format!("Altered table '{}'", table_name)))
+        Ok(DdlResult::success(format!(
+            "Altered table '{}'",
+            table_name
+        )))
     }
 
     // ========================
@@ -375,7 +450,11 @@ impl DdlService {
             if if_not_exists {
                 return Ok(DdlResult::already_exists("Index", index_name));
             } else {
-                return Err(anyhow!("Index '{}' already exists on table '{}'", index_name, table_name));
+                return Err(anyhow!(
+                    "Index '{}' already exists on table '{}'",
+                    index_name,
+                    table_name
+                ));
             }
         }
 
@@ -390,7 +469,10 @@ impl DdlService {
         catalog.create_index(&table_id, index).await?;
 
         info!(index = %index_name, table = %table_name, "Created index");
-        Ok(DdlResult::success(format!("Created index '{}' on table '{}'", index_name, table_name)))
+        Ok(DdlResult::success(format!(
+            "Created index '{}' on table '{}'",
+            index_name, table_name
+        )))
     }
 
     async fn drop_index(
@@ -412,7 +494,11 @@ impl DdlService {
             if if_exists {
                 return Ok(DdlResult::not_found("Index", index_name));
             } else {
-                return Err(anyhow!("Index '{}' does not exist on table '{}'", index_name, table_name));
+                return Err(anyhow!(
+                    "Index '{}' does not exist on table '{}'",
+                    index_name,
+                    table_name
+                ));
             }
         }
 
@@ -420,7 +506,10 @@ impl DdlService {
         catalog.drop_index(&table_id, index_name).await?;
 
         info!(index = %index_name, table = %table_name, "Dropped index");
-        Ok(DdlResult::success(format!("Dropped index '{}' from table '{}'", index_name, table_name)))
+        Ok(DdlResult::success(format!(
+            "Dropped index '{}' from table '{}'",
+            index_name, table_name
+        )))
     }
 
     // ========================
@@ -449,7 +538,10 @@ impl DdlService {
         catalog.create_namespace(namespace, properties).await?;
 
         info!(namespace = %ns_name, "Created namespace");
-        Ok(DdlResult::success(format!("Created namespace '{}'", ns_name)))
+        Ok(DdlResult::success(format!(
+            "Created namespace '{}'",
+            ns_name
+        )))
     }
 
     async fn drop_namespace(
@@ -474,7 +566,10 @@ impl DdlService {
         catalog.drop_namespace(namespace, cascade).await?;
 
         info!(namespace = %ns_name, cascade = cascade, "Dropped namespace");
-        Ok(DdlResult::success(format!("Dropped namespace '{}'", ns_name)))
+        Ok(DdlResult::success(format!(
+            "Dropped namespace '{}'",
+            ns_name
+        )))
     }
 
     // ========================
@@ -511,7 +606,9 @@ impl DdlService {
         let columns = vec![
             ColumnDefinition {
                 name: "id".to_string(),
-                data_type: SqlDataType::Varchar { max_length: Some(255) },
+                data_type: SqlDataType::Varchar {
+                    max_length: Some(255),
+                },
                 nullable: false,
                 default_value: None,
                 comment: Some("Vector record ID".to_string()),
@@ -557,7 +654,10 @@ impl DdlService {
         catalog.create_index(&table_id, index).await?;
 
         info!(collection = %collection_name, dimension = dimension, "Created collection");
-        Ok(DdlResult::success(format!("Created collection '{}' with dimension {}", collection_name, dimension)))
+        Ok(DdlResult::success(format!(
+            "Created collection '{}' with dimension {}",
+            collection_name, dimension
+        )))
     }
 
     // ========================
@@ -602,7 +702,10 @@ impl DdlService {
         Ok(schema)
     }
 
-    fn sql_to_catalog_type(&self, sql_type: &SqlDataType) -> Result<(CatalogDataType, HashMap<String, String>)> {
+    fn sql_to_catalog_type(
+        &self,
+        sql_type: &SqlDataType,
+    ) -> Result<(CatalogDataType, HashMap<String, String>)> {
         let mut properties = HashMap::new();
 
         let catalog_type = match sql_type {
@@ -649,7 +752,10 @@ impl DdlService {
         Ok((catalog_type, properties))
     }
 
-    fn build_schema_evolution(&self, changes: Vec<AlterTableChange>) -> Result<CatalogSchemaEvolution> {
+    fn build_schema_evolution(
+        &self,
+        changes: Vec<AlterTableChange>,
+    ) -> Result<CatalogSchemaEvolution> {
         let mut schema_changes = Vec::new();
 
         for change in changes {
@@ -665,20 +771,24 @@ impl DdlService {
                         after: None,
                     }
                 }
-                AlterTableChange::DropColumn(name) => {
-                    SchemaChange::DropColumn { name }
-                }
+                AlterTableChange::DropColumn(name) => SchemaChange::DropColumn { name },
                 AlterTableChange::RenameColumn { old_name, new_name } => {
                     SchemaChange::RenameColumn { old_name, new_name }
                 }
-                AlterTableChange::ChangeType { column_name, new_type } => {
+                AlterTableChange::ChangeType {
+                    column_name,
+                    new_type,
+                } => {
                     let (data_type, _) = self.sql_to_catalog_type(&new_type)?;
                     SchemaChange::ChangeType {
                         name: column_name,
                         new_type: data_type,
                     }
                 }
-                AlterTableChange::SetNullable { column_name, nullable } => {
+                AlterTableChange::SetNullable {
+                    column_name,
+                    nullable,
+                } => {
                     if nullable {
                         SchemaChange::MakeNullable { name: column_name }
                     } else {
@@ -686,7 +796,10 @@ impl DdlService {
                         SchemaChange::MakeNotNullable { name: column_name }
                     }
                 }
-                AlterTableChange::SetDefault { column_name, default_value } => {
+                AlterTableChange::SetDefault {
+                    column_name,
+                    default_value,
+                } => {
                     if let Some(val) = default_value {
                         SchemaChange::SetDefault {
                             name: column_name,
@@ -696,39 +809,44 @@ impl DdlService {
                         SchemaChange::DropDefault { name: column_name }
                     }
                 }
-                AlterTableChange::SetComment { column_name, comment } => {
-                    SchemaChange::UpdateComment {
-                        name: column_name,
-                        comment,
-                    }
-                }
-                AlterTableChange::MoveColumn { column_name, position } => {
-                    SchemaChange::MoveColumn {
-                        name: column_name,
-                        after: match position {
-                            ColumnPosition::First => None,
-                            ColumnPosition::After(col) => Some(col),
-                        },
-                    }
-                }
-                AlterTableChange::AddConstraint { constraint_name, constraint } => {
+                AlterTableChange::SetComment {
+                    column_name,
+                    comment,
+                } => SchemaChange::UpdateComment {
+                    name: column_name,
+                    comment,
+                },
+                AlterTableChange::MoveColumn {
+                    column_name,
+                    position,
+                } => SchemaChange::MoveColumn {
+                    name: column_name,
+                    after: match position {
+                        ColumnPosition::First => None,
+                        ColumnPosition::After(col) => Some(col),
+                    },
+                },
+                AlterTableChange::AddConstraint {
+                    constraint_name,
+                    constraint,
+                } => {
                     use crate::catalog::types::ColumnConstraint;
                     let catalog_constraint = match constraint {
-                        TableConstraint::Unique { columns } => {
-                            ColumnConstraint::Unique { columns }
-                        }
+                        TableConstraint::Unique { columns } => ColumnConstraint::Unique { columns },
                         TableConstraint::Check { expression } => {
                             ColumnConstraint::Check { expression }
                         }
-                        TableConstraint::ForeignKey { columns, references_table, references_columns } => {
-                            ColumnConstraint::ForeignKey {
-                                columns,
-                                references_table,
-                                references_columns,
-                                on_delete: None,
-                                on_update: None,
-                            }
-                        }
+                        TableConstraint::ForeignKey {
+                            columns,
+                            references_table,
+                            references_columns,
+                        } => ColumnConstraint::ForeignKey {
+                            columns,
+                            references_table,
+                            references_columns,
+                            on_delete: None,
+                            on_update: None,
+                        },
                     };
                     SchemaChange::AddConstraint {
                         constraint_name,
@@ -742,7 +860,9 @@ impl DdlService {
             schema_changes.push(catalog_change);
         }
 
-        Ok(CatalogSchemaEvolution { changes: schema_changes })
+        Ok(CatalogSchemaEvolution {
+            changes: schema_changes,
+        })
     }
 
     fn convert_index_type(&self, index_type: &IndexType) -> CatalogIndexType {

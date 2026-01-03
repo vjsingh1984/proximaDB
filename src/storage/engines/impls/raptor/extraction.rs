@@ -10,16 +10,16 @@ use tracing::debug;
 
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
-    ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode, ExtractionRequest,
-    ExtractionResult, ExtractionStats, ExtractedVector, VectorExtractor,
+    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
+    ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
-use super::consolidated_reader::{RaptorReader, ScanStrategy};
 use super::RaptorConfig;
+use super::consolidated_reader::{RaptorReader, ScanStrategy};
 
 /// RAPTOR Vector Extractor
 ///
@@ -113,7 +113,7 @@ impl VectorExtractor for RaptorExtractor {
 
             // Create a RaptorReader for this file
             let mut reader = RaptorReader::new(
-                file_path.clone(),       // base_path = file path
+                file_path.clone(),        // base_path = file path
                 "extraction".to_string(), // collection_id for cache keys
                 config.clone(),
                 cache.clone(),
@@ -241,7 +241,7 @@ impl VectorExtractor for RaptorExtractor {
             estimated_vectors: files * vectors_per_file,
             estimated_bytes: files * vectors_per_file * bytes_per_vector,
             estimated_duration_ms: (files * 80) as u64, // ~80ms per file
-            io_cost: 0.6, // RAPTOR is very efficient
+            io_cost: 0.6,                               // RAPTOR is very efficient
         }
     }
 

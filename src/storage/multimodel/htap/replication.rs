@@ -5,11 +5,11 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
-use tokio::sync::{mpsc, RwLock, Notify};
+use anyhow::{Result, anyhow};
+use tokio::sync::{Notify, RwLock, mpsc};
 use tracing::{debug, info, warn};
 
 /// Configuration for HTAP replication
@@ -34,7 +34,7 @@ impl Default for ReplicationConfig {
         Self {
             batch_size: 1000,
             replication_interval_ms: 100, // 100ms
-            max_lag_ms: 5000, // 5 seconds
+            max_lag_ms: 5000,             // 5 seconds
             parallel_replication: true,
             parallel_workers: 4,
             compress_batches: true,
@@ -190,7 +190,9 @@ impl ReplicationCoordinator {
 
         // Queue for replication if running
         if let Some(tx) = &self.pending_tx {
-            tx.send(change).await.map_err(|e| anyhow!("Failed to queue change: {}", e))?;
+            tx.send(change)
+                .await
+                .map_err(|e| anyhow!("Failed to queue change: {}", e))?;
         }
 
         Ok(())

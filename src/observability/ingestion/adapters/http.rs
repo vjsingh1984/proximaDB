@@ -9,7 +9,6 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -117,15 +116,35 @@ impl HttpAdapter {
             .extra
             .iter()
             .filter(|(k, _)| {
-                !["timestamp", "ts", "@timestamp", "time", "timestamp_unix",
-                  "timestamp_ns", "message", "msg", "log", "severity", "level",
-                  "lvl", "source", "host", "hostname", "service", "app",
-                  "application", "trace_id", "span_id"]
-                    .contains(&k.as_str())
+                ![
+                    "timestamp",
+                    "ts",
+                    "@timestamp",
+                    "time",
+                    "timestamp_unix",
+                    "timestamp_ns",
+                    "message",
+                    "msg",
+                    "log",
+                    "severity",
+                    "level",
+                    "lvl",
+                    "source",
+                    "host",
+                    "hostname",
+                    "service",
+                    "app",
+                    "application",
+                    "trace_id",
+                    "span_id",
+                ]
+                .contains(&k.as_str())
             })
             .map(|(k, v)| {
                 let value = match v {
-                    serde_json::Value::String(s) => crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()),
+                    serde_json::Value::String(s) => {
+                        crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())
+                    }
                     serde_json::Value::Number(n) => {
                         if let Some(i) = n.as_i64() {
                             crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)
@@ -135,7 +154,9 @@ impl HttpAdapter {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(n.to_string())
                         }
                     }
-                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
+                    serde_json::Value::Bool(b) => {
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)
+                    }
                     _ => crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string()),
                 };
                 (k.clone(), SqlValue { value: Some(value) })
@@ -210,10 +231,7 @@ impl InputAdapter for HttpAdapter {
         self.running.store(true, Ordering::SeqCst);
         // HTTP endpoints are typically added to the main REST server
         // This adapter provides the parsing logic
-        tracing::info!(
-            "HTTP adapter would listen on {}",
-            self.config.bind_address
-        );
+        tracing::info!("HTTP adapter would listen on {}", self.config.bind_address);
         Ok(())
     }
 

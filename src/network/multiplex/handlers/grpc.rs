@@ -208,10 +208,7 @@ mod tests {
 
     #[test]
     fn test_grpc_handler_builder() {
-        let handler = GrpcHandlerBuilder::new()
-            .ready()
-            .grpc_port(5680)
-            .build();
+        let handler = GrpcHandlerBuilder::new().ready().grpc_port(5680).build();
         assert!(handler.is_ready());
         assert_eq!(handler.grpc_port, 5680);
     }

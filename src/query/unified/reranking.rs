@@ -177,11 +177,7 @@ impl CrossModalReranker {
     }
 
     /// Rerank query results using cross-modal signals
-    pub fn rerank(
-        &self,
-        result: QueryResult,
-        context: &QueryContext,
-    ) -> Result<RerankedResult> {
+    pub fn rerank(&self, result: QueryResult, context: &QueryContext) -> Result<RerankedResult> {
         if result.records.is_empty() {
             return Ok(RerankedResult {
                 records: vec![],
@@ -192,7 +188,8 @@ impl CrossModalReranker {
         }
 
         // Limit to top-k for reranking
-        let records_to_rerank: Vec<UnifiedRecord> = result.records
+        let records_to_rerank: Vec<UnifiedRecord> = result
+            .records
             .into_iter()
             .take(self.config.rerank_top_k)
             .collect();
@@ -231,10 +228,7 @@ impl CrossModalReranker {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let records: Vec<UnifiedRecord> = scored_records
-            .into_iter()
-            .map(|sr| sr.record)
-            .collect();
+        let records: Vec<UnifiedRecord> = scored_records.into_iter().map(|sr| sr.record).collect();
 
         // Compute quality and diversity scores
         let diversity_score = self.compute_diversity_score(&records);
@@ -258,7 +252,9 @@ impl CrossModalReranker {
             .iter()
             .enumerate()
             .map(|(idx, record)| {
-                let model_weight = self.config.model_weights
+                let model_weight = self
+                    .config
+                    .model_weights
                     .get(&record.source_model)
                     .copied()
                     .unwrap_or(1.0);
@@ -274,14 +270,12 @@ impl CrossModalReranker {
                     context_score: 0.0,
                     diversity_penalty: 0.0,
                     final_score: weighted_score,
-                    score_components: vec![
-                        ScoreComponent {
-                            name: "base_score".to_string(),
-                            value: base_score,
-                            weight: model_weight,
-                            contribution: weighted_score,
-                        },
-                    ],
+                    score_components: vec![ScoreComponent {
+                        name: "base_score".to_string(),
+                        value: base_score,
+                        weight: model_weight,
+                        contribution: weighted_score,
+                    }],
                 }
             })
             .collect();
@@ -299,7 +293,8 @@ impl CrossModalReranker {
         if let Some(query_embedding) = &context.query_embedding {
             for record in &mut records {
                 // Try to get record embedding from metadata
-                let semantic_score = if let Some(embedding) = self.extract_embedding(&record.record) {
+                let semantic_score = if let Some(embedding) = self.extract_embedding(&record.record)
+                {
                     self.compute_cosine_similarity(query_embedding, &embedding)
                 } else {
                     // Fall back to text-based similarity if available
@@ -344,11 +339,19 @@ impl CrossModalReranker {
                 let intent_boost = match intent {
                     QueryIntent::SimilaritySearch => {
                         // Boost vector results for similarity search
-                        if record.record.source_model == DataModel::Vector { 0.2 } else { 0.0 }
+                        if record.record.source_model == DataModel::Vector {
+                            0.2
+                        } else {
+                            0.0
+                        }
                     }
                     QueryIntent::RelationshipExploration => {
                         // Boost graph results for relationship queries
-                        if record.record.source_model == DataModel::Graph { 0.2 } else { 0.0 }
+                        if record.record.source_model == DataModel::Graph {
+                            0.2
+                        } else {
+                            0.0
+                        }
                     }
                     QueryIntent::Navigational => {
                         // Boost exact matches
@@ -360,7 +363,11 @@ impl CrossModalReranker {
                     }
                     QueryIntent::Analytical => {
                         // Boost observability data
-                        if record.record.source_model == DataModel::Observability { 0.15 } else { 0.0 }
+                        if record.record.source_model == DataModel::Observability {
+                            0.15
+                        } else {
+                            0.0
+                        }
                     }
                     _ => 0.0,
                 };
@@ -376,7 +383,8 @@ impl CrossModalReranker {
 
             // Apply temporal preference
             if let Some(timestamp) = self.extract_timestamp(&record.record) {
-                let temporal_boost = self.compute_temporal_boost(timestamp, &context.temporal_preference);
+                let temporal_boost =
+                    self.compute_temporal_boost(timestamp, &context.temporal_preference);
                 context_score += temporal_boost;
                 components.push(ScoreComponent {
                     name: "temporal_boost".to_string(),
@@ -387,7 +395,10 @@ impl CrossModalReranker {
             }
 
             // Apply required models boost
-            if context.required_models.contains(&record.record.source_model) {
+            if context
+                .required_models
+                .contains(&record.record.source_model)
+            {
                 context_score += 0.1;
                 components.push(ScoreComponent {
                     name: "required_model_boost".to_string(),
@@ -453,7 +464,8 @@ impl CrossModalReranker {
 
             // Add diversity penalty to the selected record
             let mut selected_record = remaining.remove(best_idx);
-            let diversity_penalty = (1.0 - lambda) * (1.0 - best_mmr / selected_record.final_score).max(0.0);
+            let diversity_penalty =
+                (1.0 - lambda) * (1.0 - best_mmr / selected_record.final_score).max(0.0);
             selected_record.diversity_penalty = diversity_penalty;
             selected_record.score_components.push(ScoreComponent {
                 name: "diversity_adjustment".to_string(),
@@ -527,13 +539,21 @@ impl CrossModalReranker {
     // Helper methods
 
     fn extract_embedding(&self, record: &UnifiedRecord) -> Option<Vec<f32>> {
-        record.data.get("embedding")
+        record
+            .data
+            .get("embedding")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                    .collect()
+            })
     }
 
     fn extract_timestamp(&self, record: &UnifiedRecord) -> Option<i64> {
-        record.data.get("timestamp")
+        record
+            .data
+            .get("timestamp")
             .or_else(|| record.data.get("created_at"))
             .or_else(|| record.data.get("updated_at"))
             .and_then(|v| v.as_i64())
@@ -544,7 +564,11 @@ impl CrossModalReranker {
             return 0.0;
         }
 
-        let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| (*x as f64) * (*y as f64)).sum();
+        let dot: f64 = a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| (*x as f64) * (*y as f64))
+            .sum();
         let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
         let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
 
@@ -635,7 +659,8 @@ impl CrossModalReranker {
 
         for i in 0..records.len() {
             for j in (i + 1)..records.len() {
-                total_dissimilarity += 1.0 - self.compute_record_similarity(&records[i], &records[j]);
+                total_dissimilarity +=
+                    1.0 - self.compute_record_similarity(&records[i], &records[j]);
                 count += 1;
             }
         }
@@ -655,11 +680,8 @@ impl CrossModalReranker {
         }
 
         // Average normalized score
-        let avg_score: f64 = records
-            .iter()
-            .filter_map(|r| r.score)
-            .sum::<f64>()
-            / records.len() as f64;
+        let avg_score: f64 =
+            records.iter().filter_map(|r| r.score).sum::<f64>() / records.len() as f64;
 
         avg_score.min(1.0)
     }
@@ -684,7 +706,9 @@ impl CrossModalReranker {
 
     fn compute_explanation_confidence(&self, scored: &ScoredRecord) -> f64 {
         // Higher confidence when more score components agree
-        let positive_components = scored.score_components.iter()
+        let positive_components = scored
+            .score_components
+            .iter()
             .filter(|c| c.contribution > 0.0)
             .count();
         let total_components = scored.score_components.len();

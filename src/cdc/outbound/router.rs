@@ -184,7 +184,11 @@ pub enum ConditionOperator {
 
 impl MetadataCondition {
     /// Create a new condition
-    pub fn new(field: impl Into<String>, operator: ConditionOperator, value: serde_json::Value) -> Self {
+    pub fn new(
+        field: impl Into<String>,
+        operator: ConditionOperator,
+        value: serde_json::Value,
+    ) -> Self {
         Self {
             field: field.into(),
             operator,
@@ -199,9 +203,7 @@ impl MetadataCondition {
 
         match self.operator {
             ConditionOperator::Exists => field_value.is_some(),
-            ConditionOperator::IsNull => {
-                field_value.as_ref().map(|v| v.is_null()).unwrap_or(true)
-            }
+            ConditionOperator::IsNull => field_value.as_ref().map(|v| v.is_null()).unwrap_or(true),
             _ => {
                 let Some(ref actual) = field_value else {
                     return false;
@@ -312,7 +314,9 @@ impl MetadataCondition {
     fn check_regex(&self, actual: &serde_json::Value) -> bool {
         match (actual, &self.value) {
             (serde_json::Value::String(s), serde_json::Value::String(pattern)) => {
-                Regex::new(pattern).map(|re| re.is_match(s)).unwrap_or(false)
+                Regex::new(pattern)
+                    .map(|re| re.is_match(s))
+                    .unwrap_or(false)
             }
             _ => false,
         }
@@ -605,7 +609,8 @@ mod tests {
         let event = create_test_event("products", Operation::Insert);
 
         // Equals
-        let cond = MetadataCondition::new("tenant", ConditionOperator::Eq, serde_json::json!("acme"));
+        let cond =
+            MetadataCondition::new("tenant", ConditionOperator::Eq, serde_json::json!("acme"));
         assert!(cond.evaluate(&event));
 
         // Greater than
@@ -613,15 +618,24 @@ mod tests {
         assert!(cond.evaluate(&event));
 
         // Contains (array)
-        let cond = MetadataCondition::new("tags", ConditionOperator::Contains, serde_json::json!("important"));
+        let cond = MetadataCondition::new(
+            "tags",
+            ConditionOperator::Contains,
+            serde_json::json!("important"),
+        );
         assert!(cond.evaluate(&event));
 
         // Exists
-        let cond = MetadataCondition::new("tenant", ConditionOperator::Exists, serde_json::Value::Null);
+        let cond =
+            MetadataCondition::new("tenant", ConditionOperator::Exists, serde_json::Value::Null);
         assert!(cond.evaluate(&event));
 
         // Not exists
-        let cond = MetadataCondition::new("missing", ConditionOperator::Exists, serde_json::Value::Null);
+        let cond = MetadataCondition::new(
+            "missing",
+            ConditionOperator::Exists,
+            serde_json::Value::Null,
+        );
         assert!(!cond.evaluate(&event));
     }
 
@@ -736,7 +750,11 @@ mod tests {
     #[test]
     fn test_router_stats() {
         let router = EventRouter::new();
-        router.add_rule(RouteRule::new("all").with_collection("*").with_sink("kafka"));
+        router.add_rule(
+            RouteRule::new("all")
+                .with_collection("*")
+                .with_sink("kafka"),
+        );
 
         router.route(create_test_event("a", Operation::Insert));
         router.route(create_test_event("b", Operation::Insert));
@@ -750,7 +768,11 @@ mod tests {
     #[test]
     fn test_enable_disable_rule() {
         let router = EventRouter::new();
-        router.add_rule(RouteRule::new("test").with_collection("*").with_sink("kafka"));
+        router.add_rule(
+            RouteRule::new("test")
+                .with_collection("*")
+                .with_sink("kafka"),
+        );
 
         // Initially enabled
         let event = create_test_event("any", Operation::Insert);

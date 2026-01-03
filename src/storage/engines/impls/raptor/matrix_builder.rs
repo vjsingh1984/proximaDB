@@ -21,9 +21,9 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 #[cfg(feature = "gpu")]
-use crate::core::hardware_capabilities::GpuBackend;
-#[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::GpuDistanceCompute;
+#[cfg(feature = "gpu")]
+use crate::core::hardware_capabilities::GpuBackend;
 
 use super::common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,
@@ -236,13 +236,14 @@ impl MatrixBuilder {
                 return Err(anyhow::anyhow!(
                     "Unsupported metric for GPU P² matrix: {:?}",
                     self.distance_metric
-                ))
+                ));
             }
         };
 
         // Execute GPU computation - block on async call
         let distances = Handle::current().block_on(async {
-            gpu.calculate_pairwise_matrix_mps(vectors, proto_metric).await
+            gpu.calculate_pairwise_matrix_mps(vectors, proto_metric)
+                .await
         })?;
 
         // Find min/max for compression
@@ -389,7 +390,7 @@ impl MatrixBuilder {
         // Access is O(1) via formula: idx = i*(2k-i-1)/2 + (j-i-1)
         // But we keep the structures for compatibility
         let row_compressed_sizes: Vec<u16> = (0..num_centroids)
-            .map(|i| ((num_centroids - i - 1) * 2) as u16)  // Each row i has (k-i-1) elements
+            .map(|i| ((num_centroids - i - 1) * 2) as u16) // Each row i has (k-i-1) elements
             .collect();
 
         // Lookup table: cumulative offset for each row's start
@@ -397,10 +398,10 @@ impl MatrixBuilder {
         let mut offset = 0u32;
         for i in 0..num_centroids {
             lookup_table.push(offset);
-            offset += (num_centroids - i - 1) as u32 * 2;  // 2 bytes per u16
+            offset += (num_centroids - i - 1) as u32 * 2; // 2 bytes per u16
         }
 
-        let full_matrix_size = num_centroids * num_centroids * 4;  // k² × 4 bytes (f32)
+        let full_matrix_size = num_centroids * num_centroids * 4; // k² × 4 bytes (f32)
         let compressed_size = compressed_data.len();
         let savings_pct = (1.0 - compressed_size as f32 / full_matrix_size as f32) * 100.0;
 
@@ -653,7 +654,8 @@ impl MatrixBuilder {
         if centroid_idx >= k {
             return Err(anyhow::anyhow!(
                 "Centroid index {} out of bounds (k={})",
-                centroid_idx, k
+                centroid_idx,
+                k
             ));
         }
 
@@ -686,7 +688,9 @@ impl MatrixBuilder {
                 if byte_offset + 2 > matrix.compressed_data.len() {
                     return Err(anyhow::anyhow!(
                         "Index out of bounds: linear_index={}, byte_offset={}, data_len={}",
-                        linear_index, byte_offset, matrix.compressed_data.len()
+                        linear_index,
+                        byte_offset,
+                        matrix.compressed_data.len()
                     ));
                 }
 

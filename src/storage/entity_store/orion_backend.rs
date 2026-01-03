@@ -53,12 +53,12 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::{Arc, OnceLock};
 
-use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
 use super::EntityStore;
+use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
 use crate::graph::{GraphOperationsService, Node, PropertyValue};
 use crate::proto::proximadb_v1::{
-    filter_clause, property_value, ComparisonOp, EdgeQuery, Entity, LogicalOp, MetadataFilter,
-    NodeQuery, Relation,
+    ComparisonOp, EdgeQuery, Entity, LogicalOp, MetadataFilter, NodeQuery, Relation, filter_clause,
+    property_value,
 };
 use crate::{core::VectorId, index::AxisManager};
 
@@ -314,10 +314,12 @@ impl EntityStore for OrionBackedEntityStore {
 
             let hybrid_query = crate::index::axis::management::manager::HybridQuery {
                 collection_id: collection_id.to_string(),
-                vector_query: Some(crate::index::axis::management::manager::VectorQuery::Dense {
-                    vector: vec.clone(),
-                    similarity_threshold: 0.0,
-                }),
+                vector_query: Some(
+                    crate::index::axis::management::manager::VectorQuery::Dense {
+                        vector: vec.clone(),
+                        similarity_threshold: 0.0,
+                    },
+                ),
                 metadata_filters: axis_filters,
                 id_filters: Vec::<VectorId>::new(),
                 top_k,
@@ -758,7 +760,9 @@ impl OrionBackedEntityStore {
                     Some(filter_clause::Value::StringValue(v)) => {
                         serde_json::Value::String(v.clone())
                     }
-                    Some(filter_clause::Value::IntValue(v)) => serde_json::Value::Number((*v).into()),
+                    Some(filter_clause::Value::IntValue(v)) => {
+                        serde_json::Value::Number((*v).into())
+                    }
                     Some(filter_clause::Value::DoubleValue(v)) => serde_json::json!(v),
                     Some(filter_clause::Value::BoolValue(v)) => serde_json::Value::Bool(*v),
                     None => return None,
@@ -792,46 +796,38 @@ impl OrionBackedEntityStore {
             };
 
             let matched = match &clause.value {
-                Some(filter_clause::Value::StringValue(expected)) => {
-                    value
-                        .value
-                        .as_ref()
-                        .and_then(|v| match v {
-                            property_value::Value::StringValue(s) => Some(s == expected),
-                            _ => None,
-                        })
-                        .unwrap_or(false)
-                }
-                Some(filter_clause::Value::IntValue(expected)) => {
-                    value
-                        .value
-                        .as_ref()
-                        .and_then(|v| match v {
-                            property_value::Value::IntValue(i) => Some(i == expected),
-                            _ => None,
-                        })
-                        .unwrap_or(false)
-                }
-                Some(filter_clause::Value::DoubleValue(expected)) => {
-                    value
-                        .value
-                        .as_ref()
-                        .and_then(|v| match v {
-                            property_value::Value::DoubleValue(f) => Some(f == expected),
-                            _ => None,
-                        })
-                        .unwrap_or(false)
-                }
-                Some(filter_clause::Value::BoolValue(expected)) => {
-                    value
-                        .value
-                        .as_ref()
-                        .and_then(|v| match v {
-                            property_value::Value::BoolValue(b) => Some(b == expected),
-                            _ => None,
-                        })
-                        .unwrap_or(false)
-                }
+                Some(filter_clause::Value::StringValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::StringValue(s) => Some(s == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                Some(filter_clause::Value::IntValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::IntValue(i) => Some(i == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                Some(filter_clause::Value::DoubleValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::DoubleValue(f) => Some(f == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                Some(filter_clause::Value::BoolValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::BoolValue(b) => Some(b == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
                 None => false,
             };
 
@@ -842,11 +838,7 @@ impl OrionBackedEntityStore {
             }
         }
 
-        if is_or {
-            any
-        } else {
-            true
-        }
+        if is_or { any } else { true }
     }
 }
 
@@ -937,7 +929,8 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(create_request)
+        graph_service
+            .create_graph_collection(create_request)
             .await
             .expect("Failed to create graph collection");
 
@@ -998,7 +991,8 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(create_request)
+        graph_service
+            .create_graph_collection(create_request)
             .await
             .expect("Failed to create graph collection");
 
@@ -1142,7 +1136,8 @@ mod tests {
             .await
             .expect("Failed to create graph collection");
 
-        let store = OrionBackedEntityStore::new(graph_service.clone(), "test-collection-4".to_string());
+        let store =
+            OrionBackedEntityStore::new(graph_service.clone(), "test-collection-4".to_string());
 
         // Create entities with different embeddings
         let entity1 = Entity {
@@ -1260,7 +1255,8 @@ mod tests {
             .await
             .expect("Failed to create graph collection");
 
-        let store = OrionBackedEntityStore::new(graph_service.clone(), "test-collection-5".to_string());
+        let store =
+            OrionBackedEntityStore::new(graph_service.clone(), "test-collection-5".to_string());
 
         // Create 100 test entities
         let mut entities = Vec::new();
@@ -1310,6 +1306,9 @@ mod tests {
 
         println!("✓ Batch upsert of 100 entities successful");
         println!("  - Duration: {:?}", duration);
-        println!("  - Throughput: {:.2} entities/sec", 100.0 / duration.as_secs_f64());
+        println!(
+            "  - Throughput: {:.2} entities/sec",
+            100.0 / duration.as_secs_f64()
+        );
     }
 }

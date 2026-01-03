@@ -1001,8 +1001,7 @@ impl UnifiedParquetReader {
         needs_metadata: bool,
     ) -> Result<Vec<VectorRecord>> {
         use arrow_array::{
-            BinaryArray, FixedSizeListArray, Int64Array, ListArray, MapArray,
-            StringArray,
+            BinaryArray, FixedSizeListArray, Int64Array, ListArray, MapArray, StringArray,
         };
 
         // Check if we have quantized vectors for pre-filtering

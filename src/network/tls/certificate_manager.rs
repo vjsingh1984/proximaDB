@@ -34,10 +34,10 @@
 //! println!("Subject CN: {:?}", parsed.subject_cn);
 //! ```
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
-    IsCa, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, SanType,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -287,7 +287,8 @@ impl CertificateManager {
             .map_err(|e| TlsError::CertificateGeneration(e.to_string()))?;
 
         Ok(GeneratedCertificate {
-            cert_pem: cert.serialize_pem()
+            cert_pem: cert
+                .serialize_pem()
                 .map_err(|e| TlsError::CertificateGeneration(e.to_string()))?,
             key_pem: cert.serialize_private_key_pem(),
         })
@@ -340,7 +341,8 @@ impl CertificateManager {
             .map_err(|e| TlsError::CertificateGeneration(e.to_string()))?;
 
         Ok(GeneratedCertificate {
-            cert_pem: cert.serialize_pem()
+            cert_pem: cert
+                .serialize_pem()
                 .map_err(|e| TlsError::CertificateGeneration(e.to_string()))?,
             key_pem: cert.serialize_private_key_pem(),
         })
@@ -388,8 +390,9 @@ impl CertificateManager {
         ca_params.alg = &PKCS_ECDSA_P256_SHA256;
         ca_params.key_pair = Some(ca_key_pair);
 
-        let ca_cert = rcgen::Certificate::from_params(ca_params)
-            .map_err(|e| TlsError::CertificateGeneration(format!("CA cert generation error: {}", e)))?;
+        let ca_cert = rcgen::Certificate::from_params(ca_params).map_err(|e| {
+            TlsError::CertificateGeneration(format!("CA cert generation error: {}", e))
+        })?;
 
         // Create client certificate parameters
         let mut params = CertificateParams::default();
@@ -535,7 +538,8 @@ impl CertificateManager {
 
         // Read and parse certificate
         let cert_data = fs::read(&cert_path).await?;
-        let parsed = self.parse_certificate(&cert_data)
+        let parsed = self
+            .parse_certificate(&cert_data)
             .map_err(|e| anyhow!("Certificate parse error: {}", e))?;
 
         // Check validity
@@ -579,7 +583,8 @@ impl CertificateManager {
 
         info!("Generating self-signed certificate: {:?}", cert_path);
 
-        let generated = self.generate_self_signed()
+        let generated = self
+            .generate_self_signed()
             .map_err(|e| anyhow!("Certificate generation failed: {}", e))?;
 
         // Write certificate and key files
@@ -608,7 +613,8 @@ impl CertificateManager {
 
         info!("Generating CA certificate: {:?}", ca_cert_path);
 
-        let generated = self.generate_ca()
+        let generated = self
+            .generate_ca()
             .map_err(|e| anyhow!("CA generation failed: {}", e))?;
 
         // Write CA certificate and key files
@@ -860,10 +866,7 @@ mod tests {
         assert!(parsed.not_after > now);
 
         // Should be valid for approximately 30 days
-        let duration = parsed
-            .not_after
-            .duration_since(parsed.not_before)
-            .unwrap();
+        let duration = parsed.not_after.duration_since(parsed.not_before).unwrap();
         let days = duration.as_secs() / (24 * 60 * 60);
         assert!(days >= 29 && days <= 31);
     }

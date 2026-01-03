@@ -60,7 +60,10 @@ pub enum FieldTransform {
     /// Parse as JSON
     ParseJson,
     /// Apply regex replacement
-    Regex { pattern: String, replacement: String },
+    Regex {
+        pattern: String,
+        replacement: String,
+    },
     /// Extract substring
     Substring { start: usize, length: Option<usize> },
     /// Convert case
@@ -68,7 +71,10 @@ pub enum FieldTransform {
     /// Hash the value
     Hash(HashAlgorithm),
     /// Concatenate multiple fields
-    Concat { fields: Vec<String>, separator: String },
+    Concat {
+        fields: Vec<String>,
+        separator: String,
+    },
     /// Extract from JSON path
     JsonPath(String),
     /// Custom expression (for future use)
@@ -112,7 +118,11 @@ impl SchemaMapper {
     }
 
     /// Rename a field
-    pub fn rename_field(mut self, old_name: impl Into<String>, new_name: impl Into<String>) -> Self {
+    pub fn rename_field(
+        mut self,
+        old_name: impl Into<String>,
+        new_name: impl Into<String>,
+    ) -> Self {
         self.field_mappings.insert(
             old_name.into(),
             FieldMapping {
@@ -261,7 +271,7 @@ impl SchemaMapper {
                         return Err(CdcError::Transform(format!(
                             "Cannot convert {:?} to number",
                             value
-                        )))
+                        )));
                     }
                 };
                 Ok(serde_json::Value::Number(num))
@@ -300,9 +310,10 @@ impl SchemaMapper {
                                 let mut chars = word.chars();
                                 match chars.next() {
                                     None => String::new(),
-                                    Some(c) => {
-                                        c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect()
-                                    }
+                                    Some(c) => c
+                                        .to_uppercase()
+                                        .chain(chars.flat_map(|c| c.to_lowercase()))
+                                        .collect(),
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -342,7 +353,9 @@ impl SchemaMapper {
             FieldTransform::Substring { start, length } => {
                 if let serde_json::Value::String(s) = value {
                     let chars: Vec<char> = s.chars().collect();
-                    let end = length.map(|l| (*start + l).min(chars.len())).unwrap_or(chars.len());
+                    let end = length
+                        .map(|l| (*start + l).min(chars.len()))
+                        .unwrap_or(chars.len());
                     let substring: String = chars[(*start).min(chars.len())..end].iter().collect();
                     Ok(serde_json::Value::String(substring))
                 } else {
@@ -393,7 +406,10 @@ impl SchemaMapper {
                 Ok(current)
             }
 
-            FieldTransform::Regex { pattern, replacement } => {
+            FieldTransform::Regex {
+                pattern,
+                replacement,
+            } => {
                 if let serde_json::Value::String(s) = value {
                     // Simple regex replacement (basic implementation)
                     // In production, use the regex crate
@@ -404,7 +420,10 @@ impl SchemaMapper {
                 }
             }
 
-            FieldTransform::Concat { fields: _, separator: _ } => {
+            FieldTransform::Concat {
+                fields: _,
+                separator: _,
+            } => {
                 // This would need access to all fields, not just the current value
                 // Return value unchanged for now
                 Ok(value.clone())
@@ -447,7 +466,13 @@ fn sha256_hash(input: &str) -> String {
 fn sha512_hash(input: &str) -> String {
     // Placeholder - in production use sha2 crate
     let h = md5_hash(input);
-    format!("{:032x}{:032x}{:032x}{:032x}", h, h.wrapping_mul(0x12345), h.wrapping_mul(0x67890), h.wrapping_mul(0xabcde))
+    format!(
+        "{:032x}{:032x}{:032x}{:032x}",
+        h,
+        h.wrapping_mul(0x12345),
+        h.wrapping_mul(0x67890),
+        h.wrapping_mul(0xabcde)
+    )
 }
 
 fn xxhash(input: &str) -> u64 {
@@ -534,8 +559,7 @@ mod tests {
 
     #[test]
     fn test_with_default() {
-        let mapper = SchemaMapper::new()
-            .with_default("country", serde_json::json!("USA"));
+        let mapper = SchemaMapper::new().with_default("country", serde_json::json!("USA"));
         let state = create_test_state();
         let result = mapper.transform_record_state(state).unwrap();
 

@@ -320,10 +320,7 @@ impl KafkaSink {
     }
 
     /// Produce a batch of messages
-    async fn produce_batch(
-        &self,
-        messages: Vec<(String, String, Vec<u8>)>,
-    ) -> SinkResult<()> {
+    async fn produce_batch(&self, messages: Vec<(String, String, Vec<u8>)>) -> SinkResult<()> {
         let total_bytes: u64 = messages.iter().map(|(_, _, p)| p.len() as u64).sum();
         let count = messages.len() as u64;
 
@@ -430,8 +427,8 @@ mod tests {
 
     #[test]
     fn test_kafka_config_sasl() {
-        let config = KafkaConfig::new(vec!["localhost:9092"])
-            .with_sasl("PLAIN", "user", "password");
+        let config =
+            KafkaConfig::new(vec!["localhost:9092"]).with_sasl("PLAIN", "user", "password");
 
         assert!(matches!(
             config.security_protocol,
@@ -443,8 +440,8 @@ mod tests {
 
     #[test]
     fn test_resolve_topic() {
-        let config = KafkaConfig::new(vec!["localhost:9092"])
-            .with_topic_pattern("cdc.{collection}");
+        let config =
+            KafkaConfig::new(vec!["localhost:9092"]).with_topic_pattern("cdc.{collection}");
 
         let event = create_test_event();
         let topic = config.resolve_topic(&event);
@@ -454,8 +451,8 @@ mod tests {
 
     #[test]
     fn test_resolve_key() {
-        let config = KafkaConfig::new(vec!["localhost:9092"])
-            .with_key_pattern("{collection}:{key}");
+        let config =
+            KafkaConfig::new(vec!["localhost:9092"]).with_key_pattern("{collection}:{key}");
 
         let event = create_test_event();
         let key = config.resolve_key(&event);
@@ -525,7 +522,11 @@ mod tests {
         let sink = KafkaSink::new(config);
         sink.connect().await.unwrap();
 
-        let events = vec![create_test_event(), create_test_event(), create_test_event()];
+        let events = vec![
+            create_test_event(),
+            create_test_event(),
+            create_test_event(),
+        ];
         sink.send_batch(events).await.unwrap();
 
         let stats = sink.stats();

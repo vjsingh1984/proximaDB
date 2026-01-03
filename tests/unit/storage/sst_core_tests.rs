@@ -6,7 +6,6 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-
 // REMOVED: Duplicate of integration::isolated_sst_engine_test::test_isolated_sst_vector_insert_flush_search
 // and integration::isolated_sst_engine_test::test_isolated_sst_metadata_based_filtering
 // The integration tests provide better isolation and more comprehensive testing

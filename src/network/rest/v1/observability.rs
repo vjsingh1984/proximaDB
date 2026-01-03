@@ -5,10 +5,10 @@
 // - Metric ingestion and aggregation
 
 use axum::{
+    Router,
     extract::{Json, Path, State},
     response::Json as JsonResponse,
     routing::post,
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

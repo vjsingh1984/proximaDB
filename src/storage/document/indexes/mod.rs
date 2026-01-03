@@ -11,16 +11,16 @@ pub mod path_index;
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::{DocIndexType, IndexDefinition};
 
-use super::DocumentRecord;
 use self::array_index::ArrayIndex;
 use self::fulltext::FullTextIndex;
 use self::path_index::PathIndex;
+use super::DocumentRecord;
 
 /// Index type wrapper for different index implementations
 enum IndexType {
@@ -78,17 +78,13 @@ impl IndexManager {
             .entry(collection.to_string())
             .or_insert_with(CollectionIndexes::default);
 
-        let index_type = DocIndexType::try_from(definition.index_type)
-            .unwrap_or(DocIndexType::Unspecified);
+        let index_type =
+            DocIndexType::try_from(definition.index_type).unwrap_or(DocIndexType::Unspecified);
 
         match index_type {
             DocIndexType::Btree | DocIndexType::Hash => {
                 // Both btree and hash use PathIndex for now
-                let index = PathIndex::new(
-                    &definition.path,
-                    definition.unique,
-                    definition.sparse,
-                );
+                let index = PathIndex::new(&definition.path, definition.unique, definition.sparse);
                 collection_indexes
                     .path_indexes
                     .insert(definition.path.clone(), index);
@@ -254,8 +250,8 @@ impl IndexManager {
         document: &crate::proto::proximadb_v1::SqlObject,
         path: &str,
     ) -> Option<IndexValue> {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
         use super::query::path_parser::JsonPath;
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 
         // Parse and evaluate the path
         let json_path = JsonPath::parse(&format!("$.{}", path.trim_start_matches("$."))).ok()?;
@@ -280,8 +276,8 @@ impl IndexManager {
         document: &crate::proto::proximadb_v1::SqlObject,
         path: &str,
     ) -> Option<Vec<IndexValue>> {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
         use super::query::path_parser::JsonPath;
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 
         // Parse and evaluate the path
         let json_path = JsonPath::parse(&format!("$.{}", path.trim_start_matches("$."))).ok()?;
@@ -294,16 +290,14 @@ impl IndexManager {
             let index_values: Vec<IndexValue> = arr
                 .values
                 .into_iter()
-                .filter_map(|v| {
-                    match v.value {
-                        Some(SqlVal::NullValue(_)) => Some(IndexValue::Null),
-                        Some(SqlVal::BoolValue(b)) => Some(IndexValue::Bool(b)),
-                        Some(SqlVal::Int64Value(i)) => Some(IndexValue::Int(i)),
-                        Some(SqlVal::NumberValue(f)) => Some(IndexValue::Float(f)),
-                        Some(SqlVal::StringValue(s)) => Some(IndexValue::String(s)),
-                        Some(SqlVal::BytesValue(b)) => Some(IndexValue::Bytes(b)),
-                        _ => None,
-                    }
+                .filter_map(|v| match v.value {
+                    Some(SqlVal::NullValue(_)) => Some(IndexValue::Null),
+                    Some(SqlVal::BoolValue(b)) => Some(IndexValue::Bool(b)),
+                    Some(SqlVal::Int64Value(i)) => Some(IndexValue::Int(i)),
+                    Some(SqlVal::NumberValue(f)) => Some(IndexValue::Float(f)),
+                    Some(SqlVal::StringValue(s)) => Some(IndexValue::String(s)),
+                    Some(SqlVal::BytesValue(b)) => Some(IndexValue::Bytes(b)),
+                    _ => None,
                 })
                 .collect();
 

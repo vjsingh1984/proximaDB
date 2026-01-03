@@ -299,9 +299,7 @@ fn test_data_block_zstd_compression() {
 
     debug!(
         "📦 ProximaDataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes",
-        compression_ratio,
-        uncompressed_size,
-        compressed_size
+        compression_ratio, uncompressed_size, compressed_size
     );
 
     // Compression may not always be beneficial for small blocks, so just verify roundtrip works
@@ -448,7 +446,10 @@ fn test_backward_compatibility() {
     assert_eq!(record.record.vector, deserialized.record.vector);
     assert_eq!(record.record.timestamp, deserialized.record.timestamp);
     assert_eq!(record.record.version, deserialized.record.version);
-    assert_eq!(record.sst_meta.sequence_number, deserialized.sst_meta.sequence_number);
+    assert_eq!(
+        record.sst_meta.sequence_number,
+        deserialized.sst_meta.sequence_number
+    );
     assert_eq!(record.sst_meta.level, deserialized.sst_meta.level);
 
     debug!("✅ Backward compatibility test passed - serialization format stable");

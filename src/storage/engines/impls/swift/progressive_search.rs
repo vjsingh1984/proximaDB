@@ -278,15 +278,16 @@ async fn phase1_binary_filtering(
     let metric = parse_distance_metric(&sst.header.distance_metric);
 
     // Apply AdaCurves pruning at superblock level (first-stage hierarchical pruning)
-    let superblock_indices = if let Some(filtered) = filter_superblocks_by_adacurve(query, &sst.superblocks) {
-        if filtered.len() < sst.superblocks.len() {
-            filtered
+    let superblock_indices =
+        if let Some(filtered) = filter_superblocks_by_adacurve(query, &sst.superblocks) {
+            if filtered.len() < sst.superblocks.len() {
+                filtered
+            } else {
+                (0..sst.superblocks.len()).collect()
+            }
         } else {
             (0..sst.superblocks.len()).collect()
-        }
-    } else {
-        (0..sst.superblocks.len()).collect()
-    };
+        };
 
     // Iterate only over filtered superblocks
     for sb_idx in superblock_indices {
@@ -784,16 +785,15 @@ fn compute_distance(
     use crate::compute::distance_computation::DistanceMetric;
 
     match metric {
-        DistanceMetric::Euclidean => {
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| {
-                    let diff = x - y;
-                    diff * diff
-                })
-                .sum::<f32>()
-                .sqrt()
-        }
+        DistanceMetric::Euclidean => a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| {
+                let diff = x - y;
+                diff * diff
+            })
+            .sum::<f32>()
+            .sqrt(),
         DistanceMetric::Cosine => {
             let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
             let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -804,27 +804,22 @@ fn compute_distance(
                 1.0
             }
         }
-        DistanceMetric::DotProduct => {
-            -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>()
-        }
-        DistanceMetric::Manhattan => {
-            a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
-        }
+        DistanceMetric::DotProduct => -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>(),
+        DistanceMetric::Manhattan => a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum(),
         DistanceMetric::Hamming => {
             // Hamming distance for float vectors (count non-equal elements)
             a.iter().zip(b.iter()).filter(|(x, y)| x != y).count() as f32
         }
         // Default to Euclidean for unspecified or other metrics
-        _ => {
-            a.iter()
-                .zip(b.iter())
-                .map(|(x, y)| {
-                    let diff = x - y;
-                    diff * diff
-                })
-                .sum::<f32>()
-                .sqrt()
-        }
+        _ => a
+            .iter()
+            .zip(b.iter())
+            .map(|(x, y)| {
+                let diff = x - y;
+                diff * diff
+            })
+            .sum::<f32>()
+            .sqrt(),
     }
 }
 
@@ -843,12 +838,9 @@ fn compute_distance(
 ///
 /// # Returns
 /// AdaCurve code for the query, or None if insufficient data
-fn compute_query_adacurve_code(
-    query: &[f32],
-    superblocks: &[super::SuperBlock],
-) -> Option<u64> {
+fn compute_query_adacurve_code(query: &[f32], superblocks: &[super::SuperBlock]) -> Option<u64> {
     use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
-        IncrementalPCA, AdaCurve,
+        AdaCurve, IncrementalPCA,
     };
 
     if superblocks.is_empty() || query.is_empty() {
@@ -891,10 +883,7 @@ fn compute_query_adacurve_code(
     pca.finalize();
 
     // Transform centroids to PCA space for AdaCurve training
-    let pca_coords: Vec<Vec<f32>> = centroids
-        .iter()
-        .map(|c| pca.transform(c))
-        .collect();
+    let pca_coords: Vec<Vec<f32>> = centroids.iter().map(|c| pca.transform(c)).collect();
 
     // Train AdaCurve from PCA coords (same as during write)
     let num_segments = pca_coords.len().min(256).max(8);
@@ -1016,7 +1005,9 @@ fn select_blocks_by_centroid(
 
     // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
     use crate::storage::engines::core::constants::pruning;
-    let min_blocks_threshold = prune.min_blocks_override.unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    let min_blocks_threshold = prune
+        .min_blocks_override
+        .unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
     if superblock.blocks.len() < min_blocks_threshold {
         tracing::debug!(
             "SWIFT block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
@@ -1090,7 +1081,9 @@ mod tests {
     use super::*;
     use crate::compute::UnifiedDistanceCompute;
     use crate::proto::proximadb_v1::DistanceMetric;
-    use crate::storage::engines::impls::swift::{SuperBlock, SwiftSuperBlockMetadata, SwiftSpecificData, ProximaBlockMetadata};
+    use crate::storage::engines::impls::swift::{
+        ProximaBlockMetadata, SuperBlock, SwiftSpecificData, SwiftSuperBlockMetadata,
+    };
 
     #[test]
     fn test_candidate_ordering() {
@@ -1184,7 +1177,12 @@ mod tests {
             blocks: Vec::new(),
             superblock_encoding_marker: 0,
             centroid: vec![],
-            block_centroids: vec![vec![0.1, 0.1], vec![3.0, 3.0], vec![0.2, 0.2], vec![6.0, 6.0]],
+            block_centroids: vec![
+                vec![0.1, 0.1],
+                vec![3.0, 3.0],
+                vec![0.2, 0.2],
+                vec![6.0, 6.0],
+            ],
             quantized_signature: Vec::new(),
             adacurve_code: None,
             block_centroids_fp16: None,
@@ -1301,7 +1299,11 @@ mod tests {
     // AdaCurves Pruning Tests
     // ========================================================================
 
-    fn create_test_superblock(id: usize, centroid: Vec<f32>, adacurve_code: Option<u64>) -> SuperBlock {
+    fn create_test_superblock(
+        id: usize,
+        centroid: Vec<f32>,
+        adacurve_code: Option<u64>,
+    ) -> SuperBlock {
         SuperBlock {
             superblock_id: id,
             name: format!("sb_{}", id),
@@ -1361,9 +1363,7 @@ mod tests {
 
     #[test]
     fn test_calculate_adacurve_epsilon_no_codes() {
-        let superblocks = vec![
-            create_test_superblock(0, vec![0.0, 0.0], None),
-        ];
+        let superblocks = vec![create_test_superblock(0, vec![0.0, 0.0], None)];
 
         let epsilon = calculate_adacurve_epsilon_superblock(&superblocks);
         assert_eq!(epsilon, u64::MAX, "Should return MAX for no codes");
@@ -1400,11 +1400,17 @@ mod tests {
         ];
 
         let filtered = filter_superblocks_by_adacurve(&query, &superblocks);
-        assert!(filtered.is_some(), "Should handle mix of coded/non-coded superblocks");
+        assert!(
+            filtered.is_some(),
+            "Should handle mix of coded/non-coded superblocks"
+        );
 
         let indices = filtered.unwrap();
         // Superblock without code should be included
-        assert!(indices.contains(&0), "Should include superblock without AdaCurve code");
+        assert!(
+            indices.contains(&0),
+            "Should include superblock without AdaCurve code"
+        );
     }
 
     #[test]
@@ -1414,9 +1420,9 @@ mod tests {
 
         // Create superblocks with varying distances
         let superblocks = vec![
-            create_test_superblock(0, vec![0.9, 0.9], Some(5000)),    // Close
+            create_test_superblock(0, vec![0.9, 0.9], Some(5000)), // Close
             create_test_superblock(1, vec![50.0, 50.0], Some(100000)), // Far
-            create_test_superblock(2, vec![1.1, 1.1], Some(5100)),    // Close
+            create_test_superblock(2, vec![1.1, 1.1], Some(5100)), // Close
         ];
 
         let filtered = filter_superblocks_by_adacurve(&query, &superblocks);
@@ -1425,7 +1431,10 @@ mod tests {
         let indices = filtered.unwrap();
         // Expect hierarchical pruning to keep nearby superblocks
         // The exact count depends on epsilon calculation, but should prune at least the far one
-        assert!(indices.len() < 3 || indices.len() == 3,
-            "Hierarchical pruning should work (got {} superblocks)", indices.len());
+        assert!(
+            indices.len() < 3 || indices.len() == 3,
+            "Hierarchical pruning should work (got {} superblocks)",
+            indices.len()
+        );
     }
 }

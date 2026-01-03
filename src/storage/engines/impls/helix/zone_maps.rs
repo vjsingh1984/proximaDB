@@ -4,7 +4,6 @@
 //! to enable fine-grained pruning during query execution.
 
 use anyhow::Result;
-use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::VectorRecord;

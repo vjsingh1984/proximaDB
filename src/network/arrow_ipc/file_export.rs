@@ -427,11 +427,9 @@ impl FlightCompression {
     pub fn to_ipc_write_options(&self) -> arrow_ipc::writer::IpcWriteOptions {
         match self.to_arrow_compression() {
             None => arrow_ipc::writer::IpcWriteOptions::default(),
-            Some(compression) => {
-                arrow_ipc::writer::IpcWriteOptions::default()
-                    .try_with_compression(Some(compression))
-                    .unwrap_or_default()
-            }
+            Some(compression) => arrow_ipc::writer::IpcWriteOptions::default()
+                .try_with_compression(Some(compression))
+                .unwrap_or_default(),
         }
     }
 
@@ -544,15 +542,13 @@ impl ArrowFileRequest {
                 .map(|v| v as usize);
 
             // Parse compression from string or object
-            let compression = params
-                .get("compression")
-                .and_then(|v| {
-                    if let Some(s) = v.as_str() {
-                        s.parse::<FlightCompression>().ok()
-                    } else {
-                        serde_json::from_value::<FlightCompression>(v.clone()).ok()
-                    }
-                });
+            let compression = params.get("compression").and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    s.parse::<FlightCompression>().ok()
+                } else {
+                    serde_json::from_value::<FlightCompression>(v.clone()).ok()
+                }
+            });
 
             (limit, compression)
         } else {

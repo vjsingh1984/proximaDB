@@ -5,7 +5,7 @@
 // - Non-blocking push/pop operations
 // - Multiple producer support
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam::queue::ArrayQueue;
 
@@ -31,10 +31,7 @@ pub struct RingBuffer {
 #[derive(Debug, Clone)]
 pub enum BufferedEvent {
     /// Log entry
-    Log {
-        namespace: String,
-        entry: LogEntry,
-    },
+    Log { namespace: String, entry: LogEntry },
     /// Metric sample
     Metric {
         namespace: String,

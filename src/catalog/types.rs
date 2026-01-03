@@ -3,9 +3,9 @@
 //! These types are used internally by catalog implementations and
 //! converted to/from proto types at API boundaries.
 
-use std::collections::HashMap;
 use arrow_schema::DataType as ArrowDataType;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Namespace metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,19 +211,36 @@ impl CatalogDataType {
             CatalogDataType::Binary => ArrowDataType::Binary,
             CatalogDataType::Date => ArrowDataType::Date32,
             CatalogDataType::Time => ArrowDataType::Time64(arrow_schema::TimeUnit::Nanosecond),
-            CatalogDataType::Timestamp => ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, None),
-            CatalogDataType::TimestampTz => ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, Some("UTC".into())),
+            CatalogDataType::Timestamp => {
+                ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, None)
+            }
+            CatalogDataType::TimestampTz => {
+                ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, Some("UTC".into()))
+            }
             CatalogDataType::Decimal => ArrowDataType::Decimal128(38, 10),
             CatalogDataType::Uuid => ArrowDataType::Utf8, // UUID as string
             CatalogDataType::Json => ArrowDataType::Utf8, // JSON as string
-            CatalogDataType::Vector => ArrowDataType::List(Box::new(arrow_schema::Field::new("item", ArrowDataType::Float32, true)).into()),
+            CatalogDataType::Vector => ArrowDataType::List(
+                Box::new(arrow_schema::Field::new(
+                    "item",
+                    ArrowDataType::Float32,
+                    true,
+                ))
+                .into(),
+            ),
             CatalogDataType::SparseVector => ArrowDataType::Map(
-                Box::new(arrow_schema::Field::new("entries", ArrowDataType::Struct(
-                    vec![
-                        arrow_schema::Field::new("key", ArrowDataType::Int32, false),
-                        arrow_schema::Field::new("value", ArrowDataType::Float32, false),
-                    ].into()
-                ), false)).into(),
+                Box::new(arrow_schema::Field::new(
+                    "entries",
+                    ArrowDataType::Struct(
+                        vec![
+                            arrow_schema::Field::new("key", ArrowDataType::Int32, false),
+                            arrow_schema::Field::new("value", ArrowDataType::Float32, false),
+                        ]
+                        .into(),
+                    ),
+                    false,
+                ))
+                .into(),
                 false,
             ),
             CatalogDataType::BinaryVector => ArrowDataType::Binary, // Packed bits as binary
@@ -320,7 +337,11 @@ pub struct CatalogIndex {
 
 impl CatalogIndex {
     /// Create a new index
-    pub fn new(name: impl Into<String>, columns: Vec<String>, index_type: CatalogIndexType) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        columns: Vec<String>,
+        index_type: CatalogIndexType,
+    ) -> Self {
         Self {
             name: name.into(),
             columns,
@@ -579,22 +600,16 @@ pub enum SchemaChange {
         constraint: ColumnConstraint,
     },
     /// Drop a constraint
-    DropConstraint {
-        constraint_name: String,
-    },
+    DropConstraint { constraint_name: String },
 }
 
 /// Column constraint types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ColumnConstraint {
     /// UNIQUE constraint on one or more columns
-    Unique {
-        columns: Vec<String>,
-    },
+    Unique { columns: Vec<String> },
     /// CHECK constraint with SQL expression
-    Check {
-        expression: String,
-    },
+    Check { expression: String },
     /// FOREIGN KEY constraint
     ForeignKey {
         columns: Vec<String>,

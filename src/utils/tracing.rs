@@ -35,7 +35,7 @@
 //! ```
 
 use crate::utils::uuid::Uuid;
-use tracing::{info_span, Span};
+use tracing::{Span, info_span};
 
 /// Request context containing correlation IDs for distributed tracing
 #[derive(Debug, Clone)]
@@ -155,12 +155,7 @@ impl RequestContext {
     }
 
     /// Create a span for a search operation
-    pub fn create_search_span(
-        &self,
-        collection_id: &str,
-        top_k: usize,
-        has_filter: bool,
-    ) -> Span {
+    pub fn create_search_span(&self, collection_id: &str, top_k: usize, has_filter: bool) -> Span {
         info_span!(
             "search_operation",
             request_id = %self.request_id,

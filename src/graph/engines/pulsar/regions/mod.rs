@@ -49,8 +49,8 @@
 //! ```
 
 use crate::core::error::ProximaDBError;
-use crate::graph::engines::pulsar::consensus::GraphCommand;
 use crate::graph::engines::GraphEngine;
+use crate::graph::engines::pulsar::consensus::GraphCommand;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -230,8 +230,10 @@ impl MultiRegionCoordinator {
         max_batch_size: usize,
         strategy: ReplicationStrategy,
     ) -> Self {
-        let peer_map: HashMap<RegionId, RegionConfig> =
-            peer_regions.into_iter().map(|r| (r.id.clone(), r)).collect();
+        let peer_map: HashMap<RegionId, RegionConfig> = peer_regions
+            .into_iter()
+            .map(|r| (r.id.clone(), r))
+            .collect();
 
         Self {
             local_region,
@@ -309,8 +311,7 @@ impl MultiRegionCoordinator {
         let dlat = lat2 - lat1;
         let dlon = lon2 - lon1;
 
-        let a = (dlat / 2.0).sin().powi(2)
-            + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         // Earth's radius in kilometers
@@ -511,8 +512,12 @@ mod tests {
         );
 
         // Mark regions as healthy
-        coordinator.lag_tracker.update_lag("us-east-1".to_string(), 50, 0);
-        coordinator.lag_tracker.update_lag("eu-west-1".to_string(), 60, 0);
+        coordinator
+            .lag_tracker
+            .update_lag("us-east-1".to_string(), 50, 0);
+        coordinator
+            .lag_tracker
+            .update_lag("eu-west-1".to_string(), 60, 0);
 
         // Query from New York (closer to us-east-1)
         let region = coordinator

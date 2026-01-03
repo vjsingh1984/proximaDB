@@ -16,17 +16,17 @@ use crate::storage::types::StorageEngineType;
 // Import from our strategies module (unused but kept for future integration)
 #[allow(unused_imports)]
 use super::strategies::{
-    CompactionPlan, CompactionStrategyRegistry, FileMetadata, CompactionExecutionResult,
+    CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry, FileMetadata,
 };
 
 /// Compaction manager coordinates optimization operations across storage engines
 pub struct CompactionManager {
     /// Configuration for compaction behavior
     config: CompactionConfig,
-    
+
     /// Current compaction state
     state: Arc<RwLock<CompactionState>>,
-    
+
     /// Performance metrics tracking
     metrics: Arc<CompactionMetrics>,
 }
@@ -36,16 +36,16 @@ pub struct CompactionManager {
 struct CompactionConfig {
     /// Maximum number of concurrent compactions
     max_concurrent_compactions: usize,
-    
+
     /// Minimum files required to trigger minor compaction
     minor_compaction_threshold: usize,
-    
+
     /// Minimum files required to trigger major compaction  
     major_compaction_threshold: usize,
-    
+
     /// Maximum time between compactions (force compaction)
     max_compaction_interval: Duration,
-    
+
     /// Target file size after compaction
     target_file_size_mb: usize,
 }
@@ -67,10 +67,10 @@ impl Default for CompactionConfig {
 struct CompactionState {
     /// Active compactions by collection
     active_compactions: std::collections::HashMap<String, Vec<ActiveCompaction>>,
-    
+
     /// Last compaction time by collection
     last_compaction_time: std::collections::HashMap<String, Instant>,
-    
+
     /// Compaction statistics
     stats: CompactionStatistics,
 }
@@ -118,7 +118,7 @@ impl CompactionManager {
     /// Create new compaction manager
     pub fn new() -> Result<Self> {
         info!("🔧 Initializing CompactionManager");
-        
+
         Ok(Self {
             config: CompactionConfig::default(),
             state: Arc::new(RwLock::new(CompactionState::default())),
@@ -134,17 +134,27 @@ impl CompactionManager {
         end_level: u32,
         engine_type: StorageEngineType,
     ) -> Result<CompactionResult> {
-        info!("🔧 Executing minor compaction for collection: {} levels {}-{} (engine: {:?})", 
-              collection_id, start_level, end_level, engine_type);
+        info!(
+            "🔧 Executing minor compaction for collection: {} levels {}-{} (engine: {:?})",
+            collection_id, start_level, end_level, engine_type
+        );
 
         let start_time = Instant::now();
-        let operation_id = format!("minor_{}_{}_{}_{}", collection_id, start_level, end_level, 
-                                   chrono::Utc::now().timestamp_millis());
+        let operation_id = format!(
+            "minor_{}_{}_{}_{}",
+            collection_id,
+            start_level,
+            end_level,
+            chrono::Utc::now().timestamp_millis()
+        );
 
         // Record active compaction
         {
             let mut state = self.state.write().await;
-            let active_ops = state.active_compactions.entry(collection_id.to_string()).or_default();
+            let active_ops = state
+                .active_compactions
+                .entry(collection_id.to_string())
+                .or_default();
             active_ops.push(ActiveCompaction {
                 operation_id: operation_id.clone(),
                 collection_id: collection_id.to_string(),
@@ -157,16 +167,22 @@ impl CompactionManager {
         // Execute engine-specific minor compaction
         let result = match engine_type {
             StorageEngineType::Sst => {
-                self.compact_sst_levels(collection_id, start_level, end_level).await?
-            },
+                self.compact_sst_levels(collection_id, start_level, end_level)
+                    .await?
+            }
             StorageEngineType::Viper => {
-                self.compact_viper_parquet(collection_id, start_level, end_level).await?
-            },
+                self.compact_viper_parquet(collection_id, start_level, end_level)
+                    .await?
+            }
             StorageEngineType::Helix => {
-                self.compact_helix_segments(collection_id, start_level, end_level).await?
-            },
+                self.compact_helix_segments(collection_id, start_level, end_level)
+                    .await?
+            }
             _ => {
-                return Err(anyhow::anyhow!("Minor compaction not implemented for engine: {:?}", engine_type));
+                return Err(anyhow::anyhow!(
+                    "Minor compaction not implemented for engine: {:?}",
+                    engine_type
+                ));
             }
         };
 
@@ -177,16 +193,20 @@ impl CompactionManager {
             if let Some(active_ops) = state.active_compactions.get_mut(collection_id) {
                 active_ops.retain(|op| op.operation_id != operation_id);
             }
-            state.last_compaction_time.insert(collection_id.to_string(), Instant::now());
-            
+            state
+                .last_compaction_time
+                .insert(collection_id.to_string(), Instant::now());
+
             state.stats.total_compactions += 1;
             state.stats.successful_compactions += 1;
             state.stats.total_bytes_compacted += result.bytes_freed;
             state.stats.total_files_compacted += result.files_compacted.len() as u64;
         }
 
-        info!("✅ Minor compaction completed for collection: {} in {:?} (freed: {} bytes)", 
-              collection_id, duration, result.bytes_freed);
+        info!(
+            "✅ Minor compaction completed for collection: {} in {:?} (freed: {} bytes)",
+            collection_id, duration, result.bytes_freed
+        );
 
         Ok(result)
     }
@@ -197,15 +217,25 @@ impl CompactionManager {
         collection_id: &str,
         engine_type: StorageEngineType,
     ) -> Result<CompactionResult> {
-        info!("🔧 Executing major compaction for collection: {} (engine: {:?})", collection_id, engine_type);
+        info!(
+            "🔧 Executing major compaction for collection: {} (engine: {:?})",
+            collection_id, engine_type
+        );
 
         let start_time = Instant::now();
-        let operation_id = format!("major_{}_{}", collection_id, chrono::Utc::now().timestamp_millis());
+        let operation_id = format!(
+            "major_{}_{}",
+            collection_id,
+            chrono::Utc::now().timestamp_millis()
+        );
 
         // Record active compaction
         {
             let mut state = self.state.write().await;
-            let active_ops = state.active_compactions.entry(collection_id.to_string()).or_default();
+            let active_ops = state
+                .active_compactions
+                .entry(collection_id.to_string())
+                .or_default();
             active_ops.push(ActiveCompaction {
                 operation_id: operation_id.clone(),
                 collection_id: collection_id.to_string(),
@@ -217,17 +247,14 @@ impl CompactionManager {
 
         // Execute engine-specific major compaction
         let result = match engine_type {
-            StorageEngineType::Sst => {
-                self.compact_sst_full_collection(collection_id).await?
-            },
-            StorageEngineType::Viper => {
-                self.compact_viper_full_collection(collection_id).await?
-            },
-            StorageEngineType::Helix => {
-                self.compact_helix_full_collection(collection_id).await?
-            },
+            StorageEngineType::Sst => self.compact_sst_full_collection(collection_id).await?,
+            StorageEngineType::Viper => self.compact_viper_full_collection(collection_id).await?,
+            StorageEngineType::Helix => self.compact_helix_full_collection(collection_id).await?,
             _ => {
-                return Err(anyhow::anyhow!("Major compaction not implemented for engine: {:?}", engine_type));
+                return Err(anyhow::anyhow!(
+                    "Major compaction not implemented for engine: {:?}",
+                    engine_type
+                ));
             }
         };
 
@@ -238,16 +265,20 @@ impl CompactionManager {
             if let Some(active_ops) = state.active_compactions.get_mut(collection_id) {
                 active_ops.retain(|op| op.operation_id != operation_id);
             }
-            state.last_compaction_time.insert(collection_id.to_string(), Instant::now());
-            
+            state
+                .last_compaction_time
+                .insert(collection_id.to_string(), Instant::now());
+
             state.stats.total_compactions += 1;
             state.stats.successful_compactions += 1;
             state.stats.total_bytes_compacted += result.bytes_freed;
             state.stats.total_files_compacted += result.files_compacted.len() as u64;
         }
 
-        info!("✅ Major compaction completed for collection: {} in {:?} (freed: {} bytes)", 
-              collection_id, duration, result.bytes_freed);
+        info!(
+            "✅ Major compaction completed for collection: {} in {:?} (freed: {} bytes)",
+            collection_id, duration, result.bytes_freed
+        );
 
         Ok(result)
     }
@@ -255,27 +286,27 @@ impl CompactionManager {
     /// Check if collection needs compaction based on heuristics
     pub async fn needs_compaction(&self, collection_id: &str) -> bool {
         let state = self.state.read().await;
-        
+
         // Check if enough time has passed since last compaction
         if let Some(last_time) = state.last_compaction_time.get(collection_id) {
             if last_time.elapsed() > self.config.max_compaction_interval {
                 return true;
             }
         }
-        
+
         // TODO: Add additional heuristics:
         // - Number of small files
         // - Read amplification metrics
         // - Space amplification ratios
         // - Query performance degradation
-        
+
         false
     }
 
     /// Get current compaction status for monitoring
     pub async fn get_compaction_status(&self) -> CompactionStatus {
         let state = self.state.read().await;
-        
+
         CompactionStatus {
             active_compactions: state.active_compactions.values().flatten().count(),
             collections_being_compacted: state.active_compactions.len(),
@@ -286,15 +317,23 @@ impl CompactionManager {
 
     // Private implementation methods for different engines
 
-    async fn compact_sst_levels(&self, collection_id: &str, start_level: u32, end_level: u32) -> Result<CompactionResult> {
+    async fn compact_sst_levels(
+        &self,
+        collection_id: &str,
+        start_level: u32,
+        end_level: u32,
+    ) -> Result<CompactionResult> {
         // TODO: Implement SST level compaction
         // 1. Identify overlapping SSTables in level range
         // 2. Merge SSTables with efficient key range processing
         // 3. Write optimized SSTables with proper bloom filters
         // 4. Update metadata and remove old files
-        
-        debug!("Compacting SST levels {}-{} for collection: {}", start_level, end_level, collection_id);
-        
+
+        debug!(
+            "Compacting SST levels {}-{} for collection: {}",
+            start_level, end_level, collection_id
+        );
+
         Ok(CompactionResult {
             collection_id: collection_id.to_string(),
             files_compacted: vec![format!("level_{}_{}.sst", start_level, end_level)],
@@ -305,15 +344,23 @@ impl CompactionManager {
         })
     }
 
-    async fn compact_viper_parquet(&self, collection_id: &str, start_level: u32, end_level: u32) -> Result<CompactionResult> {
+    async fn compact_viper_parquet(
+        &self,
+        collection_id: &str,
+        start_level: u32,
+        end_level: u32,
+    ) -> Result<CompactionResult> {
         // TODO: Implement VIPER Parquet compaction
         // 1. Identify small Parquet files in level range
         // 2. Merge files with optimal row group sizes
         // 3. Rewrite with updated statistics and column pruning
         // 4. Update columnar indices and zone maps
-        
-        debug!("Compacting VIPER Parquet levels {}-{} for collection: {}", start_level, end_level, collection_id);
-        
+
+        debug!(
+            "Compacting VIPER Parquet levels {}-{} for collection: {}",
+            start_level, end_level, collection_id
+        );
+
         Ok(CompactionResult {
             collection_id: collection_id.to_string(),
             files_compacted: vec![format!("level_{}_{}.parquet", start_level, end_level)],
@@ -324,15 +371,23 @@ impl CompactionManager {
         })
     }
 
-    async fn compact_helix_segments(&self, collection_id: &str, start_level: u32, end_level: u32) -> Result<CompactionResult> {
+    async fn compact_helix_segments(
+        &self,
+        collection_id: &str,
+        start_level: u32,
+        end_level: u32,
+    ) -> Result<CompactionResult> {
         // TODO: Implement HELIX segment compaction
         // 1. Merge HELIX segments with optimal clustering
         // 2. Rebuild zone maps and PCA projections
         // 3. Optimize Hilbert curve ordering
         // 4. Update liquid clustering metadata
-        
-        debug!("Compacting HELIX segments levels {}-{} for collection: {}", start_level, end_level, collection_id);
-        
+
+        debug!(
+            "Compacting HELIX segments levels {}-{} for collection: {}",
+            start_level, end_level, collection_id
+        );
+
         Ok(CompactionResult {
             collection_id: collection_id.to_string(),
             files_compacted: vec![format!("segment_{}_{}.helix", start_level, end_level)],
@@ -346,7 +401,7 @@ impl CompactionManager {
     async fn compact_sst_full_collection(&self, collection_id: &str) -> Result<CompactionResult> {
         // TODO: Implement full SST collection compaction
         debug!("Full SST compaction for collection: {}", collection_id);
-        
+
         Ok(CompactionResult {
             collection_id: collection_id.to_string(),
             files_compacted: vec!["all_levels.sst".to_string()],
@@ -360,7 +415,7 @@ impl CompactionManager {
     async fn compact_viper_full_collection(&self, collection_id: &str) -> Result<CompactionResult> {
         // TODO: Implement full VIPER collection compaction
         debug!("Full VIPER compaction for collection: {}", collection_id);
-        
+
         Ok(CompactionResult {
             collection_id: collection_id.to_string(),
             files_compacted: vec!["all_levels.parquet".to_string()],
@@ -374,7 +429,7 @@ impl CompactionManager {
     async fn compact_helix_full_collection(&self, collection_id: &str) -> Result<CompactionResult> {
         // TODO: Implement full HELIX collection compaction
         debug!("Full HELIX compaction for collection: {}", collection_id);
-        
+
         Ok(CompactionResult {
             collection_id: collection_id.to_string(),
             files_compacted: vec!["all_segments.helix".to_string()],
@@ -405,7 +460,7 @@ mod tests {
     async fn test_compaction_manager_creation() {
         let manager = CompactionManager::new().unwrap();
         let status = manager.get_compaction_status().await;
-        
+
         assert_eq!(status.active_compactions, 0);
         assert_eq!(status.collections_being_compacted, 0);
     }
@@ -413,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn test_minor_compaction_execution() {
         let manager = CompactionManager::new().unwrap();
-        
+
         // This test would need mock storage engines in a real implementation
         // For now, we test that the structure works correctly
         assert!(!manager.needs_compaction("test_collection").await);
@@ -423,7 +478,7 @@ mod tests {
     async fn test_compaction_status_tracking() {
         let manager = CompactionManager::new().unwrap();
         let initial_status = manager.get_compaction_status().await;
-        
+
         assert_eq!(initial_status.active_compactions, 0);
         assert_eq!(initial_status.total_compactions_completed, 0);
     }

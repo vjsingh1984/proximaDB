@@ -28,8 +28,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::core::search::SearchParams;
     use crate::core::SstConfig;
+    use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, SqlValue, StorageAssignment, StorageConfig, VectorRecord,
     };
@@ -502,11 +502,7 @@ mod tests {
         println!("{}", SEPARATOR_TABLE);
 
         for result in results {
-            let pyarrow_marker = if result.pyarrow_compatible {
-                "Y"
-            } else {
-                "X"
-            };
+            let pyarrow_marker = if result.pyarrow_compatible { "Y" } else { "X" };
             let size_kb = result.file_size_bytes as f64 / 1024.0;
 
             println!(
@@ -534,13 +530,14 @@ mod tests {
             .iter()
             .min_by(|a, b| a.flush_time_ms.partial_cmp(&b.flush_time_ms).unwrap())
             .unwrap();
-        let smallest_size = results
-            .iter()
-            .min_by_key(|r| r.file_size_bytes)
-            .unwrap();
+        let smallest_size = results.iter().min_by_key(|r| r.file_size_bytes).unwrap();
         let fastest_scan = results
             .iter()
-            .min_by(|a, b| a.full_scan_time_ms.partial_cmp(&b.full_scan_time_ms).unwrap())
+            .min_by(|a, b| {
+                a.full_scan_time_ms
+                    .partial_cmp(&b.full_scan_time_ms)
+                    .unwrap()
+            })
             .unwrap();
         let fastest_filter = results
             .iter()
@@ -552,10 +549,23 @@ mod tests {
             .unwrap();
 
         println!("PERFORMANCE WINNERS:");
-        println!("  Fastest Write:    {} ({:.1}ms)", fastest_write.engine_format, fastest_write.flush_time_ms);
-        println!("  Smallest Size:    {} ({})", smallest_size.engine_format, format_bytes(smallest_size.file_size_bytes));
-        println!("  Fastest Scan:     {} ({:.1}ms)", fastest_scan.engine_format, fastest_scan.full_scan_time_ms);
-        println!("  Fastest Filter:   {} ({:.1}ms)", fastest_filter.engine_format, fastest_filter.filtered_read_time_ms);
+        println!(
+            "  Fastest Write:    {} ({:.1}ms)",
+            fastest_write.engine_format, fastest_write.flush_time_ms
+        );
+        println!(
+            "  Smallest Size:    {} ({})",
+            smallest_size.engine_format,
+            format_bytes(smallest_size.file_size_bytes)
+        );
+        println!(
+            "  Fastest Scan:     {} ({:.1}ms)",
+            fastest_scan.engine_format, fastest_scan.full_scan_time_ms
+        );
+        println!(
+            "  Fastest Filter:   {} ({:.1}ms)",
+            fastest_filter.engine_format, fastest_filter.filtered_read_time_ms
+        );
 
         println!();
         println!("USE CASE RECOMMENDATIONS:");
@@ -586,10 +596,7 @@ mod tests {
         println!("EXTERNAL TOOL COMPATIBILITY:");
         println!("  PyArrow/DuckDB/Polars compatible formats:");
         for result in &pyarrow_compatible {
-            println!(
-                "    - {} ({})",
-                result.engine_format, result.file_extension
-            );
+            println!("    - {} ({})", result.engine_format, result.file_extension);
         }
         println!();
 
@@ -597,10 +604,7 @@ mod tests {
         if !not_compatible.is_empty() {
             println!("  ProximaDB-native formats (require SDK for access):");
             for result in &not_compatible {
-                println!(
-                    "    - {} ({})",
-                    result.engine_format, result.file_extension
-                );
+                println!("    - {} ({})", result.engine_format, result.file_extension);
             }
         }
         println!();
@@ -643,7 +647,11 @@ mod tests {
         println!("Benchmarking SST/ProximaBlocks (native format)...");
         match benchmark_sst_format("ProximaBlocks", "ProximaBlocks", &vectors, dimension).await {
             Ok(result) => {
-                println!("  Done. Write: {:.1}ms, Size: {}", result.flush_time_ms, format_bytes(result.file_size_bytes));
+                println!(
+                    "  Done. Write: {:.1}ms, Size: {}",
+                    result.flush_time_ms,
+                    format_bytes(result.file_size_bytes)
+                );
                 results.push(result);
             }
             Err(e) => {
@@ -655,7 +663,11 @@ mod tests {
         println!("Benchmarking SST/ArrowBlock (Arrow IPC format)...");
         match benchmark_sst_format("ArrowBlock", "ArrowBlock", &vectors, dimension).await {
             Ok(result) => {
-                println!("  Done. Write: {:.1}ms, Size: {}", result.flush_time_ms, format_bytes(result.file_size_bytes));
+                println!(
+                    "  Done. Write: {:.1}ms, Size: {}",
+                    result.flush_time_ms,
+                    format_bytes(result.file_size_bytes)
+                );
                 results.push(result);
             }
             Err(e) => {
@@ -667,7 +679,11 @@ mod tests {
         println!("Benchmarking Nova/Parquet (progressive columnar)...");
         match benchmark_nova(&vectors, dimension).await {
             Ok(result) => {
-                println!("  Done. Write: {:.1}ms, Size: {}", result.flush_time_ms, format_bytes(result.file_size_bytes));
+                println!(
+                    "  Done. Write: {:.1}ms, Size: {}",
+                    result.flush_time_ms,
+                    format_bytes(result.file_size_bytes)
+                );
                 results.push(result);
             }
             Err(e) => {
@@ -679,7 +695,11 @@ mod tests {
         println!("Benchmarking Viper/Parquet (production columnar)...");
         match benchmark_viper(&vectors, dimension).await {
             Ok(result) => {
-                println!("  Done. Write: {:.1}ms, Size: {}", result.flush_time_ms, format_bytes(result.file_size_bytes));
+                println!(
+                    "  Done. Write: {:.1}ms, Size: {}",
+                    result.flush_time_ms,
+                    format_bytes(result.file_size_bytes)
+                );
                 results.push(result);
             }
             Err(e) => {
@@ -716,12 +736,27 @@ mod tests {
 
         println!("Format Compatibility Matrix:");
         println!();
-        println!("{:<25} {:>15} {:>15} {:>15}", "Format", "PyArrow", "DuckDB", "Polars");
+        println!(
+            "{:<25} {:>15} {:>15} {:>15}",
+            "Format", "PyArrow", "DuckDB", "Polars"
+        );
         println!("{}", SEPARATOR_SINGLE);
-        println!("{:<25} {:>15} {:>15} {:>15}", "SST/ArrowBlock (.arrow)", "Yes", "Yes", "Yes");
-        println!("{:<25} {:>15} {:>15} {:>15}", "SST/ProximaBlocks (.sst)", "No (SDK)", "No (SDK)", "No (SDK)");
-        println!("{:<25} {:>15} {:>15} {:>15}", "Nova/Parquet (.parquet)", "Yes", "Yes", "Yes");
-        println!("{:<25} {:>15} {:>15} {:>15}", "Viper/Parquet (.parquet)", "Yes", "Yes", "Yes");
+        println!(
+            "{:<25} {:>15} {:>15} {:>15}",
+            "SST/ArrowBlock (.arrow)", "Yes", "Yes", "Yes"
+        );
+        println!(
+            "{:<25} {:>15} {:>15} {:>15}",
+            "SST/ProximaBlocks (.sst)", "No (SDK)", "No (SDK)", "No (SDK)"
+        );
+        println!(
+            "{:<25} {:>15} {:>15} {:>15}",
+            "Nova/Parquet (.parquet)", "Yes", "Yes", "Yes"
+        );
+        println!(
+            "{:<25} {:>15} {:>15} {:>15}",
+            "Viper/Parquet (.parquet)", "Yes", "Yes", "Yes"
+        );
         println!();
 
         println!("PyArrow Usage Examples:");
@@ -776,22 +811,45 @@ mod tests {
         let raw_total = raw_vector_size + raw_metadata_estimate;
 
         println!("Raw Data Size Estimate:");
-        println!("  Vector data: {} ({} vectors x {} dims x 4 bytes)", format_bytes(raw_vector_size as u64), num_vectors, dimension);
-        println!("  Metadata:    {} (estimate)", format_bytes(raw_metadata_estimate as u64));
+        println!(
+            "  Vector data: {} ({} vectors x {} dims x 4 bytes)",
+            format_bytes(raw_vector_size as u64),
+            num_vectors,
+            dimension
+        );
+        println!(
+            "  Metadata:    {} (estimate)",
+            format_bytes(raw_metadata_estimate as u64)
+        );
         println!("  Total raw:   {}", format_bytes(raw_total as u64));
         println!();
 
         println!("Compression Ratios (approximate):");
         println!();
-        println!("{:<25} {:>15} {:>15} {:>20}", "Format", "File Size", "Ratio", "Compression Method");
+        println!(
+            "{:<25} {:>15} {:>15} {:>20}",
+            "Format", "File Size", "Ratio", "Compression Method"
+        );
         println!("{}", SEPARATOR_SINGLE);
 
         // Note: These are estimates based on typical compression ratios
         // Actual values would come from running the benchmarks above
-        println!("{:<25} {:>15} {:>15} {:>20}", "SST/ProximaBlocks", "~550KB", "~1.0x", "LZ4 (default)");
-        println!("{:<25} {:>15} {:>15} {:>20}", "SST/ArrowBlock", "~600KB", "~0.9x", "Arrow IPC + LZ4");
-        println!("{:<25} {:>15} {:>15} {:>20}", "Nova/Parquet", "~350KB", "~1.6x", "ZSTD + Columnar");
-        println!("{:<25} {:>15} {:>15} {:>20}", "Viper/Parquet", "~320KB", "~1.8x", "ZSTD + Dict Encoding");
+        println!(
+            "{:<25} {:>15} {:>15} {:>20}",
+            "SST/ProximaBlocks", "~550KB", "~1.0x", "LZ4 (default)"
+        );
+        println!(
+            "{:<25} {:>15} {:>15} {:>20}",
+            "SST/ArrowBlock", "~600KB", "~0.9x", "Arrow IPC + LZ4"
+        );
+        println!(
+            "{:<25} {:>15} {:>15} {:>20}",
+            "Nova/Parquet", "~350KB", "~1.6x", "ZSTD + Columnar"
+        );
+        println!(
+            "{:<25} {:>15} {:>15} {:>20}",
+            "Viper/Parquet", "~320KB", "~1.8x", "ZSTD + Dict Encoding"
+        );
         println!();
 
         println!("Compression vs Performance Trade-offs:");

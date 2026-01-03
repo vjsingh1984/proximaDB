@@ -993,10 +993,14 @@ impl RaptorEngine {
         // For each file, use hierarchical_search (reads from footer centroids - no in-memory state needed)
         // This is the key fix for stateless mode after close/reopen
         for file_url in files {
-            debug!("SCAN_DISK: Searching file with hierarchical_search: {}", file_url);
+            debug!(
+                "SCAN_DISK: Searching file with hierarchical_search: {}",
+                file_url
+            );
 
             // Create a RaptorReader for this file
-            let cache = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
+            let cache =
+                Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
             let reader = RaptorReader::new(
                 file_url.clone(),
                 collection_id.to_string(),
@@ -1011,13 +1015,18 @@ impl RaptorEngine {
             // Get actual rowgroup count to calculate proper nprobe for high recall
             let num_rowgroups = reader.get_rowgroup_count().await.unwrap_or(10);
             // For 90%+ recall: search at least sqrt(num_rowgroups) * 2, but min 10 and at least k
-            let nprobe = k.max(10).max(((num_rowgroups as f32).sqrt().ceil() as usize) * 2);
+            let nprobe = k
+                .max(10)
+                .max(((num_rowgroups as f32).sqrt().ceil() as usize) * 2);
             debug!(
                 "SCAN_DISK: Calculated nprobe={} for num_rowgroups={}, k={}",
                 nprobe, num_rowgroups, k
             );
 
-            match reader.hierarchical_search(query, nprobe, distance_metric).await {
+            match reader
+                .hierarchical_search(query, nprobe, distance_metric)
+                .await
+            {
                 Ok(top_rowgroups) => {
                     debug!(
                         "SCAN_DISK: hierarchical_search found {} candidate rowgroups in {}",
@@ -1102,7 +1111,10 @@ impl RaptorEngine {
                     }
                 }
                 Err(e) => {
-                    debug!("SCAN_DISK: hierarchical_search failed for {}: {}, falling back to full scan", file_url, e);
+                    debug!(
+                        "SCAN_DISK: hierarchical_search failed for {}: {}, falling back to full scan",
+                        file_url, e
+                    );
                     // Fallback to lightweight full scan for this file only
                     if let Ok(results) = reader.search_vectors_only(&file_url, query, k).await {
                         for result in results {
@@ -1185,9 +1197,14 @@ impl RaptorEngine {
             1 // Fallback: at least 1 cluster
         } else {
             // sqrt(k) with minimum of 1, capped at total centroids
-            ((total_centroids as f64).sqrt().ceil() as usize).max(1).min(total_centroids)
+            ((total_centroids as f64).sqrt().ceil() as usize)
+                .max(1)
+                .min(total_centroids)
         };
-        debug!("SELECT_ROWGROUPS: Using nprobe={} (sqrt of {} centroids)", nprobe, total_centroids);
+        debug!(
+            "SELECT_ROWGROUPS: Using nprobe={} (sqrt of {} centroids)",
+            nprobe, total_centroids
+        );
         let nearest_clusters = cluster_manager.find_nearest_clusters(query, nprobe).await?;
         debug!(
             "SELECT_ROWGROUPS: Found {} nearest clusters",
@@ -2712,7 +2729,9 @@ impl RaptorEngine {
     /// Returns the optional AXIS manager for HNSW/IVF-based search.
     /// When available, AXIS provides O(log N) approximate nearest neighbor search
     /// that is significantly faster than row-group based search.
-    pub fn axis_manager(&self) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
         self.axis_manager.as_ref()
     }
 
@@ -2720,7 +2739,9 @@ impl RaptorEngine {
     ///
     /// This helper converts our internal FilterExpression type to AXIS's
     /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(filter_expression: Option<&crate::core::search::FilterExpression>) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+    fn convert_filter_to_axis(
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
         use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
 

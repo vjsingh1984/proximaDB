@@ -31,21 +31,21 @@
 //! - **Schema Versioning**: Full history with evolution tracking
 //! - **INFORMATION_SCHEMA**: PostgreSQL-compatible introspection views
 
-pub mod registry;
 pub mod enforcement;
 pub mod information_schema;
+pub mod registry;
 
-use std::collections::HashMap;
 use anyhow::Result;
 use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::types::{CatalogColumn, CatalogIndex, CatalogTableSchema};
 
 // Re-exports
-pub use registry::InternalSchemaRegistry;
 pub use enforcement::{ConstraintEnforcer, ConstraintViolation, EnforcementResult};
 pub use information_schema::{InformationSchema, InformationSchemaView};
+pub use registry::InternalSchemaRegistry;
 
 /// Object types in the multi-model database
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -227,14 +227,10 @@ impl ObjectSchema {
 
     /// Convert to Arrow Schema
     pub fn to_arrow_schema(&self) -> Result<ArrowSchema> {
-        let fields: Vec<ArrowField> = self.columns.iter()
-            .map(|col| {
-                ArrowField::new(
-                    &col.name,
-                    col.data_type.to_arrow_datatype(),
-                    col.nullable,
-                )
-            })
+        let fields: Vec<ArrowField> = self
+            .columns
+            .iter()
+            .map(|col| ArrowField::new(&col.name, col.data_type.to_arrow_datatype(), col.nullable))
             .collect();
         Ok(ArrowSchema::new(fields))
     }
@@ -722,11 +718,15 @@ impl CatalogObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::types::CatalogDataType;
 
     #[test]
     fn test_object_type_display() {
         assert_eq!(ObjectType::RdbmsTable.to_string(), "TABLE");
-        assert_eq!(ObjectType::VectorCollection.to_string(), "VECTOR COLLECTION");
+        assert_eq!(
+            ObjectType::VectorCollection.to_string(),
+            "VECTOR COLLECTION"
+        );
         assert_eq!(ObjectType::Graph.to_string(), "GRAPH");
     }
 
@@ -795,7 +795,11 @@ mod tests {
             ..Default::default()
         };
 
-        obj.update_schema(schema2, Some("Added name column".to_string()), Some("admin".to_string()));
+        obj.update_schema(
+            schema2,
+            Some("Added name column".to_string()),
+            Some("admin".to_string()),
+        );
 
         assert_eq!(obj.schema_version, 2);
         assert_eq!(obj.schema.columns.len(), 2);
@@ -821,13 +825,22 @@ mod tests {
     #[test]
     fn test_table_constraint_creation() {
         let pk = TableConstraint::primary_key("pk_users", vec!["id".to_string()]);
-        assert!(matches!(pk.constraint_type, ConstraintType::PrimaryKey { .. }));
+        assert!(matches!(
+            pk.constraint_type,
+            ConstraintType::PrimaryKey { .. }
+        ));
 
         let unique = TableConstraint::unique("uq_email", vec!["email".to_string()]);
-        assert!(matches!(unique.constraint_type, ConstraintType::Unique { .. }));
+        assert!(matches!(
+            unique.constraint_type,
+            ConstraintType::Unique { .. }
+        ));
 
         let check = TableConstraint::check("ck_age", "age >= 0 AND age <= 150");
-        assert!(matches!(check.constraint_type, ConstraintType::Check { .. }));
+        assert!(matches!(
+            check.constraint_type,
+            ConstraintType::Check { .. }
+        ));
     }
 
     #[test]

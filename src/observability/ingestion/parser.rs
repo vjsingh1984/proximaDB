@@ -28,11 +28,7 @@ impl LogParser {
     }
 
     /// Parse a batch of logs
-    pub fn parse_batch(
-        &self,
-        logs: &[LogEntry],
-        format: IngestionFormat,
-    ) -> Result<Vec<LogEntry>> {
+    pub fn parse_batch(&self, logs: &[LogEntry], format: IngestionFormat) -> Result<Vec<LogEntry>> {
         logs.iter()
             .map(|log| self.parse_single(log, format))
             .collect()
@@ -202,8 +198,20 @@ impl LogParser {
                 // Parse extension key-value pairs
                 if parts.len() >= 8 {
                     let extension = self.parse_cef_extension(parts[7]);
-                    parsed.fields = extension.into_iter()
-                        .map(|(k, v)| (k, SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)) }))
+                    parsed.fields = extension
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (
+                                k,
+                                SqlValue {
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                            v,
+                                        ),
+                                    ),
+                                },
+                            )
+                        })
                         .collect();
                 }
             }
@@ -227,8 +235,20 @@ impl LogParser {
                 // Parse extension key-value pairs
                 if parts.len() >= 6 {
                     let extension = self.parse_leef_extension(parts[5]);
-                    parsed.fields = extension.into_iter()
-                        .map(|(k, v)| (k, SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)) }))
+                    parsed.fields = extension
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (
+                                k,
+                                SqlValue {
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                            v,
+                                        ),
+                                    ),
+                                },
+                            )
+                        })
                         .collect();
                 }
             }
@@ -247,14 +267,14 @@ impl LogParser {
     fn pri_to_severity(&self, pri: u8) -> Severity {
         let severity = pri & 0x07;
         match severity {
-            0 => Severity::Fatal,    // Emergency
-            1 => Severity::Fatal,    // Alert
-            2 => Severity::Fatal,    // Critical
-            3 => Severity::Error,    // Error
-            4 => Severity::Warn,     // Warning
-            5 => Severity::Info,     // Notice
-            6 => Severity::Info,     // Informational
-            7 => Severity::Debug,    // Debug
+            0 => Severity::Fatal, // Emergency
+            1 => Severity::Fatal, // Alert
+            2 => Severity::Fatal, // Critical
+            3 => Severity::Error, // Error
+            4 => Severity::Warn,  // Warning
+            5 => Severity::Info,  // Notice
+            6 => Severity::Info,  // Informational
+            7 => Severity::Debug, // Debug
             _ => Severity::Info,
         }
     }
@@ -266,15 +286,13 @@ impl LogParser {
             Ok(n) if n <= 6 => Severity::Warn,
             Ok(n) if n <= 8 => Severity::Error,
             Ok(_) => Severity::Fatal,
-            Err(_) => {
-                match sev.to_lowercase().as_str() {
-                    "low" => Severity::Info,
-                    "medium" => Severity::Warn,
-                    "high" => Severity::Error,
-                    "very-high" | "critical" => Severity::Fatal,
-                    _ => Severity::Info,
-                }
-            }
+            Err(_) => match sev.to_lowercase().as_str() {
+                "low" => Severity::Info,
+                "medium" => Severity::Warn,
+                "high" => Severity::Error,
+                "very-high" | "critical" => Severity::Fatal,
+                _ => Severity::Info,
+            },
         }
     }
 
@@ -296,8 +314,7 @@ impl LogParser {
 
     /// Parse ISO 8601 timestamp
     fn parse_timestamp(&self, ts: &str) -> Result<i64> {
-        let dt = DateTime::parse_from_rfc3339(ts)
-            .context("Failed to parse RFC 3339 timestamp")?;
+        let dt = DateTime::parse_from_rfc3339(ts).context("Failed to parse RFC 3339 timestamp")?;
         Ok(dt.timestamp_nanos_opt().unwrap_or(0))
     }
 
@@ -379,10 +396,22 @@ mod tests {
     fn test_infer_severity() {
         let parser = LogParser::new();
 
-        assert_eq!(parser.infer_severity("Fatal error occurred"), Severity::Fatal);
-        assert_eq!(parser.infer_severity("Error: something failed"), Severity::Error);
-        assert_eq!(parser.infer_severity("Warning: low disk space"), Severity::Warn);
-        assert_eq!(parser.infer_severity("Debug: processing request"), Severity::Debug);
+        assert_eq!(
+            parser.infer_severity("Fatal error occurred"),
+            Severity::Fatal
+        );
+        assert_eq!(
+            parser.infer_severity("Error: something failed"),
+            Severity::Error
+        );
+        assert_eq!(
+            parser.infer_severity("Warning: low disk space"),
+            Severity::Warn
+        );
+        assert_eq!(
+            parser.infer_severity("Debug: processing request"),
+            Severity::Debug
+        );
         assert_eq!(parser.infer_severity("Normal log message"), Severity::Info);
     }
 
@@ -390,11 +419,11 @@ mod tests {
     fn test_pri_to_severity() {
         let parser = LogParser::new();
 
-        assert_eq!(parser.pri_to_severity(0), Severity::Fatal);   // Emergency
-        assert_eq!(parser.pri_to_severity(3), Severity::Error);   // Error
-        assert_eq!(parser.pri_to_severity(4), Severity::Warn);    // Warning
-        assert_eq!(parser.pri_to_severity(6), Severity::Info);    // Informational
-        assert_eq!(parser.pri_to_severity(7), Severity::Debug);   // Debug
+        assert_eq!(parser.pri_to_severity(0), Severity::Fatal); // Emergency
+        assert_eq!(parser.pri_to_severity(3), Severity::Error); // Error
+        assert_eq!(parser.pri_to_severity(4), Severity::Warn); // Warning
+        assert_eq!(parser.pri_to_severity(6), Severity::Info); // Informational
+        assert_eq!(parser.pri_to_severity(7), Severity::Debug); // Debug
     }
 
     #[test]

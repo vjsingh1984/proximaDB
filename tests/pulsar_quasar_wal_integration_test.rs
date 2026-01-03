@@ -29,8 +29,8 @@
 
 #[cfg(feature = "distributed-graph")]
 mod pulsar_wal_tests {
-    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use proximadb::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
+    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -74,29 +74,46 @@ mod pulsar_wal_tests {
         let node1 = create_test_node("p_node_1", "TestLabel");
         let node2 = create_test_node("p_node_2", "TestLabel");
 
-        let inserted1 = engine.insert_node(node1).await.expect("Failed to insert node1");
-        let inserted2 = engine.insert_node(node2).await.expect("Failed to insert node2");
+        let inserted1 = engine
+            .insert_node(node1)
+            .await
+            .expect("Failed to insert node1");
+        let inserted2 = engine
+            .insert_node(node2)
+            .await
+            .expect("Failed to insert node2");
 
         assert_eq!(inserted1.id, "p_node_1");
         assert_eq!(inserted2.id, "p_node_2");
 
         // Verify nodes exist
-        let retrieved1 = engine.get_node(&"p_node_1".to_string()).expect("Failed to get node1");
+        let retrieved1 = engine
+            .get_node(&"p_node_1".to_string())
+            .expect("Failed to get node1");
         assert!(retrieved1.is_some());
         assert_eq!(retrieved1.unwrap().id, "p_node_1");
 
         // Update node
-        let mut updated_node = (*engine.get_node(&"p_node_1".to_string()).unwrap().unwrap()).clone();
+        let mut updated_node =
+            (*engine.get_node(&"p_node_1".to_string()).unwrap().unwrap()).clone();
         updated_node.labels.push("UpdatedLabel".to_string());
-        let updated = engine.update_node(updated_node).await.expect("Failed to update node");
+        let updated = engine
+            .update_node(updated_node)
+            .await
+            .expect("Failed to update node");
         assert!(updated.labels.contains(&"UpdatedLabel".to_string()));
 
         // Delete node
-        let deleted = engine.delete_node(&"p_node_2".to_string()).await.expect("Failed to delete node");
+        let deleted = engine
+            .delete_node(&"p_node_2".to_string())
+            .await
+            .expect("Failed to delete node");
         assert!(deleted.is_some());
 
         // Verify deletion
-        let missing = engine.get_node(&"p_node_2".to_string()).expect("Failed to check deleted node");
+        let missing = engine
+            .get_node(&"p_node_2".to_string())
+            .expect("Failed to check deleted node");
         assert!(missing.is_none());
     }
 
@@ -113,30 +130,49 @@ mod pulsar_wal_tests {
         // Insert nodes first
         let node1 = create_test_node("e_node_1", "Person");
         let node2 = create_test_node("e_node_2", "Person");
-        engine.insert_node(node1).await.expect("Failed to insert node1");
-        engine.insert_node(node2).await.expect("Failed to insert node2");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Failed to insert node1");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("Failed to insert node2");
 
         // Insert edge
         let edge = create_test_edge("e_edge_1", "e_node_1", "e_node_2", "KNOWS");
-        let inserted = engine.insert_edge(edge).await.expect("Failed to insert edge");
+        let inserted = engine
+            .insert_edge(edge)
+            .await
+            .expect("Failed to insert edge");
         assert_eq!(inserted.id, "e_edge_1");
 
         // Verify edge exists
-        let retrieved = engine.get_edge(&"e_edge_1".to_string()).expect("Failed to get edge");
+        let retrieved = engine
+            .get_edge(&"e_edge_1".to_string())
+            .expect("Failed to get edge");
         assert!(retrieved.is_some());
 
         // Update edge
         let mut updated_edge = (*retrieved.unwrap()).clone();
         updated_edge.weight = Some(2.0);
-        let updated = engine.update_edge(updated_edge).await.expect("Failed to update edge");
+        let updated = engine
+            .update_edge(updated_edge)
+            .await
+            .expect("Failed to update edge");
         assert_eq!(updated.weight, Some(2.0));
 
         // Delete edge
-        let deleted = engine.delete_edge(&"e_edge_1".to_string()).await.expect("Failed to delete edge");
+        let deleted = engine
+            .delete_edge(&"e_edge_1".to_string())
+            .await
+            .expect("Failed to delete edge");
         assert!(deleted.is_some());
 
         // Verify deletion
-        let missing = engine.get_edge(&"e_edge_1".to_string()).expect("Failed to check deleted edge");
+        let missing = engine
+            .get_edge(&"e_edge_1".to_string())
+            .expect("Failed to check deleted edge");
         assert!(missing.is_none());
     }
 
@@ -153,26 +189,42 @@ mod pulsar_wal_tests {
         // Create a chain: A -> B -> C
         for id in ["cs_a", "cs_b", "cs_c"] {
             let node = create_test_node(id, "ChainNode");
-            engine.insert_node(node).await.expect("Failed to insert chain node");
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert chain node");
         }
 
         let edge_ab = create_test_edge("cs_e1", "cs_a", "cs_b", "NEXT");
         let edge_bc = create_test_edge("cs_e2", "cs_b", "cs_c", "NEXT");
-        engine.insert_edge(edge_ab).await.expect("Failed to insert edge AB");
-        engine.insert_edge(edge_bc).await.expect("Failed to insert edge BC");
+        engine
+            .insert_edge(edge_ab)
+            .await
+            .expect("Failed to insert edge AB");
+        engine
+            .insert_edge(edge_bc)
+            .await
+            .expect("Failed to insert edge BC");
 
         // Verify chain exists
-        let neighbors_a = engine.get_neighbors(&"cs_a".to_string(), None).expect("Failed to get neighbors of A");
+        let neighbors_a = engine
+            .get_neighbors(&"cs_a".to_string(), None)
+            .expect("Failed to get neighbors of A");
         assert_eq!(neighbors_a.len(), 1);
         assert_eq!(neighbors_a[0].id, "cs_b");
 
         // Update middle node
         let mut node_b = (*engine.get_node(&"cs_b".to_string()).unwrap().unwrap()).clone();
         node_b.labels.push("Updated".to_string());
-        engine.update_node(node_b).await.expect("Failed to update node B");
+        engine
+            .update_node(node_b)
+            .await
+            .expect("Failed to update node B");
 
         // Verify chain still works after update
-        let neighbors_a_after = engine.get_neighbors(&"cs_a".to_string(), None).expect("Failed to get neighbors after update");
+        let neighbors_a_after = engine
+            .get_neighbors(&"cs_a".to_string(), None)
+            .expect("Failed to get neighbors after update");
         assert_eq!(neighbors_a_after.len(), 1);
         assert!(neighbors_a_after[0].labels.contains(&"Updated".to_string()));
     }
@@ -194,7 +246,10 @@ mod pulsar_wal_tests {
         // Insert nodes and edges
         for i in 0..5 {
             let node = create_test_node(&format!("stat_node_{}", i), "StatNode");
-            engine.insert_node(node).await.expect("Failed to insert node");
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node");
         }
 
         for i in 0..4 {
@@ -202,9 +257,12 @@ mod pulsar_wal_tests {
                 &format!("stat_edge_{}", i),
                 &format!("stat_node_{}", i),
                 &format!("stat_node_{}", i + 1),
-                "CONNECTS"
+                "CONNECTS",
             );
-            engine.insert_edge(edge).await.expect("Failed to insert edge");
+            engine
+                .insert_edge(edge)
+                .await
+                .expect("Failed to insert edge");
         }
 
         let stats_after_insert = engine.get_stats().await;
@@ -212,7 +270,10 @@ mod pulsar_wal_tests {
         assert_eq!(stats_after_insert.total_edges, 4);
 
         // Delete a node
-        engine.delete_node(&"stat_node_0".to_string()).await.expect("Failed to delete node");
+        engine
+            .delete_node(&"stat_node_0".to_string())
+            .await
+            .expect("Failed to delete node");
 
         let stats_after_delete = engine.get_stats().await;
         assert_eq!(stats_after_delete.total_nodes, 4);
@@ -221,8 +282,8 @@ mod pulsar_wal_tests {
 
 #[cfg(feature = "tiered-graph")]
 mod quasar_wal_tests {
+    use proximadb::graph::engines::quasar::{ColdStorageBackend, QuasarConfig, QuasarGraphEngine};
     use proximadb::graph::{Edge, Node, engines::GraphEngine};
-    use proximadb::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine, ColdStorageBackend};
     use std::collections::HashMap;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -263,27 +324,42 @@ mod quasar_wal_tests {
             cold_storage_backend: ColdStorageBackend::Json,
             ..QuasarConfig::default()
         };
-        let engine = QuasarGraphEngine::new(config).await.expect("Failed to create QUASAR engine");
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .expect("Failed to create QUASAR engine");
 
         // Insert nodes into hot tier
         let node1 = create_test_node("q_node_1", "HotNode");
         let node2 = create_test_node("q_node_2", "HotNode");
 
-        engine.insert_node(node1).await.expect("Failed to insert node1");
-        engine.insert_node(node2).await.expect("Failed to insert node2");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Failed to insert node1");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("Failed to insert node2");
 
         // Verify hot tier stats
         let stats = engine.get_stats().await;
         assert_eq!(stats.hot_tier_nodes, 2);
 
         // Update node
-        let mut updated_node = (*engine.get_node(&"q_node_1".to_string()).unwrap().unwrap()).clone();
+        let mut updated_node =
+            (*engine.get_node(&"q_node_1".to_string()).unwrap().unwrap()).clone();
         updated_node.labels.push("Updated".to_string());
-        let updated = engine.update_node(updated_node).await.expect("Failed to update node");
+        let updated = engine
+            .update_node(updated_node)
+            .await
+            .expect("Failed to update node");
         assert!(updated.labels.contains(&"Updated".to_string()));
 
         // Delete node
-        let deleted = engine.delete_node(&"q_node_2".to_string()).await.expect("Failed to delete node");
+        let deleted = engine
+            .delete_node(&"q_node_2".to_string())
+            .await
+            .expect("Failed to delete node");
         assert!(deleted.is_some());
 
         // Verify stats after delete
@@ -300,17 +376,28 @@ mod quasar_wal_tests {
             cold_storage_backend: ColdStorageBackend::Json,
             ..QuasarConfig::default()
         };
-        let engine = QuasarGraphEngine::new(config).await.expect("Failed to create QUASAR engine");
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .expect("Failed to create QUASAR engine");
 
         // Insert nodes
         let node1 = create_test_node("qe_node_1", "Person");
         let node2 = create_test_node("qe_node_2", "Person");
-        engine.insert_node(node1).await.expect("Failed to insert node1");
-        engine.insert_node(node2).await.expect("Failed to insert node2");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Failed to insert node1");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("Failed to insert node2");
 
         // Insert edge
         let edge = create_test_edge("qe_edge_1", "qe_node_1", "qe_node_2", "KNOWS");
-        let inserted = engine.insert_edge(edge).await.expect("Failed to insert edge");
+        let inserted = engine
+            .insert_edge(edge)
+            .await
+            .expect("Failed to insert edge");
         assert_eq!(inserted.id, "qe_edge_1");
 
         // Verify edge in hot tier
@@ -318,15 +405,23 @@ mod quasar_wal_tests {
         assert_eq!(stats.hot_tier_edges, 1);
 
         // Update edge
-        let retrieved = engine.get_edge(&"qe_edge_1".to_string()).expect("Failed to get edge");
+        let retrieved = engine
+            .get_edge(&"qe_edge_1".to_string())
+            .expect("Failed to get edge");
         assert!(retrieved.is_some());
         let mut updated_edge = (*retrieved.unwrap()).clone();
         updated_edge.weight = Some(2.5);
-        let updated = engine.update_edge(updated_edge).await.expect("Failed to update edge");
+        let updated = engine
+            .update_edge(updated_edge)
+            .await
+            .expect("Failed to update edge");
         assert_eq!(updated.weight, Some(2.5));
 
         // Delete edge
-        let deleted = engine.delete_edge(&"qe_edge_1".to_string()).await.expect("Failed to delete edge");
+        let deleted = engine
+            .delete_edge(&"qe_edge_1".to_string())
+            .await
+            .expect("Failed to delete edge");
         assert!(deleted.is_some());
     }
 
@@ -341,12 +436,17 @@ mod quasar_wal_tests {
             hot_promotion_threshold: Duration::from_millis(1), // Quick promotion
             ..QuasarConfig::default()
         };
-        let engine = QuasarGraphEngine::new(config).await.expect("Failed to create QUASAR engine");
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .expect("Failed to create QUASAR engine");
 
         // Insert nodes to hot tier
         for i in 0..3 {
             let node = create_test_node(&format!("cold_node_{}", i), "ColdTestNode");
-            engine.insert_node(node).await.expect("Failed to insert node");
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node");
         }
 
         // Check that we have nodes
@@ -354,9 +454,16 @@ mod quasar_wal_tests {
         assert!(stats.hot_tier_nodes >= 2); // At least 2 should be in hot tier
 
         // Update a node (should work regardless of tier)
-        let mut node = (*engine.get_node(&"cold_node_0".to_string()).unwrap().unwrap()).clone();
+        let mut node = (*engine
+            .get_node(&"cold_node_0".to_string())
+            .unwrap()
+            .unwrap())
+        .clone();
         node.labels.push("ModifiedInColdTest".to_string());
-        let updated = engine.update_node(node).await.expect("Failed to update node");
+        let updated = engine
+            .update_node(node)
+            .await
+            .expect("Failed to update node");
         assert!(updated.labels.contains(&"ModifiedInColdTest".to_string()));
     }
 
@@ -369,12 +476,17 @@ mod quasar_wal_tests {
             cold_storage_backend: ColdStorageBackend::Json,
             ..QuasarConfig::default()
         };
-        let engine = QuasarGraphEngine::new(config).await.expect("Failed to create QUASAR engine");
+        let engine = QuasarGraphEngine::new(config)
+            .await
+            .expect("Failed to create QUASAR engine");
 
         // Insert some data
         for i in 0..5 {
             let node = create_test_node(&format!("cache_node_{}", i), "CacheNode");
-            engine.insert_node(node).await.expect("Failed to insert node");
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node");
         }
 
         // Access nodes multiple times to generate cache hits
@@ -386,13 +498,18 @@ mod quasar_wal_tests {
 
         // Check stats
         let stats = engine.get_stats().await;
-        assert!(stats.cache_hits > 0, "Should have cache hits after repeated access");
+        assert!(
+            stats.cache_hits > 0,
+            "Should have cache hits after repeated access"
+        );
     }
 }
 
 mod service_recovery_tests {
     use proximadb::graph::service::GraphOperationsService;
-    use proximadb::proto::proximadb_v1::{CreateGraphRequest, GraphStorageConfig, CompressionAlgorithm};
+    use proximadb::proto::proximadb_v1::{
+        CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
+    };
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -420,7 +537,10 @@ mod service_recovery_tests {
             access_control: None,
         };
 
-        service.create_graph_collection(request).await.expect("Failed to create ORION graph");
+        service
+            .create_graph_collection(request)
+            .await
+            .expect("Failed to create ORION graph");
 
         // Verify graph is accessible
         let graphs = service.list_graphs().await.expect("Failed to list graphs");
@@ -454,7 +574,10 @@ mod service_recovery_tests {
             access_control: None,
         };
 
-        service.create_graph_collection(request).await.expect("Failed to create PULSAR graph");
+        service
+            .create_graph_collection(request)
+            .await
+            .expect("Failed to create PULSAR graph");
 
         // Verify graph is accessible
         let graphs = service.list_graphs().await.expect("Failed to list graphs");
@@ -470,7 +593,10 @@ mod service_recovery_tests {
 
         let mut engine_config = HashMap::new();
         engine_config.insert("hot_tier_max_nodes".to_string(), "1000".to_string());
-        engine_config.insert("cold_tier_path".to_string(), temp_dir.path().join("cold").to_string_lossy().to_string());
+        engine_config.insert(
+            "cold_tier_path".to_string(),
+            temp_dir.path().join("cold").to_string_lossy().to_string(),
+        );
 
         let request = CreateGraphRequest {
             graph_id: "test_quasar".to_string(),
@@ -489,7 +615,10 @@ mod service_recovery_tests {
             access_control: None,
         };
 
-        service.create_graph_collection(request).await.expect("Failed to create QUASAR graph");
+        service
+            .create_graph_collection(request)
+            .await
+            .expect("Failed to create QUASAR graph");
 
         // Verify graph is accessible
         let graphs = service.list_graphs().await.expect("Failed to list graphs");
@@ -520,7 +649,10 @@ mod service_recovery_tests {
             access_control: None,
         };
 
-        service.create_graph_collection(request).await.expect("Failed to create graph");
+        service
+            .create_graph_collection(request)
+            .await
+            .expect("Failed to create graph");
 
         // Insert some data
         let node = proximadb::graph::Node {
@@ -531,19 +663,28 @@ mod service_recovery_tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node("flush_test", node).await.expect("Failed to create node");
+        service
+            .create_node("flush_test", node)
+            .await
+            .expect("Failed to create node");
 
         // Flush WAL - should not fail
-        service.flush_wal("flush_test").await.expect("Failed to flush WAL");
+        service
+            .flush_wal("flush_test")
+            .await
+            .expect("Failed to flush WAL");
 
         // Flush non-existent graph - should not fail (graceful handling)
-        service.flush_wal("non_existent").await.expect("Flushing non-existent graph should not fail");
+        service
+            .flush_wal("non_existent")
+            .await
+            .expect("Flushing non-existent graph should not fail");
     }
 }
 
 mod wal_recovery_tests {
-    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use proximadb::graph::engines::orion::OrionGraphEngine;
+    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -571,17 +712,35 @@ mod wal_recovery_tests {
                 "recovery_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             // Insert nodes
             let node1 = create_test_node("rec_node_1", "RecoveryTest");
             let node2 = create_test_node("rec_node_2", "RecoveryTest");
-            engine.insert_node(node1).await.expect("Failed to insert node1");
-            engine.insert_node(node2).await.expect("Failed to insert node2");
+            engine
+                .insert_node(node1)
+                .await
+                .expect("Failed to insert node1");
+            engine
+                .insert_node(node2)
+                .await
+                .expect("Failed to insert node2");
 
             // Verify data exists
-            assert!(engine.get_node(&"rec_node_1".to_string()).unwrap().is_some());
-            assert!(engine.get_node(&"rec_node_2".to_string()).unwrap().is_some());
+            assert!(
+                engine
+                    .get_node(&"rec_node_1".to_string())
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                engine
+                    .get_node(&"rec_node_2".to_string())
+                    .unwrap()
+                    .is_some()
+            );
 
             // Flush WAL to ensure data is persisted
             engine.flush_wal().await.expect("Failed to flush WAL");
@@ -593,14 +752,20 @@ mod wal_recovery_tests {
                 "recovery_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             // Trigger recovery
             engine.recover().await.expect("Failed to recover from WAL");
 
             // Verify data was recovered
-            let recovered1 = engine.get_node(&"rec_node_1".to_string()).expect("Failed to get node1");
-            let recovered2 = engine.get_node(&"rec_node_2".to_string()).expect("Failed to get node2");
+            let recovered1 = engine
+                .get_node(&"rec_node_1".to_string())
+                .expect("Failed to get node1");
+            let recovered2 = engine
+                .get_node(&"rec_node_2".to_string())
+                .expect("Failed to get node2");
 
             assert!(recovered1.is_some(), "Node 1 should be recovered");
             assert!(recovered2.is_some(), "Node 2 should be recovered");
@@ -619,16 +784,25 @@ mod wal_recovery_tests {
                 "update_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             // Insert node
             let node = create_test_node("upd_node", "Original");
-            engine.insert_node(node).await.expect("Failed to insert node");
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node");
 
             // Update node with new label
-            let mut updated_node = (*engine.get_node(&"upd_node".to_string()).unwrap().unwrap()).clone();
+            let mut updated_node =
+                (*engine.get_node(&"upd_node".to_string()).unwrap().unwrap()).clone();
             updated_node.labels.push("Updated".to_string());
-            engine.update_node(updated_node).await.expect("Failed to update node");
+            engine
+                .update_node(updated_node)
+                .await
+                .expect("Failed to update node");
 
             engine.flush_wal().await.expect("Failed to flush WAL");
         }
@@ -639,13 +813,21 @@ mod wal_recovery_tests {
                 "update_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Failed to recover");
 
-            let recovered = engine.get_node(&"upd_node".to_string()).expect("Failed to get node").unwrap();
-            assert!(recovered.labels.contains(&"Updated".to_string()),
-                "Updated label should be persisted. Got labels: {:?}", recovered.labels);
+            let recovered = engine
+                .get_node(&"upd_node".to_string())
+                .expect("Failed to get node")
+                .unwrap();
+            assert!(
+                recovered.labels.contains(&"Updated".to_string()),
+                "Updated label should be persisted. Got labels: {:?}",
+                recovered.labels
+            );
         }
     }
 
@@ -661,16 +843,27 @@ mod wal_recovery_tests {
                 "delete_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine");
+            )
+            .await
+            .expect("Failed to create engine");
 
             // Insert two nodes
             let node1 = create_test_node("del_node_1", "ToKeep");
             let node2 = create_test_node("del_node_2", "ToDelete");
-            engine.insert_node(node1).await.expect("Failed to insert node1");
-            engine.insert_node(node2).await.expect("Failed to insert node2");
+            engine
+                .insert_node(node1)
+                .await
+                .expect("Failed to insert node1");
+            engine
+                .insert_node(node2)
+                .await
+                .expect("Failed to insert node2");
 
             // Delete one node
-            engine.delete_node(&"del_node_2".to_string()).await.expect("Failed to delete node");
+            engine
+                .delete_node(&"del_node_2".to_string())
+                .await
+                .expect("Failed to delete node");
 
             engine.flush_wal().await.expect("Failed to flush WAL");
         }
@@ -681,12 +874,18 @@ mod wal_recovery_tests {
                 "delete_test".to_string(),
                 base_url.clone(),
                 true,
-            ).await.expect("Failed to create engine for recovery");
+            )
+            .await
+            .expect("Failed to create engine for recovery");
 
             engine.recover().await.expect("Failed to recover");
 
-            let kept = engine.get_node(&"del_node_1".to_string()).expect("Failed to get kept node");
-            let deleted = engine.get_node(&"del_node_2".to_string()).expect("Failed to get deleted node");
+            let kept = engine
+                .get_node(&"del_node_1".to_string())
+                .expect("Failed to get kept node");
+            let deleted = engine
+                .get_node(&"del_node_2".to_string())
+                .expect("Failed to get deleted node");
 
             assert!(kept.is_some(), "Node 1 should be kept");
             assert!(deleted.is_none(), "Node 2 should be deleted after recovery");
@@ -697,8 +896,8 @@ mod wal_recovery_tests {
 /// PULSAR WAL Recovery Tests - Verifies data persistence across engine restart
 #[cfg(feature = "distributed-graph")]
 mod pulsar_wal_recovery_tests {
-    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use proximadb::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
+    use proximadb::graph::{Edge, Node, engines::GraphEngine};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -742,16 +941,18 @@ mod pulsar_wal_recovery_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine with persistence");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine with persistence");
 
             // Insert nodes that will be distributed across shards
             for i in 0..10 {
                 let node = create_test_node(&format!("p_rec_node_{}", i), "RecoveryTest");
-                engine.insert_node(node).await.expect("Failed to insert node");
+                engine
+                    .insert_node(node)
+                    .await
+                    .expect("Failed to insert node");
             }
 
             // Verify all nodes exist
@@ -759,7 +960,8 @@ mod pulsar_wal_recovery_tests {
                 let node_id = format!("p_rec_node_{}", i);
                 assert!(
                     engine.get_node(&node_id).expect("Get failed").is_some(),
-                    "Node {} should exist before recovery", node_id
+                    "Node {} should exist before recovery",
+                    node_id
                 );
             }
 
@@ -774,11 +976,10 @@ mod pulsar_wal_recovery_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine for recovery");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine for recovery");
 
             // Recover from WAL
             engine.recover().await.expect("Failed to recover PULSAR");
@@ -789,7 +990,8 @@ mod pulsar_wal_recovery_tests {
                 let recovered = engine.get_node(&node_id).expect("Get failed");
                 assert!(
                     recovered.is_some(),
-                    "Node {} should be recovered after WAL replay", node_id
+                    "Node {} should be recovered after WAL replay",
+                    node_id
                 );
             }
         }
@@ -809,16 +1011,18 @@ mod pulsar_wal_recovery_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine");
 
             // Create a chain: A -> B -> C -> D
             for c in ['A', 'B', 'C', 'D'] {
                 let node = create_test_node(&format!("chain_{}", c), "ChainNode");
-                engine.insert_node(node).await.expect("Failed to insert node");
+                engine
+                    .insert_node(node)
+                    .await
+                    .expect("Failed to insert node");
             }
 
             // Add edges
@@ -828,11 +1032,15 @@ mod pulsar_wal_recovery_tests {
                 create_test_edge("e_cd", "chain_C", "chain_D", "NEXT"),
             ];
             for edge in edges {
-                engine.insert_edge(edge).await.expect("Failed to insert edge");
+                engine
+                    .insert_edge(edge)
+                    .await
+                    .expect("Failed to insert edge");
             }
 
             // Verify traversal works
-            let neighbors = engine.get_neighbors(&"chain_A".to_string(), None)
+            let neighbors = engine
+                .get_neighbors(&"chain_A".to_string(), None)
                 .expect("Failed to get neighbors");
             assert_eq!(neighbors.len(), 1);
             assert_eq!(neighbors[0].id, "chain_B");
@@ -847,25 +1055,31 @@ mod pulsar_wal_recovery_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine for recovery");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine for recovery");
 
             engine.recover().await.expect("Failed to recover");
 
             // Verify edges were recovered
-            let edge_ab = engine.get_edge(&"e_ab".to_string()).expect("Get edge failed");
-            let edge_bc = engine.get_edge(&"e_bc".to_string()).expect("Get edge failed");
-            let edge_cd = engine.get_edge(&"e_cd".to_string()).expect("Get edge failed");
+            let edge_ab = engine
+                .get_edge(&"e_ab".to_string())
+                .expect("Get edge failed");
+            let edge_bc = engine
+                .get_edge(&"e_bc".to_string())
+                .expect("Get edge failed");
+            let edge_cd = engine
+                .get_edge(&"e_cd".to_string())
+                .expect("Get edge failed");
 
             assert!(edge_ab.is_some(), "Edge A->B should be recovered");
             assert!(edge_bc.is_some(), "Edge B->C should be recovered");
             assert!(edge_cd.is_some(), "Edge C->D should be recovered");
 
             // Verify traversal still works
-            let neighbors = engine.get_neighbors(&"chain_B".to_string(), None)
+            let neighbors = engine
+                .get_neighbors(&"chain_B".to_string(), None)
                 .expect("Failed to get neighbors");
             assert_eq!(neighbors.len(), 1);
             assert_eq!(neighbors[0].id, "chain_C");
@@ -886,20 +1100,28 @@ mod pulsar_wal_recovery_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine");
 
             // Insert nodes
             let node_to_update = create_test_node("upd_node", "Original");
             let node_to_delete = create_test_node("del_node", "ToDelete");
             let node_to_keep = create_test_node("keep_node", "ToKeep");
 
-            engine.insert_node(node_to_update).await.expect("Insert failed");
-            engine.insert_node(node_to_delete).await.expect("Insert failed");
-            engine.insert_node(node_to_keep).await.expect("Insert failed");
+            engine
+                .insert_node(node_to_update)
+                .await
+                .expect("Insert failed");
+            engine
+                .insert_node(node_to_delete)
+                .await
+                .expect("Insert failed");
+            engine
+                .insert_node(node_to_keep)
+                .await
+                .expect("Insert failed");
 
             // Update node
             let mut updated = (*engine.get_node(&"upd_node".to_string()).unwrap().unwrap()).clone();
@@ -907,7 +1129,10 @@ mod pulsar_wal_recovery_tests {
             engine.update_node(updated).await.expect("Update failed");
 
             // Delete node
-            engine.delete_node(&"del_node".to_string()).await.expect("Delete failed");
+            engine
+                .delete_node(&"del_node".to_string())
+                .await
+                .expect("Delete failed");
 
             engine.flush_wal().await.expect("Flush failed");
         }
@@ -919,29 +1144,37 @@ mod pulsar_wal_recovery_tests {
                 replication_factor: 1,
                 ..PulsarConfig::default()
             };
-            let engine = PulsarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create PULSAR engine for recovery");
+            let engine =
+                PulsarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create PULSAR engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
             // Verify update persisted
-            let updated_node = engine.get_node(&"upd_node".to_string())
+            let updated_node = engine
+                .get_node(&"upd_node".to_string())
                 .expect("Get failed")
                 .expect("Updated node should exist");
             assert!(
                 updated_node.labels.contains(&"Modified".to_string()),
-                "Update should be persisted. Labels: {:?}", updated_node.labels
+                "Update should be persisted. Labels: {:?}",
+                updated_node.labels
             );
 
             // Verify delete persisted
-            let deleted_node = engine.get_node(&"del_node".to_string()).expect("Get failed");
-            assert!(deleted_node.is_none(), "Deleted node should not exist after recovery");
+            let deleted_node = engine
+                .get_node(&"del_node".to_string())
+                .expect("Get failed");
+            assert!(
+                deleted_node.is_none(),
+                "Deleted node should not exist after recovery"
+            );
 
             // Verify kept node still exists
-            let kept_node = engine.get_node(&"keep_node".to_string()).expect("Get failed");
+            let kept_node = engine
+                .get_node(&"keep_node".to_string())
+                .expect("Get failed");
             assert!(kept_node.is_some(), "Kept node should still exist");
         }
     }
@@ -950,8 +1183,8 @@ mod pulsar_wal_recovery_tests {
 /// QUASAR WAL Recovery Tests - Verifies hot tier persistence across restart
 #[cfg(feature = "tiered-graph")]
 mod quasar_wal_recovery_tests {
+    use proximadb::graph::engines::quasar::{ColdStorageBackend, QuasarConfig, QuasarGraphEngine};
     use proximadb::graph::{Edge, Node, engines::GraphEngine};
-    use proximadb::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine, ColdStorageBackend};
     use std::collections::HashMap;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -997,16 +1230,18 @@ mod quasar_wal_recovery_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine with persistence");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine with persistence");
 
             // Insert nodes into hot tier
             for i in 0..10 {
                 let node = create_test_node(&format!("q_rec_node_{}", i), "HotTierNode");
-                engine.insert_node(node).await.expect("Failed to insert node");
+                engine
+                    .insert_node(node)
+                    .await
+                    .expect("Failed to insert node");
             }
 
             // Verify hot tier has nodes
@@ -1025,11 +1260,10 @@ mod quasar_wal_recovery_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine for recovery");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine for recovery");
 
             engine.recover().await.expect("Failed to recover QUASAR");
 
@@ -1037,10 +1271,7 @@ mod quasar_wal_recovery_tests {
             for i in 0..10 {
                 let node_id = format!("q_rec_node_{}", i);
                 let recovered = engine.get_node(&node_id).expect("Get failed");
-                assert!(
-                    recovered.is_some(),
-                    "Node {} should be recovered", node_id
-                );
+                assert!(recovered.is_some(), "Node {} should be recovered", node_id);
             }
         }
     }
@@ -1059,11 +1290,10 @@ mod quasar_wal_recovery_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine");
 
             // Create nodes
             let node1 = create_test_node("q_edge_node_1", "Person");
@@ -1089,16 +1319,17 @@ mod quasar_wal_recovery_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine for recovery");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
             // Verify edge was recovered
-            let edge = engine.get_edge(&"q_edge_1".to_string()).expect("Get edge failed");
+            let edge = engine
+                .get_edge(&"q_edge_1".to_string())
+                .expect("Get edge failed");
             assert!(edge.is_some(), "Edge should be recovered");
 
             // Verify edge metadata
@@ -1123,25 +1354,34 @@ mod quasar_wal_recovery_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine");
 
             // Insert nodes
             let node_to_update = create_test_node("q_upd_node", "Original");
             let node_to_delete = create_test_node("q_del_node", "ToDelete");
-            engine.insert_node(node_to_update).await.expect("Insert failed");
-            engine.insert_node(node_to_delete).await.expect("Insert failed");
+            engine
+                .insert_node(node_to_update)
+                .await
+                .expect("Insert failed");
+            engine
+                .insert_node(node_to_delete)
+                .await
+                .expect("Insert failed");
 
             // Update node
-            let mut updated = (*engine.get_node(&"q_upd_node".to_string()).unwrap().unwrap()).clone();
+            let mut updated =
+                (*engine.get_node(&"q_upd_node".to_string()).unwrap().unwrap()).clone();
             updated.labels.push("Modified".to_string());
             engine.update_node(updated).await.expect("Update failed");
 
             // Delete node
-            engine.delete_node(&"q_del_node".to_string()).await.expect("Delete failed");
+            engine
+                .delete_node(&"q_del_node".to_string())
+                .await
+                .expect("Delete failed");
 
             engine.flush_wal().await.expect("Flush failed");
         }
@@ -1153,26 +1393,32 @@ mod quasar_wal_recovery_tests {
                 cold_storage_backend: ColdStorageBackend::Json,
                 ..QuasarConfig::default()
             };
-            let engine = QuasarGraphEngine::with_persistence(
-                config,
-                graph_id.to_string(),
-                base_url.clone(),
-            ).await.expect("Failed to create QUASAR engine for recovery");
+            let engine =
+                QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                    .await
+                    .expect("Failed to create QUASAR engine for recovery");
 
             engine.recover().await.expect("Recovery failed");
 
             // Verify update persisted
-            let updated_node = engine.get_node(&"q_upd_node".to_string())
+            let updated_node = engine
+                .get_node(&"q_upd_node".to_string())
                 .expect("Get failed")
                 .expect("Updated node should exist");
             assert!(
                 updated_node.labels.contains(&"Modified".to_string()),
-                "Update should be persisted. Labels: {:?}", updated_node.labels
+                "Update should be persisted. Labels: {:?}",
+                updated_node.labels
             );
 
             // Verify delete persisted
-            let deleted_node = engine.get_node(&"q_del_node".to_string()).expect("Get failed");
-            assert!(deleted_node.is_none(), "Deleted node should not exist after recovery");
+            let deleted_node = engine
+                .get_node(&"q_del_node".to_string())
+                .expect("Get failed");
+            assert!(
+                deleted_node.is_none(),
+                "Deleted node should not exist after recovery"
+            );
         }
     }
 
@@ -1191,11 +1437,10 @@ mod quasar_wal_recovery_tests {
             ..QuasarConfig::default()
         };
 
-        let engine = QuasarGraphEngine::with_persistence(
-            config,
-            graph_id.to_string(),
-            base_url.clone(),
-        ).await.expect("Failed to create QUASAR engine");
+        let engine =
+            QuasarGraphEngine::with_persistence(config, graph_id.to_string(), base_url.clone())
+                .await
+                .expect("Failed to create QUASAR engine");
 
         // Insert more nodes than hot tier can hold
         for i in 0..10 {
@@ -1207,21 +1452,32 @@ mod quasar_wal_recovery_tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
 
         // Flush should work even during tiering
-        engine.flush_wal().await.expect("Flush should succeed during tiering");
+        engine
+            .flush_wal()
+            .await
+            .expect("Flush should succeed during tiering");
 
         // Force migration
-        engine.force_migration().await.expect("Force migration should succeed");
+        engine
+            .force_migration()
+            .await
+            .expect("Force migration should succeed");
 
         // Flush again after migration
-        engine.flush_wal().await.expect("Flush after migration should succeed");
+        engine
+            .flush_wal()
+            .await
+            .expect("Flush after migration should succeed");
     }
 }
 
 /// Multi-engine service recovery tests
 mod multi_engine_service_tests {
-    use proximadb::graph::service::GraphOperationsService;
     use proximadb::graph::Node;
-    use proximadb::proto::proximadb_v1::{CreateGraphRequest, GraphStorageConfig, CompressionAlgorithm};
+    use proximadb::graph::service::GraphOperationsService;
+    use proximadb::proto::proximadb_v1::{
+        CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
+    };
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -1260,15 +1516,24 @@ mod multi_engine_service_tests {
             access_control: None,
         };
 
-        service.create_graph_collection(request).await.expect("Failed to create graph");
+        service
+            .create_graph_collection(request)
+            .await
+            .expect("Failed to create graph");
 
         // Insert data
         let node = create_test_node("idem_node", "Test");
-        service.create_node("idempotent_test", node).await.expect("Insert failed");
+        service
+            .create_node("idempotent_test", node)
+            .await
+            .expect("Insert failed");
 
         // Multiple flush calls should all succeed
         for _ in 0..5 {
-            service.flush_wal("idempotent_test").await.expect("Flush should be idempotent");
+            service
+                .flush_wal("idempotent_test")
+                .await
+                .expect("Flush should be idempotent");
         }
     }
 
@@ -1295,13 +1560,21 @@ mod multi_engine_service_tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(orion_request).await.expect("Failed to create ORION graph");
+        service
+            .create_graph_collection(orion_request)
+            .await
+            .expect("Failed to create ORION graph");
 
         // Insert data in both graphs
-        service.create_node("multi_orion", create_test_node("o_node", "Orion"))
-            .await.expect("Insert to ORION failed");
+        service
+            .create_node("multi_orion", create_test_node("o_node", "Orion"))
+            .await
+            .expect("Insert to ORION failed");
 
         // Flush all graphs
-        service.flush_wal("multi_orion").await.expect("ORION flush failed");
+        service
+            .flush_wal("multi_orion")
+            .await
+            .expect("ORION flush failed");
     }
 }

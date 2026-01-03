@@ -17,9 +17,9 @@ use crate::audit::logger::AuditLogger;
 use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
-use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::security::encryption::{EncryptedField, FieldEncryption};
+use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
 use crate::security::unified_rbac::UnifiedUserContext;
 
 /// Helper to create a SqlValue from a string
@@ -79,21 +79,27 @@ impl SecureVectorOperations {
             return Ok(None);
         }
 
-        let rls_result = self.rls_service
+        let rls_result = self
+            .rls_service
             .apply_security_filter(collection, &RLSOperation::Read, user_context)
             .await?;
 
         // Log the RLS application
-        if security_config.audit_enabled &&
-           (security_config.audit_level == AuditLevel::Reads ||
-            security_config.audit_level == AuditLevel::All) {
-            self.log_rls_application(collection, user_context, &rls_result).await?;
+        if security_config.audit_enabled
+            && (security_config.audit_level == AuditLevel::Reads
+                || security_config.audit_level == AuditLevel::All)
+        {
+            self.log_rls_application(collection, user_context, &rls_result)
+                .await?;
         }
 
         if rls_result.access_denied {
             return Err(anyhow!(
                 "Access denied: {}",
-                rls_result.denial_reason.as_deref().unwrap_or("RLS policy violation")
+                rls_result
+                    .denial_reason
+                    .as_deref()
+                    .unwrap_or("RLS policy violation")
             ));
         }
 
@@ -129,10 +135,9 @@ impl SecureVectorOperations {
 
                 // Add tenant_id if present
                 if let Some(ref tenant) = user_context.tenant_id {
-                    record.metadata.insert(
-                        "tenant_id".to_string(),
-                        string_to_sql_value(tenant),
-                    );
+                    record
+                        .metadata
+                        .insert("tenant_id".to_string(), string_to_sql_value(tenant));
                 }
             }
         }
@@ -141,16 +146,19 @@ impl SecureVectorOperations {
         if security_config.field_encryption_enabled {
             if let Some(ref encryption) = self.encryption_service {
                 for record in records.iter_mut() {
-                    self.encrypt_record_fields(record, encryption, security_config).await?;
+                    self.encrypt_record_fields(record, encryption, security_config)
+                        .await?;
                 }
             }
         }
 
         // Log audit event
-        if security_config.audit_enabled &&
-           (security_config.audit_level == AuditLevel::Writes ||
-            security_config.audit_level == AuditLevel::All) {
-            self.log_insert_event(collection, user_context, records.len()).await?;
+        if security_config.audit_enabled
+            && (security_config.audit_level == AuditLevel::Writes
+                || security_config.audit_level == AuditLevel::All)
+        {
+            self.log_insert_event(collection, user_context, records.len())
+                .await?;
         }
 
         Ok(())
@@ -172,7 +180,8 @@ impl SecureVectorOperations {
         };
 
         for record in records.iter_mut() {
-            self.decrypt_record_fields(record, encryption, security_config).await?;
+            self.decrypt_record_fields(record, encryption, security_config)
+                .await?;
         }
 
         Ok(())
@@ -189,14 +198,18 @@ impl SecureVectorOperations {
             return Ok(());
         }
 
-        let rls_result = self.rls_service
+        let rls_result = self
+            .rls_service
             .apply_security_filter(collection, &RLSOperation::Write, user_context)
             .await?;
 
         if rls_result.access_denied {
             return Err(anyhow!(
                 "Write access denied: {}",
-                rls_result.denial_reason.as_deref().unwrap_or("RLS policy violation")
+                rls_result
+                    .denial_reason
+                    .as_deref()
+                    .unwrap_or("RLS policy violation")
             ));
         }
 
@@ -214,14 +227,18 @@ impl SecureVectorOperations {
             return Ok(());
         }
 
-        let rls_result = self.rls_service
+        let rls_result = self
+            .rls_service
             .apply_security_filter(collection, &RLSOperation::Delete, user_context)
             .await?;
 
         if rls_result.access_denied {
             return Err(anyhow!(
                 "Delete access denied: {}",
-                rls_result.denial_reason.as_deref().unwrap_or("RLS policy violation")
+                rls_result
+                    .denial_reason
+                    .as_deref()
+                    .unwrap_or("RLS policy violation")
             ));
         }
 
@@ -236,7 +253,8 @@ impl SecureVectorOperations {
         security_config: &CollectionSecurityConfig,
     ) -> Result<()> {
         // Get fields to encrypt from config
-        let fields_to_encrypt: Vec<String> = security_config.encryption_config
+        let fields_to_encrypt: Vec<String> = security_config
+            .encryption_config
             .field_settings
             .keys()
             .cloned()
@@ -267,11 +285,15 @@ impl SecureVectorOperations {
         for (field_name, encrypted) in encrypted_fields {
             // Store encrypted field as JSON in metadata
             let encrypted_json = serde_json::to_string(&encrypted)?;
-            record.metadata.insert(field_name, string_to_sql_value(&encrypted_json));
+            record
+                .metadata
+                .insert(field_name, string_to_sql_value(&encrypted_json));
         }
 
         // Mark record as encrypted
-        record.metadata.insert("__encrypted".to_string(), string_to_sql_value("true"));
+        record
+            .metadata
+            .insert("__encrypted".to_string(), string_to_sql_value("true"));
 
         Ok(())
     }
@@ -284,7 +306,8 @@ impl SecureVectorOperations {
         security_config: &CollectionSecurityConfig,
     ) -> Result<()> {
         // Check if record is encrypted
-        let is_encrypted = record.metadata
+        let is_encrypted = record
+            .metadata
             .get("__encrypted")
             .and_then(|v| sql_value_to_string(v))
             .map(|s| s == "true")
@@ -295,7 +318,8 @@ impl SecureVectorOperations {
         }
 
         // Get fields to decrypt from config
-        let fields_to_decrypt: Vec<String> = security_config.encryption_config
+        let fields_to_decrypt: Vec<String> = security_config
+            .encryption_config
             .field_settings
             .keys()
             .cloned()
@@ -315,7 +339,9 @@ impl SecureVectorOperations {
                         Ok(decrypted) => {
                             // Store decrypted value back
                             let decrypted_str = serde_json::to_string(&decrypted)?;
-                            record.metadata.insert(field_name.clone(), string_to_sql_value(&decrypted_str));
+                            record
+                                .metadata
+                                .insert(field_name.clone(), string_to_sql_value(&decrypted_str));
                         }
                         Err(e) => {
                             warn!("Failed to decrypt field {}: {}", field_name, e);
@@ -352,8 +378,14 @@ impl SecureVectorOperations {
             },
         )
         .with_user(user_context.user_id.clone())
-        .with_detail("rls_policies_applied".to_string(), serde_json::json!(rls_result.applied_policies))
-        .with_detail("filters_applied".to_string(), serde_json::json!(rls_result.filters_applied));
+        .with_detail(
+            "rls_policies_applied".to_string(),
+            serde_json::json!(rls_result.applied_policies),
+        )
+        .with_detail(
+            "filters_applied".to_string(),
+            serde_json::json!(rls_result.filters_applied),
+        );
 
         let event = if let Some(ref tenant) = user_context.tenant_id {
             event.with_tenant(tenant.clone())
@@ -406,9 +438,7 @@ pub fn combine_filters(
     match (user_filter, rls_filter) {
         (None, None) => None,
         (Some(f), None) | (None, Some(f)) => Some(f),
-        (Some(user), Some(rls)) => {
-            Some(FilterExpression::And(vec![user, rls]))
-        }
+        (Some(user), Some(rls)) => Some(FilterExpression::And(vec![user, rls])),
     }
 }
 
@@ -444,9 +474,7 @@ mod tests {
 
     async fn create_test_service() -> SecureVectorOperations {
         let rls_service = Arc::new(CollectionRLS::new(RLSConfig::default()));
-        let audit_logger = Arc::new(
-            AuditLogger::new(AuditConfig::default()).await.unwrap()
-        );
+        let audit_logger = Arc::new(AuditLogger::new(AuditConfig::default()).await.unwrap());
 
         SecureVectorOperations::new(rls_service, None, audit_logger)
     }
@@ -463,11 +491,10 @@ mod tests {
         let user_context = create_test_user_context();
         let security_config = CollectionSecurityConfig::default();
 
-        let result = service.apply_search_security(
-            "test_collection",
-            &user_context,
-            &security_config,
-        ).await.unwrap();
+        let result = service
+            .apply_search_security("test_collection", &user_context, &security_config)
+            .await
+            .unwrap();
 
         assert!(result.is_none());
     }
@@ -488,12 +515,15 @@ mod tests {
             ..Default::default()
         }];
 
-        service.apply_insert_security(
-            "test_collection",
-            &mut records,
-            &user_context,
-            &security_config,
-        ).await.unwrap();
+        service
+            .apply_insert_security(
+                "test_collection",
+                &mut records,
+                &user_context,
+                &security_config,
+            )
+            .await
+            .unwrap();
 
         assert!(records[0].metadata.contains_key("owner_id"));
         assert!(records[0].metadata.contains_key("created_by"));

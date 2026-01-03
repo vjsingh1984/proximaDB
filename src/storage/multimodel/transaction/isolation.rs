@@ -46,7 +46,10 @@ impl IsolationLevel {
 
     /// Check if this level prevents non-repeatable reads
     pub fn prevents_non_repeatable_reads(&self) -> bool {
-        matches!(self, IsolationLevel::RepeatableRead | IsolationLevel::Serializable)
+        matches!(
+            self,
+            IsolationLevel::RepeatableRead | IsolationLevel::Serializable
+        )
     }
 
     /// Check if this level prevents phantom reads
@@ -91,7 +94,12 @@ impl ReadSnapshot {
     }
 
     /// Check if a record version is visible in this snapshot
-    pub fn is_visible(&self, record_ts: i64, created_by_txn: Option<&str>, committed: bool) -> bool {
+    pub fn is_visible(
+        &self,
+        record_ts: i64,
+        created_by_txn: Option<&str>,
+        committed: bool,
+    ) -> bool {
         // Same transaction can see its own changes
         if let Some(txn_id) = created_by_txn {
             if txn_id == self.transaction_id {
@@ -292,7 +300,10 @@ impl IsolationManager {
             write_sets.insert(transaction_id.to_string(), WriteSet::new());
         }
 
-        debug!("Transaction {} started with isolation level {:?}", transaction_id, level);
+        debug!(
+            "Transaction {} started with isolation level {:?}",
+            transaction_id, level
+        );
         snapshot
     }
 
@@ -565,8 +576,12 @@ mod tests {
         let manager = IsolationManager::new(IsolationLevel::Serializable);
 
         // Start two concurrent transactions
-        manager.begin_transaction("txn1", Some(IsolationLevel::Serializable)).await;
-        manager.begin_transaction("txn2", Some(IsolationLevel::Serializable)).await;
+        manager
+            .begin_transaction("txn1", Some(IsolationLevel::Serializable))
+            .await;
+        manager
+            .begin_transaction("txn2", Some(IsolationLevel::Serializable))
+            .await;
 
         // Both write to same record
         manager.record_write("txn1", "vector", "vec1").await;

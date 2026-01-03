@@ -23,9 +23,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -53,7 +53,10 @@ pub enum TransactionState {
 impl TransactionState {
     /// Check if transaction is in a terminal state
     pub fn is_terminal(&self) -> bool {
-        matches!(self, TransactionState::Committed | TransactionState::Aborted)
+        matches!(
+            self,
+            TransactionState::Committed | TransactionState::Aborted
+        )
     }
 
     /// Check if transaction can be aborted
@@ -178,7 +181,11 @@ pub struct TwoPhaseTransaction {
 
 impl TwoPhaseTransaction {
     /// Create a new 2PC transaction
-    pub fn new(transaction_id: String, prepare_timeout: Duration, commit_timeout: Duration) -> Self {
+    pub fn new(
+        transaction_id: String,
+        prepare_timeout: Duration,
+        commit_timeout: Duration,
+    ) -> Self {
         Self {
             transaction_id,
             state: TransactionState::Active,
@@ -193,10 +200,8 @@ impl TwoPhaseTransaction {
     /// Add a participant
     pub fn add_participant(&mut self, participant_type: ParticipantType) {
         if !self.participants.contains_key(&participant_type) {
-            self.participants.insert(
-                participant_type,
-                ParticipantState::new(participant_type),
-            );
+            self.participants
+                .insert(participant_type, ParticipantState::new(participant_type));
             self.log(format!("Added participant: {:?}", participant_type));
         }
     }
@@ -209,9 +214,10 @@ impl TwoPhaseTransaction {
     /// Check if all participants voted YES
     pub fn all_prepared(&self) -> bool {
         !self.participants.is_empty()
-            && self.participants.values().all(|p| {
-                p.prepare_result.as_ref().is_some_and(|r| r.is_yes())
-            })
+            && self
+                .participants
+                .values()
+                .all(|p| p.prepare_result.as_ref().is_some_and(|r| r.is_yes()))
     }
 
     /// Check if any participant voted NO
@@ -219,7 +225,9 @@ impl TwoPhaseTransaction {
         self.participants.values().any(|p| {
             matches!(
                 &p.prepare_result,
-                Some(PrepareResult::No(_)) | Some(PrepareResult::Error(_)) | Some(PrepareResult::Timeout)
+                Some(PrepareResult::No(_))
+                    | Some(PrepareResult::Error(_))
+                    | Some(PrepareResult::Timeout)
             )
         })
     }
@@ -411,7 +419,10 @@ impl TwoPhaseCommitProtocol {
 
                 if !is_yes {
                     all_yes = false;
-                    warn!("Participant {:?} voted NO for transaction {}", ptype, transaction_id);
+                    warn!(
+                        "Participant {:?} voted NO for transaction {}",
+                        ptype, transaction_id
+                    );
                 }
             } else {
                 all_yes = false;
@@ -619,9 +630,8 @@ impl TwoPhaseCommitProtocol {
     /// Cleanup completed transactions
     pub async fn cleanup_completed(&self, max_age: Duration) {
         let mut transactions = self.transactions.write().await;
-        transactions.retain(|_, txn| {
-            !txn.state.is_terminal() || txn.start_time.elapsed() < max_age
-        });
+        transactions
+            .retain(|_, txn| !txn.state.is_terminal() || txn.start_time.elapsed() < max_age);
     }
 
     /// Get configuration
@@ -697,17 +707,23 @@ mod tests {
         txn.add_participant(ParticipantType::Document);
 
         // Simulate YES votes
-        txn.participants.get_mut(&ParticipantType::Vector).unwrap().prepare_result =
-            Some(PrepareResult::Yes);
-        txn.participants.get_mut(&ParticipantType::Document).unwrap().prepare_result =
-            Some(PrepareResult::Yes);
+        txn.participants
+            .get_mut(&ParticipantType::Vector)
+            .unwrap()
+            .prepare_result = Some(PrepareResult::Yes);
+        txn.participants
+            .get_mut(&ParticipantType::Document)
+            .unwrap()
+            .prepare_result = Some(PrepareResult::Yes);
 
         assert!(txn.all_prepared());
         assert!(!txn.any_rejected());
 
         // Simulate a NO vote
-        txn.participants.get_mut(&ParticipantType::Vector).unwrap().prepare_result =
-            Some(PrepareResult::No("Resource conflict".to_string()));
+        txn.participants
+            .get_mut(&ParticipantType::Vector)
+            .unwrap()
+            .prepare_result = Some(PrepareResult::No("Resource conflict".to_string()));
 
         assert!(!txn.all_prepared());
         assert!(txn.any_rejected());
@@ -740,8 +756,14 @@ mod tests {
         let protocol = TwoPhaseCommitProtocol::new(TwoPhaseCommitConfig::default());
 
         protocol.begin("txn1").await.unwrap();
-        protocol.enlist("txn1", ParticipantType::Vector).await.unwrap();
-        protocol.enlist("txn1", ParticipantType::Document).await.unwrap();
+        protocol
+            .enlist("txn1", ParticipantType::Vector)
+            .await
+            .unwrap();
+        protocol
+            .enlist("txn1", ParticipantType::Document)
+            .await
+            .unwrap();
 
         // Enlist to non-existent transaction should fail
         let result = protocol.enlist("txn2", ParticipantType::Graph).await;

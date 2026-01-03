@@ -65,7 +65,11 @@ impl RetentionPolicy {
     }
 
     /// Create an archive-after policy
-    pub fn archive_after(name: impl Into<String>, age: Duration, archive_url: impl Into<String>) -> Self {
+    pub fn archive_after(
+        name: impl Into<String>,
+        age: Duration,
+        archive_url: impl Into<String>,
+    ) -> Self {
         Self::new(name).with_rule(RetentionRule::archive_after(age, archive_url))
     }
 
@@ -644,9 +648,7 @@ impl RetentionManager {
 
         for metadata in items {
             for policy in policies.iter() {
-                if !policy.enabled
-                    || !policy.applies_to_collection(&metadata.collection)
-                {
+                if !policy.enabled || !policy.applies_to_collection(&metadata.collection) {
                     continue;
                 }
 
@@ -767,13 +769,16 @@ mod tests {
     fn test_retention_rule_evaluation() {
         let rule = RetentionRule::ttl(Duration::from_secs(7 * 24 * 3600));
 
-        let old_metadata = RetentionMetadata::new("item1", "col1")
-            .with_age(Duration::from_secs(10 * 24 * 3600));
+        let old_metadata =
+            RetentionMetadata::new("item1", "col1").with_age(Duration::from_secs(10 * 24 * 3600));
 
-        let new_metadata = RetentionMetadata::new("item2", "col1")
-            .with_age(Duration::from_secs(1 * 24 * 3600));
+        let new_metadata =
+            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(1 * 24 * 3600));
 
-        assert!(matches!(rule.evaluate(&old_metadata), Some(RetentionAction::Delete)));
+        assert!(matches!(
+            rule.evaluate(&old_metadata),
+            Some(RetentionAction::Delete)
+        ));
         assert!(rule.evaluate(&new_metadata).is_none());
     }
 
@@ -784,8 +789,8 @@ mod tests {
             "s3://archive-bucket/prefix/",
         );
 
-        let old_metadata = RetentionMetadata::new("item1", "col1")
-            .with_age(Duration::from_secs(60 * 24 * 3600));
+        let old_metadata =
+            RetentionMetadata::new("item1", "col1").with_age(Duration::from_secs(60 * 24 * 3600));
 
         let action = rule.evaluate(&old_metadata);
         assert!(matches!(action, Some(RetentionAction::Archive { .. })));

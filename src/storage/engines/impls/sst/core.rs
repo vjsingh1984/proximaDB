@@ -79,7 +79,9 @@ pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::
 
 /// Get the PCA model for a collection from the global cache
 /// Returns None if no model is cached for the collection.
-pub fn get_collection_pca_model(collection_id: &str) -> Option<super::pca_manager::EnhancedPCAModel> {
+pub fn get_collection_pca_model(
+    collection_id: &str,
+) -> Option<super::pca_manager::EnhancedPCAModel> {
     if let Ok(cache) = GLOBAL_PCA_MODEL_CACHE.read() {
         cache.get(collection_id).cloned()
     } else {
@@ -269,7 +271,11 @@ pub struct SstEngine {
     /// - Eliminates per-query PCA training overhead (40ms+ saved)
     ///
     /// Models are persisted to `{collection_dir}/__model/pca_model.bin`
-    pca_model_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>>>,
+    pca_model_cache: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
+        >,
+    >,
 }
 
 impl SstEngine {
@@ -536,7 +542,11 @@ impl SstEngine {
     /// to PCA space for Z-Order pruning.
     pub fn pca_model_cache(
         &self,
-    ) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>>> {
+    ) -> &Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
+        >,
+    > {
         &self.pca_model_cache
     }
 
@@ -594,9 +604,10 @@ impl SstEngine {
                     .await
                     .map_err(|e| SstError::Internal(format!("Failed to read PCA model: {}", e)))?;
 
-                let model: super::pca_manager::EnhancedPCAModel =
-                    bincode::deserialize(&data)
-                        .map_err(|e| SstError::Internal(format!("Failed to deserialize PCA model: {}", e)))?;
+                let model: super::pca_manager::EnhancedPCAModel = bincode::deserialize(&data)
+                    .map_err(|e| {
+                        SstError::Internal(format!("Failed to deserialize PCA model: {}", e))
+                    })?;
 
                 info!(
                     "[SST] Loaded persisted PCA model for collection (version: {}, {} components)",
@@ -605,17 +616,11 @@ impl SstEngine {
                 Ok(Some(model))
             }
             Ok(false) => {
-                tracing::debug!(
-                    "[SST] No persisted PCA model found at {}",
-                    model_path
-                );
+                tracing::debug!("[SST] No persisted PCA model found at {}", model_path);
                 Ok(None)
             }
             Err(e) => {
-                tracing::debug!(
-                    "[SST] Error checking PCA model at {}: {}",
-                    model_path, e
-                );
+                tracing::debug!("[SST] Error checking PCA model at {}: {}", model_path, e);
                 Ok(None)
             }
         }
@@ -636,10 +641,9 @@ impl SstEngine {
 
         // Ensure __model directory exists
         let model_dir = format!("{}/__model", collection_data_dir);
-        filesystem
-            .create_dir_all(&model_dir)
-            .await
-            .map_err(|e| SstError::Internal(format!("Failed to create __model directory: {}", e)))?;
+        filesystem.create_dir_all(&model_dir).await.map_err(|e| {
+            SstError::Internal(format!("Failed to create __model directory: {}", e))
+        })?;
 
         // Serialize model with bincode
         let data = bincode::serialize(model)
@@ -686,14 +690,17 @@ impl SstEngine {
         if vectors.len() < n_components {
             tracing::debug!(
                 "[SST] Not enough vectors ({}) for PCA training (need at least {})",
-                vectors.len(), n_components
+                vectors.len(),
+                n_components
             );
             return Ok(());
         }
 
         info!(
             "[SST] Training PCA model: {} vectors → {} components (from {}-dim)",
-            vectors.len(), n_components, vector_dim
+            vectors.len(),
+            n_components,
+            vector_dim
         );
 
         // Train PCA model

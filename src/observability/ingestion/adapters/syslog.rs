@@ -7,8 +7,8 @@
 // - TLS encryption (optional)
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -267,6 +267,7 @@ impl InputAdapter for SyslogAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     #[test]
     fn test_pri_to_severity() {

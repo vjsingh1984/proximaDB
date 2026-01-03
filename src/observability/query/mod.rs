@@ -24,7 +24,7 @@ use super::{
 };
 use crate::proto::proximadb_v1::{LogEntry, Severity};
 
-use self::logs::{LogAggregation, LogAggregationResult, LogAggregator, LogQueryBuilder};
+use self::logs::{LogAggregation, LogAggregationResult, LogQueryBuilder};
 use self::metrics::{MetricAggregationFn, MetricQueryBuilder, MetricResult};
 use self::promql::{PromQLExecutor, PromQLParser};
 pub use self::tantivy_log_index::{LogSearchOptions, LogSearchResult, TantivyLogIndex};
@@ -276,8 +276,16 @@ impl ObservabilityQueryEngine {
         }
 
         // Extract timestamps from results for range query
-        let min_ts = search_results.iter().map(|r| r.timestamp_ns).min().unwrap_or(0);
-        let max_ts = search_results.iter().map(|r| r.timestamp_ns).max().unwrap_or(i64::MAX);
+        let min_ts = search_results
+            .iter()
+            .map(|r| r.timestamp_ns)
+            .min()
+            .unwrap_or(0);
+        let max_ts = search_results
+            .iter()
+            .map(|r| r.timestamp_ns)
+            .max()
+            .unwrap_or(i64::MAX);
 
         // Fetch logs in the time range
         let all_logs = self
@@ -286,10 +294,8 @@ impl ObservabilityQueryEngine {
             .await?;
 
         // Build a set of result timestamps for matching
-        let result_timestamps: std::collections::HashSet<i64> = search_results
-            .iter()
-            .map(|r| r.timestamp_ns)
-            .collect();
+        let result_timestamps: std::collections::HashSet<i64> =
+            search_results.iter().map(|r| r.timestamp_ns).collect();
 
         // Filter to only matching logs
         let logs: Vec<LogEntry> = all_logs
@@ -309,26 +315,34 @@ impl ObservabilityQueryEngine {
         let start = std::time::Instant::now();
 
         // Get raw logs from storage
-        let mut logs = self.storage
-            .query_logs(namespace, params.start_time_ns, params.end_time_ns, params.limit as usize * 2)
+        let mut logs = self
+            .storage
+            .query_logs(
+                namespace,
+                params.start_time_ns,
+                params.end_time_ns,
+                params.limit as usize * 2,
+            )
             .await?;
 
         // Apply filters
         if !params.severities.is_empty() {
-            logs.retain(|log| {
-                params.severities.iter().any(|s| log.severity == *s as i32)
-            });
+            logs.retain(|log| params.severities.iter().any(|s| log.severity == *s as i32));
         }
 
         if !params.services.is_empty() {
             logs.retain(|log| {
-                log.service.as_ref().map_or(false, |s| params.services.contains(s))
+                log.service
+                    .as_ref()
+                    .map_or(false, |s| params.services.contains(s))
             });
         }
 
         if !params.sources.is_empty() {
             logs.retain(|log| {
-                log.source.as_ref().map_or(false, |s| params.sources.contains(s))
+                log.source
+                    .as_ref()
+                    .map_or(false, |s| params.sources.contains(s))
             });
         }
 
@@ -431,7 +445,9 @@ impl ObservabilityQueryEngine {
         // Trace ID filter - check in fields map
         if let Some(trace_id) = &query.trace_id_filter {
             if let Some(field_value) = log.fields.get("trace_id") {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &field_value.value {
+                if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) =
+                    &field_value.value
+                {
                     if s != trace_id {
                         return false;
                     }
@@ -562,12 +578,12 @@ impl ObservabilityQueryEngine {
                 .collect::<Vec<_>>()
                 .join(",");
 
-            let series = series_map.entry(label_key.clone()).or_insert_with(|| {
-                TimeSeriesResult {
+            let series = series_map
+                .entry(label_key.clone())
+                .or_insert_with(|| TimeSeriesResult {
                     labels: result.labels.clone(),
                     points: Vec::new(),
-                }
-            });
+                });
 
             series.points.push(DataPoint {
                 timestamp_ns: result.timestamp_ns,
@@ -607,8 +623,8 @@ impl ObservabilityQueryEngine {
             .await?;
 
         // Build a query with filters
-        let mut builder = LogQueryBuilder::new()
-            .time_range(params.start_time_ns, params.end_time_ns);
+        let mut builder =
+            LogQueryBuilder::new().time_range(params.start_time_ns, params.end_time_ns);
 
         // Apply service filter
         for service in &params.services {
@@ -977,7 +993,10 @@ mod tests {
             ),
         ];
 
-        engine.index_logs_for_search("search_ns", logs).await.unwrap();
+        engine
+            .index_logs_for_search("search_ns", logs)
+            .await
+            .unwrap();
 
         // Search for "connection"
         let options = LogSearchOptions::with_limit(10);
@@ -1020,7 +1039,10 @@ mod tests {
             ),
         ];
 
-        engine.index_logs_for_search("phrase_ns", logs).await.unwrap();
+        engine
+            .index_logs_for_search("phrase_ns", logs)
+            .await
+            .unwrap();
 
         // Phrase search - exact phrase
         let options = LogSearchOptions::with_limit(10);
@@ -1074,7 +1096,10 @@ mod tests {
             ),
         ];
 
-        engine.index_logs_for_search("filter_ns", logs).await.unwrap();
+        engine
+            .index_logs_for_search("filter_ns", logs)
+            .await
+            .unwrap();
 
         // Search with severity filter
         let options = LogSearchOptions::with_limit(10).severity(Severity::Error);
@@ -1098,21 +1123,22 @@ mod tests {
         assert_eq!(stats.doc_count, 0);
 
         // Add some logs
-        let logs = vec![
-            (
-                "log_1".to_string(),
-                LogEntry {
-                    timestamp_ns: 1000,
-                    severity: Severity::Info as i32,
-                    message: "Test message".to_string(),
-                    service: Some("api".to_string()),
-                    source: None,
-                    fields: HashMap::new(),
-                },
-            ),
-        ];
+        let logs = vec![(
+            "log_1".to_string(),
+            LogEntry {
+                timestamp_ns: 1000,
+                severity: Severity::Info as i32,
+                message: "Test message".to_string(),
+                service: Some("api".to_string()),
+                source: None,
+                fields: HashMap::new(),
+            },
+        )];
 
-        engine.index_logs_for_search("stats_ns", logs).await.unwrap();
+        engine
+            .index_logs_for_search("stats_ns", logs)
+            .await
+            .unwrap();
 
         let stats = engine.log_index_stats("stats_ns").await.unwrap();
         assert_eq!(stats.doc_count, 1);

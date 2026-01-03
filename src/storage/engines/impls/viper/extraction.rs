@@ -10,11 +10,11 @@ use tracing::debug;
 
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
-    ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode, ExtractionRequest,
-    ExtractionResult, ExtractionStats, ExtractedVector, VectorExtractor,
+    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
+    ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
 
 /// VIPER Vector Extractor
@@ -234,7 +234,7 @@ impl VectorExtractor for ViperExtractor {
             estimated_vectors: files * vectors_per_file,
             estimated_bytes: files * vectors_per_file * bytes_per_vector,
             estimated_duration_ms: (files * 200) as u64, // ~200ms per large file
-            io_cost: 0.7, // Columnar is efficient for full scans
+            io_cost: 0.7,                                // Columnar is efficient for full scans
         }
     }
 

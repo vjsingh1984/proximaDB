@@ -22,30 +22,37 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::Client as HttpClient;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use tokio::time::sleep;
 use tonic::transport::Channel;
 
 // Proto types for gRPC
 use proximadb::proto::proximadb_v1::{
-    // Vector types
-    VectorBatchRequest, VectorRecord, VectorSearchRequest, SearchQuery, SqlValue,
-    SearchVectorRecord,
-    // Graph types
-    CreateNodeRequest, GetNodeRequest, Node,
-    // SQL types
-    ExecuteSqlRequest, ExecuteSqlResponse,
     // Collection types
-    CollectionConfig, GetCollectionRequest,
-    DistanceMetric, StorageEngine,
+    CollectionConfig,
+    // Graph types
+    CreateNodeRequest,
+    DistanceMetric,
+    // SQL types
+    ExecuteSqlRequest,
+    ExecuteSqlResponse,
+    GetCollectionRequest,
+    GetNodeRequest,
+    Node,
+    SearchQuery,
+    SearchVectorRecord,
+    SqlValue,
+    StorageEngine,
+    // Vector types
+    VectorBatchRequest,
+    VectorRecord,
+    VectorSearchRequest,
 };
 
 // gRPC service clients
 use proximadb::proto::proximadb_v1::{
-    vector_service_client::VectorServiceClient,
-    collection_service_client::CollectionServiceClient,
-    graph_service_client::GraphServiceClient,
-    sql_service_client::SqlServiceClient,
+    collection_service_client::CollectionServiceClient, graph_service_client::GraphServiceClient,
+    sql_service_client::SqlServiceClient, vector_service_client::VectorServiceClient,
 };
 
 // Constants for server endpoints
@@ -85,18 +92,25 @@ impl NormalizedSearchResult {
     fn from_json(value: &JsonValue) -> Option<Self> {
         let id = value.get("id")?.as_str()?.to_string();
         let score = value.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let has_vector = value.get("vector")
+        let has_vector = value
+            .get("vector")
             .and_then(|v| v.as_array())
             .map(|arr| !arr.is_empty())
             .unwrap_or(false);
 
-        let mut metadata_keys: Vec<String> = value.get("metadata")
+        let mut metadata_keys: Vec<String> = value
+            .get("metadata")
             .and_then(|v| v.as_object())
             .map(|obj| obj.keys().cloned().collect())
             .unwrap_or_default();
         metadata_keys.sort();
 
-        Some(Self { id, score, has_vector, metadata_keys })
+        Some(Self {
+            id,
+            score,
+            has_vector,
+            metadata_keys,
+        })
     }
 }
 
@@ -126,19 +140,29 @@ impl NormalizedNode {
     fn from_json(value: &JsonValue) -> Option<Self> {
         let id = value.get("id")?.as_str()?.to_string();
 
-        let mut labels: Vec<String> = value.get("labels")
+        let mut labels: Vec<String> = value
+            .get("labels")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         labels.sort();
 
-        let mut property_keys: Vec<String> = value.get("properties")
+        let mut property_keys: Vec<String> = value
+            .get("properties")
             .and_then(|v| v.as_object())
             .map(|obj| obj.keys().cloned().collect())
             .unwrap_or_default();
         property_keys.sort();
 
-        Some(Self { id, labels, property_keys })
+        Some(Self {
+            id,
+            labels,
+            property_keys,
+        })
     }
 }
 
@@ -161,7 +185,8 @@ impl NormalizedSqlResult {
     }
 
     fn from_json(value: &JsonValue) -> Self {
-        let row_count = value.get("row_count")
+        let row_count = value
+            .get("row_count")
             .or_else(|| value.get("rows_returned"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
@@ -172,14 +197,22 @@ impl NormalizedSqlResult {
             .and_then(|row| row.as_object())
             .map(|obj| obj.keys().cloned().collect())
             .unwrap_or_else(|| {
-                value.get("columns")
+                value
+                    .get("columns")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default()
             });
         column_names.sort();
 
-        Self { row_count, column_names }
+        Self {
+            row_count,
+            column_names,
+        }
     }
 }
 
@@ -231,7 +264,10 @@ impl ParityTestHarness {
                 Some((vector_client, collection_client, graph_client, sql_client))
             }
             Err(e) => {
-                eprintln!("Warning: Could not connect to gRPC server at {}: {}", GRPC_ENDPOINT, e);
+                eprintln!(
+                    "Warning: Could not connect to gRPC server at {}: {}",
+                    GRPC_ENDPOINT, e
+                );
                 None
             }
         };
@@ -255,7 +291,8 @@ impl ParityTestHarness {
     /// Check if servers are available
     async fn check_servers(&self) -> (bool, bool) {
         // Check REST server
-        let rest_available = self.http_client
+        let rest_available = self
+            .http_client
             .get(&format!("{}/health", REST_BASE_URL))
             .send()
             .await
@@ -280,7 +317,8 @@ impl ParityTestHarness {
             }
         });
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&format!("{}/api/v1/collections", REST_BASE_URL))
             .json(&request)
             .send()
@@ -293,7 +331,8 @@ impl ParityTestHarness {
             return Err(format!("Failed to create collection: {:?}", body).into());
         }
 
-        Ok(body.get("collection_id")
+        Ok(body
+            .get("collection_id")
             .or_else(|| body.get("collection").and_then(|c| c.get("id")))
             .and_then(|v| v.as_str())
             .unwrap_or(&self.test_collection_name)
@@ -302,7 +341,9 @@ impl ParityTestHarness {
 
     /// Create a test collection via gRPC
     async fn create_collection_grpc(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let mut client = self.collection_client.clone()
+        let mut client = self
+            .collection_client
+            .clone()
             .ok_or("gRPC collection client not available")?;
 
         let request = CollectionConfig {
@@ -320,27 +361,33 @@ impl ParityTestHarness {
     }
 
     /// Insert test vectors via REST
-    async fn insert_vectors_rest(&self, vectors: &[(String, Vec<f32>, HashMap<String, String>)])
-        -> Result<(), Box<dyn std::error::Error>>
-    {
-        let records: Vec<JsonValue> = vectors.iter().map(|(id, vec, meta)| {
-            let metadata: HashMap<String, JsonValue> = meta.iter()
-                .map(|(k, v)| (k.clone(), json!({ "string_value": v })))
-                .collect();
+    async fn insert_vectors_rest(
+        &self,
+        vectors: &[(String, Vec<f32>, HashMap<String, String>)],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let records: Vec<JsonValue> = vectors
+            .iter()
+            .map(|(id, vec, meta)| {
+                let metadata: HashMap<String, JsonValue> = meta
+                    .iter()
+                    .map(|(k, v)| (k.clone(), json!({ "string_value": v })))
+                    .collect();
 
-            json!({
-                "id": id,
-                "vector": vec,
-                "metadata": metadata
+                json!({
+                    "id": id,
+                    "vector": vec,
+                    "metadata": metadata
+                })
             })
-        }).collect();
+            .collect();
 
         let request = json!({
             "collection_id": self.test_collection_name,
             "vectors": records
         });
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&format!("{}/api/v1/vectors/batch", REST_BASE_URL))
             .json(&request)
             .send()
@@ -355,26 +402,42 @@ impl ParityTestHarness {
     }
 
     /// Insert test vectors via gRPC
-    async fn insert_vectors_grpc(&self, vectors: &[(String, Vec<f32>, HashMap<String, String>)])
-        -> Result<(), Box<dyn std::error::Error>>
-    {
-        let mut client = self.vector_client.clone()
+    async fn insert_vectors_grpc(
+        &self,
+        vectors: &[(String, Vec<f32>, HashMap<String, String>)],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut client = self
+            .vector_client
+            .clone()
             .ok_or("gRPC vector client not available")?;
 
-        let records: Vec<VectorRecord> = vectors.iter().map(|(id, vec, meta)| {
-            let metadata: HashMap<String, SqlValue> = meta.iter().map(|(k, v)| {
-                (k.clone(), SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(v.clone()))
-                })
-            }).collect();
+        let records: Vec<VectorRecord> = vectors
+            .iter()
+            .map(|(id, vec, meta)| {
+                let metadata: HashMap<String, SqlValue> = meta
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            SqlValue {
+                                value: Some(
+                                    proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        v.clone(),
+                                    ),
+                                ),
+                            },
+                        )
+                    })
+                    .collect();
 
-            VectorRecord {
-                id: id.clone(),
-                vector: vec.clone(),
-                metadata,
-                ..Default::default()
-            }
-        }).collect();
+                VectorRecord {
+                    id: id.clone(),
+                    vector: vec.clone(),
+                    metadata,
+                    ..Default::default()
+                }
+            })
+            .collect();
 
         let request = VectorBatchRequest {
             collection_id: self.test_collection_name.clone(),
@@ -386,9 +449,11 @@ impl ParityTestHarness {
     }
 
     /// Search vectors via REST
-    async fn search_vectors_rest(&self, query_vector: &[f32], top_k: u32)
-        -> Result<Vec<NormalizedSearchResult>, Box<dyn std::error::Error>>
-    {
+    async fn search_vectors_rest(
+        &self,
+        query_vector: &[f32],
+        top_k: u32,
+    ) -> Result<Vec<NormalizedSearchResult>, Box<dyn std::error::Error>> {
         let request = json!({
             "collection_id": self.test_collection_name,
             "queries": [{
@@ -397,7 +462,8 @@ impl ParityTestHarness {
             "top_k": top_k
         });
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&format!("{}/api/v1/search", REST_BASE_URL))
             .json(&request)
             .send()
@@ -411,7 +477,8 @@ impl ParityTestHarness {
         let body: JsonValue = response.json().await?;
 
         // Parse results from REST response
-        let results = body.get("results")
+        let results = body
+            .get("results")
             .and_then(|r| r.get("results"))
             .or_else(|| body.get("results"))
             .and_then(|v| v.as_array())
@@ -426,10 +493,14 @@ impl ParityTestHarness {
     }
 
     /// Search vectors via gRPC
-    async fn search_vectors_grpc(&self, query_vector: &[f32], top_k: u32)
-        -> Result<Vec<NormalizedSearchResult>, Box<dyn std::error::Error>>
-    {
-        let mut client = self.vector_client.clone()
+    async fn search_vectors_grpc(
+        &self,
+        query_vector: &[f32],
+        top_k: u32,
+    ) -> Result<Vec<NormalizedSearchResult>, Box<dyn std::error::Error>> {
+        let mut client = self
+            .vector_client
+            .clone()
             .ok_or("gRPC vector client not available")?;
 
         let request = VectorSearchRequest {
@@ -446,23 +517,31 @@ impl ParityTestHarness {
         let response = client.vector_search(request).await?;
         let inner = response.into_inner();
 
-        let results = inner.results
-            .map(|r| r.results.iter().map(NormalizedSearchResult::from_grpc).collect())
+        let results = inner
+            .results
+            .map(|r| {
+                r.results
+                    .iter()
+                    .map(NormalizedSearchResult::from_grpc)
+                    .collect()
+            })
             .unwrap_or_default();
 
         Ok(results)
     }
 
     /// Execute SQL via REST
-    async fn execute_sql_rest(&self, query: &str)
-        -> Result<NormalizedSqlResult, Box<dyn std::error::Error>>
-    {
+    async fn execute_sql_rest(
+        &self,
+        query: &str,
+    ) -> Result<NormalizedSqlResult, Box<dyn std::error::Error>> {
         let request = json!({
             "query": query,
             "collection": self.test_collection_name
         });
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&format!("{}/api/v1/sql/execute", REST_BASE_URL))
             .json(&request)
             .send()
@@ -478,10 +557,13 @@ impl ParityTestHarness {
     }
 
     /// Execute SQL via gRPC
-    async fn execute_sql_grpc(&self, query: &str)
-        -> Result<NormalizedSqlResult, Box<dyn std::error::Error>>
-    {
-        let mut client = self.sql_client.clone()
+    async fn execute_sql_grpc(
+        &self,
+        query: &str,
+    ) -> Result<NormalizedSqlResult, Box<dyn std::error::Error>> {
+        let mut client = self
+            .sql_client
+            .clone()
             .ok_or("gRPC SQL client not available")?;
 
         let request = ExecuteSqlRequest {
@@ -497,10 +579,14 @@ impl ParityTestHarness {
     }
 
     /// Create a graph node via REST
-    async fn create_graph_node_rest(&self, node_id: &str, labels: &[&str], properties: HashMap<String, String>)
-        -> Result<NormalizedNode, Box<dyn std::error::Error>>
-    {
-        let props: HashMap<String, JsonValue> = properties.iter()
+    async fn create_graph_node_rest(
+        &self,
+        node_id: &str,
+        labels: &[&str],
+        properties: HashMap<String, String>,
+    ) -> Result<NormalizedNode, Box<dyn std::error::Error>> {
+        let props: HashMap<String, JsonValue> = properties
+            .iter()
             .map(|(k, v)| (k.clone(), json!({ "string_value": v })))
             .collect();
 
@@ -513,7 +599,8 @@ impl ParityTestHarness {
             }
         });
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&format!("{}/api/v1/graph/nodes", REST_BASE_URL))
             .json(&request)
             .send()
@@ -525,23 +612,33 @@ impl ParityTestHarness {
         }
 
         let body: JsonValue = response.json().await?;
-        NormalizedNode::from_json(&body)
-            .ok_or_else(|| "Failed to parse node response".into())
+        NormalizedNode::from_json(&body).ok_or_else(|| "Failed to parse node response".into())
     }
 
     /// Create a graph node via gRPC
-    async fn create_graph_node_grpc(&self, node_id: &str, labels: &[&str], properties: HashMap<String, String>)
-        -> Result<NormalizedNode, Box<dyn std::error::Error>>
-    {
-        let mut client = self.graph_client.clone()
+    async fn create_graph_node_grpc(
+        &self,
+        node_id: &str,
+        labels: &[&str],
+        properties: HashMap<String, String>,
+    ) -> Result<NormalizedNode, Box<dyn std::error::Error>> {
+        let mut client = self
+            .graph_client
+            .clone()
             .ok_or("gRPC graph client not available")?;
 
         use proximadb::proto::proximadb_v1::{PropertyValue, property_value};
 
-        let props: HashMap<String, PropertyValue> = properties.iter()
-            .map(|(k, v)| (k.clone(), PropertyValue {
-                value: Some(property_value::Value::StringValue(v.clone()))
-            }))
+        let props: HashMap<String, PropertyValue> = properties
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    PropertyValue {
+                        value: Some(property_value::Value::StringValue(v.clone())),
+                    },
+                )
+            })
             .collect();
 
         let request = CreateNodeRequest {
@@ -559,11 +656,16 @@ impl ParityTestHarness {
     }
 
     /// Get a graph node via REST
-    async fn get_graph_node_rest(&self, node_id: &str)
-        -> Result<Option<NormalizedNode>, Box<dyn std::error::Error>>
-    {
-        let response = self.http_client
-            .get(&format!("{}/api/v1/graph/{}/nodes/{}", REST_BASE_URL, self.test_graph_name, node_id))
+    async fn get_graph_node_rest(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<NormalizedNode>, Box<dyn std::error::Error>> {
+        let response = self
+            .http_client
+            .get(&format!(
+                "{}/api/v1/graph/{}/nodes/{}",
+                REST_BASE_URL, self.test_graph_name, node_id
+            ))
             .send()
             .await?;
 
@@ -581,10 +683,13 @@ impl ParityTestHarness {
     }
 
     /// Get a graph node via gRPC
-    async fn get_graph_node_grpc(&self, node_id: &str)
-        -> Result<Option<NormalizedNode>, Box<dyn std::error::Error>>
-    {
-        let mut client = self.graph_client.clone()
+    async fn get_graph_node_grpc(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<NormalizedNode>, Box<dyn std::error::Error>> {
+        let mut client = self
+            .graph_client
+            .clone()
             .ok_or("gRPC graph client not available")?;
 
         let request = GetNodeRequest {
@@ -601,8 +706,12 @@ impl ParityTestHarness {
 
     /// Test error response for non-existent collection via REST
     async fn get_error_rest(&self, collection_id: &str) -> Result<u16, Box<dyn std::error::Error>> {
-        let response = self.http_client
-            .get(&format!("{}/api/v1/collections/{}", REST_BASE_URL, collection_id))
+        let response = self
+            .http_client
+            .get(&format!(
+                "{}/api/v1/collections/{}",
+                REST_BASE_URL, collection_id
+            ))
             .send()
             .await?;
 
@@ -610,8 +719,13 @@ impl ParityTestHarness {
     }
 
     /// Test error response for non-existent collection via gRPC
-    async fn get_error_grpc(&self, collection_id: &str) -> Result<tonic::Code, Box<dyn std::error::Error>> {
-        let mut client = self.collection_client.clone()
+    async fn get_error_grpc(
+        &self,
+        collection_id: &str,
+    ) -> Result<tonic::Code, Box<dyn std::error::Error>> {
+        let mut client = self
+            .collection_client
+            .clone()
             .ok_or("gRPC collection client not available")?;
 
         let request = GetCollectionRequest {
@@ -627,8 +741,12 @@ impl ParityTestHarness {
     /// Cleanup test resources
     async fn cleanup(&self) {
         // Try to delete test collection via REST
-        let _ = self.http_client
-            .delete(&format!("{}/api/v1/collections/{}", REST_BASE_URL, self.test_collection_name))
+        let _ = self
+            .http_client
+            .delete(&format!(
+                "{}/api/v1/collections/{}",
+                REST_BASE_URL, self.test_collection_name
+            ))
             .send()
             .await;
 
@@ -641,17 +759,22 @@ impl ParityTestHarness {
 // ================================================================================
 
 /// Generate test vectors for testing
-fn generate_test_vectors(count: usize, dimension: usize) -> Vec<(String, Vec<f32>, HashMap<String, String>)> {
-    (0..count).map(|i| {
-        let id = format!("vec_{}", i);
-        let vector: Vec<f32> = (0..dimension)
-            .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
-            .collect();
-        let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), format!("cat_{}", i % 3));
-        metadata.insert("index".to_string(), i.to_string());
-        (id, vector, metadata)
-    }).collect()
+fn generate_test_vectors(
+    count: usize,
+    dimension: usize,
+) -> Vec<(String, Vec<f32>, HashMap<String, String>)> {
+    (0..count)
+        .map(|i| {
+            let id = format!("vec_{}", i);
+            let vector: Vec<f32> = (0..dimension)
+                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .collect();
+            let mut metadata = HashMap::new();
+            metadata.insert("category".to_string(), format!("cat_{}", i % 3));
+            metadata.insert("index".to_string(), i.to_string());
+            (id, vector, metadata)
+        })
+        .collect()
 }
 
 /// Test that vector search returns identical results via REST and gRPC
@@ -668,7 +791,10 @@ async fn test_vector_search_parity() {
     let (rest_available, grpc_available) = harness.check_servers().await;
 
     if !rest_available || !grpc_available {
-        eprintln!("Skipping test: Servers not available (REST: {}, gRPC: {})", rest_available, grpc_available);
+        eprintln!(
+            "Skipping test: Servers not available (REST: {}, gRPC: {})",
+            rest_available, grpc_available
+        );
         eprintln!("Start the server with: cargo run --release --bin proximadb-server");
         return;
     }
@@ -761,7 +887,10 @@ async fn test_sql_query_parity() {
     let (rest_available, grpc_available) = harness.check_servers().await;
 
     if !rest_available || !grpc_available {
-        eprintln!("Skipping test: Servers not available (REST: {}, gRPC: {})", rest_available, grpc_available);
+        eprintln!(
+            "Skipping test: Servers not available (REST: {}, gRPC: {})",
+            rest_available, grpc_available
+        );
         return;
     }
 
@@ -809,15 +938,13 @@ async fn test_sql_query_parity() {
 
     // Compare row counts
     assert_eq!(
-        rest_result.row_count,
-        grpc_result.row_count,
+        rest_result.row_count, grpc_result.row_count,
         "REST and gRPC returned different row counts"
     );
 
     // Compare column names (normalized/sorted)
     assert_eq!(
-        rest_result.column_names,
-        grpc_result.column_names,
+        rest_result.column_names, grpc_result.column_names,
         "REST and gRPC returned different columns"
     );
 
@@ -841,19 +968,28 @@ async fn test_graph_query_parity() {
     let (rest_available, grpc_available) = harness.check_servers().await;
 
     if !rest_available || !grpc_available {
-        eprintln!("Skipping test: Servers not available (REST: {}, gRPC: {})", rest_available, grpc_available);
+        eprintln!(
+            "Skipping test: Servers not available (REST: {}, gRPC: {})",
+            rest_available, grpc_available
+        );
         return;
     }
 
     // Create a test node via REST
-    let node_id = format!("test_node_{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+    let node_id = format!(
+        "test_node_{}",
+        uuid::Uuid::new_v4().to_string()[..8].to_string()
+    );
     let labels = vec!["Person", "Employee"];
     let mut properties = HashMap::new();
     properties.insert("name".to_string(), "Alice".to_string());
     properties.insert("age".to_string(), "30".to_string());
 
     // Create node via REST
-    let rest_node = match harness.create_graph_node_rest(&node_id, &labels, properties.clone()).await {
+    let rest_node = match harness
+        .create_graph_node_rest(&node_id, &labels, properties.clone())
+        .await
+    {
         Ok(n) => n,
         Err(e) => {
             // Graph operations may not be fully implemented
@@ -879,10 +1015,7 @@ async fn test_graph_query_parity() {
     println!("REST node: {:?}", rest_node);
     println!("gRPC node: {:?}", grpc_node);
 
-    assert_eq!(
-        rest_node.id, grpc_node.id,
-        "Node IDs do not match"
-    );
+    assert_eq!(rest_node.id, grpc_node.id, "Node IDs do not match");
 
     assert_eq!(
         rest_node.labels, grpc_node.labels,
@@ -911,7 +1044,10 @@ async fn test_error_response_parity() {
     let (rest_available, grpc_available) = harness.check_servers().await;
 
     if !rest_available || !grpc_available {
-        eprintln!("Skipping test: Servers not available (REST: {}, gRPC: {})", rest_available, grpc_available);
+        eprintln!(
+            "Skipping test: Servers not available (REST: {}, gRPC: {})",
+            rest_available, grpc_available
+        );
         return;
     }
 
@@ -943,10 +1079,11 @@ async fn test_error_response_parity() {
     // REST: 404 Not Found
     // gRPC: NOT_FOUND
     assert!(
-        (rest_status == 404 && grpc_code == tonic::Code::NotFound) ||
-        (rest_status >= 400 && grpc_code != tonic::Code::Ok),
+        (rest_status == 404 && grpc_code == tonic::Code::NotFound)
+            || (rest_status >= 400 && grpc_code != tonic::Code::Ok),
         "Error responses should be consistent: REST {} vs gRPC {:?}",
-        rest_status, grpc_code
+        rest_status,
+        grpc_code
     );
 
     println!("Error response parity test PASSED");
@@ -966,7 +1103,10 @@ async fn test_vector_batch_parity() {
     let (rest_available, grpc_available) = harness.check_servers().await;
 
     if !rest_available || !grpc_available {
-        eprintln!("Skipping test: Servers not available (REST: {}, gRPC: {})", rest_available, grpc_available);
+        eprintln!(
+            "Skipping test: Servers not available (REST: {}, gRPC: {})",
+            rest_available, grpc_available
+        );
         return;
     }
 
@@ -978,7 +1118,8 @@ async fn test_vector_batch_parity() {
 
     // Create different test vectors for REST and gRPC
     let rest_vectors = generate_test_vectors(5, TEST_DIMENSION as usize);
-    let grpc_vectors: Vec<_> = rest_vectors.iter()
+    let grpc_vectors: Vec<_> = rest_vectors
+        .iter()
         .map(|(id, vec, meta)| (format!("{}_grpc", id), vec.clone(), meta.clone()))
         .collect();
 
@@ -1012,10 +1153,19 @@ async fn test_vector_batch_parity() {
     };
 
     // Should find vectors from both REST and gRPC inserts
-    let rest_inserted = all_results.iter().filter(|r| !r.id.contains("_grpc")).count();
-    let grpc_inserted = all_results.iter().filter(|r| r.id.contains("_grpc")).count();
+    let rest_inserted = all_results
+        .iter()
+        .filter(|r| !r.id.contains("_grpc"))
+        .count();
+    let grpc_inserted = all_results
+        .iter()
+        .filter(|r| r.id.contains("_grpc"))
+        .count();
 
-    println!("Found {} vectors from REST insert, {} from gRPC insert", rest_inserted, grpc_inserted);
+    println!(
+        "Found {} vectors from REST insert, {} from gRPC insert",
+        rest_inserted, grpc_inserted
+    );
 
     assert!(rest_inserted > 0, "Should find REST-inserted vectors");
     assert!(grpc_inserted > 0, "Should find gRPC-inserted vectors");
@@ -1062,8 +1212,24 @@ async fn test_rest_grpc_parity_summary() {
     let (rest_available, grpc_available) = harness.check_servers().await;
 
     println!("Server Status:");
-    println!("  REST ({}): {}", REST_BASE_URL, if rest_available { "AVAILABLE" } else { "NOT AVAILABLE" });
-    println!("  gRPC ({}): {}", GRPC_ENDPOINT, if grpc_available { "AVAILABLE" } else { "NOT AVAILABLE" });
+    println!(
+        "  REST ({}): {}",
+        REST_BASE_URL,
+        if rest_available {
+            "AVAILABLE"
+        } else {
+            "NOT AVAILABLE"
+        }
+    );
+    println!(
+        "  gRPC ({}): {}",
+        GRPC_ENDPOINT,
+        if grpc_available {
+            "AVAILABLE"
+        } else {
+            "NOT AVAILABLE"
+        }
+    );
 
     if rest_available && grpc_available {
         println!("\nBoth servers are available. Run individual tests with:");

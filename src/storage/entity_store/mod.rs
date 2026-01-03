@@ -11,13 +11,13 @@ mod legacy;
 
 // New graph-first implementation
 pub mod graph_schema;
-pub mod orion_backend;
 pub mod migration;
+pub mod orion_backend;
 
 // Re-export legacy types for backward compatibility
 pub use legacy::{
-    CsrRelationsStore, EntityHeader, EntityStore, InMemoryProvenanceRegistry,
-    ProximaEntityStore, ProvenanceRegistry, RelationsStore,
+    CsrRelationsStore, EntityHeader, EntityStore, InMemoryProvenanceRegistry, ProvenanceRegistry,
+    ProximaEntityStore, RelationsStore,
 };
 
 // Re-export graph-first types

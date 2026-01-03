@@ -9,17 +9,15 @@
 //! - **Cold tier**: VIPER/Parquet columnar storage
 //! - **Indexes**: JSON path (B+ tree), Array (inverted), Full-text (Tantivy)
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::storage::traits::{
-    DocumentStorageOperations, DocumentRecord, DocumentCollectionInfo,
-};
 use crate::proto::proximadb_v1::{
     DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject,
 };
+use crate::storage::traits::{DocumentCollectionInfo, DocumentRecord, DocumentStorageOperations};
 
 use super::super::traits::{ModelType, StoreCapabilities};
 
@@ -113,7 +111,9 @@ impl DocumentStore {
             supports_acid: false,
             supports_streaming: true,
             max_recommended_records: Some(10_000_000), // 10M documents
-            description: "MongoDB-like JSON documents with SST (hot) + VIPER (cold) + Tantivy (full-text)".to_string(),
+            description:
+                "MongoDB-like JSON documents with SST (hot) + VIPER (cold) + Tantivy (full-text)"
+                    .to_string(),
         }
     }
 
@@ -142,17 +142,19 @@ impl DocumentStorageOperations for DocumentStore {
         document: SqlObject,
         indexed_paths: Vec<String>,
     ) -> Result<DocumentRecord> {
-        let service = self.service.as_ref()
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
-        service.insert_document(collection, id, document, indexed_paths).await
+        service
+            .insert_document(collection, id, document, indexed_paths)
+            .await
     }
 
-    async fn get_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<Option<DocumentRecord>> {
-        let service = self.service.as_ref()
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>> {
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
         service.get_document(collection, id).await
     }
@@ -164,9 +166,13 @@ impl DocumentStorageOperations for DocumentStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<DocumentRecord>> {
-        let service = self.service.as_ref()
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
-        service.query_documents(collection, filter, limit, offset).await
+        service
+            .query_documents(collection, filter, limit, offset)
+            .await
     }
 
     async fn update_document(
@@ -175,32 +181,33 @@ impl DocumentStorageOperations for DocumentStore {
         id: &str,
         updates: Vec<DocumentUpdate>,
     ) -> Result<DocumentRecord> {
-        let service = self.service.as_ref()
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
         service.update_document(collection, id, updates).await
     }
 
-    async fn delete_document(
-        &self,
-        collection: &str,
-        id: &str,
-    ) -> Result<bool> {
-        let service = self.service.as_ref()
+    async fn delete_document(&self, collection: &str, id: &str) -> Result<bool> {
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
         service.delete_document(collection, id).await
     }
 
-    async fn create_document_collection(
-        &self,
-        config: DocumentCollectionConfig,
-    ) -> Result<String> {
-        let service = self.service.as_ref()
+    async fn create_document_collection(&self, config: DocumentCollectionConfig) -> Result<String> {
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
         service.create_document_collection(config).await
     }
 
     async fn list_document_collections(&self) -> Result<Vec<DocumentCollectionInfo>> {
-        let service = self.service.as_ref()
+        let service = self
+            .service
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Document service not configured"))?;
         service.list_document_collections().await
     }

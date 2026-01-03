@@ -184,11 +184,7 @@ impl WebhookConfig {
     }
 
     /// Set API key authentication
-    pub fn with_api_key(
-        mut self,
-        header: impl Into<String>,
-        key: impl Into<String>,
-    ) -> Self {
+    pub fn with_api_key(mut self, header: impl Into<String>, key: impl Into<String>) -> Self {
         self.auth = Some(WebhookAuth::ApiKey {
             header: header.into(),
             key: key.into(),
@@ -266,11 +262,7 @@ impl WebhookSink {
     }
 
     /// Send an HTTP request (simulated)
-    async fn http_request(
-        &self,
-        url: &str,
-        payload: &[u8],
-    ) -> SinkResult<()> {
+    async fn http_request(&self, url: &str, payload: &[u8]) -> SinkResult<()> {
         // In production, would use reqwest here
         let _ = (url, payload);
 
@@ -282,11 +274,7 @@ impl WebhookSink {
     }
 
     /// Send with retry
-    async fn send_with_retry(
-        &self,
-        url: &str,
-        payload: &[u8],
-    ) -> SinkResult<()> {
+    async fn send_with_retry(&self, url: &str, payload: &[u8]) -> SinkResult<()> {
         let mut attempt = 0;
 
         loop {
@@ -394,8 +382,8 @@ impl CdcSink for WebhookSink {
         if self.config.batching {
             // Send as a single batch request
             let url = &self.config.url;
-            let batch_payload = serde_json::to_vec(&events)
-                .map_err(|e| SinkError::Serialization(e.to_string()))?;
+            let batch_payload =
+                serde_json::to_vec(&events).map_err(|e| SinkError::Serialization(e.to_string()))?;
 
             self.send_with_retry(url, &batch_payload).await?;
 
@@ -475,35 +463,24 @@ mod tests {
 
     #[test]
     fn test_webhook_basic_auth() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_basic_auth("user", "pass");
+        let config = WebhookConfig::new("https://api.example.com").with_basic_auth("user", "pass");
 
-        assert!(matches!(
-            config.auth,
-            Some(WebhookAuth::Basic { .. })
-        ));
+        assert!(matches!(config.auth, Some(WebhookAuth::Basic { .. })));
     }
 
     #[test]
     fn test_webhook_bearer_auth() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_bearer_auth("my-token");
+        let config = WebhookConfig::new("https://api.example.com").with_bearer_auth("my-token");
 
-        assert!(matches!(
-            config.auth,
-            Some(WebhookAuth::Bearer { .. })
-        ));
+        assert!(matches!(config.auth, Some(WebhookAuth::Bearer { .. })));
     }
 
     #[test]
     fn test_webhook_api_key_auth() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_api_key("X-API-Key", "secret-key");
+        let config =
+            WebhookConfig::new("https://api.example.com").with_api_key("X-API-Key", "secret-key");
 
-        assert!(matches!(
-            config.auth,
-            Some(WebhookAuth::ApiKey { .. })
-        ));
+        assert!(matches!(config.auth, Some(WebhookAuth::ApiKey { .. })));
     }
 
     #[test]
@@ -557,11 +534,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_webhook_sink_batching() {
-        let config = WebhookConfig::new("https://api.example.com/events")
-            .with_batching(true);
+        let config = WebhookConfig::new("https://api.example.com/events").with_batching(true);
         let sink = WebhookSink::new(config);
 
-        let events = vec![create_test_event(), create_test_event(), create_test_event()];
+        let events = vec![
+            create_test_event(),
+            create_test_event(),
+            create_test_event(),
+        ];
         sink.send_batch(events).await.unwrap();
 
         let stats = sink.stats();
@@ -576,8 +556,7 @@ mod tests {
 
     #[test]
     fn test_build_auth_headers_basic() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_basic_auth("user", "pass");
+        let config = WebhookConfig::new("https://api.example.com").with_basic_auth("user", "pass");
         let sink = WebhookSink::new(config);
 
         let headers = sink.build_auth_headers();
@@ -587,8 +566,7 @@ mod tests {
 
     #[test]
     fn test_build_auth_headers_bearer() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_bearer_auth("my-token");
+        let config = WebhookConfig::new("https://api.example.com").with_bearer_auth("my-token");
         let sink = WebhookSink::new(config);
 
         let headers = sink.build_auth_headers();
@@ -600,8 +578,8 @@ mod tests {
 
     #[test]
     fn test_build_auth_headers_api_key() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_api_key("X-API-Key", "secret");
+        let config =
+            WebhookConfig::new("https://api.example.com").with_api_key("X-API-Key", "secret");
         let sink = WebhookSink::new(config);
 
         let headers = sink.build_auth_headers();
@@ -610,8 +588,7 @@ mod tests {
 
     #[test]
     fn test_timeout_duration() {
-        let config = WebhookConfig::new("https://api.example.com")
-            .with_timeout(5000);
+        let config = WebhookConfig::new("https://api.example.com").with_timeout(5000);
 
         assert_eq!(config.timeout(), Duration::from_millis(5000));
     }

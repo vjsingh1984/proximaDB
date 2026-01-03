@@ -232,7 +232,8 @@ impl ConcurrentIdMapping {
     /// Restore a mapping directly (for deserialization)
     /// This bypasses the auto-increment logic of register()
     pub fn restore_mapping(&self, external_id: String, internal_id: usize) -> Result<()> {
-        self.external_to_internal.insert(external_id.clone(), internal_id);
+        self.external_to_internal
+            .insert(external_id.clone(), internal_id);
         self.internal_to_external.insert(internal_id, external_id);
         Ok(())
     }

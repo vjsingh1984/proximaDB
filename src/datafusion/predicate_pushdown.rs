@@ -34,10 +34,7 @@ pub enum PushdownCapability {
 /// Convert a DataFusion expression to a ProximaDB FilterExpression.
 ///
 /// Returns an error if the expression cannot be converted.
-pub fn convert_expr_to_filter(
-    expr: &Expr,
-    schema: &ProximaSchema,
-) -> DFResult<FilterExpression> {
+pub fn convert_expr_to_filter(expr: &Expr, schema: &ProximaSchema) -> DFResult<FilterExpression> {
     match expr {
         Expr::BinaryExpr(binary) => convert_binary_expr(binary, schema),
         Expr::Not(inner) => {
@@ -62,11 +59,7 @@ pub fn convert_expr_to_filter(
             let column_name = extract_column_name(&in_list.expr)?;
             validate_column_exists(&column_name, schema)?;
 
-            let values: Result<Vec<_>, _> = in_list
-                .list
-                .iter()
-                .map(scalar_to_json_value)
-                .collect();
+            let values: Result<Vec<_>, _> = in_list.list.iter().map(scalar_to_json_value).collect();
 
             let filter = FilterExpression::In {
                 column: column_name,
@@ -117,7 +110,9 @@ pub fn convert_expr_to_filter(
                 ScalarValue::Boolean(Some(false)) => {
                     // Always false - will never match
                     // Return NOT of empty And (which is NOT true = false)
-                    Ok(FilterExpression::Not(Box::new(FilterExpression::And(vec![]))))
+                    Ok(FilterExpression::Not(Box::new(FilterExpression::And(
+                        vec![],
+                    ))))
                 }
                 _ => Err(DataFusionError::Plan(format!(
                     "Cannot push down standalone literal: {:?}",
@@ -133,10 +128,7 @@ pub fn convert_expr_to_filter(
 }
 
 /// Convert a binary expression to FilterExpression.
-fn convert_binary_expr(
-    binary: &BinaryExpr,
-    schema: &ProximaSchema,
-) -> DFResult<FilterExpression> {
+fn convert_binary_expr(binary: &BinaryExpr, schema: &ProximaSchema) -> DFResult<FilterExpression> {
     match binary.op {
         // Logical operators
         Operator::And => {
@@ -152,7 +144,9 @@ fn convert_binary_expr(
 
         // Comparison operators
         Operator::Eq => convert_comparison(&binary.left, &binary.right, schema, ComparisonOp::Eq),
-        Operator::NotEq => convert_comparison(&binary.left, &binary.right, schema, ComparisonOp::Ne),
+        Operator::NotEq => {
+            convert_comparison(&binary.left, &binary.right, schema, ComparisonOp::Ne)
+        }
         Operator::Lt => convert_comparison(&binary.left, &binary.right, schema, ComparisonOp::Lt),
         Operator::LtEq => convert_comparison(&binary.left, &binary.right, schema, ComparisonOp::Le),
         Operator::Gt => convert_comparison(&binary.left, &binary.right, schema, ComparisonOp::Gt),
@@ -291,10 +285,7 @@ fn scalar_value_to_json(scalar: &ScalarValue) -> DFResult<serde_json::Value> {
 }
 
 /// Analyze predicates and determine pushdown strategy.
-pub fn analyze_predicates(
-    predicates: &[Expr],
-    schema: &ProximaSchema,
-) -> FilterPushdownResult {
+pub fn analyze_predicates(predicates: &[Expr], schema: &ProximaSchema) -> FilterPushdownResult {
     let mut pushed_filters = Vec::new();
     let mut residual_exprs = Vec::new();
 

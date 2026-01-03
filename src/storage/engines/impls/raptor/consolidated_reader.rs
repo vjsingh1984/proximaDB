@@ -340,8 +340,7 @@ impl RaptorReader {
                     .track_access_async(cache_key.clone(), CacheType::VectorData);
 
                 // Try zero-copy cached read first
-                if let Ok(cached_data) = self.filesystem.read(file_path).await
-                {
+                if let Ok(cached_data) = self.filesystem.read(file_path).await {
                     // Check if we have cached row group data
                     debug!("✅ Zero-copy cache hit for row group {}", rg_idx);
                     // TODO: Extract specific row group from cached data
@@ -1081,12 +1080,10 @@ impl RaptorReader {
 
         // Read magic number and footer size in one 8-byte read (optimization)
         let footer_metadata_offset = file_size - 8;
-        let footer_metadata_bytes = self.filesystem.read_range(
-            file_path,
-            footer_metadata_offset as u64,
-            8,
-        )
-        .await?;
+        let footer_metadata_bytes = self
+            .filesystem
+            .read_range(file_path, footer_metadata_offset as u64, 8)
+            .await?;
 
         // Validate we got the expected number of bytes
         if footer_metadata_bytes.len() < 8 {
@@ -1117,12 +1114,10 @@ impl RaptorReader {
 
         // Now read the actual footer using the correct size
         let footer_offset = file_size as u64 - 8 - footer_size;
-        let footer_data = self.filesystem.read_range(
-            file_path,
-            footer_offset,
-            footer_size,
-        )
-        .await?;
+        let footer_data = self
+            .filesystem
+            .read_range(file_path, footer_offset, footer_size)
+            .await?;
 
         // Deserialize the footer to get metadata
         tracing::debug!(
@@ -2290,12 +2285,10 @@ impl RaptorReader {
             footer_offset,
             footer_size
         );
-        let footer_bytes = self.filesystem.read_range(
-            file_path,
-            footer_offset,
-            footer_size,
-        )
-        .await?;
+        let footer_bytes = self
+            .filesystem
+            .read_range(file_path, footer_offset, footer_size)
+            .await?;
 
         // Deserialize footer
         tracing::debug!(
@@ -2367,18 +2360,14 @@ impl RaptorReader {
     /// Traditional file I/O fallback for cloud storage
     async fn load_footer_traditional(&mut self, file_path: &str) -> Result<()> {
         // Read file size to find footer location
-        let file_size = self.filesystem.metadata(file_path)
-            .await?
-            .size;
+        let file_size = self.filesystem.metadata(file_path).await?.size;
 
         // Read magic number and footer size in one 8-byte read (optimization)
         let footer_metadata_offset = file_size - 8;
-        let footer_metadata_bytes = self.filesystem.read_range(
-            file_path,
-            footer_metadata_offset,
-            8,
-        )
-        .await?;
+        let footer_metadata_bytes = self
+            .filesystem
+            .read_range(file_path, footer_metadata_offset, 8)
+            .await?;
 
         // Extract footer size (first 4 bytes) and magic (last 4 bytes)
         let footer_size_bytes = &footer_metadata_bytes[0..4];
@@ -2394,12 +2383,10 @@ impl RaptorReader {
 
         // Read the actual footer
         let footer_offset = file_size - 8 - footer_size;
-        let footer_bytes = self.filesystem.read_range(
-            file_path,
-            footer_offset,
-            footer_size,
-        )
-        .await?;
+        let footer_bytes = self
+            .filesystem
+            .read_range(file_path, footer_offset, footer_size)
+            .await?;
 
         // Deserialize footer
         let footer: RaptorFooter = bincode::deserialize(&footer_bytes)?;
@@ -2724,7 +2711,9 @@ impl RaptorReader {
         let max_clusters_to_search = if total_clusters == 0 {
             1
         } else {
-            ((total_clusters as f64).sqrt().ceil() as usize).max(1).min(total_clusters)
+            ((total_clusters as f64).sqrt().ceil() as usize)
+                .max(1)
+                .min(total_clusters)
         };
         tracing::debug!(
             "RAPTOR similarity: Using nprobe={} (sqrt of {} clusters)",
@@ -3405,13 +3394,15 @@ impl RaptorReader {
             // Triangle inequality: query_to_neighbor >= |query_to_seed - seed_to_neighbor|
             let expansion_threshold = centroid_distances
                 .get(top_k_rowgroups.min(k - 1))
-                .map(|(d, _)| d * 1.5)  // 50% margin beyond kth best
+                .map(|(d, _)| d * 1.5) // 50% margin beyond kth best
                 .unwrap_or(f32::MAX);
 
             for &(seed_dist, seed_rg) in centroid_distances.iter().take(3) {
                 if let Some(&seed_idx) = rg_to_idx.get(&seed_rg) {
                     // Use K² to find all centroids close to this seed
-                    for (neighbor_idx, (neighbor_rg, neighbor_centroid)) in all_centroids.iter().enumerate() {
+                    for (neighbor_idx, (neighbor_rg, neighbor_centroid)) in
+                        all_centroids.iter().enumerate()
+                    {
                         if visited.contains(neighbor_rg) {
                             continue;
                         }
@@ -3442,7 +3433,8 @@ impl RaptorReader {
             }
 
             // Sort by distance and take top-k
-            result_with_dist.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            result_with_dist
+                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
             let result: Vec<u16> = result_with_dist
                 .into_iter()
@@ -3591,7 +3583,8 @@ impl RaptorReader {
                     // Decode based on column type
                     match column_type {
                         ColumnType::VectorsFp32 => {
-                            partial.vectors = Some(self.decode_vector_column(&decompressed, metadata.dimension)?);
+                            partial.vectors =
+                                Some(self.decode_vector_column(&decompressed, metadata.dimension)?);
                         }
                         ColumnType::Ids => {
                             partial.ids = Some(self.decode_id_column(&decompressed)?);
@@ -3714,7 +3707,9 @@ impl RaptorReader {
             if offset + col_len > data.len() {
                 return Err(anyhow::anyhow!(
                     "Invalid vector column data: expected {} bytes at offset {}, but only {} available",
-                    col_len, offset, data.len() - offset
+                    col_len,
+                    offset,
+                    data.len() - offset
                 ));
             }
 
@@ -3850,12 +3845,14 @@ impl RaptorReader {
             vector_column_meta.offset,
             vector_column_meta.compressed_size
         );
-        let vector_compressed = self.filesystem.read_range(
-            &self.base_path,
-            vector_column_meta.offset,
-            vector_column_meta.compressed_size,
-        )
-        .await?;
+        let vector_compressed = self
+            .filesystem
+            .read_range(
+                &self.base_path,
+                vector_column_meta.offset,
+                vector_column_meta.compressed_size,
+            )
+            .await?;
 
         let vector_data = if vector_column_meta.compression != CompressionAlgorithm::None {
             use crate::core::compression::{CompressionContext, decompress};
@@ -3874,12 +3871,14 @@ impl RaptorReader {
             id_column_meta.offset,
             id_column_meta.compressed_size
         );
-        let id_compressed = self.filesystem.read_range(
-            &self.base_path,
-            id_column_meta.offset,
-            id_column_meta.compressed_size,
-        )
-        .await?;
+        let id_compressed = self
+            .filesystem
+            .read_range(
+                &self.base_path,
+                id_column_meta.offset,
+                id_column_meta.compressed_size,
+            )
+            .await?;
 
         let id_data = if id_column_meta.compression != CompressionAlgorithm::None {
             use crate::core::compression::{CompressionContext, decompress};

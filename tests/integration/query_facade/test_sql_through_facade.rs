@@ -27,14 +27,13 @@
 //! - Response format validation (JSON rows)
 //! - Error handling for invalid SQL
 
-use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use proximadb::query::facade::{
-    ExecutionMetrics, FacadeConfig, QueryContext, QueryFacadeAdapter,
-    QueryRequest, QueryResult, QueryResultData, QueryStrategy, QueryType,
-    UnifiedQueryFacade, QueryContent,
+    ExecutionMetrics, FacadeConfig, QueryContent, QueryContext, QueryFacadeAdapter, QueryRequest,
+    QueryResult, QueryResultData, QueryStrategy, QueryType, UnifiedQueryFacade,
 };
 
 // ================================================================================
@@ -127,21 +126,21 @@ impl QueryStrategy for MockSqlStrategy {
 
         // Simulate parse error
         if self.should_parse_error {
-            return Err(anyhow::anyhow!("SQL parse error: syntax error near 'SELEC'"));
+            return Err(anyhow::anyhow!(
+                "SQL parse error: syntax error near 'SELEC'"
+            ));
         }
 
         // Simulate execution error
         if self.should_exec_error {
-            return Err(anyhow::anyhow!("SQL execution error: table 'unknown' not found"));
+            return Err(anyhow::anyhow!(
+                "SQL execution error: table 'unknown' not found"
+            ));
         }
 
         // Simulate LIMIT clause
         let limit = Self::extract_limit(&sql).unwrap_or(self.rows.len());
-        let limited_rows: Vec<serde_json::Value> = self.rows
-            .iter()
-            .take(limit)
-            .cloned()
-            .collect();
+        let limited_rows: Vec<serde_json::Value> = self.rows.iter().take(limit).cloned().collect();
 
         Ok(QueryResult {
             data: QueryResultData::Rows(limited_rows.clone()),
@@ -184,9 +183,7 @@ impl MockSqlStrategy {
 
 /// Create a test facade with mock SQL strategy
 fn create_sql_facade() -> UnifiedQueryFacade {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockSqlStrategy::new()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockSqlStrategy::new())];
     UnifiedQueryFacade::new(strategies, FacadeConfig::default())
 }
 
@@ -198,27 +195,23 @@ fn create_sql_adapter() -> QueryFacadeAdapter {
 
 /// Create a facade with custom rows
 fn create_facade_with_rows(rows: Vec<serde_json::Value>) -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockSqlStrategy::with_rows(rows)),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![Arc::new(MockSqlStrategy::with_rows(rows))];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
 
 /// Create a facade that simulates parse errors
 fn create_parse_error_facade() -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockSqlStrategy::with_parse_error()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockSqlStrategy::with_parse_error())];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
 
 /// Create a facade that simulates execution errors
 fn create_exec_error_facade() -> QueryFacadeAdapter {
-    let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-        Arc::new(MockSqlStrategy::with_exec_error()),
-    ];
+    let strategies: Vec<Arc<dyn QueryStrategy>> =
+        vec![Arc::new(MockSqlStrategy::with_exec_error())];
     let facade = Arc::new(UnifiedQueryFacade::new(strategies, FacadeConfig::default()));
     QueryFacadeAdapter::new(facade)
 }
@@ -253,7 +246,10 @@ async fn test_sql_query_routes_through_facade() {
 async fn test_sql_query_respects_limit() {
     let adapter = create_sql_adapter();
 
-    let result = adapter.sql_query("SELECT * FROM products LIMIT 2").await.unwrap();
+    let result = adapter
+        .sql_query("SELECT * FROM products LIMIT 2")
+        .await
+        .unwrap();
 
     if let QueryResultData::Rows(rows) = result.data {
         assert_eq!(rows.len(), 2, "Should respect LIMIT 2");
@@ -327,16 +323,17 @@ async fn test_federated_query_multi_model() {
 async fn test_federated_query_metrics() {
     let facade = create_sql_facade();
 
-    let request = QueryRequest::federated(
-        "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 5)"
-    ).with_metrics();
+    let request = QueryRequest::federated("SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 5)")
+        .with_metrics();
 
     let result = facade.execute(request).await.unwrap();
 
     let metrics = result.metrics.expect("Should have metrics");
 
     // Verify federated flag in extra
-    let is_federated = metrics.extra.get("is_federated")
+    let is_federated = metrics
+        .extra
+        .get("is_federated")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     assert!(is_federated, "Should mark as federated query");
@@ -395,17 +392,15 @@ async fn test_federated_query_error() {
 /// Test SQL response with various data types
 #[tokio::test]
 async fn test_sql_response_data_types() {
-    let rows = vec![
-        serde_json::json!({
-            "string_col": "hello",
-            "int_col": 42,
-            "float_col": 3.14,
-            "bool_col": true,
-            "null_col": null,
-            "array_col": [1, 2, 3],
-            "object_col": {"nested": "value"}
-        }),
-    ];
+    let rows = vec![serde_json::json!({
+        "string_col": "hello",
+        "int_col": 42,
+        "float_col": 3.14,
+        "bool_col": true,
+        "null_col": null,
+        "array_col": [1, 2, 3],
+        "object_col": {"nested": "value"}
+    })];
 
     let adapter = create_facade_with_rows(rows);
     let result = adapter.sql_query("SELECT * FROM test").await.unwrap();
@@ -428,7 +423,10 @@ async fn test_sql_response_data_types() {
 async fn test_sql_empty_results() {
     let adapter = create_facade_with_rows(vec![]);
 
-    let result = adapter.sql_query("SELECT * FROM empty_table").await.unwrap();
+    let result = adapter
+        .sql_query("SELECT * FROM empty_table")
+        .await
+        .unwrap();
 
     if let QueryResultData::Rows(rows) = result.data {
         assert!(rows.is_empty());
@@ -448,8 +446,8 @@ async fn test_sql_empty_results() {
 async fn test_facade_sql_query_directly() {
     let facade = create_sql_facade();
 
-    let request = QueryRequest::sql("SELECT name, price FROM products WHERE in_stock = true")
-        .with_metrics();
+    let request =
+        QueryRequest::sql("SELECT name, price FROM products WHERE in_stock = true").with_metrics();
 
     let result = facade.execute(request).await.unwrap();
 

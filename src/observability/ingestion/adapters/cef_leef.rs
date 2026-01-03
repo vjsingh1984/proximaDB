@@ -7,14 +7,13 @@
 // - Syslog-wrapped CEF/LEEF
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::mpsc;
 
 use super::{AdapterConfig, InputAdapter};
 use crate::proto::proximadb_v1::{LogEntry, Severity, SqlValue};
@@ -131,7 +130,14 @@ impl CefLeefAdapter {
         // Convert attributes to SqlValue map
         let fields: HashMap<String, SqlValue> = attributes
             .into_iter()
-            .map(|(k, v)| (k, SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)) }))
+            .map(|(k, v)| {
+                (
+                    k,
+                    SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                    },
+                )
+            })
             .collect();
 
         Some(LogEntry {
@@ -187,7 +193,14 @@ impl CefLeefAdapter {
         // Convert attributes to SqlValue map
         let fields: HashMap<String, SqlValue> = attributes
             .into_iter()
-            .map(|(k, v)| (k, SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)) }))
+            .map(|(k, v)| {
+                (
+                    k,
+                    SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                    },
+                )
+            })
             .collect();
 
         Some(LogEntry {
@@ -208,15 +221,13 @@ impl CefLeefAdapter {
             Ok(n) if n <= 6 => Severity::Warn,
             Ok(n) if n <= 8 => Severity::Error,
             Ok(_) => Severity::Fatal,
-            Err(_) => {
-                match sev.to_lowercase().as_str() {
-                    "low" | "unknown" => Severity::Info,
-                    "medium" => Severity::Warn,
-                    "high" => Severity::Error,
-                    "very-high" | "critical" => Severity::Fatal,
-                    _ => Severity::Info,
-                }
-            }
+            Err(_) => match sev.to_lowercase().as_str() {
+                "low" | "unknown" => Severity::Info,
+                "medium" => Severity::Warn,
+                "high" => Severity::Error,
+                "very-high" | "critical" => Severity::Fatal,
+                _ => Severity::Info,
+            },
         }
     }
 
@@ -482,6 +493,7 @@ impl InputAdapter for CefLeefAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     #[test]
     fn test_parse_cef() {
@@ -494,7 +506,12 @@ mod tests {
 
         assert_eq!(entry.message, "Test Event");
         assert_eq!(entry.severity, Severity::Warn as i32);
-        assert!(entry.source.as_ref().map_or(false, |s| s.contains("Security")));
+        assert!(
+            entry
+                .source
+                .as_ref()
+                .map_or(false, |s| s.contains("Security"))
+        );
     }
 
     #[test]
@@ -507,7 +524,12 @@ mod tests {
         let entry = adapter.parse_leef(msg).unwrap();
 
         assert_eq!(entry.message, "EventID");
-        assert!(entry.source.as_ref().map_or(false, |s| s.contains("Vendor")));
+        assert!(
+            entry
+                .source
+                .as_ref()
+                .map_or(false, |s| s.contains("Vendor"))
+        );
     }
 
     #[test]

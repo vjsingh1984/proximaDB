@@ -367,7 +367,9 @@ impl TrinoSplitManager {
             file_path: String::new(),
             offset: 0,
             length: 0,
-            split_type: crate::storage::formats::SplitType::ByteRange { estimated_records: 0 },
+            split_type: crate::storage::formats::SplitType::ByteRange {
+                estimated_records: 0,
+            },
             statistics: SplitStatistics::default(),
             locality: crate::storage::formats::SplitLocality::default(),
         };
@@ -585,7 +587,11 @@ pub fn flight_list_tables(_catalog: &str, _schema: &str) -> Vec<String> {
 }
 
 /// Flight action for getting table schema
-pub fn flight_get_table_schema(_catalog: &str, _schema: &str, _table: &str) -> Option<Arc<ArrowSchema>> {
+pub fn flight_get_table_schema(
+    _catalog: &str,
+    _schema: &str,
+    _table: &str,
+) -> Option<Arc<ArrowSchema>> {
     // TODO: Implement actual schema retrieval via Arrow Flight
     None
 }
@@ -645,7 +651,10 @@ mod tests {
             file_path: "/data/file.sst".to_string(),
             offset: 0,
             length: 1024,
-            split_type: crate::storage::formats::SplitType::Block { block_id: 0, record_count: 100 },
+            split_type: crate::storage::formats::SplitType::Block {
+                block_id: 0,
+                record_count: 100,
+            },
             statistics: SplitStatistics::default(),
             locality: crate::storage::formats::SplitLocality::default(),
         };
@@ -669,7 +678,9 @@ mod tests {
             file_path: String::new(),
             offset: 0,
             length: 0,
-            split_type: crate::storage::formats::SplitType::ByteRange { estimated_records: 0 },
+            split_type: crate::storage::formats::SplitType::ByteRange {
+                estimated_records: 0,
+            },
             statistics: SplitStatistics::default(),
             locality: crate::storage::formats::SplitLocality::default(),
         };

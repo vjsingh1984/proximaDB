@@ -49,6 +49,6 @@ pub use evaluator::{EvaluationResult, QueryEvaluator, ScoreChange};
 pub use manager::{SubscriptionHandle, SubscriptionManager};
 pub use result_set::{ResultSet, ResultSetStats};
 pub use subscription::{
-    QueryFingerprint, QueryUpdate, ResultChange, ScoredResult, Subscription,
-    SubscriptionConfig, SubscriptionId, SubscriptionState, SubscriptionStats, UpdateType,
+    QueryFingerprint, QueryUpdate, ResultChange, ScoredResult, Subscription, SubscriptionConfig,
+    SubscriptionId, SubscriptionState, SubscriptionStats, UpdateType,
 };

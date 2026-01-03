@@ -81,11 +81,7 @@ impl FloydWarshallAPSP {
             // NEON is always available on aarch64
             true
         }
-        #[cfg(not(any(
-            target_arch = "x86",
-            target_arch = "x86_64",
-            target_arch = "aarch64"
-        )))]
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
         {
             false
         }
@@ -97,7 +93,10 @@ impl FloydWarshallAPSP {
     /// - 0.0 for diagonal (i == j)
     /// - 1.0 for edges (unweighted graph)
     /// - f64::INFINITY for non-adjacent pairs
-    fn initialize_distance_matrix(&self, node_count: usize) -> Result<Vec<Vec<f64>>, ProximaDBError> {
+    fn initialize_distance_matrix(
+        &self,
+        node_count: usize,
+    ) -> Result<Vec<Vec<f64>>, ProximaDBError> {
         let mut dist = vec![vec![f64::INFINITY; node_count]; node_count];
 
         // Set diagonal to 0
@@ -106,11 +105,10 @@ impl FloydWarshallAPSP {
         }
 
         // Get CSR storage for edge access
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
 
         // Initialize edges from CSR (O(E) operation)
         for from_idx in 0..node_count {
@@ -173,11 +171,7 @@ impl FloydWarshallAPSP {
             return unsafe { self.floyd_warshall_neon(dist) };
         }
 
-        #[cfg(not(any(
-            target_arch = "x86",
-            target_arch = "x86_64",
-            target_arch = "aarch64"
-        )))]
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
         {
             // Fallback to scalar if no SIMD support
             self.floyd_warshall_scalar(dist)
@@ -301,7 +295,11 @@ impl GraphAlgorithm for FloydWarshallAPSP {
 
         // Build node ID list from memory pool (authoritative source for nodes)
         // This ensures we work with all inserted nodes, not just CSR-indexed ones
-        let node_ids: Vec<String> = self.engine.memory_pool.nodes.iter()
+        let node_ids: Vec<String> = self
+            .engine
+            .memory_pool
+            .nodes
+            .iter()
             .map(|entry| entry.key().clone())
             .collect();
         let node_count = node_ids.len();
@@ -311,7 +309,8 @@ impl GraphAlgorithm for FloydWarshallAPSP {
         }
 
         // Build node ID -> index mapping for O(1) lookup
-        let node_to_idx: HashMap<&String, usize> = node_ids.iter()
+        let node_to_idx: HashMap<&String, usize> = node_ids
+            .iter()
             .enumerate()
             .map(|(idx, id)| (id, idx))
             .collect();
@@ -327,7 +326,7 @@ impl GraphAlgorithm for FloydWarshallAPSP {
             let edge = edge_ref.value();
             if let (Some(&from_idx), Some(&to_idx)) = (
                 node_to_idx.get(&edge.from_node_id),
-                node_to_idx.get(&edge.to_node_id)
+                node_to_idx.get(&edge.to_node_id),
             ) {
                 // Use edge weight if available, otherwise default to 1.0
                 let weight = edge.weight.unwrap_or(1.0);
@@ -368,11 +367,10 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
         use std::collections::HashMap;
 
         // Get node count from CSR storage
-        let csr_out = self
-            .engine
-            .csr_outgoing
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire CSR read lock".to_string()))?;
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
         let node_count = csr_out.node_count();
         drop(csr_out); // Release lock before long computation
 
@@ -406,11 +404,9 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
         let mut result = HashMap::new();
 
         // Get index to node ID mapping
-        let index_to_node = self
-            .engine
-            .index_to_node
-            .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to acquire index_to_node read lock".to_string()))?;
+        let index_to_node = self.engine.index_to_node.read().map_err(|_| {
+            ProximaDBError::Internal("Failed to acquire index_to_node read lock".to_string())
+        })?;
 
         for i in 0..node_count {
             for j in 0..node_count {
@@ -450,8 +446,8 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::engines::GraphEngine;
+    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::{Edge, Node};
 
     #[test]
@@ -482,7 +478,10 @@ mod tests {
         let result = floyd.execute(NoInput).unwrap();
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result.get(&("n1".to_string(), "n1".to_string())).unwrap(), &0.0);
+        assert_eq!(
+            result.get(&("n1".to_string(), "n1".to_string())).unwrap(),
+            &0.0
+        );
     }
 
     #[tokio::test]
@@ -614,12 +613,28 @@ mod tests {
         assert_eq!(result.len(), 16); // 4x4 matrix
 
         // Verify distances within components are finite
-        assert_eq!(*result.get(&("n1".to_string(), "n2".to_string())).unwrap(), 1.0); // n1 -> n2
-        assert_eq!(*result.get(&("n3".to_string(), "n4".to_string())).unwrap(), 1.0); // n3 -> n4
+        assert_eq!(
+            *result.get(&("n1".to_string(), "n2".to_string())).unwrap(),
+            1.0
+        ); // n1 -> n2
+        assert_eq!(
+            *result.get(&("n3".to_string(), "n4".to_string())).unwrap(),
+            1.0
+        ); // n3 -> n4
 
         // Verify distances between components are infinity
-        assert!(result.get(&("n1".to_string(), "n3".to_string())).unwrap().is_infinite()); // n1 -> n3 (disconnected)
-        assert!(result.get(&("n2".to_string(), "n4".to_string())).unwrap().is_infinite()); // n2 -> n4 (disconnected)
+        assert!(
+            result
+                .get(&("n1".to_string(), "n3".to_string()))
+                .unwrap()
+                .is_infinite()
+        ); // n1 -> n3 (disconnected)
+        assert!(
+            result
+                .get(&("n2".to_string(), "n4".to_string()))
+                .unwrap()
+                .is_infinite()
+        ); // n2 -> n4 (disconnected)
     }
 
     #[test]
@@ -680,11 +695,7 @@ mod tests {
             assert!(supported);
         }
 
-        #[cfg(not(any(
-            target_arch = "x86",
-            target_arch = "x86_64",
-            target_arch = "aarch64"
-        )))]
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
         {
             // On other architectures, SIMD should not be detected
             assert!(!supported);

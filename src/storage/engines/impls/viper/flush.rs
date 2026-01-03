@@ -449,12 +449,16 @@ impl Flush {
                 match collector.serialize_metadata() {
                     Ok(sidecar_bytes) if !sidecar_bytes.is_empty() => {
                         // Generate sidecar file path (same as parquet but with .viper_meta extension)
-                        let sidecar_url = final_url.replace(".parquet", &format!(".{}", sidecar_ext));
+                        let sidecar_url =
+                            final_url.replace(".parquet", &format!(".{}", sidecar_ext));
                         if let Ok(fs) = self.filesystem_factory.get_filesystem(&sidecar_url) {
                             use crate::storage::persistence::filesystem::FileSystem;
                             match fs.write(&sidecar_url, &sidecar_bytes, None).await {
                                 Ok(_) => {
-                                    debug!("🟩 VIPER: Saved centroid sidecar metadata to {}", sidecar_url);
+                                    debug!(
+                                        "🟩 VIPER: Saved centroid sidecar metadata to {}",
+                                        sidecar_url
+                                    );
                                 }
                                 Err(e) => {
                                     warn!("⚠️ VIPER: Failed to save sidecar metadata: {}", e);

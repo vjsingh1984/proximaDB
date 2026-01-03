@@ -45,9 +45,8 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{
-    ArrayRef, RecordBatch,
-    builder::{Float32Builder, Int64Builder, StringBuilder, MapBuilder},
-    FixedSizeListArray,
+    ArrayRef, FixedSizeListArray, RecordBatch,
+    builder::{Float32Builder, Int64Builder, MapBuilder, StringBuilder},
 };
 use arrow_schema::{DataType, Field, Fields, Schema};
 use std::fs::File;
@@ -56,8 +55,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, trace, warn};
 
-use crate::storage::engines::impls::sst::{SstableHeader, SstableIndex};
 use super::block_structures::ProximaDataBlock;
+use crate::storage::engines::impls::sst::{SstableHeader, SstableIndex};
 
 /// Arrow reader for ProximaBlocks (.sst) files
 ///
@@ -92,7 +91,8 @@ impl ProximaBlocksArrowReader {
     /// A ProximaBlocksArrowReader ready to read records
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        let mut file = File::open(&path).context(format!("Failed to open SST file: {}", path_str))?;
+        let mut file =
+            File::open(&path).context(format!("Failed to open SST file: {}", path_str))?;
 
         // Read and validate magic marker
         let mut magic = [0u8; 4];
@@ -117,8 +117,8 @@ impl ProximaBlocksArrowReader {
             .context("Failed to read header data")?;
 
         // Deserialize header
-        let header: SstableHeader = bincode::deserialize(&header_data)
-            .context("Failed to deserialize SST header")?;
+        let header: SstableHeader =
+            bincode::deserialize(&header_data).context("Failed to deserialize SST header")?;
 
         debug!(
             "Opened SST file: {} (version={}, entries={}, blocks={})",
@@ -176,8 +176,7 @@ impl ProximaBlocksArrowReader {
         file.read_exact(&mut index_data)?;
 
         // Deserialize index
-        SstableIndex::deserialize(&index_data)
-            .context("Failed to deserialize SST index")
+        SstableIndex::deserialize(&index_data).context("Failed to deserialize SST index")
     }
 
     /// Create the Arrow schema for ProximaBlocks data
@@ -249,9 +248,8 @@ impl ProximaBlocksArrowReader {
     /// Note: For large files, consider using `read_batches()` instead
     /// to process data incrementally.
     pub fn read_all(&mut self) -> Result<RecordBatch> {
-        let all_batches: Vec<RecordBatch> = self
-            .read_batches(usize::MAX)
-            .collect::<Result<Vec<_>>>()?;
+        let all_batches: Vec<RecordBatch> =
+            self.read_batches(usize::MAX).collect::<Result<Vec<_>>>()?;
 
         if all_batches.is_empty() {
             // Return empty batch with schema
@@ -271,8 +269,7 @@ impl ProximaBlocksArrowReader {
             .map(|field| arrow_array::new_empty_array(field.data_type()))
             .collect();
 
-        RecordBatch::try_new(schema.clone(), columns)
-            .context("Failed to create empty record batch")
+        RecordBatch::try_new(schema.clone(), columns).context("Failed to create empty record batch")
     }
 
     /// Read records in batches
@@ -327,9 +324,7 @@ impl ProximaBlocksArrowReader {
 
         trace!(
             "Reading block {} at offset {} with size {} bytes",
-            block_idx,
-            block_offset,
-            block_size
+            block_idx, block_offset, block_size
         );
 
         // Read block data
@@ -424,9 +419,9 @@ impl ProximaBlocksArrowReader {
     ) -> Result<ArrayRef> {
         if dimension == 0 {
             // Return empty list array
-            return Ok(Arc::new(arrow_array::new_empty_array(
-                &DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
-            )));
+            return Ok(Arc::new(arrow_array::new_empty_array(&DataType::List(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+            ))));
         }
 
         // Build flat Float32 array for all vectors
@@ -485,9 +480,15 @@ impl ProximaBlocksArrowReader {
                 // Convert SqlValue to string
                 let value_str = match &sql_value.value {
                     Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                        n.to_string()
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        b.to_string()
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        i.to_string()
+                    }
                     _ => String::new(),
                 };
 
@@ -587,7 +588,7 @@ impl<'a> Iterator for ProximaBlocksBatchIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value::Value as SqlVal};
+    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value as SqlVal};
     use std::collections::HashMap;
     use tempfile::tempdir;
 
@@ -693,8 +694,11 @@ mod tests {
         match result {
             Err(e) => {
                 let err_msg = e.to_string();
-                assert!(err_msg.contains("magic") || err_msg.contains("SST1"),
-                    "Expected magic marker error, got: {}", err_msg);
+                assert!(
+                    err_msg.contains("magic") || err_msg.contains("SST1"),
+                    "Expected magic marker error, got: {}",
+                    err_msg
+                );
             }
             Ok(_) => panic!("Expected error for invalid magic bytes"),
         }

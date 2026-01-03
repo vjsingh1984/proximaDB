@@ -8,10 +8,10 @@
 //! - **Open**: Failure threshold exceeded, requests are blocked
 //! - **HalfOpen**: Testing if service has recovered
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use parking_lot::RwLock;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 /// Circuit breaker state
@@ -224,10 +224,7 @@ impl CircuitBreaker {
     }
 
     /// Execute an async operation with circuit breaker protection
-    pub async fn execute<F, Fut, T, E>(
-        self: &Arc<Self>,
-        f: F,
-    ) -> Result<T, CircuitBreakerError>
+    pub async fn execute<F, Fut, T, E>(self: &Arc<Self>, f: F) -> Result<T, CircuitBreakerError>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, E>>,
@@ -324,7 +321,10 @@ mod tests {
         assert_eq!(cb.state(), CircuitState::Open);
 
         let result = cb.allow_request();
-        assert!(matches!(result, Err(CircuitBreakerError::CircuitOpen { .. })));
+        assert!(matches!(
+            result,
+            Err(CircuitBreakerError::CircuitOpen { .. })
+        ));
     }
 
     #[test]

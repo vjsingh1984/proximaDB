@@ -84,8 +84,8 @@ pub use config::{HnswConfig, IndexConfig, IndexUpdateMode, IvfConfig};
 
 // Re-export geospatial types
 pub use geo::{
-    GeoPoint, GeoBoundingBox, GeoPolygon, GeoCircle, GeoDistanceUnit,
-    GeoHash, GeoIndex, GeoIndexConfig, GeoQuery, GeoQueryResult, GeoQueryBuilder,
+    GeoBoundingBox, GeoCircle, GeoDistanceUnit, GeoHash, GeoIndex, GeoIndexConfig, GeoPoint,
+    GeoPolygon, GeoQuery, GeoQueryBuilder, GeoQueryResult,
 };
 
 // Placeholder index structures for compilation

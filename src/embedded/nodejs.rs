@@ -114,12 +114,10 @@ impl ProximaDB {
         let storage_locations = if let Some(disks) = config.data_dirs {
             disks
                 .into_iter()
-                .map(|d| {
-                    StorageLocationConfig {
-                        path: d.path,
-                        weight: d.weight.unwrap_or(1),
-                        tags: d.tags.unwrap_or_default(),
-                    }
+                .map(|d| StorageLocationConfig {
+                    path: d.path,
+                    weight: d.weight.unwrap_or(1),
+                    tags: d.tags.unwrap_or_default(),
                 })
                 .collect()
         } else if let Some(path) = config.data_dir {
@@ -128,9 +126,9 @@ impl ProximaDB {
             vec![StorageLocationConfig::new("./data")]
         };
 
-        let metadata_path = config.metadata_dir.unwrap_or_else(|| {
-            format!("{}/metadata", storage_locations[0].path)
-        });
+        let metadata_path = config
+            .metadata_dir
+            .unwrap_or_else(|| format!("{}/metadata", storage_locations[0].path));
 
         let embedded_config = EmbeddedConfig {
             storage_locations,

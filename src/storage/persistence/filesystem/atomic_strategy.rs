@@ -453,7 +453,11 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
 
         // Cleanup local temp file
         if let Err(e) = local_fs.delete(&local_temp_path.to_string_lossy()).await {
-            tracing::warn!("Failed to cleanup local temp file {:?}: {}", local_temp_path, e);
+            tracing::warn!(
+                "Failed to cleanup local temp file {:?}: {}",
+                local_temp_path,
+                e
+            );
         }
 
         Ok(())

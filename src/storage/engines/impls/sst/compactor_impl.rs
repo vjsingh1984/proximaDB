@@ -1110,14 +1110,17 @@ impl SstCompactor {
         if merged_records.len() < n_components {
             debug!(
                 "[SST Compaction] Not enough vectors ({}) for PCA training (need at least {})",
-                merged_records.len(), n_components
+                merged_records.len(),
+                n_components
             );
             return;
         }
 
         info!(
             "[SST Compaction] Retraining PCA model: {} vectors → {} components (from {}-dim)",
-            merged_records.len(), n_components, vector_dim
+            merged_records.len(),
+            n_components,
+            vector_dim
         );
 
         // Train PCA model

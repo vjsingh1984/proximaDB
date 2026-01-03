@@ -42,7 +42,10 @@ pub enum SchemaEvolutionOp {
     },
 
     /// Set default value
-    SetDefault { column_id: i32, default: DefaultValue },
+    SetDefault {
+        column_id: i32,
+        default: DefaultValue,
+    },
 
     /// Remove default value
     DropDefault { column_id: i32 },
@@ -128,7 +131,10 @@ pub struct MigrationPlan {
 #[derive(Debug)]
 pub enum MigrationStep {
     /// Add column with default value (no data migration needed)
-    AddColumnWithDefault { column_id: i32, default: DefaultValue },
+    AddColumnWithDefault {
+        column_id: i32,
+        default: DefaultValue,
+    },
     /// Rewrite data files with new schema
     RewriteDataFiles {
         affected_files: Vec<String>,
@@ -259,10 +265,9 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                     // Dropping column breaks backward compatibility
                     validation.is_backward_compatible = false;
                     if current_schema.primary_key.contains(column_id) {
-                        validation.errors.push(format!(
-                            "Cannot drop primary key column {}",
-                            column_id
-                        ));
+                        validation
+                            .errors
+                            .push(format!("Cannot drop primary key column {}", column_id));
                         validation.is_valid = false;
                     }
                 }
@@ -349,11 +354,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                     }
                 }
                 SchemaEvolutionOp::DropColumn { column_id } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.is_deleted = true;
                     }
                 }
@@ -361,11 +362,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                     column_id,
                     new_name,
                 } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         if col.original_id.is_none() {
                             col.original_id = Some(col.id);
                         }
@@ -377,47 +374,27 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                     new_type,
                     ..
                 } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.data_type = new_type.clone();
                     }
                 }
                 SchemaEvolutionOp::MakeNullable { column_id } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.nullable = true;
                     }
                 }
                 SchemaEvolutionOp::MakeNotNullable { column_id, .. } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.nullable = false;
                     }
                 }
                 SchemaEvolutionOp::SetDefault { column_id, default } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.default_value = Some(default.clone());
                     }
                 }
                 SchemaEvolutionOp::DropDefault { column_id } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.default_value = None;
                     }
                 }
@@ -437,11 +414,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                     new_schema.columns = reordered;
                 }
                 SchemaEvolutionOp::SetComment { column_id, comment } => {
-                    if let Some(col) = new_schema
-                        .columns
-                        .iter_mut()
-                        .find(|c| c.id == *column_id)
-                    {
+                    if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
                         col.comment = Some(comment.clone());
                     }
                 }

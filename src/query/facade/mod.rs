@@ -29,7 +29,7 @@
 pub mod adapter;
 pub mod strategies;
 
-pub use adapter::{QueryFacadeAdapter, ExplainResult, ExplainComponent};
+pub use adapter::{ExplainComponent, ExplainResult, QueryFacadeAdapter};
 pub use strategies::{
     ColumnarStrategy, ColumnarStrategyConfig, DocumentStrategy, GraphStrategy,
     ObservabilityStrategy, SqlStrategy, VectorSearchStrategy,
@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 
 // ================================================================================
 // QUERY REQUEST - Unified Input Type
@@ -114,7 +114,10 @@ impl QueryRequest {
         Self {
             query_type: QueryType::VectorSearch,
             target: None,
-            content: QueryContent::Vector { query_vector, top_k },
+            content: QueryContent::Vector {
+                query_vector,
+                top_k,
+            },
             params: QueryParams::default(),
         }
     }
@@ -347,7 +350,10 @@ impl UnifiedQueryFacade {
     /// Execute a query through the appropriate strategy
     #[instrument(skip(self, request), fields(query_type = ?request.query_type))]
     pub async fn execute(&self, request: QueryRequest) -> Result<QueryResult> {
-        let timeout_ms = request.params.timeout_ms.unwrap_or(self.config.default_timeout_ms);
+        let timeout_ms = request
+            .params
+            .timeout_ms
+            .unwrap_or(self.config.default_timeout_ms);
         let ctx = QueryContext::new(timeout_ms);
         let include_metrics = request.params.include_metrics;
         let start = Instant::now();
@@ -436,15 +442,17 @@ mod tests {
             request.query_type == QueryType::VectorSearch
         }
 
-        async fn execute(&self, _request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+        async fn execute(
+            &self,
+            _request: QueryRequest,
+            _ctx: &QueryContext,
+        ) -> Result<QueryResult> {
             Ok(QueryResult {
-                data: QueryResultData::VectorResults(vec![
-                    VectorMatch {
-                        id: "test_1".to_string(),
-                        score: 0.95,
-                        metadata: None,
-                    },
-                ]),
+                data: QueryResultData::VectorResults(vec![VectorMatch {
+                    id: "test_1".to_string(),
+                    score: 0.95,
+                    metadata: None,
+                }]),
                 metrics: Some(ExecutionMetrics {
                     execution_path: "unified".to_string(),
                     strategy_name: self.name.clone(),
@@ -470,7 +478,11 @@ mod tests {
             matches!(request.query_type, QueryType::Sql | QueryType::Federated)
         }
 
-        async fn execute(&self, _request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+        async fn execute(
+            &self,
+            _request: QueryRequest,
+            _ctx: &QueryContext,
+        ) -> Result<QueryResult> {
             Ok(QueryResult {
                 data: QueryResultData::Rows(vec![]),
                 metrics: Some(ExecutionMetrics {
@@ -494,7 +506,11 @@ mod tests {
             request.query_type == QueryType::Graph
         }
 
-        async fn execute(&self, _request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+        async fn execute(
+            &self,
+            _request: QueryRequest,
+            _ctx: &QueryContext,
+        ) -> Result<QueryResult> {
             Ok(QueryResult {
                 data: QueryResultData::Graph(GraphQueryResult {
                     nodes: vec![],
@@ -535,7 +551,10 @@ mod tests {
         // Verify execution path is "unified"
         let metrics = result.metrics.expect("Metrics should be present");
         assert_eq!(metrics.execution_path, "unified", "Should use unified path");
-        assert_eq!(metrics.strategy_name, "vector", "Should use vector strategy");
+        assert_eq!(
+            metrics.strategy_name, "vector",
+            "Should use vector strategy"
+        );
 
         // Verify result type
         assert!(matches!(result.data, QueryResultData::VectorResults(_)));
@@ -644,10 +663,8 @@ mod tests {
             }
         }
 
-        let strategies: Vec<Arc<dyn QueryStrategy>> = vec![
-            Arc::new(LowPriorityVector),
-            Arc::new(HighPriorityVector),
-        ];
+        let strategies: Vec<Arc<dyn QueryStrategy>> =
+            vec![Arc::new(LowPriorityVector), Arc::new(HighPriorityVector)];
         let facade = UnifiedQueryFacade::with_strategies(strategies);
 
         let query = QueryRequest::vector_search(vec![0.1], 10).with_metrics();
@@ -703,7 +720,11 @@ mod tests {
         assert_eq!(query.target, Some("my_collection".to_string()));
         assert!(query.params.include_metrics);
 
-        if let QueryContent::Vector { query_vector, top_k } = &query.content {
+        if let QueryContent::Vector {
+            query_vector,
+            top_k,
+        } = &query.content
+        {
             assert_eq!(query_vector.len(), 3);
             assert_eq!(*top_k, 10);
         } else {

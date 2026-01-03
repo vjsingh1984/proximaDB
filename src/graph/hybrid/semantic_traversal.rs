@@ -202,13 +202,20 @@ impl SemanticBFSTraversal {
             nodes_visited += 1;
 
             // Get current node
-            let current_node = self.graph_engine.get_node(&current_node_id)?.ok_or_else(|| {
-                ProximaDBError::Internal(format!("Node disappeared during traversal: {}", current_node_id))
-            })?;
+            let current_node = self
+                .graph_engine
+                .get_node(&current_node_id)?
+                .ok_or_else(|| {
+                    ProximaDBError::Internal(format!(
+                        "Node disappeared during traversal: {}",
+                        current_node_id
+                    ))
+                })?;
 
             // Compute similarity if node has embedding
             if let Some(embedding_wrapper) = &current_node.embedding {
-                let similarity = self.compute_similarity(&input.query_embedding, &embedding_wrapper.vector)?;
+                let similarity =
+                    self.compute_similarity(&input.query_embedding, &embedding_wrapper.vector)?;
 
                 // Only include nodes that meet similarity threshold
                 if similarity >= self.similarity_threshold {
@@ -283,9 +290,11 @@ impl SemanticBFSTraversal {
         }
 
         // Use UnifiedDistanceCompute for SIMD-accelerated distance calculation
-        let distance = self
-            .distance_compute
-            .distance_with_metric(query_vector, node_vector, &self.distance_metric);
+        let distance = self.distance_compute.distance_with_metric(
+            query_vector,
+            node_vector,
+            &self.distance_metric,
+        );
 
         // Convert distance to similarity
         // For cosine: distance = 1 - similarity, so similarity = 1 - distance
@@ -330,8 +339,8 @@ impl SemanticBFSTraversal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::engines::GraphEngine;
+    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
     use std::collections::HashMap;
 
@@ -402,7 +411,9 @@ mod tests {
         // Create a single node with embedding identical to query
         let embedding = vec![1.0; 128];
         let node = create_test_node("node_1", embedding.clone());
-        GraphEngine::insert_node(engine.as_ref(), node).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node)
+            .await
+            .unwrap();
 
         let semantic_bfs = SemanticBFSTraversal::new(
             engine.clone(),
@@ -447,7 +458,9 @@ mod tests {
             embed1[i] = 1.0;
         }
         let node1 = create_test_node("node_1", embed1);
-        GraphEngine::insert_node(engine.as_ref(), node1).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node1)
+            .await
+            .unwrap();
 
         // Node 2: Orthogonal to query (second half of dimensions)
         let mut embed2 = vec![0.0; 128];
@@ -455,7 +468,9 @@ mod tests {
             embed2[i] = 1.0;
         }
         let node2 = create_test_node("node_2", embed2);
-        GraphEngine::insert_node(engine.as_ref(), node2).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node2)
+            .await
+            .unwrap();
 
         // Node 3: Opposite direction (negative first half)
         let mut embed3 = vec![0.0; 128];
@@ -463,13 +478,19 @@ mod tests {
             embed3[i] = -1.0;
         }
         let node3 = create_test_node("node_3", embed3);
-        GraphEngine::insert_node(engine.as_ref(), node3).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node3)
+            .await
+            .unwrap();
 
         // Create edges
         let edge1 = create_test_edge("node_1", "node_2");
         let edge2 = create_test_edge("node_2", "node_3");
-        GraphEngine::insert_edge(engine.as_ref(), edge1).await.unwrap();
-        GraphEngine::insert_edge(engine.as_ref(), edge2).await.unwrap();
+        GraphEngine::insert_edge(engine.as_ref(), edge1)
+            .await
+            .unwrap();
+        GraphEngine::insert_edge(engine.as_ref(), edge2)
+            .await
+            .unwrap();
 
         let semantic_bfs = SemanticBFSTraversal::new(
             engine.clone(),
@@ -502,13 +523,17 @@ mod tests {
         let embedding = vec![1.0; 128];
         for i in 1..=5 {
             let node = create_test_node(&format!("node_{}", i), embedding.clone());
-            GraphEngine::insert_node(engine.as_ref(), node).await.unwrap();
+            GraphEngine::insert_node(engine.as_ref(), node)
+                .await
+                .unwrap();
         }
 
         // Create edges: 1->2->3->4->5
         for i in 1..5 {
             let edge = create_test_edge(&format!("node_{}", i), &format!("node_{}", i + 1));
-            GraphEngine::insert_edge(engine.as_ref(), edge).await.unwrap();
+            GraphEngine::insert_edge(engine.as_ref(), edge)
+                .await
+                .unwrap();
         }
 
         let semantic_bfs = SemanticBFSTraversal::new(
@@ -545,15 +570,21 @@ mod tests {
 
         // Node 1 at depth 0: perfect match (similarity 1.0)
         let node1 = create_test_node("node_1", vec![1.0; 128]);
-        GraphEngine::insert_node(engine.as_ref(), node1).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node1)
+            .await
+            .unwrap();
 
         // Node 2 at depth 1: good match (similarity ~0.95)
         let node2 = create_test_node("node_2", vec![0.95; 128]);
-        GraphEngine::insert_node(engine.as_ref(), node2).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node2)
+            .await
+            .unwrap();
 
         // Node 3 at depth 2: moderate match (similarity ~0.7)
         let node3 = create_test_node("node_3", vec![0.7; 128]);
-        GraphEngine::insert_node(engine.as_ref(), node3).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node3)
+            .await
+            .unwrap();
 
         // Create edges
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_1", "node_2"))
@@ -640,10 +671,18 @@ mod tests {
         }
         let node4 = create_test_node("node_4", embed4);
 
-        GraphEngine::insert_node(engine.as_ref(), node1).await.unwrap();
-        GraphEngine::insert_node(engine.as_ref(), node2).await.unwrap();
-        GraphEngine::insert_node(engine.as_ref(), node3).await.unwrap();
-        GraphEngine::insert_node(engine.as_ref(), node4).await.unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node1)
+            .await
+            .unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node2)
+            .await
+            .unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node3)
+            .await
+            .unwrap();
+        GraphEngine::insert_node(engine.as_ref(), node4)
+            .await
+            .unwrap();
 
         // Create a star topology: node_1 connects to all others
         GraphEngine::insert_edge(engine.as_ref(), create_test_edge("node_1", "node_2"))
@@ -682,12 +721,8 @@ mod tests {
         let engine = create_test_engine();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
-        let semantic_bfs = SemanticBFSTraversal::new(
-            engine,
-            distance_compute,
-            0.7,
-            DistanceMetric::Cosine,
-        );
+        let semantic_bfs =
+            SemanticBFSTraversal::new(engine, distance_compute, 0.7, DistanceMetric::Cosine);
 
         assert_eq!(semantic_bfs.name(), "SemanticBFS");
     }
@@ -697,12 +732,8 @@ mod tests {
         let engine = create_test_engine();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
-        let semantic_bfs = SemanticBFSTraversal::new(
-            engine,
-            distance_compute,
-            0.75,
-            DistanceMetric::Cosine,
-        );
+        let semantic_bfs =
+            SemanticBFSTraversal::new(engine, distance_compute, 0.75, DistanceMetric::Cosine);
 
         assert_eq!(semantic_bfs.similarity_threshold(), 0.75);
         assert_eq!(semantic_bfs.distance_metric(), DistanceMetric::Cosine);

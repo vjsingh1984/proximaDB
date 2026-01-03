@@ -7,16 +7,20 @@
 // - Time-partitioned index segments for efficient pruning
 // - Score-based ranking for search results
 
-use std::collections::HashMap;
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, FAST, INDEXED, STORED, STRING, TEXT};
+use tantivy::schema::{
+    FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema, TEXT, TextFieldIndexing,
+    TextOptions, Value,
+};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
-use crate::proto::proximadb_v1::{sql_value::Value as SqlValueVariant, LogEntry, Severity, SqlValue};
+use crate::proto::proximadb_v1::{
+    LogEntry, Severity, SqlValue, sql_value::Value as SqlValueVariant,
+};
 
 /// Full-text search index for log entries
 pub struct TantivyLogIndex {
@@ -408,12 +412,17 @@ impl TantivyLogIndex {
     }
 
     /// Search logs with a query string
-    pub fn search(&self, query_str: &str, options: &LogSearchOptions) -> Result<Vec<LogSearchResult>> {
+    pub fn search(
+        &self,
+        query_str: &str,
+        options: &LogSearchOptions,
+    ) -> Result<Vec<LogSearchResult>> {
         // Determine which fields to search
         let search_fields = if options.search_fields.is_empty() {
             vec![self.message_field, self.all_text_field]
         } else {
-            options.search_fields
+            options
+                .search_fields
                 .iter()
                 .filter_map(|f| match f.as_str() {
                     "message" => Some(self.message_field),
@@ -441,7 +450,11 @@ impl TantivyLogIndex {
         // Execute search
         let reader = self.reader.read().unwrap();
         let searcher = reader.searcher();
-        let limit = if options.limit > 0 { options.limit } else { 100 };
+        let limit = if options.limit > 0 {
+            options.limit
+        } else {
+            100
+        };
         let top_docs = searcher
             .search(&final_query, &TopDocs::with_limit(limit))
             .context("Log search failed")?;
@@ -485,7 +498,11 @@ impl TantivyLogIndex {
     }
 
     /// Search with phrase query (exact phrase match)
-    pub fn search_phrase(&self, phrase: &str, options: &LogSearchOptions) -> Result<Vec<LogSearchResult>> {
+    pub fn search_phrase(
+        &self,
+        phrase: &str,
+        options: &LogSearchOptions,
+    ) -> Result<Vec<LogSearchResult>> {
         // Wrap phrase in quotes for exact match
         let quoted_phrase = format!("\"{}\"", phrase.replace('"', "\\\""));
         self.search(&quoted_phrase, options)
@@ -523,18 +540,17 @@ impl TantivyLogIndex {
 
         // Add time range filter using range query
         if options.start_time_ns.is_some() || options.end_time_ns.is_some() {
-            let start = options.start_time_ns
+            let start = options
+                .start_time_ns
                 .map(std::ops::Bound::Included)
                 .unwrap_or(std::ops::Bound::Unbounded);
-            let end = options.end_time_ns
+            let end = options
+                .end_time_ns
                 .map(std::ops::Bound::Included)
                 .unwrap_or(std::ops::Bound::Unbounded);
 
-            let range_query = tantivy::query::RangeQuery::new_i64_bounds(
-                "timestamp_ns".to_string(),
-                start,
-                end,
-            );
+            let range_query =
+                tantivy::query::RangeQuery::new_i64_bounds("timestamp_ns".to_string(), start, end);
             clauses.push((Occur::Must, Box::new(range_query)));
         }
 
@@ -564,20 +580,18 @@ impl TantivyLogIndex {
             Some(SqlValueVariant::BoolValue(b)) => b.to_string(),
             Some(SqlValueVariant::NullValue(_)) => String::new(),
             Some(SqlValueVariant::BytesValue(b)) => format!("<bytes:{}>", b.len()),
-            Some(SqlValueVariant::ArrayValue(arr)) => {
-                arr.values
-                    .iter()
-                    .map(|v| self.sql_value_to_string(v))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            }
-            Some(SqlValueVariant::ObjectValue(obj)) => {
-                obj.fields
-                    .iter()
-                    .map(|(k, v)| format!("{}:{}", k, self.sql_value_to_string(v)))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            }
+            Some(SqlValueVariant::ArrayValue(arr)) => arr
+                .values
+                .iter()
+                .map(|v| self.sql_value_to_string(v))
+                .collect::<Vec<_>>()
+                .join(" "),
+            Some(SqlValueVariant::ObjectValue(obj)) => obj
+                .fields
+                .iter()
+                .map(|(k, v)| format!("{}:{}", k, self.sql_value_to_string(v)))
+                .collect::<Vec<_>>()
+                .join(" "),
             None => String::new(),
         }
     }
@@ -586,8 +600,15 @@ impl TantivyLogIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
-    fn make_log(id: &str, message: &str, service: &str, severity: Severity, ts_ns: i64) -> (String, LogEntry) {
+    fn make_log(
+        id: &str,
+        message: &str,
+        service: &str,
+        severity: Severity,
+        ts_ns: i64,
+    ) -> (String, LogEntry) {
         (
             id.to_string(),
             LogEntry {
@@ -634,7 +655,13 @@ mod tests {
     #[test]
     fn test_index_single_log() {
         let index = TantivyLogIndex::new("test_ns").unwrap();
-        let (id, log) = make_log("log1", "Connection timeout error", "api", Severity::Error, 1000);
+        let (id, log) = make_log(
+            "log1",
+            "Connection timeout error",
+            "api",
+            Severity::Error,
+            1000,
+        );
 
         let result = index.index_log(&id, &log);
         assert!(result.is_ok());
@@ -649,7 +676,13 @@ mod tests {
         let logs = vec![
             make_log("log1", "Error occurred", "api", Severity::Error, 1000),
             make_log("log2", "Request completed", "web", Severity::Info, 2000),
-            make_log("log3", "Database connection failed", "db", Severity::Error, 3000),
+            make_log(
+                "log3",
+                "Database connection failed",
+                "db",
+                Severity::Error,
+                3000,
+            ),
         ];
 
         let result = index.index_logs(&logs);
@@ -664,9 +697,27 @@ mod tests {
     fn test_search_simple() {
         let index = TantivyLogIndex::new("test_ns").unwrap();
         let logs = vec![
-            make_log("log1", "Connection timeout error", "api", Severity::Error, 1000),
-            make_log("log2", "Request completed successfully", "web", Severity::Info, 2000),
-            make_log("log3", "Database connection failed", "db", Severity::Error, 3000),
+            make_log(
+                "log1",
+                "Connection timeout error",
+                "api",
+                Severity::Error,
+                1000,
+            ),
+            make_log(
+                "log2",
+                "Request completed successfully",
+                "web",
+                Severity::Info,
+                2000,
+            ),
+            make_log(
+                "log3",
+                "Database connection failed",
+                "db",
+                Severity::Error,
+                3000,
+            ),
         ];
 
         index.index_logs(&logs).unwrap();
@@ -705,7 +756,13 @@ mod tests {
         let logs = vec![
             make_log("log1", "Old error message", "api", Severity::Error, 1000),
             make_log("log2", "Recent error message", "api", Severity::Error, 5000),
-            make_log("log3", "Latest error message", "api", Severity::Error, 10000),
+            make_log(
+                "log3",
+                "Latest error message",
+                "api",
+                Severity::Error,
+                10000,
+            ),
         ];
 
         index.index_logs(&logs).unwrap();
@@ -723,9 +780,27 @@ mod tests {
     fn test_search_phrase() {
         let index = TantivyLogIndex::new("test_ns").unwrap();
         let logs = vec![
-            make_log("log1", "Connection timeout error occurred", "api", Severity::Error, 1000),
-            make_log("log2", "Error connection timeout", "api", Severity::Error, 2000),
-            make_log("log3", "Timeout in connection pool", "api", Severity::Error, 3000),
+            make_log(
+                "log1",
+                "Connection timeout error occurred",
+                "api",
+                Severity::Error,
+                1000,
+            ),
+            make_log(
+                "log2",
+                "Error connection timeout",
+                "api",
+                Severity::Error,
+                2000,
+            ),
+            make_log(
+                "log3",
+                "Timeout in connection pool",
+                "api",
+                Severity::Error,
+                3000,
+            ),
         ];
 
         index.index_logs(&logs).unwrap();
@@ -791,7 +866,14 @@ mod tests {
 
         let index = TantivyLogIndex::new("test_ns").unwrap();
         let logs = vec![
-            make_log_with_fields("log1", "Request processed", "api", Severity::Info, 1000, fields),
+            make_log_with_fields(
+                "log1",
+                "Request processed",
+                "api",
+                Severity::Info,
+                1000,
+                fields,
+            ),
             make_log("log2", "Another request", "api", Severity::Info, 2000),
         ];
 
@@ -825,9 +907,13 @@ mod tests {
     #[test]
     fn test_empty_search_results() {
         let index = TantivyLogIndex::new("test_ns").unwrap();
-        let logs = vec![
-            make_log("log1", "Connection error", "api", Severity::Error, 1000),
-        ];
+        let logs = vec![make_log(
+            "log1",
+            "Connection error",
+            "api",
+            Severity::Error,
+            1000,
+        )];
 
         index.index_logs(&logs).unwrap();
         index.commit().unwrap();

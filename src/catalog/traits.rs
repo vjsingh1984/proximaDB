@@ -9,12 +9,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::types::{
-    CatalogIndex, CatalogNamespace, CatalogPartitionSpec, CatalogSchemaEvolution,
-    CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
+    CatalogIndex, CatalogNamespace, CatalogPartitionSpec, CatalogSchemaEvolution, CatalogSortOrder,
+    CatalogTableSchema, CatalogTableStatistics,
 };
-use super::TableIdentifier;
 
 /// Core catalog trait - all catalog backends implement this
 #[async_trait]

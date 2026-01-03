@@ -113,13 +113,15 @@ impl FileRollupPersistence {
 
     /// Get the directory for a resolution tier
     fn resolution_dir(&self, resolution: DownsampleResolution) -> PathBuf {
-        self.base_path.join(format!("rollups_{}", resolution.name()))
+        self.base_path
+            .join(format!("rollups_{}", resolution.name()))
     }
 
     /// Get the file path for a series at a resolution
     fn series_file(&self, series_key: &str, resolution: DownsampleResolution) -> PathBuf {
         let safe_key = Self::sanitize_series_key(series_key);
-        self.resolution_dir(resolution).join(format!("{}.json", safe_key))
+        self.resolution_dir(resolution)
+            .join(format!("{}.json", safe_key))
     }
 
     /// Sanitize series key for use in filenames
@@ -136,7 +138,8 @@ impl FileRollupPersistence {
     async fn ensure_dir(&self, resolution: DownsampleResolution) -> Result<()> {
         let dir = self.resolution_dir(resolution);
         if !dir.exists() {
-            fs::create_dir_all(&dir).await
+            fs::create_dir_all(&dir)
+                .await
                 .context("Failed to create rollup directory")?;
         }
         Ok(())
@@ -151,10 +154,10 @@ impl FileRollupPersistence {
         let path = self.series_file(series_key, resolution);
 
         if path.exists() {
-            let content = fs::read_to_string(&path).await
+            let content = fs::read_to_string(&path)
+                .await
                 .context("Failed to read rollup file")?;
-            serde_json::from_str(&content)
-                .context("Failed to parse rollup file")
+            serde_json::from_str(&content).context("Failed to parse rollup file")
         } else {
             Ok(RollupFile::new(series_key, resolution))
         }
@@ -165,10 +168,11 @@ impl FileRollupPersistence {
         self.ensure_dir(resolution).await?;
 
         let path = self.series_file(&file.series_key, resolution);
-        let content = serde_json::to_string_pretty(file)
-            .context("Failed to serialize rollup file")?;
+        let content =
+            serde_json::to_string_pretty(file).context("Failed to serialize rollup file")?;
 
-        fs::write(&path, content).await
+        fs::write(&path, content)
+            .await
             .context("Failed to write rollup file")?;
 
         Ok(())
@@ -203,7 +207,9 @@ impl RollupPersistence for FileRollupPersistence {
 
         debug!(
             "Flushed {} rollup points for '{}' at resolution {} to disk",
-            count, series_key, resolution.name()
+            count,
+            series_key,
+            resolution.name()
         );
 
         Ok(count)
@@ -225,13 +231,15 @@ impl RollupPersistence for FileRollupPersistence {
             return Ok(Vec::new());
         }
 
-        let content = fs::read_to_string(&path).await
+        let content = fs::read_to_string(&path)
+            .await
             .context("Failed to read rollup file")?;
-        let file: RollupFile = serde_json::from_str(&content)
-            .context("Failed to parse rollup file")?;
+        let file: RollupFile =
+            serde_json::from_str(&content).context("Failed to parse rollup file")?;
 
         // Filter by time range
-        let aggregates: Vec<AggregatedMetric> = file.points
+        let aggregates: Vec<AggregatedMetric> = file
+            .points
             .range(start_ns..=end_ns)
             .map(|(ts, point)| AggregatedMetric {
                 name: point.name.clone(),
@@ -247,7 +255,9 @@ impl RollupPersistence for FileRollupPersistence {
 
         debug!(
             "Loaded {} rollup points for '{}' at resolution {} from disk",
-            aggregates.len(), series_key, resolution.name()
+            aggregates.len(),
+            series_key,
+            resolution.name()
         );
 
         Ok(aggregates)
@@ -287,7 +297,9 @@ impl RollupPersistence for FileRollupPersistence {
                 };
 
                 // Remove old points
-                let to_remove: Vec<i64> = file.points.keys()
+                let to_remove: Vec<i64> = file
+                    .points
+                    .keys()
                     .filter(|ts| **ts < cutoff_ns)
                     .cloned()
                     .collect();
@@ -309,7 +321,8 @@ impl RollupPersistence for FileRollupPersistence {
 
         info!(
             "Deleted {} rollup points at resolution {} before cutoff",
-            total_deleted, resolution.name()
+            total_deleted,
+            resolution.name()
         );
 
         Ok(total_deleted)
@@ -375,9 +388,11 @@ impl RollupPersistence for InMemoryRollupPersistence {
         let data = self.data.read().await;
         let key = (resolution, series_key.to_string());
 
-        let rollups = data.get(&key)
+        let rollups = data
+            .get(&key)
             .map(|btree| {
-                btree.range(start_ns..=end_ns)
+                btree
+                    .range(start_ns..=end_ns)
                     .map(|(ts, point)| AggregatedMetric {
                         name: point.name.clone(),
                         timestamp_ns: *ts,
@@ -409,7 +424,8 @@ impl RollupPersistence for InMemoryRollupPersistence {
 
         for ((res, _), btree) in data.iter_mut() {
             if *res == resolution {
-                let to_remove: Vec<i64> = btree.keys()
+                let to_remove: Vec<i64> = btree
+                    .keys()
                     .filter(|ts| **ts < cutoff_ns)
                     .cloned()
                     .collect();
@@ -584,14 +600,23 @@ mod tests {
 
         // Flush
         let count = persistence
-            .flush_rollups("cpu:{host=server1}", DownsampleResolution::Minute, &aggregates)
+            .flush_rollups(
+                "cpu:{host=server1}",
+                DownsampleResolution::Minute,
+                &aggregates,
+            )
             .await
             .unwrap();
         assert_eq!(count, 2);
 
         // Load
         let loaded = persistence
-            .load_rollups("cpu:{host=server1}", DownsampleResolution::Minute, 0, 200000000000)
+            .load_rollups(
+                "cpu:{host=server1}",
+                DownsampleResolution::Minute,
+                0,
+                200000000000,
+            )
             .await
             .unwrap();
         assert_eq!(loaded.len(), 2);

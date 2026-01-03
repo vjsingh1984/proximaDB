@@ -178,10 +178,7 @@ impl CompositeBloomFilterBuilder {
         column: String,
         item: crate::proto::proximadb_v1::MetadataItem,
     ) {
-        self.metadata_values
-            .entry(column)
-            .or_default()
-            .push(item);
+        self.metadata_values.entry(column).or_default().push(item);
     }
 
     /// Build the composite filter

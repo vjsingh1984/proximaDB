@@ -114,18 +114,20 @@
 //!   -d '{"query": "SELECT * FROM VECTOR_SEARCH('embeddings', '[0.1, 0.2]', 10)"}'
 //! ```
 
-pub mod parser;
-pub mod optimizer;
 pub mod execution;
+pub mod optimizer;
+pub mod parser;
 
 // Re-exports
+pub use execution::{ExecutionResult, FederatedExecutor};
+pub use optimizer::{CrossModelOptimizer, PlanNode, QueryPlan};
 pub use parser::{FederatedParser, FederatedQuery, QueryType};
-pub use optimizer::{CrossModelOptimizer, QueryPlan, PlanNode};
-pub use execution::{FederatedExecutor, ExecutionResult};
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
+use tracing::debug;
 
+use super::cache::{CacheInvalidator, QueryKey, QueryResultCache};
 use crate::storage::multimodel::MultiModelStorageFacade;
 
 /// Federated query context containing all necessary components
@@ -138,6 +140,10 @@ pub struct FederatedQueryContext {
     pub optimizer: CrossModelOptimizer,
     /// Federated executor
     pub executor: FederatedExecutor,
+    /// Query result cache for repetitive queries
+    pub cache: Option<Arc<QueryResultCache>>,
+    /// Cache invalidator for real-time invalidation
+    pub invalidator: Option<Arc<CacheInvalidator>>,
 }
 
 impl FederatedQueryContext {
@@ -148,11 +154,98 @@ impl FederatedQueryContext {
             parser: FederatedParser::new(),
             optimizer: CrossModelOptimizer::new(),
             executor: FederatedExecutor::new(storage),
+            cache: None,
+            invalidator: None,
         }
     }
 
-    /// Execute a federated query
+    /// Create a new federated query context with caching enabled
+    pub fn with_cache(storage: Arc<MultiModelStorageFacade>, cache: Arc<QueryResultCache>) -> Self {
+        let invalidator = Arc::new(CacheInvalidator::new(cache.clone()));
+        Self {
+            storage: storage.clone(),
+            parser: FederatedParser::new(),
+            optimizer: CrossModelOptimizer::new(),
+            executor: FederatedExecutor::new(storage),
+            cache: Some(cache),
+            invalidator: Some(invalidator),
+        }
+    }
+
+    /// Enable caching on an existing context
+    pub fn enable_cache(&mut self, cache: Arc<QueryResultCache>) {
+        let invalidator = Arc::new(CacheInvalidator::new(cache.clone()));
+        self.cache = Some(cache);
+        self.invalidator = Some(invalidator);
+    }
+
+    /// Get the cache if enabled
+    pub fn get_cache(&self) -> Option<&Arc<QueryResultCache>> {
+        self.cache.as_ref()
+    }
+
+    /// Get the invalidator if caching is enabled
+    pub fn get_invalidator(&self) -> Option<&Arc<CacheInvalidator>> {
+        self.invalidator.as_ref()
+    }
+
+    /// Execute a federated query with optional caching
     pub async fn execute(&self, sql: &str) -> Result<ExecutionResult> {
+        // Check cache first if enabled
+        if let Some(ref cache) = self.cache {
+            let key = QueryKey::from_sql(sql);
+            if let Some(cached) = cache.get(&key) {
+                debug!(
+                    query_fingerprint = key.fingerprint,
+                    "Cache hit for federated query"
+                );
+                // Return a clone of the cached result
+                // Note: ExecutionResult contains Arc<Schema> and Vec<RecordBatch>,
+                // which are relatively cheap to clone
+                return Ok(ExecutionResult {
+                    batches: cached.result.batches.clone(),
+                    schema: cached.result.schema.clone(),
+                    stats: cached.result.stats.clone(),
+                });
+            }
+        }
+
+        // 1. Parse the query
+        let federated_query = self.parser.parse(sql)?;
+
+        // 2. Optimize the query plan
+        let plan = self.optimizer.optimize(&federated_query)?;
+
+        // Extract dependencies for cache invalidation
+        let dependencies: Vec<String> = plan
+            .metadata
+            .involved_models
+            .iter()
+            .map(|m| format!("{:?}", m).to_lowercase())
+            .collect();
+
+        // 3. Execute the plan
+        let result = self.executor.execute(plan).await?;
+
+        // Cache the result if caching is enabled
+        if let Some(ref cache) = self.cache {
+            let key = QueryKey::from_sql(sql);
+            // Clone the result for caching
+            let cached_result = ExecutionResult {
+                batches: result.batches.clone(),
+                schema: result.schema.clone(),
+                stats: result.stats.clone(),
+            };
+            if let Err(e) = cache.insert(key, cached_result, dependencies) {
+                debug!("Failed to cache query result: {:?}", e);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Execute a query without caching (bypass cache)
+    pub async fn execute_uncached(&self, sql: &str) -> Result<ExecutionResult> {
         // 1. Parse the query
         let federated_query = self.parser.parse(sql)?;
 
@@ -162,10 +255,27 @@ impl FederatedQueryContext {
         // 3. Execute the plan
         self.executor.execute(plan).await
     }
+
+    /// Invalidate cache entries for a collection
+    ///
+    /// Call this when data in a collection is modified.
+    pub fn invalidate_collection(&self, collection: &str) -> usize {
+        if let Some(ref invalidator) = self.invalidator {
+            invalidator.invalidate_collection(collection)
+        } else {
+            0
+        }
+    }
+
+    /// Get cache statistics
+    pub fn cache_stats(&self) -> Option<super::cache::QueryCacheStats> {
+        self.cache.as_ref().map(|c| c.stats())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::cache::QueryResultCacheConfig;
     use super::*;
 
     #[test]
@@ -173,5 +283,75 @@ mod tests {
         let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
         assert!(ctx.parser.supported_extensions().len() > 0);
+    }
+
+    #[test]
+    fn test_federated_context_with_cache() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let cache = Arc::new(QueryResultCache::with_defaults());
+        let ctx = FederatedQueryContext::with_cache(storage, cache);
+
+        assert!(ctx.cache.is_some());
+        assert!(ctx.invalidator.is_some());
+        assert!(ctx.get_cache().is_some());
+        assert!(ctx.get_invalidator().is_some());
+    }
+
+    #[test]
+    fn test_federated_context_enable_cache() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let mut ctx = FederatedQueryContext::new(storage);
+
+        assert!(ctx.cache.is_none());
+
+        let cache = Arc::new(QueryResultCache::with_defaults());
+        ctx.enable_cache(cache);
+
+        assert!(ctx.cache.is_some());
+        assert!(ctx.invalidator.is_some());
+    }
+
+    #[test]
+    fn test_cache_stats() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let cache = Arc::new(QueryResultCache::with_defaults());
+        let ctx = FederatedQueryContext::with_cache(storage, cache);
+
+        let stats = ctx.cache_stats();
+        assert!(stats.is_some());
+
+        let stats = stats.unwrap();
+        assert_eq!(stats.entries, 0);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+    }
+
+    #[test]
+    fn test_invalidate_collection() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let cache = Arc::new(QueryResultCache::with_defaults());
+        let ctx = FederatedQueryContext::with_cache(storage, cache);
+
+        // With no cached entries, invalidation returns 0
+        let invalidated = ctx.invalidate_collection("products");
+        assert_eq!(invalidated, 0);
+    }
+
+    #[test]
+    fn test_context_without_cache_stats() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let ctx = FederatedQueryContext::new(storage);
+
+        assert!(ctx.cache_stats().is_none());
+    }
+
+    #[test]
+    fn test_context_without_cache_invalidation() {
+        let storage = Arc::new(MultiModelStorageFacade::new());
+        let ctx = FederatedQueryContext::new(storage);
+
+        // Without cache, invalidation is a no-op
+        let invalidated = ctx.invalidate_collection("products");
+        assert_eq!(invalidated, 0);
     }
 }

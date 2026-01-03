@@ -16,8 +16,8 @@
 
 //! Kafka consumer configuration types
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Kafka consumer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,16 +102,22 @@ impl KafkaConsumerConfig {
     /// Validate configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.brokers.is_empty() {
-            return Err(ConfigError::InvalidConfig("No brokers specified".to_string()));
+            return Err(ConfigError::InvalidConfig(
+                "No brokers specified".to_string(),
+            ));
         }
         if self.topic.is_empty() {
             return Err(ConfigError::InvalidConfig("No topic specified".to_string()));
         }
         if self.group.group_id.is_empty() {
-            return Err(ConfigError::InvalidConfig("No group ID specified".to_string()));
+            return Err(ConfigError::InvalidConfig(
+                "No group ID specified".to_string(),
+            ));
         }
         if self.batch_size == 0 {
-            return Err(ConfigError::InvalidConfig("Batch size must be > 0".to_string()));
+            return Err(ConfigError::InvalidConfig(
+                "Batch size must be > 0".to_string(),
+            ));
         }
         Ok(())
     }

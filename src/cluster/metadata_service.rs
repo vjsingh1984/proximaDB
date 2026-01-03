@@ -184,7 +184,9 @@ impl MetadataService {
 
         *version += 1;
         metadata.version = *version;
-        metadata.collections.insert(collection.collection_id.clone(), collection);
+        metadata
+            .collections
+            .insert(collection.collection_id.clone(), collection);
 
         tracing::info!(
             version = metadata.version,
@@ -200,12 +202,17 @@ impl MetadataService {
         let mut version = self.version_counter.write().await;
 
         if !metadata.collections.contains_key(&collection.collection_id) {
-            return Err(anyhow::anyhow!("Collection not found: {}", collection.collection_id));
+            return Err(anyhow::anyhow!(
+                "Collection not found: {}",
+                collection.collection_id
+            ));
         }
 
         *version += 1;
         metadata.version = *version;
-        metadata.collections.insert(collection.collection_id.clone(), collection);
+        metadata
+            .collections
+            .insert(collection.collection_id.clone(), collection);
 
         Ok(())
     }
@@ -220,7 +227,9 @@ impl MetadataService {
         }
 
         // Also remove associated shard placements
-        metadata.shard_placements.retain(|_, v| v.collection_id != collection_id);
+        metadata
+            .shard_placements
+            .retain(|_, v| v.collection_id != collection_id);
 
         *version += 1;
         metadata.version = *version;
@@ -246,7 +255,9 @@ impl MetadataService {
 
         *version += 1;
         metadata.version = *version;
-        metadata.shard_placements.insert(placement.shard_id.clone(), placement);
+        metadata
+            .shard_placements
+            .insert(placement.shard_id.clone(), placement);
 
         Ok(())
     }
@@ -289,7 +300,10 @@ mod tests {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        service.register_collection(collection.clone()).await.unwrap();
+        service
+            .register_collection(collection.clone())
+            .await
+            .unwrap();
 
         let retrieved = service.get_collection("test-collection").await;
         assert!(retrieved.is_some());
