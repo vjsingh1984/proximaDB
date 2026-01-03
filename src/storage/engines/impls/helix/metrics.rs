@@ -14,124 +14,124 @@ use tokio::sync::RwLock;
 lazy_static! {
     /// Compaction metrics
     static ref COMPACTION_DURATION: HistogramVec = register_histogram_vec!(
-        "helix_compaction_duration_seconds",
+        "proximadb_helix_compaction_duration_seconds",
         "Time spent in compaction by level",
         &["level"]
-    ).expect("Failed to register helix_compaction_duration metric");
+    ).expect("Failed to register proximadb_helix_compaction_duration metric");
 
     static ref COMPACTION_BYTES_WRITTEN: CounterVec = register_counter_vec!(
-        "helix_compaction_bytes_written",
+        "proximadb_helix_compaction_bytes_written",
         "Bytes written during compaction",
         &["level"]
-    ).expect("Failed to register helix_compaction_bytes_written metric");
+    ).expect("Failed to register proximadb_helix_compaction_bytes_written metric");
 
     static ref COMPACTION_CLUSTERING_QUALITY: GaugeVec = register_gauge_vec!(
-        "helix_compaction_clustering_quality",
+        "proximadb_helix_compaction_clustering_quality",
         "Clustering quality score after compaction",
         &["level"]
-    ).expect("Failed to register helix_compaction_clustering_quality metric");
+    ).expect("Failed to register proximadb_helix_compaction_clustering_quality metric");
 
     /// Query metrics
     static ref QUERY_PRUNING_RATIO: HistogramVec = register_histogram_vec!(
-        "helix_query_pruning_ratio",
+        "proximadb_helix_query_pruning_ratio",
         "Ratio of SSTables pruned during query",
         &["collection"]
-    ).expect("Failed to register helix_query_pruning_ratio metric");
+    ).expect("Failed to register proximadb_helix_query_pruning_ratio metric");
 
     static ref PROXIMA_BLOCKS_SCANNED: HistogramVec = register_histogram_vec!(
-        "helix_proximablocks_scanned",
+        "proximadb_helix_proximablocks_scanned",
         "Number of Proxima blocks scanned per query",
         &["collection"]
-    ).expect("Failed to register helix_proximablocks_scanned metric");
+    ).expect("Failed to register proximadb_helix_proximablocks_scanned metric");
 
     static ref HILBERT_RANGE_EFFICIENCY: GaugeVec = register_gauge_vec!(
-        "helix_hilbert_range_efficiency",
+        "proximadb_helix_hilbert_range_efficiency",
         "Efficiency of Hilbert range pruning",
         &["collection"]
-    ).expect("Failed to register helix_hilbert_range_efficiency metric");
+    ).expect("Failed to register proximadb_helix_hilbert_range_efficiency metric");
 
     /// PCA metrics
     static ref PCA_MODEL_VERSION: GaugeVec = register_gauge_vec!(
-        "helix_pca_model_version",
+        "proximadb_helix_pca_model_version",
         "Current PCA model version",
         &["collection"]
-    ).expect("Failed to register helix_pca_model_version metric");
+    ).expect("Failed to register proximadb_helix_pca_model_version metric");
 
     static ref PCA_PROJECTION_LATENCY: HistogramVec = register_histogram_vec!(
-        "helix_pca_projection_latency_us",
+        "proximadb_helix_pca_projection_latency_us",
         "PCA projection latency in microseconds",
         &["collection"]
-    ).expect("Failed to register helix_pca_projection_latency metric");
+    ).expect("Failed to register proximadb_helix_pca_projection_latency metric");
 
     static ref PCA_MODEL_DRIFT_SCORE: GaugeVec = register_gauge_vec!(
-        "helix_pca_model_drift_score",
+        "proximadb_helix_pca_model_drift_score",
         "PCA model drift from training distribution",
         &["collection"]
-    ).expect("Failed to register helix_pca_model_drift_score metric");
+    ).expect("Failed to register proximadb_helix_pca_model_drift_score metric");
 
     /// Storage metrics
     static ref SSTABLE_COUNT: GaugeVec = register_gauge_vec!(
-        "helix_sstable_count",
+        "proximadb_helix_sstable_count",
         "Number of SSTables by level",
         &["level", "collection"]
-    ).expect("Failed to register helix_sstable_count metric");
+    ).expect("Failed to register proximadb_helix_sstable_count metric");
 
     static ref SSTABLE_SIZE_BYTES: GaugeVec = register_gauge_vec!(
-        "helix_sstable_size_bytes",
+        "proximadb_helix_sstable_size_bytes",
         "Total size of SSTables by level",
         &["level", "collection"]
-    ).expect("Failed to register helix_sstable_size_bytes metric");
+    ).expect("Failed to register proximadb_helix_sstable_size_bytes metric");
 
     static ref BLOOM_FILTER_HITS: CounterVec = register_counter_vec!(
-        "helix_bloom_filter_hits",
+        "proximadb_helix_bloom_filter_hits",
         "Bloom filter hit count",
         &["type", "collection"]
-    ).expect("Failed to register helix_bloom_filter_hits metric");
+    ).expect("Failed to register proximadb_helix_bloom_filter_hits metric");
 
     /// Liquid clustering metrics
     static ref LIQUID_CLUSTERING_QUALITY: GaugeVec = register_gauge_vec!(
-        "helix_liquid_clustering_quality",
+        "proximadb_helix_liquid_clustering_quality",
         "Liquid clustering quality score",
         &["collection"]
-    ).expect("Failed to register helix_liquid_clustering_quality metric");
+    ).expect("Failed to register proximadb_helix_liquid_clustering_quality metric");
 
     static ref HOT_REGIONS_COUNT: GaugeVec = register_gauge_vec!(
-        "helix_hot_regions_count",
+        "proximadb_helix_hot_regions_count",
         "Number of hot regions identified",
         &["collection"]
-    ).expect("Failed to register helix_hot_regions_count metric");
+    ).expect("Failed to register proximadb_helix_hot_regions_count metric");
 
     static ref LIQUID_REORGANIZATIONS: CounterVec = register_counter_vec!(
-        "helix_liquid_reorganizations_total",
+        "proximadb_helix_liquid_reorganizations_total",
         "Total number of liquid clustering reorganizations",
         &["collection"]
-    ).expect("Failed to register helix_liquid_reorganizations metric");
+    ).expect("Failed to register proximadb_helix_liquid_reorganizations metric");
 
     /// Progressive search metrics
     static ref PROGRESSIVE_SEARCH_STAGES: HistogramVec = register_histogram_vec!(
-        "helix_progressive_search_stages",
+        "proximadb_helix_progressive_search_stages",
         "Number of stages used in progressive search",
         &["collection"]
-    ).expect("Failed to register helix_progressive_search_stages metric");
+    ).expect("Failed to register proximadb_helix_progressive_search_stages metric");
 
     static ref QUANTIZATION_STAGE_LATENCY: HistogramVec = register_histogram_vec!(
-        "helix_quantization_stage_latency_ms",
+        "proximadb_helix_quantization_stage_latency_ms",
         "Latency of each quantization stage",
         &["stage", "collection"]
-    ).expect("Failed to register helix_quantization_stage_latency metric");
+    ).expect("Failed to register proximadb_helix_quantization_stage_latency metric");
 
     /// Zone map metrics
     static ref ZONE_MAP_PRUNING_RATIO: HistogramVec = register_histogram_vec!(
-        "helix_zone_map_pruning_ratio",
+        "proximadb_helix_zone_map_pruning_ratio",
         "Ratio of blocks pruned by zone maps",
         &["collection"]
-    ).expect("Failed to register helix_zone_map_pruning_ratio metric");
+    ).expect("Failed to register proximadb_helix_zone_map_pruning_ratio metric");
 
     static ref DIMENSION_SELECTIVITY: HistogramVec = register_histogram_vec!(
-        "helix_dimension_selectivity",
+        "proximadb_helix_dimension_selectivity",
         "Selectivity per dimension",
         &["dimension", "collection"]
-    ).expect("Failed to register helix_dimension_selectivity metric");
+    ).expect("Failed to register proximadb_helix_dimension_selectivity metric");
 }
 
 /// HELIX engine metrics aggregator
