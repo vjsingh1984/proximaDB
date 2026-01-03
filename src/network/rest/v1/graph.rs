@@ -658,6 +658,8 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/:graph_id/shortest_path", post(shortest_path))
         .route("/graphs/:graph_id/query/nodes", post(query_nodes))
         .route("/graphs/:graph_id/query/edges", post(query_edges))
+        // Declarative graph query (Cypher)
+        .route("/graphs/:graph_id/query", post(execute_graph_query))
         // Multi-graph batch operations
         .route("/graphs/:graph_id/nodes/batch", post(batch_create_nodes))
         .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
@@ -1785,4 +1787,143 @@ pub async fn update_graph_schema(
         Json(GraphResponse::<serde_json::Value>::error(graph_error)),
     )
         .into_response()
+}
+
+// ============================================================================
+// Declarative Graph Query (Cypher) Handler
+// ============================================================================
+
+/// Request body for executing a declarative graph query
+#[derive(Debug, Deserialize)]
+struct GraphQueryRequest {
+    /// The Cypher query string
+    query: String,
+    /// Query language (currently only "cypher" is supported)
+    #[serde(default = "default_query_language")]
+    language: String,
+}
+
+fn default_query_language() -> String {
+    "cypher".to_string()
+}
+
+/// Response for graph query execution
+#[derive(Debug, Serialize)]
+struct GraphQueryResultResponse {
+    /// Result rows
+    rows: Vec<serde_json::Value>,
+    /// Total number of rows returned
+    row_count: u64,
+    /// Execution time in milliseconds
+    execution_time_ms: f64,
+}
+
+/// Execute a declarative graph query (Cypher)
+///
+/// POST /api/v1/graph/graphs/:graph_id/query
+///
+/// Request body:
+/// ```json
+/// {
+///   "query": "MATCH (n:Person)-[:KNOWS]->(m) RETURN m.name",
+///   "language": "cypher"
+/// }
+/// ```
+///
+/// When the `unified-facade-routing` feature is enabled and a query adapter is available,
+/// the query is routed through the QueryFacadeAdapter for consistent metrics and tracing.
+pub async fn execute_graph_query(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<GraphQueryRequest>,
+) -> impl IntoResponse {
+    debug!(
+        "Executing graph query on graph '{}': {}",
+        graph_id,
+        request.query.chars().take(100).collect::<String>()
+    );
+
+    let start = std::time::Instant::now();
+
+    // Route through unified facade when feature is enabled and adapter is available
+    #[cfg(feature = "unified-facade-routing")]
+    if let Some(ref adapter) = app_state.query_adapter {
+        debug!("Using unified facade routing for graph query");
+        let graph_name = if graph_id.is_empty() || graph_id == "default" {
+            None
+        } else {
+            Some(graph_id.as_str())
+        };
+
+        return match adapter.graph_query(&request.query, graph_name).await {
+            Ok(result) => {
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                // Convert QueryResult to response format
+                let rows = convert_query_result_to_rows(&result);
+                let row_count = rows.len() as u64;
+
+                info!(
+                    "Graph query (facade) completed in {:.2}ms with {} rows",
+                    elapsed_ms, row_count
+                );
+
+                let response = GraphQueryResultResponse {
+                    rows,
+                    row_count,
+                    execution_time_ms: elapsed_ms,
+                };
+                Json(GraphResponse::success(response)).into_response()
+            }
+            Err(e) => {
+                error!("Graph query (facade) failed: {}", e);
+                let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(GraphResponse::<GraphQueryResultResponse>::error(graph_error)),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    // Legacy path: Return unimplemented error (no direct Cypher execution without facade)
+    let graph_error = GraphError::new(
+        ErrorCode::InvalidArgument,
+        "Declarative query execution requires unified-facade-routing feature. \
+         Use /query/nodes or /query/edges for property-based queries, \
+         or /traverse for graph traversal.",
+    );
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(GraphResponse::<GraphQueryResultResponse>::error(graph_error)),
+    )
+        .into_response()
+}
+
+/// Convert QueryResult from the unified facade to JSON rows
+#[cfg(feature = "unified-facade-routing")]
+fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde_json::Value> {
+    use crate::query::QueryResultData;
+
+    match &result.data {
+        QueryResultData::Rows(rows) => rows.clone(),
+        QueryResultData::VectorResults(matches) => {
+            matches
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "score": m.score,
+                        "metadata": m.metadata
+                    })
+                })
+                .collect()
+        }
+        QueryResultData::Graph(graph_result) => {
+            // Convert graph nodes to JSON rows
+            graph_result.nodes.clone()
+        }
+        QueryResultData::Empty => vec![],
+    }
 }

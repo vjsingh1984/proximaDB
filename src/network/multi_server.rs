@@ -1573,6 +1573,13 @@ impl MultiServer {
             }
 
             // Add GraphService for native graph database operations
+            // When unified-facade-routing is enabled, provide the adapter for Cypher query routing
+            #[cfg(feature = "unified-facade-routing")]
+            let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
+                services.unified_handlers.clone(),
+                services.query_adapter(),
+            );
+            #[cfg(not(feature = "unified-facade-routing"))]
             let graph_service_impl =
                 crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service =
@@ -1923,6 +1930,13 @@ impl MultiServer {
                     .send_compressed(CompressionEncoding::Gzip);
             }
 
+            // When unified-facade-routing is enabled, provide the adapter for Cypher query routing
+            #[cfg(feature = "unified-facade-routing")]
+            let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
+                services.unified_handlers.clone(),
+                services.query_adapter(),
+            );
+            #[cfg(not(feature = "unified-facade-routing"))]
             let graph_service_impl =
                 crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service =
