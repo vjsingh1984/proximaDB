@@ -1192,10 +1192,7 @@ mod tests {
         assert_eq!(explanation.confidence, 0.85);
         assert_eq!(explanation.alternatives_considered.len(), 1);
         assert_eq!(explanation.influential_features.len(), 1);
-        assert_eq!(
-            explanation.exploration_mode,
-            ExplorationMode::Exploitation
-        );
+        assert_eq!(explanation.exploration_mode, ExplorationMode::Exploitation);
     }
 
     #[test]
@@ -1250,10 +1247,7 @@ mod tests {
         );
 
         // Test conversion from ExplainModelType to ModelType
-        assert_eq!(
-            ModelType::from(ExplainModelType::Vector),
-            ModelType::Vector
-        );
+        assert_eq!(ModelType::from(ExplainModelType::Vector), ModelType::Vector);
     }
 
     #[test]

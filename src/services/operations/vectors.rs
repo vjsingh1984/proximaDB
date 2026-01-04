@@ -34,6 +34,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+use crate::security::validation::{
+    CollectionNameValidator, MetadataValidationConfig, MetadataValidator,
+};
 use crate::storage::traits::UnifiedStorageEngine;
 
 use crate::compute::quantization::types::{
@@ -163,6 +166,13 @@ pub struct VectorOperationsService {
     /// Bulk write router for intelligent write path selection
     /// Routes large batches to direct storage write, bypassing WAL+memtable
     bulk_write_router: BulkWriteRouter,
+
+    /// Security validation for metadata fields
+    /// Validates metadata for SQL injection and data integrity
+    metadata_validator: MetadataValidator,
+
+    /// Collection name validator for security
+    collection_name_validator: CollectionNameValidator,
 }
 
 impl VectorOperationsService {
@@ -474,6 +484,10 @@ impl VectorOperationsService {
 
             // Bulk write router for intelligent write path selection
             bulk_write_router: BulkWriteRouter::new(),
+
+            // Security validation for metadata fields
+            metadata_validator: MetadataValidator::default(),
+            collection_name_validator: CollectionNameValidator::default(),
         }
     }
 
@@ -510,6 +524,19 @@ impl VectorOperationsService {
         config: crate::services::operations::BulkWriteConfig,
     ) -> Self {
         self.bulk_write_router = BulkWriteRouter::with_config(config);
+        self
+    }
+
+    /// Set custom metadata validation configuration (builder-style)
+    ///
+    /// This allows customization of metadata validation rules, including:
+    /// - SQL injection detection sensitivity
+    /// - Maximum string length
+    /// - Maximum binary size
+    /// - Maximum JSON nesting depth
+    /// - Strict mode for enhanced security
+    pub fn with_metadata_validation_config(mut self, config: MetadataValidationConfig) -> Self {
+        self.metadata_validator = MetadataValidator::new(config);
         self
     }
 
@@ -2501,12 +2528,58 @@ impl VectorOperationsService {
 
     /// Validate vectors for insertion based on collection requirements
     /// OPTIMIZED: Purely in-memory validation with inline operations
+    ///
+    /// Validation includes:
+    /// - Collection name validation (SQL injection prevention)
+    /// - Metadata field validation (SQL injection, length limits)
+    /// - Dimension validation
+    /// - ID validation and uniqueness
     #[inline(always)]
     async fn validate_vectors_for_insert(
         &self,
         collection_id: &str,
         vectors: &[VectorRecord],
     ) -> Result<()> {
+        // SECURITY: Validate collection name to prevent SQL injection
+        if let Err(e) = self.collection_name_validator.validate(collection_id) {
+            warn!(
+                "Collection name validation failed for '{}': {:?}",
+                collection_id, e
+            );
+            return Err(anyhow::anyhow!(
+                "Invalid collection name '{}': {}",
+                collection_id,
+                e
+            ));
+        }
+
+        // SECURITY: Validate metadata for all vectors
+        let metadata_errors = self.metadata_validator.validate_batch(vectors);
+        if !metadata_errors.is_empty() {
+            let error_count = metadata_errors.len();
+            let first_error = metadata_errors.iter().next();
+            if let Some((vector_id, errors)) = first_error {
+                let first_field_error = errors.first();
+                if let Some((field_name, err)) = first_field_error {
+                    warn!(
+                        "Metadata validation failed for {} vectors. First error: vector '{}', field '{}': {:?}",
+                        error_count, vector_id, field_name, err
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Metadata validation failed for vector '{}', field '{}': {}. Total {} vectors with errors.",
+                        vector_id,
+                        field_name,
+                        err,
+                        error_count
+                    ));
+                }
+            }
+            return Err(anyhow::anyhow!(
+                "Metadata validation failed for {} vectors",
+                error_count
+            ));
+        }
+
         // Get collection configuration - this is cached after first load
         let collection = self.get_or_load_collection(collection_id).await?;
 
