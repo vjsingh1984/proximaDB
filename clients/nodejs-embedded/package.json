@@ -1,69 +1,58 @@
 {
-  "name": "proximadb-embedded",
-  "version": "0.2.0",
-  "description": "ProximaDB Embedded - In-process vector database for Node.js with zero network overhead",
-  "main": "index.js",
-  "types": "index.d.ts",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/vjsingh1984/proximadb.git"
+  "name": "@proximadb/client",
+  "version": "1.0.0",
+  "description": "TypeScript/Node.js SDK for ProximaDB vector database",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
   },
-  "homepage": "https://github.com/vjsingh1984/proximadb",
-  "author": "Vijaykumar Singh <singhvjd@gmail.com>",
-  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc && tsc -p tsconfig.esm.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write src/**/*.ts"
+  },
   "keywords": [
+    "proximadb",
     "vector",
     "database",
-    "embedded",
+    "embeddings",
     "similarity-search",
     "ai",
     "ml",
-    "embeddings",
-    "rust",
-    "napi"
+    "graph",
+    "typescript"
   ],
+  "author": "ProximaDB Contributors",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proximadb/proximadb.git",
+    "directory": "clients/nodejs-embedded"
+  },
+  "bugs": {
+    "url": "https://github.com/proximadb/proximadb/issues"
+  },
+  "homepage": "https://github.com/proximadb/proximadb#readme",
   "engines": {
-    "node": ">= 16"
+    "node": ">=18.0.0"
   },
-  "napi": {
-    "name": "proximadb-embedded",
-    "triples": {
-      "additional": [
-        "aarch64-apple-darwin",
-        "aarch64-unknown-linux-gnu",
-        "x86_64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
-        "x86_64-pc-windows-msvc"
-      ]
-    }
-  },
-  "scripts": {
-    "artifacts": "napi artifacts",
-    "build": "napi build --platform --release --features nodejs",
-    "build:debug": "napi build --platform --features nodejs",
-    "prepublishOnly": "napi prepublish -t npm",
-    "test": "jest",
-    "universal": "napi universal",
-    "version": "napi version"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@napi-rs/cli": "^2.16.3",
-    "@types/jest": "^29.5.5",
-    "@types/node": "^20.8.0",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.1",
-    "typescript": "^5.2.2"
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
   },
-  "optionalDependencies": {
-    "proximadb-embedded-darwin-arm64": "0.2.0",
-    "proximadb-embedded-darwin-x64": "0.2.0",
-    "proximadb-embedded-linux-arm64-gnu": "0.2.0",
-    "proximadb-embedded-linux-x64-gnu": "0.2.0",
-    "proximadb-embedded-win32-x64-msvc": "0.2.0"
-  },
-  "files": [
-    "index.js",
-    "index.d.ts",
-    "README.md"
-  ]
+  "peerDependencies": {},
+  "optionalDependencies": {}
 }
