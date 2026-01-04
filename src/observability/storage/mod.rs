@@ -241,6 +241,26 @@ impl ObservabilityStorage {
         Ok(())
     }
 
+    /// Delete a namespace
+    pub async fn delete_namespace(&self, name: &str) -> Result<()> {
+        info!("Deleting observability namespace: {}", name);
+
+        // Write to WAL first
+        self.write_to_wal(ObservabilityOperation::DeleteNamespace {
+            namespace: name.to_string(),
+        })
+        .await?;
+
+        // Remove from in-memory map
+        let mut namespaces = self.namespaces.write().await;
+        namespaces
+            .remove(name)
+            .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", name))?;
+
+        info!("Deleted observability namespace: {}", name);
+        Ok(())
+    }
+
     /// Write a log entry
     pub async fn write_log(&self, namespace: &str, log: &LogEntry) -> Result<()> {
         // Write to WAL first

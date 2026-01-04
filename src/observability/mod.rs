@@ -239,6 +239,85 @@ impl ObservabilityService {
             last_ingest_at_ns: state.last_ingest_at_ns,
         })
     }
+
+    /// Delete a namespace
+    pub async fn delete_namespace(&self, namespace: &str) -> Result<()> {
+        info!("Deleting observability namespace: {}", namespace);
+
+        // Verify namespace exists
+        {
+            let namespaces = self.namespaces.read().await;
+            if !namespaces.contains_key(namespace) {
+                return Err(anyhow::anyhow!("Namespace '{}' not found", namespace));
+            }
+        }
+
+        // Delete from storage (handles WAL write)
+        self.storage.delete_namespace(namespace).await?;
+
+        // Remove from in-memory state
+        {
+            let mut namespaces = self.namespaces.write().await;
+            namespaces.remove(namespace);
+        }
+
+        info!("Deleted observability namespace: {}", namespace);
+        Ok(())
+    }
+
+    /// List all namespaces
+    pub async fn list_namespaces(&self) -> Vec<NamespaceInfo> {
+        let namespaces = self.namespaces.read().await;
+        namespaces
+            .iter()
+            .map(|(name, state)| NamespaceInfo {
+                name: name.clone(),
+                created_at_ns: state.created_at_ns,
+                last_ingest_at_ns: state.last_ingest_at_ns,
+                total_events: state.total_events,
+            })
+            .collect()
+    }
+
+    /// Query metrics with time range and label filters
+    pub async fn query_metrics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        labels: &std::collections::HashMap<String, String>,
+        limit: u32,
+    ) -> Result<MetricQueryResult> {
+        let start = std::time::Instant::now();
+
+        // Get raw metrics from storage
+        let mut samples = self
+            .storage
+            .query_metrics(namespace, metric_name, start_time_ns, end_time_ns)
+            .await?;
+
+        // Apply label filters
+        if !labels.is_empty() {
+            samples.retain(|sample| {
+                labels
+                    .iter()
+                    .all(|(k, v)| sample.labels.get(k).map_or(false, |sv| sv == v))
+            });
+        }
+
+        // Apply limit
+        if limit > 0 && samples.len() > limit as usize {
+            samples.truncate(limit as usize);
+        }
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+
+        Ok(MetricQueryResult {
+            samples,
+            query_time_ms,
+        })
+    }
 }
 
 /// Result of an ingestion operation
@@ -360,6 +439,28 @@ pub struct NamespaceStats {
     pub created_at_ns: i64,
     /// Last ingestion timestamp
     pub last_ingest_at_ns: Option<i64>,
+}
+
+/// Namespace info (for list_namespaces)
+#[derive(Debug, Clone)]
+pub struct NamespaceInfo {
+    /// Namespace name
+    pub name: String,
+    /// Created timestamp (nanoseconds since epoch)
+    pub created_at_ns: i64,
+    /// Last ingestion timestamp (nanoseconds since epoch)
+    pub last_ingest_at_ns: Option<i64>,
+    /// Total events ingested
+    pub total_events: u64,
+}
+
+/// Result of a metric query
+#[derive(Debug, Clone)]
+pub struct MetricQueryResult {
+    /// Metric samples matching the query
+    pub samples: Vec<MetricSample>,
+    /// Query time in milliseconds
+    pub query_time_ms: u64,
 }
 
 // =============================================================================
