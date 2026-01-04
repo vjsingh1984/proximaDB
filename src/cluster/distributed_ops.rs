@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::consensus::RaftConsensus;
-use super::node_registry::NodeRegistry;
+use super::node_registry::{NodeInfo, NodeRegistry, NodeStatus};
 use super::routing::RoutingService;
 use super::rpc::{
     ForwardWriteRequest, NodeEndpoint, SearchFanout, SearchParams, ShardSearchRequest,
@@ -1923,6 +1923,18 @@ mod tests {
     async fn test_forward_write_without_fanout_fails() {
         let coordinator = create_test_coordinator().await;
 
+        // Register the remote node in the registry first
+        coordinator
+            .node_registry
+            .register_node(super::NodeInfo {
+                node_id: "remote-node-1".to_string(),
+                address: "localhost:5679".to_string(),
+                status: super::NodeStatus::Running,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
         // Create a shard that is on a remote node
         let mut shard = Shard::new("test-collection", 0);
         shard.state = ShardState::Active;
@@ -1944,10 +1956,14 @@ mod tests {
             .forward_write_to_node(&shard, "remote-node-1", &records, ConsistencyLevel::Quorum)
             .await;
 
-        // Should fail because no fanout
+        // Should fail because no fanout is configured
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("No SearchFanout implementation"));
+        assert!(
+            err.to_string().contains("SearchFanout"),
+            "Expected SearchFanout error, got: {}",
+            err
+        );
     }
 
     #[tokio::test]

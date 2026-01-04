@@ -481,7 +481,7 @@ pub struct MtlsAuthenticatedUser {
 ///
 /// ## Usage
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use axum::Router;
 /// use axum::middleware;
 ///

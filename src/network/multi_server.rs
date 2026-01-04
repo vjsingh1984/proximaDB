@@ -1024,6 +1024,11 @@ impl SharedServices {
                     tags: vec![],
                     owner: None,
                     embedding_models: vec![], // No embedding models for imported collections
+                    // ProximaRecord schema configuration (NEW)
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {

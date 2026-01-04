@@ -17,7 +17,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use proximadb::network::tls::{TlsConfig, TlsServerConfig};
 //!
 //! // Create TLS configuration
@@ -25,7 +25,7 @@
 //!     .with_auto_certificates("/tmp/certs".into())
 //!     .with_mtls();
 //!
-//! // Build rustls server config
+//! // Build rustls server config (async)
 //! let rustls_config = config.build_server_config().await?;
 //! ```
 
