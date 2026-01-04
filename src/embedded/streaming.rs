@@ -464,7 +464,6 @@ mod tests {
     #[tokio::test]
     async fn test_iterator_channel_completion() {
         let (tx, rx) = mpsc::channel(10);
-        let runtime = tokio::runtime::Handle::current();
 
         // Send some batches
         tx.send(Ok(vec![StreamingSearchResult {
@@ -486,10 +485,16 @@ mod tests {
         // Send empty batch to signal completion
         tx.send(Ok(Vec::new())).await.ok();
 
-        let config = StreamingSearchConfig::default().with_batch_size(1);
-        let iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
+        // Use spawn_blocking to avoid deadlock with block_on inside async context
+        let all_results = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            let config = StreamingSearchConfig::default().with_batch_size(1);
+            let iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
+            iterator.collect_all().expect("Should collect all results")
+        })
+        .await
+        .expect("spawn_blocking should succeed");
 
-        let all_results = iterator.collect_all().expect("Should collect all results");
         assert_eq!(all_results.len(), 2);
         assert_eq!(all_results[0].id, "1");
         assert_eq!(all_results[1].id, "2");
@@ -498,7 +503,6 @@ mod tests {
     #[tokio::test]
     async fn test_iterator_respects_top_k() {
         let (tx, rx) = mpsc::channel(10);
-        let runtime = tokio::runtime::Handle::current();
 
         // Send more results than top_k
         for i in 0..10 {
@@ -511,25 +515,36 @@ mod tests {
             .ok();
         }
 
-        let config = StreamingSearchConfig::default().with_batch_size(1);
-        let iterator = EmbeddedSearchIterator::new(rx, config, 5, runtime);
+        // Use spawn_blocking to avoid deadlock
+        let all_results = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            let config = StreamingSearchConfig::default().with_batch_size(1);
+            let iterator = EmbeddedSearchIterator::new(rx, config, 5, runtime);
+            iterator.collect_all().expect("Should collect all results")
+        })
+        .await
+        .expect("spawn_blocking should succeed");
 
-        let all_results = iterator.collect_all().expect("Should collect all results");
         assert_eq!(all_results.len(), 5);
     }
 
     #[tokio::test]
     async fn test_iterator_handles_errors() {
         let (tx, rx) = mpsc::channel(10);
-        let runtime = tokio::runtime::Handle::current();
 
         // Send an error
         tx.send(Err("Test error".to_string())).await.ok();
 
-        let config = StreamingSearchConfig::default();
-        let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
+        // Use spawn_blocking to avoid deadlock
+        let result = tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Handle::current();
+            let config = StreamingSearchConfig::default();
+            let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
+            iterator.next()
+        })
+        .await
+        .expect("spawn_blocking should succeed");
 
-        let result = iterator.next();
         assert!(result.is_some());
         assert!(result.expect("Should have result").is_err());
     }
