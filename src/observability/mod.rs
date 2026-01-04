@@ -49,6 +49,7 @@
 // - JSON over HTTP
 
 pub mod alerting;
+pub mod audit;
 pub mod ingestion;
 pub mod query;
 pub mod storage;
