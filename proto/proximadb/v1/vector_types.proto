@@ -288,8 +288,11 @@ enum CompressionAlgorithm {
 }
 
 // Filterable data types
+// Extended with rich types for OLAP/OLTP workloads
 enum FilterableDataType {
   FILTERABLE_DATA_TYPE_UNSPECIFIED = 0;
+
+  // Basic types (original)
   FILTERABLE_STRING = 1;
   FILTERABLE_INTEGER = 2;
   FILTERABLE_FLOAT = 3;
@@ -298,6 +301,35 @@ enum FilterableDataType {
   FILTERABLE_ARRAY_STRING = 6;
   FILTERABLE_ARRAY_INTEGER = 7;
   FILTERABLE_ARRAY_FLOAT = 8;
+
+  // Rich text types (NEW)
+  FILTERABLE_TEXT = 10;           // Large text, columnar storage
+  FILTERABLE_TEXT_LARGE = 11;     // Very large text, sidecar storage
+
+  // Precision numeric types (NEW)
+  FILTERABLE_DECIMAL = 12;        // Decimal128 for financial precision
+
+  // Temporal types (NEW)
+  FILTERABLE_TIMESTAMP_TZ = 13;   // Timestamp with timezone
+  FILTERABLE_DATE = 14;           // Date only
+  FILTERABLE_TIME = 15;           // Time only
+
+  // Identifier types (NEW)
+  FILTERABLE_UUID = 16;           // RFC 4122 UUID
+
+  // Binary types (NEW)
+  FILTERABLE_BINARY = 17;         // Raw bytes
+
+  // Structured types (NEW)
+  FILTERABLE_JSON = 18;           // Validated JSON
+
+  // Additional array types (NEW)
+  FILTERABLE_ARRAY_BOOLEAN = 19;
+  FILTERABLE_ARRAY_UUID = 20;
+
+  // Map types (NEW)
+  FILTERABLE_MAP_STRING_STRING = 21;
+  FILTERABLE_MAP_STRING_ANY = 22;
 }
 
 // Filterable column specification

@@ -263,6 +263,11 @@ pub mod proximadb_cluster_v1 {
     pub use super::cluster::v1::*;
 }
 
+// NOTE: V2 proto definitions for ProximaRecord are in proto/proximadb/v2/record.proto
+// but not compiled yet. The internal representation uses native Rust types in
+// src/core/types/mod.rs which have proper serde derives. V2 proto can be added
+// later for REST/gRPC API versioning (requires custom serde for TypedValue oneof).
+
 // Custom serde implementations for oneof types
 pub mod serde_impls;
 

@@ -255,6 +255,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .field_attribute("CollectionConfig.filterable_columns", "#[serde(default)]")
         .field_attribute("CollectionConfig.index_configs", "#[serde(default)]")
         .field_attribute("CollectionConfig.embedding_models", "#[serde(default)]")
+        .field_attribute("CollectionConfig.text_columns", "#[serde(default)]")
+        .field_attribute("CollectionConfig.text_storage_configs", "#[serde(default)]")
+        // TEXT storage config types (for detailed TEXT column configuration)
+        .type_attribute(
+            "TextStorageConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TextCompression",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        // ProximaRecord schema types (NEW - rich type system)
+        .type_attribute(
+            "RecordSchemaConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TypedColumnConfig",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "SchemaEnforcement",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "TextStorage",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .field_attribute("RecordSchemaConfig.columns", "#[serde(default)]")
         .type_attribute(
             "CollectionStats",
             "#[derive(serde::Serialize, serde::Deserialize)]",
@@ -788,6 +817,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "proximadb.streaming.v1.SessionStats",
             "#[derive(serde::Serialize, serde::Deserialize)]",
         )
+        // NOTE: ProximaRecord v2 proto types are defined in proto/proximadb/v2/record.proto
+        // but we use the Rust native types in src/core/types/mod.rs for the internal representation.
+        // The v2 proto is kept for future REST/gRPC API versioning.
         .compile_protos(
             &[
                 "proto/proximadb/v1/entity.proto",
@@ -831,6 +863,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto/proximadb/v1/catalog.proto");
     // Real-time streaming
     println!("cargo:rerun-if-changed=proto/proximadb/v1/streaming.proto");
+    // ProximaRecord v2 (NEW - rich type system)
+    println!("cargo:rerun-if-changed=proto/proximadb/v2/record.proto");
     Ok(())
 }
 

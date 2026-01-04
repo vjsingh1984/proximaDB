@@ -22,6 +22,12 @@ message CollectionConfig {
   optional bool auto_index_selection = 12; // Default: true
   optional string owner = 13;
   repeated string embedding_models = 14; // Defaults to empty array if not provided
+
+  // ProximaRecord schema configuration (NEW)
+  optional RecordSchemaConfig record_schema = 20;
+  optional bool enable_proxima_record = 21;  // Feature flag for ProximaRecord (default: false)
+  repeated string text_columns = 22;         // Column names to store as TEXT (not in metadata)
+  repeated TextStorageConfig text_storage_configs = 23;  // Detailed TEXT column configurations
 }
 
 message CollectionStats {
@@ -152,4 +158,95 @@ message CollectionSnapshot {
   repeated VectorRecord vectors = 2;
   int64 snapshot_timestamp = 3;
   string snapshot_version = 4;
+}
+
+// =============================================================================
+// ProximaRecord Schema Configuration (for v1 API compatibility)
+// =============================================================================
+
+// Record schema configuration for collection
+message RecordSchemaConfig {
+  string schema_id = 1;              // Reference to schema in catalog
+  string schema_version = 2;         // Schema version
+  SchemaEnforcement enforcement = 3; // How strictly to enforce schema
+  bool auto_evolve = 4;              // Allow automatic schema evolution
+  repeated TypedColumnConfig columns = 5;
+}
+
+// Schema enforcement mode
+enum SchemaEnforcement {
+  SCHEMA_ENFORCEMENT_UNSPECIFIED = 0;
+  SCHEMA_STRICT = 1;     // All fields must match schema
+  SCHEMA_FLEXIBLE = 2;   // Schema on read, no validation
+  SCHEMA_HYBRID = 3;     // Core fields enforced, extras allowed
+}
+
+// Typed column configuration
+message TypedColumnConfig {
+  string name = 1;
+  FilterableDataType data_type = 2;
+  bool nullable = 3;
+  bool indexed = 4;
+  bool filterable = 5;
+
+  // Validation constraints
+  optional uint32 max_length = 10;
+  optional int64 min_value = 11;
+  optional int64 max_value = 12;
+  optional string regex_pattern = 13;
+  optional string default_value = 14;
+
+  // TEXT-specific
+  optional TextStorage text_storage = 20;
+  optional bool fulltext_indexed = 21;
+}
+
+// TEXT storage strategy
+enum TextStorage {
+  TEXT_STORAGE_UNSPECIFIED = 0;
+  TEXT_STORAGE_INLINE = 1;    // In main Parquet column (<4KB)
+  TEXT_STORAGE_CHUNKED = 2;   // Split into chunks with embeddings
+  TEXT_STORAGE_SIDECAR = 3;   // Separate sidecar file
+  TEXT_STORAGE_ADAPTIVE = 4;  // Auto-select based on size
+}
+
+// Detailed TEXT column storage configuration
+message TextStorageConfig {
+  // Column name this config applies to
+  string column_name = 1;
+
+  // Storage strategy
+  TextStorage strategy = 2;
+
+  // Thresholds for adaptive strategy (bytes)
+  uint32 inline_threshold = 3;    // Default: 4096 (4KB)
+  uint32 chunked_threshold = 4;   // Default: 1048576 (1MB)
+
+  // Chunked storage options (for RAG)
+  uint32 chunk_size = 5;          // Characters per chunk, default: 512
+  bool generate_chunk_embeddings = 6;  // Generate embeddings per chunk
+  string embedding_model = 7;     // Model for chunk embeddings
+
+  // N-gram bloom filter for CONTAINS queries
+  bool enable_ngram_bloom = 8;    // Enable bloom filter acceleration
+  uint32 ngram_size = 9;          // N-gram size, default: 3
+
+  // Sidecar storage options
+  string sidecar_base_path = 10;  // Base path for sidecar files
+  TextCompression sidecar_compression = 11;
+
+  // Limits
+  uint64 max_text_size = 12;      // Max text size in bytes (0 = unlimited)
+
+  // Full-text search options
+  bool enable_fulltext_index = 13;
+  string fulltext_analyzer = 14;  // Analyzer for full-text indexing
+}
+
+// Compression for sidecar TEXT files
+enum TextCompression {
+  TEXT_COMPRESSION_UNSPECIFIED = 0;
+  TEXT_COMPRESSION_NONE = 1;
+  TEXT_COMPRESSION_LZ4 = 2;
+  TEXT_COMPRESSION_ZSTD = 3;
 }
