@@ -341,6 +341,218 @@ impl<'a> CollectionHandle<'a> {
         let client = self.client.expect("Client reference required");
         client.delete_collection(&self.name).await
     }
+
+    /// Start building an update operation for a vector
+    pub fn update(&self, id: &str) -> UpdateBuilder<'a> {
+        #[cfg(feature = "client")]
+        {
+            UpdateBuilder::new_client(
+                self.client.expect("Client reference required"),
+                &self.name,
+                id,
+            )
+        }
+        #[cfg(all(feature = "embedded", not(feature = "client")))]
+        {
+            UpdateBuilder::new_embedded(
+                self.db.expect("Embedded DB reference required"),
+                &self.name,
+                id,
+            )
+        }
+    }
+
+    /// Delete a vector by ID
+    #[cfg(feature = "client")]
+    pub async fn delete_vector(&self, id: &str) -> Result<()> {
+        let client = self.client.expect("Client reference required");
+        let url = format!(
+            "{}/api/v1/collections/{}/vectors/{}",
+            client.url(),
+            self.name,
+            id
+        );
+        client.delete::<serde_json::Value>(&url).await?;
+        Ok(())
+    }
+
+    /// Delete multiple vectors by IDs
+    #[cfg(feature = "client")]
+    pub async fn delete_vectors(&self, ids: Vec<String>) -> Result<usize> {
+        let client = self.client.expect("Client reference required");
+        let request = DeleteVectorsRequest {
+            collection: self.name.clone(),
+            ids,
+        };
+        let url = format!(
+            "{}/api/v1/collections/{}/vectors/delete",
+            client.url(),
+            self.name
+        );
+        let response: DeleteVectorsResponse = client.post(&url, &request).await?;
+        Ok(response.deleted_count)
+    }
+
+    /// Get a vector by ID
+    #[cfg(feature = "client")]
+    pub async fn get_vector(&self, id: &str) -> Result<Option<VectorRecord>> {
+        let client = self.client.expect("Client reference required");
+        let url = format!(
+            "{}/api/v1/collections/{}/vectors/{}",
+            client.url(),
+            self.name,
+            id
+        );
+        match client.get::<VectorRecord>(&url).await {
+            Ok(record) => Ok(Some(record)),
+            Err(ProximaError::Network(crate::error::NetworkError::HttpError {
+                status: 404,
+                ..
+            })) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Check if a vector exists
+    #[cfg(feature = "client")]
+    pub async fn exists(&self, id: &str) -> Result<bool> {
+        Ok(self.get_vector(id).await?.is_some())
+    }
+}
+
+/// Builder for update operations
+///
+/// # Example
+///
+/// ```rust,ignore
+/// collection.update("vec_123")
+///     .vector(&new_embedding)
+///     .meta("updated_at", "2024-01-15")
+///     .execute()
+///     .await?;
+/// ```
+pub struct UpdateBuilder<'a> {
+    #[cfg(feature = "client")]
+    client: Option<&'a crate::client::ProximaClient>,
+    #[cfg(feature = "embedded")]
+    db: Option<&'a crate::embedded::ProximaDB>,
+    collection: String,
+    id: String,
+    vector: Option<Vec<f32>>,
+    metadata: HashMap<String, serde_json::Value>,
+    replace_metadata: bool,
+}
+
+impl<'a> UpdateBuilder<'a> {
+    /// Create a new update builder (client mode)
+    #[cfg(feature = "client")]
+    pub fn new_client(
+        client: &'a crate::client::ProximaClient,
+        collection: &str,
+        id: &str,
+    ) -> Self {
+        Self {
+            client: Some(client),
+            #[cfg(feature = "embedded")]
+            db: None,
+            collection: collection.to_string(),
+            id: id.to_string(),
+            vector: None,
+            metadata: HashMap::new(),
+            replace_metadata: false,
+        }
+    }
+
+    /// Create a new update builder (embedded mode)
+    #[cfg(feature = "embedded")]
+    pub fn new_embedded(
+        db: &'a crate::embedded::ProximaDB,
+        collection: &str,
+        id: &str,
+    ) -> Self {
+        Self {
+            #[cfg(feature = "client")]
+            client: None,
+            db: Some(db),
+            collection: collection.to_string(),
+            id: id.to_string(),
+            vector: None,
+            metadata: HashMap::new(),
+            replace_metadata: false,
+        }
+    }
+
+    /// Set a new vector
+    pub fn vector(mut self, vector: &[f32]) -> Self {
+        self.vector = Some(vector.to_vec());
+        self
+    }
+
+    /// Set metadata from JSON value (merges with existing)
+    pub fn metadata(mut self, metadata: serde_json::Value) -> Self {
+        if let serde_json::Value::Object(map) = metadata {
+            for (k, v) in map {
+                self.metadata.insert(k, v);
+            }
+        }
+        self
+    }
+
+    /// Set a single metadata field
+    pub fn meta(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
+
+    /// Replace all metadata instead of merging
+    pub fn replace_metadata(mut self, replace: bool) -> Self {
+        self.replace_metadata = replace;
+        self
+    }
+
+    /// Execute the update (async, client mode)
+    #[cfg(feature = "client")]
+    pub async fn execute(self) -> Result<()> {
+        let client = self
+            .client
+            .ok_or_else(|| ProximaError::Internal("No client reference".to_string()))?;
+
+        let request = UpdateVectorRequest {
+            collection: self.collection.clone(),
+            id: self.id,
+            vector: self.vector,
+            metadata: if self.metadata.is_empty() {
+                None
+            } else {
+                Some(self.metadata)
+            },
+            replace_metadata: self.replace_metadata,
+        };
+
+        let url = format!(
+            "{}/api/v1/collections/{}/vectors/update",
+            client.url(),
+            self.collection
+        );
+        let _response: UpdateVectorResponse = client.post(&url, &request).await?;
+        Ok(())
+    }
+
+    /// Execute the update (sync, embedded mode)
+    #[cfg(feature = "embedded")]
+    pub fn execute_sync(self) -> Result<()> {
+        let db = self
+            .db
+            .ok_or_else(|| ProximaError::Internal("No embedded database reference".to_string()))?;
+
+        db.update_internal(
+            &self.collection,
+            self.id,
+            self.vector,
+            self.metadata,
+            self.replace_metadata,
+        )
+    }
 }
 
 /// Collection information
@@ -628,17 +840,50 @@ struct InsertRequest {
     vectors: Vec<VectorRecord>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct VectorRecord {
-    id: String,
-    vector: Vec<f32>,
+/// A vector record with ID, vector data, and metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorRecord {
+    /// Vector ID
+    pub id: String,
+    /// Vector data
+    pub vector: Vec<f32>,
+    /// Associated metadata
     #[serde(default)]
-    metadata: HashMap<String, serde_json::Value>,
+    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
 struct InsertResponse {
     inserted_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct UpdateVectorRequest {
+    collection: String,
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vector: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    replace_metadata: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateVectorResponse {
+    #[allow(dead_code)]
+    success: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteVectorsRequest {
+    collection: String,
+    ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteVectorsResponse {
+    deleted_count: usize,
 }
 
 #[cfg(test)]

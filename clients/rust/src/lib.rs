@@ -132,12 +132,90 @@
 //!     .execute()
 //!     .await?;
 //! ```
+//!
+//! # Filtering
+//!
+//! ProximaDB provides a fluent filter builder for complex query filtering:
+//!
+//! ```rust,ignore
+//! use proximadb_sdk::FilterBuilder;
+//!
+//! // Simple equality filter
+//! let filter = FilterBuilder::new()
+//!     .eq("category", "tech")
+//!     .build();
+//!
+//! // Range filter
+//! let filter = FilterBuilder::new()
+//!     .gte("price", 100)
+//!     .lte("price", 500)
+//!     .build();
+//!
+//! // Complex filter with multiple conditions
+//! let filter = FilterBuilder::new()
+//!     .eq("status", "active")
+//!     .in_list("category", vec!["tech", "science"])
+//!     .range("rating", 3.0, 5.0)
+//!     .build();
+//!
+//! // Use with search
+//! let results = client.collection("items")
+//!     .search()
+//!     .vector(&query)
+//!     .with_filter(filter)
+//!     .execute()
+//!     .await?;
+//! ```
+//!
+//! # Graph Operations
+//!
+//! ProximaDB includes native graph database capabilities:
+//!
+//! ```rust,ignore
+//! use proximadb_sdk::{ProximaClient, GraphNode, GraphEdge};
+//!
+//! // Create a graph
+//! client.create_graph("knowledge")
+//!     .execute()
+//!     .await?;
+//!
+//! // Add nodes with fluent API
+//! client.graph("knowledge")
+//!     .add_node()
+//!     .id("person_1")
+//!     .label("Person")
+//!     .property("name", "Alice")
+//!     .execute()
+//!     .await?;
+//!
+//! // Add edges
+//! client.graph("knowledge")
+//!     .add_edge()
+//!     .from("person_1")
+//!     .to("person_2")
+//!     .relationship("KNOWS")
+//!     .execute()
+//!     .await?;
+//!
+//! // Traverse the graph
+//! let results = client.graph("knowledge")
+//!     .traverse()
+//!     .start("person_1")
+//!     .relationship("KNOWS")
+//!     .max_depth(3)
+//!     .execute()
+//!     .await?;
+//! ```
 
 // Module declarations
 pub mod error;
+pub mod filter;
 
 #[cfg(feature = "client")]
 pub mod client;
+
+#[cfg(feature = "client")]
+pub mod graph;
 
 pub mod collection;
 pub mod search;
@@ -152,14 +230,27 @@ pub use error::{
 };
 
 #[cfg(feature = "client")]
-pub use client::{ClientBuilder, ClientConfig, CollectionInfo, HealthStatus, ProximaClient};
+pub use client::{ClientBuilder, ClientConfig, CollectionInfo, GraphInfo, HealthStatus, ProximaClient};
 
 pub use collection::{
     CollectionBuilder, CollectionHandle, DistanceMetric, IndexType, InsertBuilder,
-    InsertBuilderBatch, InsertBuilderWithId, StorageEngine,
+    InsertBuilderBatch, InsertBuilderWithId, StorageEngine, UpdateBuilder, VectorRecord,
 };
 
 pub use search::{SearchBuilder, SearchMode, SearchResult};
+
+// Filter builder exports
+pub use filter::{
+    and_filters, eq, in_list, ne, or_filters, range, Filter, FilterBuilder, FilterCondition,
+    FilterGroup, FilterNode, FilterOp, LogicalOp,
+};
+
+// Graph exports (client mode only)
+#[cfg(feature = "client")]
+pub use graph::{
+    EdgeBuilder, GraphBuilder, GraphEdge, GraphHandle, GraphNode, NodeBuilder, TraversalBuilder,
+    TraversalDirection, TraversalResult,
+};
 
 #[cfg(feature = "embedded")]
 pub use embedded::{EmbeddedBuilder, EmbeddedConfig, ProximaDB, StorageLocation, StorageStats};

@@ -226,6 +226,34 @@ impl ProximaClient {
         Ok(())
     }
 
+    /// Get a handle to a graph for fluent operations
+    #[cfg(feature = "client")]
+    pub fn graph(&self, name: &str) -> crate::graph::GraphHandle<'_> {
+        crate::graph::GraphHandle::new(self, name)
+    }
+
+    /// Create a graph builder
+    #[cfg(feature = "client")]
+    pub fn create_graph(&self, name: &str) -> crate::graph::GraphBuilder<'_> {
+        crate::graph::GraphBuilder::new(self, name)
+    }
+
+    /// Delete a graph
+    #[cfg(feature = "client")]
+    pub async fn delete_graph(&self, name: &str) -> Result<()> {
+        let url = format!("{}/api/v1/graphs/{}", self.inner.config.url, name);
+        self.delete::<serde_json::Value>(&url).await?;
+        Ok(())
+    }
+
+    /// List all graphs
+    #[cfg(feature = "client")]
+    pub async fn list_graphs(&self) -> Result<Vec<GraphInfo>> {
+        let url = format!("{}/api/v1/graphs", self.inner.config.url);
+        let response: ListGraphsResponse = self.get(&url).await?;
+        Ok(response.graphs)
+    }
+
     /// List all collections
     #[cfg(feature = "client")]
     pub async fn list_collections(&self) -> Result<Vec<CollectionInfo>> {
@@ -353,6 +381,27 @@ pub struct CollectionInfo {
 #[derive(Debug, Deserialize)]
 struct ListCollectionsResponse {
     collections: Vec<CollectionInfo>,
+}
+
+/// Graph information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphInfo {
+    /// Graph name
+    pub name: String,
+    /// Number of nodes
+    #[serde(default)]
+    pub node_count: u64,
+    /// Number of edges
+    #[serde(default)]
+    pub edge_count: u64,
+    /// Graph description
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListGraphsResponse {
+    graphs: Vec<GraphInfo>,
 }
 
 #[cfg(test)]
