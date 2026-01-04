@@ -3,16 +3,14 @@
 //! Provides real-time security monitoring, threat detection, and automated alerting
 //! for comprehensive security posture management.
 
-use super::unified_rbac::{UnifiedPermission, UnifiedUserContext};
-use crate::audit::logger::AuditLogger;
+use super::unified_rbac::UnifiedPermission;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
 
 /// Security monitoring service
 pub struct SecurityMonitoringService {

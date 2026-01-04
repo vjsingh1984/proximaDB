@@ -80,7 +80,6 @@
 //! - **ProximaBlocks are now accessible via Arrow Flight** for external tool access
 
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::{debug, info};

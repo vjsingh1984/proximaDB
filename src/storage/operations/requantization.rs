@@ -142,7 +142,7 @@ enum QualityTrend {
     Improving,
     Stable,
     Degrading,
-    Rapid_Degradation,
+    RapidDegradation,
 }
 
 /// Data distribution analyzer for monitoring quantization effectiveness
@@ -339,7 +339,7 @@ impl RequantizationManager {
                 return true;
             }
 
-            if matches!(quality.degradation_trend, QualityTrend::Rapid_Degradation) {
+            if matches!(quality.degradation_trend, QualityTrend::RapidDegradation) {
                 return true;
             }
         }

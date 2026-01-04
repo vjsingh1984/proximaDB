@@ -10,7 +10,6 @@
 //! on the critical path.
 
 use super::histograms::{HistogramStats, LatencyHistogram, RollingWindow};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
