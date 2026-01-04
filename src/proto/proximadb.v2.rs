@@ -3,7 +3,6 @@
 /// TypedValue: Strongly-typed value wrapper
 ///
 /// Used in typed_fields map for schema-validated columns.
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedValue {
     #[prost(enumeration = "ColumnDataType", tag = "1")]
@@ -205,7 +204,6 @@ pub struct SparseVector {
 }
 /// # =============================================================================
 /// TypedColumn: Column definition with validation constraints
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedColumn {
     #[prost(string, tag = "1")]
@@ -293,7 +291,6 @@ pub struct TypedColumn {
 }
 /// # =============================================================================
 /// RecordSchema: Schema definition with enforcement mode
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RecordSchema {
     /// UUID for this schema version
@@ -350,7 +347,6 @@ pub struct SchemaEvolutionRule {
 }
 /// # =============================================================================
 /// TextField: Dedicated TEXT storage with strategy hints
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TextField {
     #[prost(string, tag = "1")]
@@ -375,7 +371,6 @@ pub struct TextField {
 /// * Dedicated TEXT fields for chunked text storage
 /// * Schema enforcement with catalog integration
 /// * Full backward compatibility via flexible_fields
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProximaRecord {
     /// Core identity
@@ -453,7 +448,6 @@ pub struct ProximaRecord {
 }
 /// # =============================================================================
 /// Batch operations for ProximaRecord
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProximaRecordBatch {
     #[prost(string, tag = "1")]
@@ -693,7 +687,6 @@ pub struct EvolveSchemaResponse {
 ///
 /// Extends FilterableDataType with enterprise-grade types for OLAP/OLTP workloads.
 /// Each type maps to specific Arrow DataType for columnar storage.
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ColumnDataType {
@@ -856,7 +849,6 @@ impl ColumnDataType {
     }
 }
 /// Schema enforcement modes
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum SchemaEnforcementMode {
@@ -936,7 +928,6 @@ impl SchemaEvolutionType {
     }
 }
 /// TEXT storage strategies
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum TextStorageStrategy {
@@ -976,7 +967,6 @@ impl TextStorageStrategy {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum BatchWriteMode {

@@ -263,10 +263,24 @@ pub mod proximadb_cluster_v1 {
     pub use super::cluster::v1::*;
 }
 
-// NOTE: V2 proto definitions for ProximaRecord are in proto/proximadb/v2/record.proto
-// but not compiled yet. The internal representation uses native Rust types in
-// src/core/types/mod.rs which have proper serde derives. V2 proto can be added
-// later for REST/gRPC API versioning (requires custom serde for TypedValue oneof).
+// V2 proto definitions for ProximaRecord with rich type system
+// These are used for the V2 gRPC API with typed fields and schema support
+pub mod v2 {
+    //! V2 proto module for ProximaRecord and related types
+    //!
+    //! The V2 API introduces:
+    //! - ProximaRecord with typed fields (TEXT, INTEGER, FLOAT, DECIMAL, UUID, etc.)
+    //! - Schema enforcement (STRICT, FLEXIBLE, HYBRID modes)
+    //! - Dedicated TEXT column storage with chunking support
+    //! - Typed filtering with range, equality, and CONTAINS operators
+    include!("../proto/proximadb.v2.rs");
+}
+
+// Re-export V2 types at the expected location (for convenience)
+pub mod proximadb_v2 {
+    //! Re-export of V2 proto types for gRPC services
+    pub use super::v2::*;
+}
 
 // Custom serde implementations for oneof types
 pub mod serde_impls;

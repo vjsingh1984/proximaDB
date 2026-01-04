@@ -4,8 +4,13 @@
 // you may not use this file except in compliance with the License.
 
 //! gRPC protocol implementation with thin handlers
+//!
+//! ## Module Organization
+//!
+//! - **V1 Services** (root level): Original gRPC services for vector, collection, graph operations
+//! - **V2 Services** (`v2/`): New V2 API with ProximaRecord, typed fields, and schema support
 
-// pub mod v1; // Removed - not needed
+// V1 services (original API)
 pub mod collection_service;
 pub mod document_service;
 pub mod entity_service;
@@ -14,6 +19,9 @@ pub mod observability_service;
 pub mod sql_service;
 pub mod streaming_service;
 pub mod vector_service;
+
+// V2 services (new API with ProximaRecord support)
+pub mod v2;
 
 // Re-export the entity service for SKS
 pub use entity_service::EntityServiceImpl;
@@ -24,3 +32,5 @@ pub use document_service::DocumentServiceImpl;
 pub use observability_service::ObservabilityServiceImpl;
 // Re-export streaming service
 pub use streaming_service::StreamingServiceImpl;
+// Re-export V2 services
+pub use v2::ProximaRecordServiceImpl;
