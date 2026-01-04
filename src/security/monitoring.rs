@@ -3,16 +3,16 @@
 //! Provides real-time security monitoring, threat detection, and automated alerting
 //! for comprehensive security posture management.
 
-use super::unified_rbac::{UnifiedUserContext, UnifiedPermission};
+use super::unified_rbac::{UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
 
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use std::collections::{HashMap, VecDeque};
-use chrono::{DateTime, Utc, Duration};
-use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error, debug};
+use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
 /// Security monitoring service
 pub struct SecurityMonitoringService {
@@ -103,7 +103,9 @@ impl SecurityMetricsCollector {
             return;
         }
 
-        let mut metrics = self.auth_metrics.entry(user_id.to_string())
+        let mut metrics = self
+            .auth_metrics
+            .entry(user_id.to_string())
             .or_insert_with(|| AuthenticationMetrics::new());
 
         if success {
@@ -114,7 +116,10 @@ impl SecurityMetricsCollector {
         }
 
         // Track auth method usage
-        *metrics.auth_methods.entry(auth_method.to_string()).or_insert(0) += 1;
+        *metrics
+            .auth_methods
+            .entry(auth_method.to_string())
+            .or_insert(0) += 1;
 
         // Track login sources
         if let Some(ip) = source_ip {
@@ -133,7 +138,9 @@ impl SecurityMetricsCollector {
             return;
         }
 
-        let mut metrics = self.authz_metrics.entry(user_id.to_string())
+        let mut metrics = self
+            .authz_metrics
+            .entry(user_id.to_string())
             .or_insert_with(|| AuthorizationMetrics::new());
 
         metrics.permission_checks += 1;
@@ -144,14 +151,14 @@ impl SecurityMetricsCollector {
 
         // Track sensitive operations
         match permission {
-            UnifiedPermission::SystemAdmin |
-            UnifiedPermission::TenantAdmin |
-            UnifiedPermission::ConfigureSystem => {
+            UnifiedPermission::SystemAdmin
+            | UnifiedPermission::TenantAdmin
+            | UnifiedPermission::ConfigureSystem => {
                 metrics.admin_operations += 1;
             }
-            UnifiedPermission::RiskDataAccess |
-            UnifiedPermission::FinancialDataAccess |
-            UnifiedPermission::ComplianceDataAccess => {
+            UnifiedPermission::RiskDataAccess
+            | UnifiedPermission::FinancialDataAccess
+            | UnifiedPermission::ComplianceDataAccess => {
                 metrics.sensitive_data_access += 1;
             }
             _ => {}
@@ -290,7 +297,7 @@ pub struct ThreatDetectionRule {
 }
 
 /// Threat alert
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ThreatAlert {
     pub alert_id: String,
     pub severity: AlertSeverity,
@@ -304,7 +311,7 @@ pub struct ThreatAlert {
 }
 
 /// Alert severity levels
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum AlertSeverity {
     Low,
     Medium,
@@ -393,7 +400,8 @@ impl ThreatDetectionEngine {
             high_severity_alerts: 0,
             blocked_ips: 0,
             suspicious_users: 0,
-            analysis_window_start: Utc::now() - Duration::minutes(self.config.analysis_window_minutes as i64),
+            analysis_window_start: Utc::now()
+                - Duration::minutes(self.config.analysis_window_minutes as i64),
             analysis_generated_at: Utc::now(),
         }
     }
@@ -409,7 +417,8 @@ impl SecurityAlertManager {
     }
 
     async fn get_active_alerts(&self) -> Vec<ThreatAlert> {
-        self.active_alerts.iter()
+        self.active_alerts
+            .iter()
             .map(|entry| entry.value().clone())
             .collect()
     }
