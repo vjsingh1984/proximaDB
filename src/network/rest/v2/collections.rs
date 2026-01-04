@@ -298,14 +298,18 @@ pub async fn create_collection_v2(
 
             // Validate decimal precision/scale
             if column.data_type == "decimal" {
-                if column.precision.is_none() || column.scale.is_none() {
-                    return Err(ApiError::InvalidArgument(format!(
-                        "Column '{}' with type 'decimal' requires precision and scale",
+                let precision = column.precision.ok_or_else(|| {
+                    ApiError::InvalidArgument(format!(
+                        "Column '{}' with type 'decimal' requires precision",
                         column.name
-                    )));
-                }
-                let precision = column.precision.unwrap();
-                let scale = column.scale.unwrap();
+                    ))
+                })?;
+                let scale = column.scale.ok_or_else(|| {
+                    ApiError::InvalidArgument(format!(
+                        "Column '{}' with type 'decimal' requires scale",
+                        column.name
+                    ))
+                })?;
                 if precision == 0 || precision > 38 {
                     return Err(ApiError::InvalidArgument(format!(
                         "Column '{}': decimal precision must be between 1 and 38",
