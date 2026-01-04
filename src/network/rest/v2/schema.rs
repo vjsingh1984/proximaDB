@@ -81,7 +81,7 @@ pub struct SchemaResponse {
 /// - `500 Internal Server Error`: Retrieval failed
 pub async fn get_schema(
     Path(collection_id): Path<String>,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> ApiResult<Json<SchemaResponse>> {
     debug!("V2 API: Getting schema for collection '{}'", collection_id);
 
@@ -91,20 +91,163 @@ pub async fn get_schema(
         ));
     }
 
-    // Placeholder implementation
-    // TODO: Implement actual schema retrieval
-    //
-    // Implementation steps:
-    // 1. Verify collection exists
-    // 2. Check if ProximaRecord is enabled
-    // 3. Load schema from metadata store
-    // 4. Return schema with version info
+    // Step 1: Verify collection exists and get metadata
+    let collection_request = crate::proto::proximadb_v1::CollectionRequest {
+        operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
 
-    // For now, return not found since this is a placeholder
-    Err(ApiError::CollectionNotFound(format!(
-        "Schema not found for collection '{}'",
-        collection_id
-    )))
+    let collection_response = state
+        .unified_handlers
+        .handle_collection_operation(collection_request)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = collection_response.collection.ok_or_else(|| {
+        ApiError::CollectionNotFound(collection_id.clone())
+    })?;
+
+    let config = collection.config.ok_or_else(|| {
+        ApiError::Internal("Collection has no configuration".to_string())
+    })?;
+
+    // Step 2: Check if ProximaRecord is enabled
+    let proxima_record_enabled = config.enable_proxima_record.unwrap_or(false);
+
+    // Step 3: Load schema from collection metadata
+    let record_schema_config = config.record_schema;
+
+    // Convert stored schema to response format
+    let (schema_id, schema_version, parent_schema_id, schema_def) =
+        if let Some(ref schema_config) = record_schema_config {
+            // We have a schema configuration stored
+            let schema_id = if schema_config.schema_id.is_empty() {
+                // Generate a deterministic ID based on collection
+                format!("schema_{}", collection_id)
+            } else {
+                schema_config.schema_id.clone()
+            };
+
+            let version = if schema_config.schema_version.is_empty() {
+                "1.0.0".to_string()
+            } else {
+                schema_config.schema_version.clone()
+            };
+
+            // Build schema definition from text_columns if available
+            let columns: Vec<ColumnDefinition> = config.text_columns.iter()
+                .map(|col_name| ColumnDefinition {
+                    name: col_name.clone(),
+                    data_type: "text".to_string(),
+                    nullable: Some(true),
+                    indexed: Some(false),
+                    filterable: Some(true),
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                })
+                .collect();
+
+            // Also add columns from text_storage_configs
+            let mut all_columns = columns;
+            for text_config in &config.text_storage_configs {
+                if !all_columns.iter().any(|c| c.name == text_config.column_name) {
+                    all_columns.push(ColumnDefinition {
+                        name: text_config.column_name.clone(),
+                        data_type: "text_large".to_string(),
+                        nullable: Some(true),
+                        indexed: Some(false),
+                        filterable: Some(false),
+                        max_length: Some(text_config.chunk_size),
+                        precision: None,
+                        scale: None,
+                        vector_dimension: None,
+                    });
+                }
+            }
+
+            // Map enforcement level from proto
+            let enforcement = match schema_config.enforcement {
+                1 => "strict",
+                2 => "flexible",
+                3 => "hybrid",
+                _ => "hybrid",
+            };
+
+            let schema_def = SchemaDefinition {
+                columns: all_columns,
+                enforcement: Some(enforcement.to_string()),
+                allow_additional_fields: Some(schema_config.auto_evolve),
+            };
+
+            (schema_id, version, None, schema_def)
+        } else if proxima_record_enabled {
+            // ProximaRecord enabled but no explicit schema - create default
+            let schema_id = format!("schema_{}", collection_id);
+            let columns: Vec<ColumnDefinition> = config.text_columns.iter()
+                .map(|col_name| ColumnDefinition {
+                    name: col_name.clone(),
+                    data_type: "text".to_string(),
+                    nullable: Some(true),
+                    indexed: Some(false),
+                    filterable: Some(true),
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                })
+                .collect();
+
+            let schema_def = SchemaDefinition {
+                columns,
+                enforcement: Some("hybrid".to_string()),
+                allow_additional_fields: Some(true),
+            };
+
+            (schema_id, "1.0.0".to_string(), None, schema_def)
+        } else {
+            // No schema defined and ProximaRecord not enabled
+            return Err(ApiError::CollectionNotFound(format!(
+                "No schema defined for collection '{}'. Enable ProximaRecord to use schemas.",
+                collection_id
+            )));
+        };
+
+    // Step 4: Return schema with version info
+    let response = SchemaResponse {
+        schema_id,
+        schema_version,
+        collection_id: collection_id.clone(),
+        schema: schema_def,
+        created_at: chrono::DateTime::from_timestamp(collection.created_at / 1000, 0)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+        updated_at: if collection.updated_at != collection.created_at {
+            chrono::DateTime::from_timestamp(collection.updated_at / 1000, 0)
+                .map(|dt| dt.to_rfc3339())
+        } else {
+            None
+        },
+        parent_schema_id,
+    };
+
+    info!(
+        "V2 API: Retrieved schema '{}' v{} for collection '{}'",
+        response.schema_id, response.schema_version, collection_id
+    );
+
+    Ok(Json(response))
 }
 
 /// Request to update schema
@@ -197,7 +340,7 @@ pub struct SchemaChange {
 /// - `500 Internal Server Error`: Update failed
 pub async fn update_schema(
     Path(collection_id): Path<String>,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(request): Json<UpdateSchemaRequest>,
 ) -> ApiResult<Json<UpdateSchemaResponse>> {
     info!("V2 API: Updating schema for collection '{}'", collection_id);
@@ -288,25 +431,348 @@ pub async fn update_schema(
         }
     }
 
-    // Placeholder implementation
-    // TODO: Implement actual schema update with evolution validation
-    //
-    // Implementation steps:
-    // 1. Load current schema
-    // 2. Compare with new schema for evolution rules:
-    //    - Check for removed columns (error if not force)
-    //    - Check for type changes (error unless compatible widening)
-    //    - Check new columns are nullable or have defaults
-    // 3. Generate schema diff and changes list
-    // 4. Create new schema version
-    // 5. Store updated schema with parent reference
-    // 6. Update collection metadata
+    // Step 1: Load current collection and schema
+    let collection_request = crate::proto::proximadb_v1::CollectionRequest {
+        operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
 
-    // For now, return not found since collection doesn't exist in placeholder
-    Err(ApiError::CollectionNotFound(format!(
-        "Collection '{}' not found",
-        collection_id
-    )))
+    let collection_response = state
+        .unified_handlers
+        .handle_collection_operation(collection_request)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = collection_response.collection.ok_or_else(|| {
+        ApiError::CollectionNotFound(collection_id.clone())
+    })?;
+
+    let mut config = collection.config.clone().ok_or_else(|| {
+        ApiError::Internal("Collection has no configuration".to_string())
+    })?;
+
+    // Get existing schema for evolution validation
+    let existing_schema = build_existing_schema(&config);
+
+    // Step 2: Validate schema evolution rules
+    let validation_result = validate_schema(schema, existing_schema.as_ref());
+
+    // Collect changes and warnings
+    let mut changes: Vec<SchemaChange> = Vec::new();
+    let mut warnings: Vec<String> = validation_result.warnings.clone();
+
+    // Check for evolution violations (unless force is set)
+    if !validation_result.valid && !force {
+        // Return conflict error with details about what's wrong
+        return Err(ApiError::Conflict(format!(
+            "Schema evolution validation failed: {}. Use 'force: true' to override.",
+            validation_result.errors.join("; ")
+        )));
+    }
+
+    // If force is set, add evolution errors as warnings
+    if !validation_result.valid && force {
+        for error in &validation_result.errors {
+            warnings.push(format!("FORCED: {}", error));
+        }
+    }
+
+    // Step 3: Generate schema diff and changes list
+    if let Some(ref existing) = existing_schema {
+        let existing_columns: std::collections::HashMap<&str, &ColumnDefinition> = existing
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
+
+        let new_columns: std::collections::HashMap<&str, &ColumnDefinition> = schema
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
+
+        // Detect added columns
+        for (name, col) in &new_columns {
+            if !existing_columns.contains_key(name) {
+                changes.push(SchemaChange {
+                    change_type: "ADD_COLUMN".to_string(),
+                    column: Some(name.to_string()),
+                    description: format!(
+                        "Added column '{}' with type '{}'",
+                        name, col.data_type
+                    ),
+                });
+            }
+        }
+
+        // Detect removed columns (only if force is set)
+        for (name, _) in &existing_columns {
+            if !new_columns.contains_key(name) {
+                changes.push(SchemaChange {
+                    change_type: "REMOVE_COLUMN".to_string(),
+                    column: Some(name.to_string()),
+                    description: format!("Removed column '{}'", name),
+                });
+            }
+        }
+
+        // Detect property changes
+        for (name, new_col) in &new_columns {
+            if let Some(existing_col) = existing_columns.get(name) {
+                // Check for type change
+                if existing_col.data_type != new_col.data_type {
+                    changes.push(SchemaChange {
+                        change_type: "CHANGE_TYPE".to_string(),
+                        column: Some(name.to_string()),
+                        description: format!(
+                            "Changed type of '{}' from '{}' to '{}'",
+                            name, existing_col.data_type, new_col.data_type
+                        ),
+                    });
+                }
+
+                // Check for indexed change
+                if existing_col.indexed != new_col.indexed {
+                    changes.push(SchemaChange {
+                        change_type: "CHANGE_INDEX".to_string(),
+                        column: Some(name.to_string()),
+                        description: format!(
+                            "Changed indexed status of '{}' from {:?} to {:?}",
+                            name, existing_col.indexed, new_col.indexed
+                        ),
+                    });
+                }
+
+                // Check for nullable change
+                if existing_col.nullable != new_col.nullable {
+                    changes.push(SchemaChange {
+                        change_type: "CHANGE_NULLABILITY".to_string(),
+                        column: Some(name.to_string()),
+                        description: format!(
+                            "Changed nullable status of '{}' from {:?} to {:?}",
+                            name, existing_col.nullable, new_col.nullable
+                        ),
+                    });
+                }
+            }
+        }
+
+        // Detect enforcement mode change
+        if existing.enforcement != schema.enforcement {
+            changes.push(SchemaChange {
+                change_type: "CHANGE_ENFORCEMENT".to_string(),
+                column: None,
+                description: format!(
+                    "Changed enforcement mode from {:?} to {:?}",
+                    existing.enforcement, schema.enforcement
+                ),
+            });
+        }
+    } else {
+        // No existing schema - this is the initial schema
+        for col in &schema.columns {
+            changes.push(SchemaChange {
+                change_type: "ADD_COLUMN".to_string(),
+                column: Some(col.name.clone()),
+                description: format!("Added column '{}' with type '{}'", col.name, col.data_type),
+            });
+        }
+    }
+
+    // Step 4: Create new schema version
+    let previous_schema_id = config
+        .record_schema
+        .as_ref()
+        .map(|s| s.schema_id.clone())
+        .unwrap_or_else(|| format!("schema_{}_v0", collection_id));
+
+    let new_schema_id = format!("schema_{}_{}", collection_id, uuid::Uuid::new_v4());
+    let new_version = increment_version(
+        config
+            .record_schema
+            .as_ref()
+            .map(|s| s.schema_version.as_str())
+            .unwrap_or("0.0.0"),
+    );
+
+    // Step 5: Build and store updated schema configuration
+    // Map enforcement mode to proto enum
+    let enforcement_value = match schema.enforcement.as_deref() {
+        Some("strict") => 1,   // SchemaEnforcement::Strict
+        Some("flexible") => 2, // SchemaEnforcement::Flexible
+        Some("hybrid") => 3,   // SchemaEnforcement::Hybrid
+        _ => 3,                // Default to hybrid
+    };
+
+    // Build text_columns from schema columns with text types
+    let text_columns: Vec<String> = schema
+        .columns
+        .iter()
+        .filter(|c| c.data_type == "text" || c.data_type == "text_large")
+        .map(|c| c.name.clone())
+        .collect();
+
+    // Build text_storage_configs for text_large columns
+    let text_storage_configs: Vec<crate::proto::proximadb_v1::TextStorageConfig> = schema
+        .columns
+        .iter()
+        .filter(|c| c.data_type == "text_large")
+        .map(|c| crate::proto::proximadb_v1::TextStorageConfig {
+            column_name: c.name.clone(),
+            strategy: 1, // TextStorage::Chunked
+            inline_threshold: 4096,
+            chunked_threshold: 1048576,
+            chunk_size: c.max_length.unwrap_or(512),
+            generate_chunk_embeddings: false,
+            embedding_model: String::new(),
+            enable_ngram_bloom: false,
+            ngram_size: 3,
+            sidecar_base_path: String::new(),
+            sidecar_compression: 0, // TextCompression::None
+            max_text_size: 0, // Unlimited
+            enable_fulltext_index: false,
+            fulltext_analyzer: String::new(),
+        })
+        .collect();
+
+    // Create the new record schema config
+    let new_record_schema = crate::proto::proximadb_v1::RecordSchemaConfig {
+        schema_id: new_schema_id.clone(),
+        schema_version: new_version.clone(),
+        enforcement: enforcement_value,
+        auto_evolve: schema.allow_additional_fields.unwrap_or(true),
+        columns: Vec::new(), // Column definitions are stored separately in text_columns/text_storage_configs
+    };
+
+    // Update the collection config
+    config.record_schema = Some(new_record_schema);
+    config.enable_proxima_record = Some(true);
+    config.text_columns = text_columns;
+    config.text_storage_configs = text_storage_configs;
+
+    // Step 6: Persist the updated collection
+    let update_request = crate::proto::proximadb_v1::CollectionRequest {
+        operation: crate::proto::proximadb_v1::CollectionOperation::CollectionUpdate as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: Some(config),
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+
+    state
+        .unified_handlers
+        .handle_collection_operation(update_request)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to update collection schema: {}", e)))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    info!(
+        "V2 API: Updated schema for collection '{}' to version '{}' with {} changes",
+        collection_id,
+        new_version,
+        changes.len()
+    );
+
+    Ok(Json(UpdateSchemaResponse {
+        schema_id: new_schema_id,
+        schema_version: new_version,
+        previous_schema_id,
+        changes,
+        warnings,
+        updated_at: now,
+    }))
+}
+
+/// Build existing schema from collection config
+fn build_existing_schema(config: &crate::proto::proximadb_v1::CollectionConfig) -> Option<SchemaDefinition> {
+    // If ProximaRecord is not enabled or no schema config, return None
+    if !config.enable_proxima_record.unwrap_or(false) && config.record_schema.is_none() {
+        return None;
+    }
+
+    // Build columns from text_columns and text_storage_configs
+    let mut columns: Vec<ColumnDefinition> = config
+        .text_columns
+        .iter()
+        .map(|col_name| ColumnDefinition {
+            name: col_name.clone(),
+            data_type: "text".to_string(),
+            nullable: Some(true),
+            indexed: Some(false),
+            filterable: Some(true),
+            max_length: None,
+            precision: None,
+            scale: None,
+            vector_dimension: None,
+        })
+        .collect();
+
+    // Add text_large columns from text_storage_configs
+    for text_config in &config.text_storage_configs {
+        if !columns.iter().any(|c| c.name == text_config.column_name) {
+            columns.push(ColumnDefinition {
+                name: text_config.column_name.clone(),
+                data_type: "text_large".to_string(),
+                nullable: Some(true),
+                indexed: Some(false),
+                filterable: Some(false),
+                max_length: Some(text_config.chunk_size),
+                precision: None,
+                scale: None,
+                vector_dimension: None,
+            });
+        }
+    }
+
+    // Get enforcement mode from record_schema if available
+    let enforcement = config.record_schema.as_ref().map(|schema_config| {
+        match schema_config.enforcement {
+            1 => "strict".to_string(),
+            2 => "flexible".to_string(),
+            3 => "hybrid".to_string(),
+            _ => "hybrid".to_string(),
+        }
+    });
+
+    let allow_additional = config
+        .record_schema
+        .as_ref()
+        .map(|s| s.auto_evolve)
+        .unwrap_or(true);
+
+    Some(SchemaDefinition {
+        columns,
+        enforcement,
+        allow_additional_fields: Some(allow_additional),
+    })
+}
+
+/// Increment semantic version (e.g., "1.0.0" -> "1.0.1")
+fn increment_version(current: &str) -> String {
+    let parts: Vec<&str> = current.split('.').collect();
+    if parts.len() == 3 {
+        if let (Ok(major), Ok(minor), Ok(patch)) = (
+            parts[0].parse::<u32>(),
+            parts[1].parse::<u32>(),
+            parts[2].parse::<u32>(),
+        ) {
+            return format!("{}.{}.{}", major, minor, patch + 1);
+        }
+    }
+    // Fallback: return 1.0.0
+    "1.0.0".to_string()
 }
 
 /// Schema validation result
