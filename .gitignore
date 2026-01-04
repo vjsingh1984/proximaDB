@@ -269,8 +269,10 @@ tests_new/
 obsolete/
 simple_wal_test
 
-# Test-generated WAL and metadata files
-metadata/
+# Test-generated WAL and metadata files (not source code)
+/metadata/
+**/test_*/metadata/
+**/data/metadata/
 segment_*/
 *.wal
 *.bcwal
