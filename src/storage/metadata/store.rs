@@ -497,6 +497,11 @@ impl MetadataStoreInterface for MetadataStore {
                     tags: versioned.tags.clone(),
                     owner: versioned.owner.clone(),
                     embedding_models: Vec::new(),
+                    // ProximaRecord schema configuration (NEW)
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 };
 
                 let stats = CollectionStats {
@@ -595,6 +600,11 @@ impl MetadataStoreInterface for MetadataStore {
                         tags: versioned.tags.clone(),
                         owner: versioned.owner.clone(),
                         embedding_models: Vec::new(),
+                        // ProximaRecord schema configuration (NEW)
+                        record_schema: None,
+                        enable_proxima_record: None,
+                        text_columns: vec![],
+                        text_storage_configs: vec![],
                     };
 
                     let stats = CollectionStats {

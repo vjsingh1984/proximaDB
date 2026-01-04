@@ -543,6 +543,331 @@ pub struct ColumnStatistics {
     pub bloom_filter_enabled: bool,
 }
 
+/// Typed column statistics for efficient predicate pushdown
+///
+/// Unlike ColumnStatistics which uses serde_json::Value, TypedColumnStatistics
+/// provides native typed statistics for each column type, enabling:
+/// - Zero-overhead predicate evaluation (no JSON parsing)
+/// - Type-specific statistics (e.g., ngram bloom for TEXT)
+/// - Efficient serialization (bincode, not JSON)
+///
+/// This is part of the ProximaRecord type system upgrade.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TypedColumnStatistics {
+    /// String column statistics
+    String(StringStats),
+    /// Integer column statistics (i64)
+    Integer(NumericStats<i64>),
+    /// Float column statistics (f64)
+    Float(NumericStats<f64>),
+    /// Decimal column statistics (i128 representation)
+    Decimal(DecimalStats),
+    /// Boolean column statistics
+    Boolean(BooleanStats),
+    /// Timestamp column statistics (microseconds since epoch)
+    Timestamp(TimestampStats),
+    /// TEXT column statistics (large text with storage strategy)
+    Text(TextStats),
+    /// UUID column statistics
+    Uuid(UuidStats),
+    /// Binary column statistics
+    Binary(BinaryStats),
+    /// Date column statistics (days since epoch)
+    Date(DateStats),
+    /// Time column statistics (microseconds since midnight)
+    Time(TimeStats),
+    /// GeoPoint column statistics
+    GeoPoint(GeoPointStats),
+    /// JSON column statistics
+    Json(JsonStats),
+    /// Array column statistics
+    Array(ArrayStats),
+}
+
+/// String column statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StringStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<String>,
+    pub max_value: Option<String>,
+    pub avg_length: f32,
+    pub max_length: u32,
+    pub total_bytes: u64,
+    pub bloom_filter_offset: Option<u64>,
+}
+
+/// Numeric statistics (generic over i64/f64)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NumericStats<T: Clone> {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<T>,
+    pub max_value: Option<T>,
+    pub sum: Option<T>,
+    /// Histogram buckets for cardinality estimation
+    pub histogram_buckets: Option<Vec<T>>,
+}
+
+/// Decimal statistics (128-bit precision)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecimalStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i128>,
+    pub max_value: Option<i128>,
+    pub precision: u8,
+    pub scale: u8,
+}
+
+/// Boolean statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BooleanStats {
+    pub null_count: u32,
+    pub true_count: u32,
+    pub false_count: u32,
+}
+
+/// Timestamp statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimestampStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i64>, // Microseconds since epoch
+    pub max_value: Option<i64>,
+    pub timezone: Option<String>,
+}
+
+/// TEXT column statistics for large text with storage strategy info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_length: f32,
+    pub max_length: u64,
+    pub total_bytes: u64,
+    /// Offset to n-gram bloom filter for CONTAINS queries
+    pub ngram_bloom_offset: Option<u64>,
+    /// Storage strategy used (Inline/Chunked/Sidecar)
+    pub storage_strategy: TextStorageStrategyStats,
+    /// Number of chunked records (if chunked storage used)
+    pub chunked_count: u32,
+    /// Sidecar file reference (if sidecar storage used)
+    pub sidecar_file: Option<String>,
+}
+
+/// TEXT storage strategy statistics
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub enum TextStorageStrategyStats {
+    #[default]
+    Inline,
+    Chunked,
+    Sidecar,
+    Mixed, // Block contains records with different strategies
+}
+
+/// UUID statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UuidStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    /// Bloom filter for exact match
+    pub bloom_filter_offset: Option<u64>,
+}
+
+/// Binary statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_size: f32,
+    pub max_size: u64,
+    pub total_bytes: u64,
+}
+
+/// Date statistics (days since epoch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DateStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i32>,
+    pub max_value: Option<i32>,
+}
+
+/// Time statistics (microseconds since midnight)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i64>,
+    pub max_value: Option<i64>,
+}
+
+/// GeoPoint statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoPointStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    /// Bounding box for spatial queries
+    pub min_latitude: Option<f64>,
+    pub max_latitude: Option<f64>,
+    pub min_longitude: Option<f64>,
+    pub max_longitude: Option<f64>,
+}
+
+/// JSON statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_size: f32,
+    pub max_depth: u32,
+    pub total_bytes: u64,
+}
+
+/// Array statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArrayStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_length: f32,
+    pub max_length: u32,
+    pub element_type: String, // Type name of array elements
+}
+
+impl TypedColumnStatistics {
+    /// Check if column has null values
+    pub fn has_nulls(&self) -> bool {
+        match self {
+            TypedColumnStatistics::String(s) => s.null_count > 0,
+            TypedColumnStatistics::Integer(s) => s.null_count > 0,
+            TypedColumnStatistics::Float(s) => s.null_count > 0,
+            TypedColumnStatistics::Decimal(s) => s.null_count > 0,
+            TypedColumnStatistics::Boolean(s) => s.null_count > 0,
+            TypedColumnStatistics::Timestamp(s) => s.null_count > 0,
+            TypedColumnStatistics::Text(s) => s.null_count > 0,
+            TypedColumnStatistics::Uuid(s) => s.null_count > 0,
+            TypedColumnStatistics::Binary(s) => s.null_count > 0,
+            TypedColumnStatistics::Date(s) => s.null_count > 0,
+            TypedColumnStatistics::Time(s) => s.null_count > 0,
+            TypedColumnStatistics::GeoPoint(s) => s.null_count > 0,
+            TypedColumnStatistics::Json(s) => s.null_count > 0,
+            TypedColumnStatistics::Array(s) => s.null_count > 0,
+        }
+    }
+
+    /// Get null count
+    pub fn null_count(&self) -> u32 {
+        match self {
+            TypedColumnStatistics::String(s) => s.null_count,
+            TypedColumnStatistics::Integer(s) => s.null_count,
+            TypedColumnStatistics::Float(s) => s.null_count,
+            TypedColumnStatistics::Decimal(s) => s.null_count,
+            TypedColumnStatistics::Boolean(s) => s.null_count,
+            TypedColumnStatistics::Timestamp(s) => s.null_count,
+            TypedColumnStatistics::Text(s) => s.null_count,
+            TypedColumnStatistics::Uuid(s) => s.null_count,
+            TypedColumnStatistics::Binary(s) => s.null_count,
+            TypedColumnStatistics::Date(s) => s.null_count,
+            TypedColumnStatistics::Time(s) => s.null_count,
+            TypedColumnStatistics::GeoPoint(s) => s.null_count,
+            TypedColumnStatistics::Json(s) => s.null_count,
+            TypedColumnStatistics::Array(s) => s.null_count,
+        }
+    }
+
+    /// Convert to legacy ColumnStatistics for backward compatibility
+    pub fn to_legacy(&self, name: &str) -> ColumnStatistics {
+        let (min_value, max_value) = match self {
+            TypedColumnStatistics::String(s) => (
+                s.min_value
+                    .as_ref()
+                    .map(|v| serde_json::Value::String(v.clone())),
+                s.max_value
+                    .as_ref()
+                    .map(|v| serde_json::Value::String(v.clone())),
+            ),
+            TypedColumnStatistics::Integer(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Float(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Decimal(s) => (
+                s.min_value.map(|v| serde_json::json!(v.to_string())),
+                s.max_value.map(|v| serde_json::json!(v.to_string())),
+            ),
+            TypedColumnStatistics::Timestamp(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Date(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Time(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            _ => (None, None),
+        };
+
+        ColumnStatistics {
+            name: name.to_string(),
+            null_count: self.null_count(),
+            distinct_count: self.get_distinct_count(),
+            min_value,
+            max_value,
+            avg_size_bytes: self.get_avg_size_bytes(),
+            bloom_filter_enabled: self.has_bloom_filter(),
+        }
+    }
+
+    fn get_distinct_count(&self) -> u32 {
+        match self {
+            TypedColumnStatistics::String(s) => s.distinct_count,
+            TypedColumnStatistics::Integer(s) => s.distinct_count,
+            TypedColumnStatistics::Float(s) => s.distinct_count,
+            TypedColumnStatistics::Decimal(s) => s.distinct_count,
+            TypedColumnStatistics::Timestamp(s) => s.distinct_count,
+            TypedColumnStatistics::Date(s) => s.distinct_count,
+            TypedColumnStatistics::Time(s) => s.distinct_count,
+            TypedColumnStatistics::Uuid(s) => s.distinct_count,
+            _ => 0,
+        }
+    }
+
+    fn get_avg_size_bytes(&self) -> u64 {
+        match self {
+            TypedColumnStatistics::String(s) => s.avg_length as u64,
+            TypedColumnStatistics::Text(s) => s.avg_length as u64,
+            TypedColumnStatistics::Binary(s) => s.avg_size as u64,
+            TypedColumnStatistics::Json(s) => s.avg_size as u64,
+            TypedColumnStatistics::Integer(_) => 8,
+            TypedColumnStatistics::Float(_) => 8,
+            TypedColumnStatistics::Decimal(_) => 16,
+            TypedColumnStatistics::Boolean(_) => 1,
+            TypedColumnStatistics::Timestamp(_) => 8,
+            TypedColumnStatistics::Date(_) => 4,
+            TypedColumnStatistics::Time(_) => 8,
+            TypedColumnStatistics::Uuid(_) => 16,
+            TypedColumnStatistics::GeoPoint(_) => 24,
+            TypedColumnStatistics::Array(s) => s.avg_length as u64,
+        }
+    }
+
+    fn has_bloom_filter(&self) -> bool {
+        match self {
+            TypedColumnStatistics::String(s) => s.bloom_filter_offset.is_some(),
+            TypedColumnStatistics::Uuid(s) => s.bloom_filter_offset.is_some(),
+            TypedColumnStatistics::Text(s) => s.ngram_bloom_offset.is_some(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ColumnData {
     String,
@@ -551,6 +876,15 @@ pub enum ColumnData {
     Boolean,
     Timestamp,
     Json,
+    // New types for ProximaRecord
+    Text,
+    Decimal,
+    Uuid,
+    Binary,
+    Date,
+    Time,
+    GeoPoint,
+    Array,
 }
 
 /// Quantization statistics

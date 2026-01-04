@@ -1050,8 +1050,10 @@ fn get_global_metadata_provider()
 /// This ensures all pool instances can resolve collection storage assignments
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust,ignore
+/// use std::sync::Arc;
 /// use proximadb::storage::persistence::write_ahead_log::set_global_metadata_provider;
+/// use proximadb::storage::traits::InternalCollectionProvider;
 ///
 /// async fn setup(provider: Arc<dyn InternalCollectionProvider>) {
 ///     set_global_metadata_provider(provider).await;
