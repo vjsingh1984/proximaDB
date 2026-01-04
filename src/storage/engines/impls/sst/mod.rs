@@ -250,6 +250,7 @@ pub mod manifest;
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
+pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;
 pub mod utils; // Tiered storage integration (opt-in)
@@ -279,6 +280,13 @@ pub use utils::{MemoryEstimate, SortingStats, SstableFileInfo, SstableFileUtils}
 
 // Tiering integration exports (opt-in feature)
 pub use tiering_integration::{SstTieringConfig, SstTieringIntegration, TieringIntegrationStatus};
+
+// TEXT column support exports
+pub use text_column_support::{
+    SstTextColumnProcessor, SstTextColumnReader, SstTextFilterEvaluator, SstTextSupport,
+    SstTextSupportBuilder, TextColumnBatchResult, TextColumnDefinition, TextColumnStats,
+    TextProcessingError,
+};
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::search::results::OptimizedSearchRecord;
@@ -709,9 +717,14 @@ pub fn get_centroid_fp32(fp16_centroid: &Option<Vec<u16>>, fp32_centroid: &[f32]
 // ============================================================================
 
 /// Index entry for fast key lookups in SSTable with hierarchical bloom filters
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IndexEntry {
+    /// First (minimum) key in this block - used for range lookups
     pub key: String,
+    /// Last (maximum) key in this block - enables proper B+ tree range queries
+    /// When a block contains multiple records, this allows correct key containment checks
+    #[serde(default)]
+    pub last_key: Option<String>,
     pub offset: u64,
     pub size: u32,
     pub block_id: u32,
@@ -785,9 +798,10 @@ impl BPlusTreeIndex {
 
         for (i, chunk) in entries.chunks(fanout).enumerate() {
             let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
+            // Use last_key from the last entry in chunk if available, otherwise fall back to key
             let end_key = chunk
                 .last()
-                .map(|e| e.key.clone())
+                .map(|e| e.last_key.clone().unwrap_or_else(|| e.key.clone()))
                 .unwrap_or_else(|| start_key.clone());
             leaves.push(BPlusLeaf {
                 start_key,
@@ -1018,13 +1032,26 @@ impl IndexEntry {
         use std::io::Write;
         let mut buffer = Vec::new();
 
-        // Write magic header
-        buffer.write_all(b"IDX1")?;
+        // Write magic header (upgraded to IDX2 for last_key support)
+        buffer.write_all(b"IDX2")?;
 
         // Write key
         let key_bytes = self.key.as_bytes();
         buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(key_bytes)?;
+
+        // Write last_key (new in IDX2)
+        match &self.last_key {
+            Some(lk) => {
+                buffer.write_all(&1u8.to_le_bytes())?; // Has last_key
+                let lk_bytes = lk.as_bytes();
+                buffer.write_all(&(lk_bytes.len() as u32).to_le_bytes())?;
+                buffer.write_all(lk_bytes)?;
+            }
+            None => {
+                buffer.write_all(&0u8.to_le_bytes())?; // No last_key
+            }
+        }
 
         // Write primitive fields
         buffer.write_all(&self.offset.to_le_bytes())?;
@@ -1129,10 +1156,11 @@ impl IndexEntry {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
 
-        // Read and validate magic header
+        // Read and validate magic header (IDX1 = legacy, IDX2 = with last_key)
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
-        if &magic != b"IDX1" {
+        let is_v2 = &magic == b"IDX2";
+        if !is_v2 && &magic != b"IDX1" {
             return Err(anyhow::anyhow!("Invalid IndexEntry format"));
         }
 
@@ -1143,6 +1171,24 @@ impl IndexEntry {
         let mut key_bytes = vec![0u8; key_len];
         cursor.read_exact(&mut key_bytes)?;
         let key = String::from_utf8(key_bytes)?;
+
+        // Read last_key (new in IDX2, defaults to None for IDX1)
+        let last_key = if is_v2 {
+            let mut bool_buf = [0u8; 1];
+            cursor.read_exact(&mut bool_buf)?;
+            let has_last_key = bool_buf[0] != 0;
+            if has_last_key {
+                cursor.read_exact(&mut len_buf)?;
+                let lk_len = u32::from_le_bytes(len_buf) as usize;
+                let mut lk_bytes = vec![0u8; lk_len];
+                cursor.read_exact(&mut lk_bytes)?;
+                Some(String::from_utf8(lk_bytes)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Read primitive fields
         let mut u64_buf = [0u8; 8];
@@ -1280,6 +1326,7 @@ impl IndexEntry {
 
         Ok(Self {
             key,
+            last_key,
             offset,
             size,
             block_id,

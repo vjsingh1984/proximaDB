@@ -1035,8 +1035,11 @@ impl SstableWriter {
         // Add enhanced index entry leveraging Proxima capabilities
         if let Some(first_record) = current_block.first() {
             let first_id = first_record.id.clone();
+            // Get last key for proper B+ tree range queries
+            let last_id = current_block.last().map(|r| r.id.clone());
             index_entries.push(IndexEntry {
                 key: first_id,
+                last_key: last_id,
                 offset: 0,
                 size: block_size,
                 block_id,

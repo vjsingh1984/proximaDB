@@ -346,6 +346,7 @@ mod tests {
         let filter = IntelligentBlockFilter::for_query_type(&QueryType::Compaction);
         let index_entry = IndexEntry {
             key: "test".to_string(),
+            last_key: None,
             offset: 0,
             size: 100,
             block_id: 1,
@@ -383,6 +384,7 @@ mod tests {
         let filter = IntelligentBlockFilter::for_query_type(&QueryType::PointQuery);
         let index_entry = IndexEntry {
             key: "aaa".to_string(),
+            last_key: None,
             offset: 0,
             size: 100,
             block_id: 1,

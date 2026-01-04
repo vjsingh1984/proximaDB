@@ -55,6 +55,11 @@ impl SstEngine {
             auto_index_selection: Some(true),
             owner: None,
             embedding_models: vec![],
+            // ProximaRecord schema configuration (NEW)
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         let stats = CollectionStats {

@@ -5133,6 +5133,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5150,6 +5151,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5167,6 +5169,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5184,6 +5187,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "d".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 3,
@@ -5218,6 +5222,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5235,6 +5240,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5279,6 +5285,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5296,6 +5303,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5313,6 +5321,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5357,6 +5366,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5374,6 +5384,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5391,6 +5402,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5408,6 +5420,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "d".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 3,
@@ -5453,6 +5466,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5470,6 +5484,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5487,6 +5502,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5536,6 +5552,7 @@ mod centroid_tests {
         let entries = (0..5)
             .map(|i| IndexEntry {
                 key: format!("block_{}", i),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: i,
@@ -5584,6 +5601,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5601,6 +5619,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5657,6 +5676,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5700,6 +5720,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5717,6 +5738,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5751,6 +5773,7 @@ mod centroid_tests {
         // Test with no Z-Order codes
         let entries = vec![IndexEntry {
             key: "a".into(),
+            last_key: None,
             offset: 0,
             size: 0,
             block_id: 0,
@@ -5785,6 +5808,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5802,6 +5826,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5819,6 +5844,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5875,6 +5901,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5892,6 +5919,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5909,6 +5937,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5927,6 +5956,7 @@ mod centroid_tests {
             // Block without Z-Order code (backward compatibility - always included)
             IndexEntry {
                 key: "d".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 3,
@@ -5993,6 +6023,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -6010,6 +6041,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
