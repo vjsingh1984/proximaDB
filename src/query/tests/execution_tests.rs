@@ -858,6 +858,10 @@ async fn create_test_executor_with_collection() -> QueryExecutor {
         auto_index_selection: Some(true),
         owner: None,
         embedding_models: vec![],
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
     };
     let _ = collection_service.create_collection(&config).await;
 

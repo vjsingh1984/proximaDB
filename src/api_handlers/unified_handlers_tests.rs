@@ -33,6 +33,10 @@ mod tests {
             primary_index: Some("hnsw".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }
     }
 
@@ -282,6 +286,10 @@ mod tests {
             primary_index: Some("hnsw".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         assert_eq!(config.dimension, 256);
@@ -373,6 +381,10 @@ mod tests {
             primary_index: Some("hnsw".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test_user".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         assert_eq!(config.tags.len(), 2);

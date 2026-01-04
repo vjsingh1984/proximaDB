@@ -73,6 +73,10 @@ mod tests {
                 auto_index_selection: Some(true),
                 owner: Some("test_user".to_string()),
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(proximadb_v1::CollectionStats {
                 vector_count: 0,
@@ -276,6 +280,10 @@ mod tests {
                         auto_index_selection: Some(true),
                         owner: versioned.owner.clone(),
                         embedding_models: vec![],
+                        record_schema: None,
+                        enable_proxima_record: None,
+                        text_columns: vec![],
+                        text_storage_configs: vec![],
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,
@@ -335,6 +343,10 @@ mod tests {
                         auto_index_selection: Some(true),
                         owner: versioned.owner.clone(),
                         embedding_models: vec![],
+                        record_schema: None,
+                        enable_proxima_record: None,
+                        text_columns: vec![],
+                        text_storage_configs: vec![],
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,

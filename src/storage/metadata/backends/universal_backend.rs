@@ -1769,6 +1769,10 @@ mod tests {
             owner: Some("test".to_string()),
             storage_config: None,
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         // Create a proto collection
@@ -1859,6 +1863,10 @@ mod integration_tests {
                 owner: Some("test_user".to_string()),
                 storage_config: None,
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -1943,6 +1951,10 @@ mod integration_tests {
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,

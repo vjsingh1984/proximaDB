@@ -59,6 +59,10 @@ pub enum ApiError {
     /// Invalid vector data
     #[error("Invalid vector: {0}")]
     InvalidVector(String),
+
+    /// Conflict error (e.g., schema evolution violation)
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 impl ApiError {
@@ -91,6 +95,7 @@ impl From<ApiError> for tonic::Status {
             ApiError::InvalidVector(msg) => {
                 tonic::Status::invalid_argument(format!("Invalid vector: {}", msg))
             }
+            ApiError::Conflict(msg) => tonic::Status::aborted(msg),
         }
     }
 }
@@ -111,6 +116,7 @@ impl IntoResponse for ApiError {
             ApiError::Gone(_) => (StatusCode::GONE, "gone"),
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
+            ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
         };
 
         let body = Json(json!({

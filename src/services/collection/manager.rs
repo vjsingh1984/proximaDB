@@ -1722,6 +1722,10 @@ mod tests {
             tags: vec![],
             owner: Some("test".to_string()),
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         // Test create with valid config
@@ -1849,6 +1853,10 @@ mod tests {
                 owner: Some("test".to_string()),
                 embedding_models: vec![],
                 storage_config: None,
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             };
 
             let result = service.create_collection(&config).await.unwrap();

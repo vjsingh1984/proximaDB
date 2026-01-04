@@ -32,6 +32,10 @@ mod comprehensive_api_tests {
             index_configs: vec![],
             quantization: None,
             storage_config: None,
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }
     }
 
