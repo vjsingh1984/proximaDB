@@ -242,9 +242,16 @@ pub use text_filter::{
     TextFilterStats,
 };
 pub use text_storage::{
-    CHUNKED_THRESHOLD, DEFAULT_CHUNK_SIZE, INLINE_THRESHOLD, SidecarCompression, SidecarRef,
-    StorageType, TextChunk, TextColumnReader, TextColumnWriter, TextStorageConfig,
-    TextStorageError, TextStorageStats, determine_storage_strategy,
+    // Constants
+    CHUNKED_THRESHOLD, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP_SIZE, INLINE_THRESHOLD,
+    MAX_BOUNDARY_SEARCH, MIN_CHUNK_SIZE,
+    // RAG Chunking
+    ChunkingConfig, ChunkPosition, TextChunker,
+    // Storage types
+    SidecarCompression, SidecarRef, StorageType, TextChunk, TextColumnReader, TextColumnWriter,
+    TextStorageConfig, TextStorageError, TextStorageStats,
+    // Functions
+    determine_storage_strategy,
 };
 
 use anyhow::Result;

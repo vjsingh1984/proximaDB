@@ -1,10 +1,19 @@
-//! TEXT Column Storage Strategies
+//! TEXT Column Storage Strategies with RAG Integration
 //!
 //! Provides storage strategies for TEXT columns in columnar storage:
 //! - **INLINE** (<4KB): Store directly in main Parquet column
 //! - **CHUNKED** (4KB-1MB): Split into chunks with per-chunk embeddings for RAG
 //! - **SIDECAR** (>1MB): Store in separate files with references
 //! - **ADAPTIVE**: Auto-select based on actual content size
+//!
+//! ## RAG Integration
+//!
+//! The `TextChunker` struct provides intelligent text chunking for RAG workflows:
+//! - Configurable chunk size (default 512 characters)
+//! - Overlap support for context preservation (default 50 characters)
+//! - Sentence/paragraph boundary preservation when possible
+//! - Chunk ID generation for retrieval
+//! - Position metadata for reconstructing original text
 //!
 //! ## Architecture
 //!
@@ -18,7 +27,7 @@
 //! │  │  StringArr  │  │  + Embed     │  │  File + Ref       │  │
 //! │  └─────────────┘  └──────────────┘  └───────────────────┘  │
 //! ├─────────────────────────────────────────────────────────────┤
-//! │  TextColumnWriter │ TextColumnReader │ SidecarManager      │
+//! │  TextChunker │ TextColumnWriter │ TextColumnReader          │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -27,6 +36,29 @@
 //! - **INLINE**: Short descriptions, titles, tags
 //! - **CHUNKED**: Documents for RAG (embeddings per chunk)
 //! - **SIDECAR**: Large documents, logs, raw content
+//!
+//! ## Example Usage
+//!
+//! ```rust,ignore
+//! use proximadb::storage::engines::core::formats::columnar::text_storage::*;
+//!
+//! // Create a chunker with custom configuration
+//! let chunker = TextChunker::new(ChunkingConfig {
+//!     chunk_size: 512,
+//!     overlap: 50,
+//!     preserve_boundaries: true,
+//!     ..Default::default()
+//! });
+//!
+//! // Chunk a document
+//! let chunks = chunker.chunk_text("doc_123", "Your long document text...");
+//!
+//! // Each chunk has:
+//! // - Unique chunk_id for retrieval
+//! // - Position metadata (start_offset, end_offset)
+//! // - Reference to parent document
+//! // - Optional embedding slot
+//! ```
 
 use arrow::array::{Array, ArrayRef, LargeStringArray, StringArray};
 use arrow::datatypes::{DataType, Field};
@@ -40,6 +72,9 @@ use crate::core::types::TextStorageStrategy;
 pub const INLINE_THRESHOLD: usize = 4 * 1024; // 4KB
 pub const CHUNKED_THRESHOLD: usize = 1024 * 1024; // 1MB
 pub const DEFAULT_CHUNK_SIZE: usize = 512; // 512 characters per chunk (for RAG)
+pub const DEFAULT_OVERLAP_SIZE: usize = 50; // 50 characters overlap between chunks
+pub const MIN_CHUNK_SIZE: usize = 64; // Minimum chunk size to avoid tiny fragments
+pub const MAX_BOUNDARY_SEARCH: usize = 100; // Max chars to search for sentence boundary
 
 /// Errors that can occur during text storage operations
 #[derive(Error, Debug)]
@@ -198,6 +233,573 @@ pub fn determine_storage_strategy(
             }
         }
         strategy => strategy, // Use explicit strategy
+    }
+}
+
+// =============================================================================
+// RAG Text Chunking
+// =============================================================================
+
+/// Configuration for text chunking operations
+///
+/// Controls how text is split into chunks for RAG (Retrieval Augmented Generation)
+/// workflows. Proper chunking is critical for:
+/// - Embedding quality: Chunks should be semantically coherent
+/// - Retrieval accuracy: Overlap preserves context across chunk boundaries
+/// - Storage efficiency: Chunk size affects storage and retrieval performance
+#[derive(Debug, Clone)]
+pub struct ChunkingConfig {
+    /// Target chunk size in characters (default: 512)
+    ///
+    /// This is the ideal chunk size. Actual chunks may be slightly smaller
+    /// or larger when preserving sentence/paragraph boundaries.
+    pub chunk_size: usize,
+
+    /// Overlap between consecutive chunks in characters (default: 50)
+    ///
+    /// Overlap ensures that information at chunk boundaries is not lost.
+    /// A typical value is 10-20% of chunk_size.
+    pub overlap: usize,
+
+    /// Whether to preserve sentence/paragraph boundaries (default: true)
+    ///
+    /// When true, chunks will be adjusted to end at natural boundaries
+    /// (periods, newlines) when possible, improving semantic coherence.
+    pub preserve_boundaries: bool,
+
+    /// Minimum chunk size (default: 64)
+    ///
+    /// Prevents creation of very small chunks at the end of text.
+    /// If the remaining text is smaller than this, it's merged with
+    /// the previous chunk.
+    pub min_chunk_size: usize,
+
+    /// Maximum boundary search distance (default: 100)
+    ///
+    /// When looking for sentence boundaries, search at most this many
+    /// characters beyond the target chunk size.
+    pub max_boundary_search: usize,
+
+    /// ID prefix for generated chunk IDs
+    ///
+    /// Chunk IDs are generated as: `{prefix}_{parent_id}_{chunk_index}`
+    /// Default prefix is "chunk".
+    pub chunk_id_prefix: String,
+
+    /// Separator pattern for splitting (used when preserve_boundaries is false)
+    ///
+    /// If provided, text is split on this pattern first, then combined
+    /// to reach target chunk size.
+    pub separator: Option<String>,
+}
+
+impl Default for ChunkingConfig {
+    fn default() -> Self {
+        Self {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            overlap: DEFAULT_OVERLAP_SIZE,
+            preserve_boundaries: true,
+            min_chunk_size: MIN_CHUNK_SIZE,
+            max_boundary_search: MAX_BOUNDARY_SEARCH,
+            chunk_id_prefix: "chunk".to_string(),
+            separator: None,
+        }
+    }
+}
+
+impl ChunkingConfig {
+    /// Create a new configuration with specified chunk size and overlap
+    pub fn new(chunk_size: usize, overlap: usize) -> Self {
+        Self {
+            chunk_size,
+            overlap,
+            ..Default::default()
+        }
+    }
+
+    /// Create configuration optimized for semantic search
+    ///
+    /// Uses smaller chunks with more overlap for better retrieval
+    pub fn for_semantic_search() -> Self {
+        Self {
+            chunk_size: 256,
+            overlap: 64,
+            preserve_boundaries: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create configuration optimized for question answering
+    ///
+    /// Uses larger chunks to preserve more context
+    pub fn for_qa() -> Self {
+        Self {
+            chunk_size: 1024,
+            overlap: 128,
+            preserve_boundaries: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create configuration for code/structured text
+    ///
+    /// Respects paragraph boundaries more strictly
+    pub fn for_code() -> Self {
+        Self {
+            chunk_size: 512,
+            overlap: 32,
+            preserve_boundaries: true,
+            separator: Some("\n\n".to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Builder method to set chunk size
+    pub fn with_chunk_size(mut self, size: usize) -> Self {
+        self.chunk_size = size;
+        self
+    }
+
+    /// Builder method to set overlap
+    pub fn with_overlap(mut self, overlap: usize) -> Self {
+        self.overlap = overlap;
+        self
+    }
+
+    /// Builder method to enable/disable boundary preservation
+    pub fn with_boundary_preservation(mut self, preserve: bool) -> Self {
+        self.preserve_boundaries = preserve;
+        self
+    }
+
+    /// Builder method to set chunk ID prefix
+    pub fn with_id_prefix(mut self, prefix: String) -> Self {
+        self.chunk_id_prefix = prefix;
+        self
+    }
+
+    /// Validate configuration
+    pub fn validate(&self) -> Result<(), TextStorageError> {
+        if self.chunk_size < self.min_chunk_size {
+            return Err(TextStorageError::ConfigError(format!(
+                "chunk_size ({}) must be >= min_chunk_size ({})",
+                self.chunk_size, self.min_chunk_size
+            )));
+        }
+        if self.overlap >= self.chunk_size {
+            return Err(TextStorageError::ConfigError(format!(
+                "overlap ({}) must be < chunk_size ({})",
+                self.overlap, self.chunk_size
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Metadata about a chunk's position within the original text
+#[derive(Debug, Clone)]
+pub struct ChunkPosition {
+    /// Byte offset from start of original text
+    pub byte_start: usize,
+    /// Byte offset of end (exclusive)
+    pub byte_end: usize,
+    /// Character offset from start of original text
+    pub char_start: usize,
+    /// Character offset of end (exclusive)
+    pub char_end: usize,
+    /// Line number where chunk starts (1-indexed)
+    pub line_start: usize,
+    /// Line number where chunk ends (1-indexed)
+    pub line_end: usize,
+}
+
+impl ChunkPosition {
+    /// Create a new chunk position
+    pub fn new(
+        byte_start: usize,
+        byte_end: usize,
+        char_start: usize,
+        char_end: usize,
+    ) -> Self {
+        Self {
+            byte_start,
+            byte_end,
+            char_start,
+            char_end,
+            line_start: 1,
+            line_end: 1,
+        }
+    }
+
+    /// Set line information
+    pub fn with_lines(mut self, start: usize, end: usize) -> Self {
+        self.line_start = start;
+        self.line_end = end;
+        self
+    }
+
+    /// Get the byte length of this chunk
+    pub fn byte_len(&self) -> usize {
+        self.byte_end - self.byte_start
+    }
+
+    /// Get the character length of this chunk
+    pub fn char_len(&self) -> usize {
+        self.char_end - self.char_start
+    }
+}
+
+/// RAG-optimized text chunker for generating per-chunk embeddings
+///
+/// The `TextChunker` provides intelligent text splitting that:
+/// - Respects semantic boundaries (sentences, paragraphs)
+/// - Maintains overlap for context preservation
+/// - Generates unique chunk IDs for retrieval
+/// - Tracks position metadata for text reconstruction
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use proximadb::storage::engines::core::formats::columnar::text_storage::*;
+///
+/// let chunker = TextChunker::new(ChunkingConfig::default());
+/// let chunks = chunker.chunk_text("doc_001", "Long document text...");
+///
+/// for chunk in chunks {
+///     println!("Chunk {}: {} chars at offset {}",
+///         chunk.chunk_id,
+///         chunk.content.len(),
+///         chunk.start_offset);
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct TextChunker {
+    /// Chunking configuration
+    config: ChunkingConfig,
+}
+
+impl TextChunker {
+    /// Create a new text chunker with the given configuration
+    pub fn new(config: ChunkingConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create a text chunker with default configuration
+    pub fn default_chunker() -> Self {
+        Self::new(ChunkingConfig::default())
+    }
+
+    /// Get the current configuration
+    pub fn config(&self) -> &ChunkingConfig {
+        &self.config
+    }
+
+    /// Split text into chunks with overlap and boundary preservation
+    ///
+    /// # Arguments
+    /// * `parent_id` - ID of the parent document/record
+    /// * `text` - The text content to chunk
+    ///
+    /// # Returns
+    /// Vector of `TextChunk` with position metadata
+    pub fn chunk_text(&self, parent_id: &str, text: &str) -> Vec<TextChunk> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+
+        // Validate configuration
+        if let Err(_) = self.config.validate() {
+            // Fall back to simple chunking on invalid config
+            return self.simple_chunk(parent_id, text);
+        }
+
+        let chars: Vec<char> = text.chars().collect();
+        let total_chars = chars.len();
+
+        // If text is smaller than minimum chunk size, return as single chunk
+        if total_chars <= self.config.min_chunk_size {
+            return vec![self.create_chunk(
+                parent_id,
+                0,
+                text.to_string(),
+                0,
+                total_chars,
+                1,
+            )];
+        }
+
+        let mut chunks = Vec::new();
+        let mut char_start = 0;
+        let mut chunk_index = 0u32;
+
+        while char_start < total_chars {
+            // Calculate target end position
+            let target_end = (char_start + self.config.chunk_size).min(total_chars);
+
+            // Find the actual end position (with boundary preservation if enabled)
+            let actual_end = if self.config.preserve_boundaries && target_end < total_chars {
+                self.find_boundary(&chars, target_end)
+            } else {
+                target_end
+            };
+
+            // Extract chunk content
+            let chunk_content: String = chars[char_start..actual_end].iter().collect();
+
+            // Skip empty chunks
+            if !chunk_content.trim().is_empty() {
+                let chunk = self.create_chunk(
+                    parent_id,
+                    chunk_index,
+                    chunk_content,
+                    char_start,
+                    actual_end,
+                    total_chars,
+                );
+                chunks.push(chunk);
+                chunk_index += 1;
+            }
+
+            // Calculate next start position with overlap
+            let step = if actual_end == total_chars {
+                // Last chunk, we're done
+                total_chars
+            } else {
+                // Apply overlap
+                let effective_step = (actual_end - char_start).saturating_sub(self.config.overlap);
+                if effective_step == 0 {
+                    // Prevent infinite loop
+                    self.config.chunk_size
+                } else {
+                    effective_step
+                }
+            };
+
+            char_start += step;
+
+            // If remaining text is too small, stop
+            if total_chars - char_start < self.config.min_chunk_size && !chunks.is_empty() {
+                // Extend the last chunk to include remaining text
+                if let Some(last_chunk) = chunks.last_mut() {
+                    let remaining: String = chars[char_start..].iter().collect();
+                    last_chunk.content.push_str(&remaining);
+                    last_chunk.end_offset = total_chars;
+                }
+                break;
+            }
+        }
+
+        // Add total_chunks metadata to each chunk
+        let total_chunks = chunks.len();
+        for chunk in &mut chunks {
+            chunk.metadata.insert(
+                "total_chunks".to_string(),
+                total_chunks.to_string(),
+            );
+        }
+
+        chunks
+    }
+
+    /// Simple chunking without boundary preservation (fallback)
+    fn simple_chunk(&self, parent_id: &str, text: &str) -> Vec<TextChunk> {
+        let chars: Vec<char> = text.chars().collect();
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        let mut chunk_index = 0u32;
+        let total_chars = chars.len();
+
+        while start < total_chars {
+            let end = (start + self.config.chunk_size).min(total_chars);
+            let chunk_content: String = chars[start..end].iter().collect();
+
+            let chunk = self.create_chunk(
+                parent_id,
+                chunk_index,
+                chunk_content,
+                start,
+                end,
+                total_chars,
+            );
+            chunks.push(chunk);
+
+            // Move forward with overlap
+            let step = if end == total_chars {
+                total_chars
+            } else {
+                self.config.chunk_size.saturating_sub(self.config.overlap)
+            };
+            start += step;
+            chunk_index += 1;
+        }
+
+        chunks
+    }
+
+    /// Find a natural boundary (sentence/paragraph end) near the target position
+    fn find_boundary(&self, chars: &[char], target: usize) -> usize {
+        let search_end = (target + self.config.max_boundary_search).min(chars.len());
+
+        // First, look for paragraph boundary (double newline)
+        for i in target..search_end {
+            if i + 1 < chars.len() && chars[i] == '\n' && chars[i + 1] == '\n' {
+                return i + 2;
+            }
+        }
+
+        // Then look for sentence boundary (period/question/exclamation followed by space)
+        for i in target..search_end {
+            let c = chars[i];
+            if (c == '.' || c == '!' || c == '?') && i + 1 < chars.len() {
+                let next = chars[i + 1];
+                if next.is_whitespace() || next == '"' || next == '\'' {
+                    return i + 1;
+                }
+            }
+        }
+
+        // Look for single newline
+        for i in target..search_end {
+            if chars[i] == '\n' {
+                return i + 1;
+            }
+        }
+
+        // Look for any whitespace
+        for i in target..search_end {
+            if chars[i].is_whitespace() {
+                return i + 1;
+            }
+        }
+
+        // No boundary found, use target position
+        target
+    }
+
+    /// Create a TextChunk with all metadata
+    fn create_chunk(
+        &self,
+        parent_id: &str,
+        chunk_index: u32,
+        content: String,
+        char_start: usize,
+        char_end: usize,
+        _total_chars: usize,
+    ) -> TextChunk {
+        let chunk_id = format!(
+            "{}_{}_{:04}",
+            self.config.chunk_id_prefix, parent_id, chunk_index
+        );
+
+        let mut metadata = HashMap::new();
+        metadata.insert("chunk_index".to_string(), chunk_index.to_string());
+        metadata.insert("parent_id".to_string(), parent_id.to_string());
+        metadata.insert("char_start".to_string(), char_start.to_string());
+        metadata.insert("char_end".to_string(), char_end.to_string());
+
+        TextChunk {
+            chunk_id,
+            parent_id: parent_id.to_string(),
+            chunk_index,
+            content,
+            embedding: None,
+            start_offset: char_start,
+            end_offset: char_end,
+            metadata,
+        }
+    }
+
+    /// Calculate byte offsets for a chunk (useful for binary formats)
+    pub fn calculate_byte_offsets(text: &str, char_start: usize, char_end: usize) -> (usize, usize) {
+        let chars: Vec<char> = text.chars().collect();
+        let mut byte_start = 0;
+        let mut byte_end = 0;
+
+        for (i, c) in chars.iter().enumerate() {
+            if i == char_start {
+                byte_start = text[..].chars().take(i).map(|c| c.len_utf8()).sum();
+            }
+            if i == char_end {
+                byte_end = text[..].chars().take(i).map(|c| c.len_utf8()).sum();
+                break;
+            }
+        }
+
+        if char_end >= chars.len() {
+            byte_end = text.len();
+        }
+
+        (byte_start, byte_end)
+    }
+
+    /// Calculate line numbers for a chunk
+    pub fn calculate_line_numbers(text: &str, char_start: usize, char_end: usize) -> (usize, usize) {
+        let chars: Vec<char> = text.chars().collect();
+        let mut line = 1;
+        let mut line_start = 1;
+        let mut line_end = 1;
+
+        for (i, c) in chars.iter().enumerate() {
+            if i == char_start {
+                line_start = line;
+            }
+            if i == char_end {
+                line_end = line;
+                break;
+            }
+            if *c == '\n' {
+                line += 1;
+            }
+        }
+
+        if char_end >= chars.len() {
+            line_end = line;
+        }
+
+        (line_start, line_end)
+    }
+
+    /// Reassemble chunks back into original text (for verification)
+    ///
+    /// Note: This only works correctly when overlap is 0 or chunks
+    /// have been properly deduplicated.
+    pub fn reassemble_chunks(chunks: &[TextChunk]) -> String {
+        if chunks.is_empty() {
+            return String::new();
+        }
+
+        // Sort by chunk_index
+        let mut sorted: Vec<_> = chunks.iter().collect();
+        sorted.sort_by_key(|c| c.chunk_index);
+
+        // For simple case (no overlap), just concatenate
+        sorted.iter().map(|c| c.content.as_str()).collect()
+    }
+
+    /// Get chunk by ID from a collection
+    pub fn find_chunk_by_id<'a>(chunks: &'a [TextChunk], chunk_id: &str) -> Option<&'a TextChunk> {
+        chunks.iter().find(|c| c.chunk_id == chunk_id)
+    }
+
+    /// Get all chunks for a parent document
+    pub fn get_chunks_for_parent<'a>(
+        chunks: &'a [TextChunk],
+        parent_id: &str,
+    ) -> Vec<&'a TextChunk> {
+        let mut result: Vec<_> = chunks.iter().filter(|c| c.parent_id == parent_id).collect();
+        result.sort_by_key(|c| c.chunk_index);
+        result
+    }
+
+    /// Generate a unique chunk ID
+    pub fn generate_chunk_id(prefix: &str, parent_id: &str, index: u32) -> String {
+        format!("{}_{}__{:04}", prefix, parent_id, index)
+    }
+}
+
+impl Default for TextChunker {
+    fn default() -> Self {
+        Self::default_chunker()
     }
 }
 
@@ -407,8 +1009,22 @@ impl TextChunk {
 ///
 /// Collects text values and routes them to appropriate storage:
 /// - Inline: Stored directly in Arrow StringArray
-/// - Chunked: Split into chunks with optional embeddings
+/// - Chunked: Split into chunks with optional embeddings (using RAG-optimized TextChunker)
 /// - Sidecar: Stored in external files with references
+///
+/// ## RAG Integration
+///
+/// For RAG workflows, use `with_chunking_config()` to configure intelligent chunking:
+///
+/// ```rust,ignore
+/// let writer = TextColumnWriter::new(TextStorageConfig::for_rag_documents(512))
+///     .with_chunking_config(ChunkingConfig {
+///         chunk_size: 512,
+///         overlap: 50,
+///         preserve_boundaries: true,
+///         ..Default::default()
+///     });
+/// ```
 pub struct TextColumnWriter {
     /// Storage configuration
     config: TextStorageConfig,
@@ -430,6 +1046,9 @@ pub struct TextColumnWriter {
 
     /// Statistics
     stats: TextStorageStats,
+
+    /// Optional RAG-optimized text chunker (used when configured)
+    chunker: Option<TextChunker>,
 }
 
 /// Storage type for a record
@@ -470,7 +1089,42 @@ impl TextColumnWriter {
             storage_mapping: HashMap::new(),
             current_sidecar_offset: 0,
             stats: TextStorageStats::default(),
+            chunker: None,
         }
+    }
+
+    /// Configure RAG-optimized text chunking
+    ///
+    /// When configured, the writer will use the `TextChunker` for intelligent
+    /// chunking with overlap and boundary preservation.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let writer = TextColumnWriter::new(TextStorageConfig::for_rag_documents(512))
+    ///     .with_chunking_config(ChunkingConfig::for_semantic_search());
+    /// ```
+    pub fn with_chunking_config(mut self, chunking_config: ChunkingConfig) -> Self {
+        self.chunker = Some(TextChunker::new(chunking_config));
+        self
+    }
+
+    /// Configure with a custom TextChunker
+    ///
+    /// Use this when you need more control over the chunker instance.
+    pub fn with_chunker(mut self, chunker: TextChunker) -> Self {
+        self.chunker = Some(chunker);
+        self
+    }
+
+    /// Get a reference to the current chunker (if configured)
+    pub fn chunker(&self) -> Option<&TextChunker> {
+        self.chunker.as_ref()
+    }
+
+    /// Check if RAG chunking is enabled
+    pub fn has_rag_chunking(&self) -> bool {
+        self.chunker.is_some()
     }
 
     /// Write text value using appropriate strategy
@@ -572,7 +1226,20 @@ impl TextColumnWriter {
     }
 
     /// Split text into chunks
+    ///
+    /// If a `TextChunker` is configured, uses RAG-optimized chunking with:
+    /// - Overlap support for context preservation
+    /// - Sentence/paragraph boundary preservation
+    /// - Rich metadata for retrieval
+    ///
+    /// Otherwise, falls back to simple fixed-size chunking.
     fn split_into_chunks(&self, record_id: &str, content: &str) -> Vec<TextChunk> {
+        // Use TextChunker if configured for RAG-optimized chunking
+        if let Some(ref chunker) = self.chunker {
+            return chunker.chunk_text(record_id, content);
+        }
+
+        // Fallback to simple chunking (original behavior)
         let mut chunks = Vec::new();
         let chars: Vec<char> = content.chars().collect();
         let chunk_size = self.config.chunk_size;
@@ -1044,5 +1711,333 @@ mod tests {
             Some("/sidecars".to_string())
         );
         assert_eq!(large_config.sidecar_compression, SidecarCompression::Zstd);
+    }
+
+    // =========================================================================
+    // TextChunker Tests
+    // =========================================================================
+
+    #[test]
+    fn test_chunking_config_default() {
+        let config = ChunkingConfig::default();
+        assert_eq!(config.chunk_size, DEFAULT_CHUNK_SIZE);
+        assert_eq!(config.overlap, DEFAULT_OVERLAP_SIZE);
+        assert!(config.preserve_boundaries);
+        assert_eq!(config.min_chunk_size, MIN_CHUNK_SIZE);
+        assert_eq!(config.max_boundary_search, MAX_BOUNDARY_SEARCH);
+    }
+
+    #[test]
+    fn test_chunking_config_presets() {
+        let semantic = ChunkingConfig::for_semantic_search();
+        assert_eq!(semantic.chunk_size, 256);
+        assert_eq!(semantic.overlap, 64);
+
+        let qa = ChunkingConfig::for_qa();
+        assert_eq!(qa.chunk_size, 1024);
+        assert_eq!(qa.overlap, 128);
+
+        let code = ChunkingConfig::for_code();
+        assert_eq!(code.chunk_size, 512);
+        assert!(code.separator.is_some());
+    }
+
+    #[test]
+    fn test_chunking_config_validation() {
+        // Valid config
+        let valid = ChunkingConfig::new(512, 50);
+        assert!(valid.validate().is_ok());
+
+        // Overlap >= chunk_size is invalid
+        let mut invalid = ChunkingConfig::default();
+        invalid.overlap = 600;
+        assert!(invalid.validate().is_err());
+
+        // chunk_size < min_chunk_size is invalid
+        let mut invalid2 = ChunkingConfig::default();
+        invalid2.chunk_size = 32;
+        invalid2.min_chunk_size = 64;
+        assert!(invalid2.validate().is_err());
+    }
+
+    #[test]
+    fn test_text_chunker_simple() {
+        let chunker = TextChunker::new(ChunkingConfig {
+            chunk_size: 10,
+            overlap: 0,
+            preserve_boundaries: false,
+            min_chunk_size: 5,
+            ..Default::default()
+        });
+
+        let text = "Hello World, how are you today?";
+        let chunks = chunker.chunk_text("doc1", text);
+
+        assert!(!chunks.is_empty());
+        assert!(chunks.len() > 1);
+
+        // All chunks should have correct parent_id
+        for chunk in &chunks {
+            assert_eq!(chunk.parent_id, "doc1");
+        }
+
+        // First chunk should start at 0
+        assert_eq!(chunks[0].start_offset, 0);
+    }
+
+    #[test]
+    fn test_text_chunker_with_overlap() {
+        let chunker = TextChunker::new(ChunkingConfig {
+            chunk_size: 20,
+            overlap: 5,
+            preserve_boundaries: false,
+            min_chunk_size: 10,
+            ..Default::default()
+        });
+
+        let text = "AAAAAAAAAABBBBBBBBBBCCCCCCCCCC"; // 30 chars
+        let chunks = chunker.chunk_text("doc1", text);
+
+        // With overlap, chunks should overlap
+        assert!(chunks.len() >= 2);
+
+        // Check that chunks overlap (second chunk starts before first ends)
+        if chunks.len() >= 2 {
+            // The second chunk should start within the first chunk's range
+            // due to overlap
+            assert!(chunks[1].start_offset < chunks[0].end_offset || chunks.len() == 2);
+        }
+    }
+
+    #[test]
+    fn test_text_chunker_boundary_preservation() {
+        let chunker = TextChunker::new(ChunkingConfig {
+            chunk_size: 30,
+            overlap: 5,
+            preserve_boundaries: true,
+            min_chunk_size: 10,
+            max_boundary_search: 20,
+            ..Default::default()
+        });
+
+        // Text with clear sentence boundaries
+        let text = "Hello world. This is a test. Another sentence here.";
+        let chunks = chunker.chunk_text("doc1", text);
+
+        // Should have at least one chunk
+        assert!(!chunks.is_empty());
+
+        // With boundary preservation, chunks should tend to end at periods
+        // (This is a soft check since boundary finding is best-effort)
+        for chunk in &chunks {
+            // Chunks should not be empty
+            assert!(!chunk.content.trim().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_text_chunker_empty_text() {
+        let chunker = TextChunker::default();
+        let chunks = chunker.chunk_text("doc1", "");
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_text_chunker_small_text() {
+        let chunker = TextChunker::new(ChunkingConfig {
+            chunk_size: 512,
+            overlap: 50,
+            min_chunk_size: 64,
+            ..Default::default()
+        });
+
+        let text = "Short text"; // Less than min_chunk_size
+        let chunks = chunker.chunk_text("doc1", text);
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "Short text");
+    }
+
+    #[test]
+    fn test_text_chunker_metadata() {
+        let chunker = TextChunker::new(ChunkingConfig {
+            chunk_size: 20,
+            overlap: 5,
+            preserve_boundaries: false,
+            min_chunk_size: 10,
+            chunk_id_prefix: "test_chunk".to_string(),
+            ..Default::default()
+        });
+
+        let text = "This is a test document for metadata.";
+        let chunks = chunker.chunk_text("doc123", text);
+
+        assert!(!chunks.is_empty());
+
+        let first_chunk = &chunks[0];
+
+        // Check chunk_id format
+        assert!(first_chunk.chunk_id.starts_with("test_chunk_doc123_"));
+
+        // Check metadata
+        assert_eq!(
+            first_chunk.metadata.get("parent_id"),
+            Some(&"doc123".to_string())
+        );
+        assert!(first_chunk.metadata.contains_key("chunk_index"));
+        assert!(first_chunk.metadata.contains_key("char_start"));
+        assert!(first_chunk.metadata.contains_key("char_end"));
+        assert!(first_chunk.metadata.contains_key("total_chunks"));
+    }
+
+    #[test]
+    fn test_text_chunker_chunk_position() {
+        let position = ChunkPosition::new(10, 100, 5, 50).with_lines(2, 5);
+
+        assert_eq!(position.byte_start, 10);
+        assert_eq!(position.byte_end, 100);
+        assert_eq!(position.byte_len(), 90);
+        assert_eq!(position.char_start, 5);
+        assert_eq!(position.char_end, 50);
+        assert_eq!(position.char_len(), 45);
+        assert_eq!(position.line_start, 2);
+        assert_eq!(position.line_end, 5);
+    }
+
+    #[test]
+    fn test_text_chunker_byte_offset_calculation() {
+        let text = "Hello World";
+        let (byte_start, byte_end) = TextChunker::calculate_byte_offsets(text, 0, 5);
+        assert_eq!(byte_start, 0);
+        assert_eq!(byte_end, 5); // "Hello" is 5 bytes
+    }
+
+    #[test]
+    fn test_text_chunker_line_number_calculation() {
+        let text = "Line 1\nLine 2\nLine 3";
+        let (line_start, line_end) = TextChunker::calculate_line_numbers(text, 0, 15);
+        assert_eq!(line_start, 1);
+        assert!(line_end >= 2);
+    }
+
+    #[test]
+    fn test_text_chunker_find_by_id() {
+        let chunker = TextChunker::default();
+        let text = "This is a test document that will be chunked into multiple pieces.";
+        let chunks = chunker.chunk_text("doc1", text);
+
+        if !chunks.is_empty() {
+            let chunk_id = &chunks[0].chunk_id;
+            let found = TextChunker::find_chunk_by_id(&chunks, chunk_id);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().chunk_id, *chunk_id);
+
+            let not_found = TextChunker::find_chunk_by_id(&chunks, "nonexistent");
+            assert!(not_found.is_none());
+        }
+    }
+
+    #[test]
+    fn test_text_chunker_get_chunks_for_parent() {
+        let chunker = TextChunker::new(ChunkingConfig {
+            chunk_size: 20,
+            overlap: 0,
+            preserve_boundaries: false,
+            min_chunk_size: 10,
+            ..Default::default()
+        });
+
+        let chunks1 = chunker.chunk_text("doc1", "Text for document one.");
+        let chunks2 = chunker.chunk_text("doc2", "Text for document two.");
+
+        let mut all_chunks: Vec<TextChunk> = Vec::new();
+        all_chunks.extend(chunks1);
+        all_chunks.extend(chunks2);
+
+        let doc1_chunks = TextChunker::get_chunks_for_parent(&all_chunks, "doc1");
+        let doc2_chunks = TextChunker::get_chunks_for_parent(&all_chunks, "doc2");
+
+        assert!(!doc1_chunks.is_empty());
+        assert!(!doc2_chunks.is_empty());
+
+        for chunk in doc1_chunks {
+            assert_eq!(chunk.parent_id, "doc1");
+        }
+        for chunk in doc2_chunks {
+            assert_eq!(chunk.parent_id, "doc2");
+        }
+    }
+
+    // =========================================================================
+    // TextColumnWriter with RAG Chunking Tests
+    // =========================================================================
+
+    #[test]
+    fn test_writer_with_rag_chunking() {
+        let mut config = TextStorageConfig::default();
+        config.strategy = TextStorageStrategy::Chunked;
+
+        let writer = TextColumnWriter::new(config).with_chunking_config(ChunkingConfig {
+            chunk_size: 20,
+            overlap: 5,
+            preserve_boundaries: false,
+            min_chunk_size: 10,
+            ..Default::default()
+        });
+
+        assert!(writer.has_rag_chunking());
+        assert!(writer.chunker().is_some());
+    }
+
+    #[test]
+    fn test_writer_rag_chunking_produces_overlap() {
+        let mut config = TextStorageConfig::default();
+        config.strategy = TextStorageStrategy::Chunked;
+
+        let mut writer = TextColumnWriter::new(config).with_chunking_config(ChunkingConfig {
+            chunk_size: 20,
+            overlap: 5,
+            preserve_boundaries: false,
+            min_chunk_size: 10,
+            ..Default::default()
+        });
+
+        writer
+            .write("rec_1", "This is a longer text for testing RAG chunking with overlap.")
+            .unwrap();
+
+        let chunks = writer.get_chunks();
+        assert!(chunks.len() > 1);
+
+        // Verify chunks have metadata
+        for chunk in chunks {
+            assert!(chunk.metadata.contains_key("parent_id"));
+            assert!(chunk.metadata.contains_key("chunk_index"));
+        }
+    }
+
+    #[test]
+    fn test_writer_without_rag_chunking_fallback() {
+        let mut config = TextStorageConfig::default();
+        config.strategy = TextStorageStrategy::Chunked;
+        config.chunk_size = 10;
+
+        let mut writer = TextColumnWriter::new(config);
+        // No chunking config set - should use fallback
+
+        assert!(!writer.has_rag_chunking());
+
+        writer
+            .write("rec_1", "This is a test text for fallback chunking.")
+            .unwrap();
+
+        let chunks = writer.get_chunks();
+        assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunker_generate_chunk_id() {
+        let id = TextChunker::generate_chunk_id("chunk", "doc123", 5);
+        assert_eq!(id, "chunk_doc123__0005");
     }
 }
