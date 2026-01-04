@@ -114,6 +114,10 @@ pub mod schema;
 pub mod serialization;
 // NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
 
+// TEXT column storage and filtering (Phase 3)
+pub mod text_filter;
+pub mod text_storage;
+
 // Examples demonstrating optimization benefits (moved to tests)
 #[cfg(test)]
 mod examples_test;
@@ -230,6 +234,17 @@ pub use common::{
     CommonColumnarConfig, CommonColumnarOperations, DistanceComputationConfig, OptimalBatchSizes,
     PerformanceMonitor, RowGroupSizeOptimization, SchemaGenerationConfig,
     SerializationOptimizationConfig, ViperOptimizations,
+};
+
+// TEXT column storage and filtering re-exports
+pub use text_filter::{
+    TextColumnFilterEvaluator, TextComparisonOp, TextFilterBuilder, TextFilterError,
+    TextFilterStats,
+};
+pub use text_storage::{
+    CHUNKED_THRESHOLD, DEFAULT_CHUNK_SIZE, INLINE_THRESHOLD, SidecarCompression, SidecarRef,
+    StorageType, TextChunk, TextColumnReader, TextColumnWriter, TextStorageConfig,
+    TextStorageError, TextStorageStats, determine_storage_strategy,
 };
 
 use anyhow::Result;
