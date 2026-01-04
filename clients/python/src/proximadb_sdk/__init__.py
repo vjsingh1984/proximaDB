@@ -39,30 +39,30 @@ from .models import (
     CollectionConfig,
     CollectionStats,
     CollectionInfo,
-    
+
     # Vector models
     VectorRecord,
     SearchResult,
-    
+
     # Operation responses
     OperationMetrics,
     VectorOperationResponse,
     HealthStatus,
-    
+
     # Enums
     DistanceMetric,
     StorageEngine,
     IndexingAlgorithm,
     IndexingAlgorithm as IndexType,  # Alias for compatibility
-    
+
     # Quantization
     QuantizationConfig,
     QuantizationType,
     QuantizationHint,
-    
+
     # Search optimization
     SearchOptimization,
-    
+
     # Additional models
     IndexConfiguration,
     FlushConfig,
@@ -71,11 +71,43 @@ from .models import (
     FilterableColumn,
     FilterableDataType,
     ServerCapabilities,
-    
+
     # Type aliases
     VectorArray,
     MetadataDict,
     FilterDict,
+)
+
+# v2 Models - ProximaRecord and typed schema support
+from .models_v2 import (
+    # Core record type
+    ProximaRecord,
+
+    # Typed values
+    TypedValue,
+    ColumnDataType,
+
+    # Text storage
+    TextField,
+    TextStorageStrategy,
+    TextColumnConfig,
+
+    # Text column convenience functions
+    create_text_column_schema,
+    text_column,
+
+    # Schema
+    RecordSchema,
+    ColumnDefinition,
+    SchemaEnforcement,
+
+    # Typed filters
+    FilterBuilderV2,
+    TypedFilterCondition,
+    FilterOperator as FilterOperatorV2,
+
+    # Search
+    SearchRequestV2,
 )
 
 # Exceptions
@@ -315,7 +347,7 @@ __all__ = [
     
     # Models
     "Collection",
-    "CollectionConfig", 
+    "CollectionConfig",
     "CollectionStats",
     "CollectionInfo",
     "VectorRecord",
@@ -341,7 +373,24 @@ __all__ = [
     "VectorArray",
     "MetadataDict",
     "FilterDict",
-    
+
+    # v2 Models - ProximaRecord and typed schema support
+    "ProximaRecord",
+    "TypedValue",
+    "ColumnDataType",
+    "TextField",
+    "TextStorageStrategy",
+    "TextColumnConfig",
+    "create_text_column_schema",
+    "text_column",
+    "RecordSchema",
+    "ColumnDefinition",
+    "SchemaEnforcement",
+    "FilterBuilderV2",
+    "TypedFilterCondition",
+    "FilterOperatorV2",
+    "SearchRequestV2",
+
     # Exceptions
     "ProximaDBError",
     "CollectionNotFoundError",
