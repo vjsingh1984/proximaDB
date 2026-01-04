@@ -13,10 +13,13 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status};
+use tokio_stream::StreamExt;
+use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, warn};
 
 use crate::api_handlers::UnifiedHandlers;
@@ -26,10 +29,12 @@ use crate::proto::proximadb_v1::{
 };
 use crate::proto::proximadb_v2::{
     self, proxima_record_service_server::ProximaRecordService,
-    proxima_record_service_server::ProximaRecordServiceServer, BatchWriteMode, CreateSchemaRequest,
-    CreateSchemaResponse, EvolveSchemaRequest, EvolveSchemaResponse, GetSchemaRequest,
-    GetSchemaResponse, ListSchemasRequest, ListSchemasResponse, ProximaRecordBatch,
-    ProximaRecordBatchResponse, TypedSearchRequest, TypedSearchResponse, TypedSearchResult,
+    proxima_record_service_server::ProximaRecordServiceServer, BackpressureLevel,
+    BackpressureSignal, BatchError, BatchWriteMode, BatchWriteStreamRequest,
+    BatchWriteStreamResponse, CreateSchemaRequest, CreateSchemaResponse, EvolveSchemaRequest,
+    EvolveSchemaResponse, GetSchemaRequest, GetSchemaResponse, ListSchemasRequest,
+    ListSchemasResponse, ProximaRecordBatch, ProximaRecordBatchResponse, TypedSearchRequest,
+    TypedSearchResponse, TypedSearchResult,
 };
 
 /// gRPC V2 ProximaRecord service implementation
@@ -45,6 +50,19 @@ pub struct ProximaRecordServiceImpl {
 /// Streaming response type for SearchStream
 pub type SearchStreamStream =
     Pin<Box<dyn tokio_stream::Stream<Item = Result<TypedSearchResult, Status>> + Send>>;
+
+/// Streaming response type for BatchWriteStream
+pub type BatchWriteStreamStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<BatchWriteStreamResponse, Status>> + Send>>;
+
+/// Channel buffer size for streaming operations
+const STREAM_BUFFER_SIZE: usize = 128;
+
+/// Buffer utilization thresholds for backpressure
+const BACKPRESSURE_LOW_THRESHOLD: u32 = 25;
+const BACKPRESSURE_MEDIUM_THRESHOLD: u32 = 50;
+const BACKPRESSURE_HIGH_THRESHOLD: u32 = 75;
+const BACKPRESSURE_CRITICAL_THRESHOLD: u32 = 90;
 
 impl ProximaRecordServiceImpl {
     /// Create a new ProximaRecordServiceImpl
@@ -274,6 +292,129 @@ impl ProximaRecordServiceImpl {
                     .collect();
                 Some(serde_json::Value::Object(map))
             }
+        }
+    }
+
+    /// Convert a single ProximaRecord to VectorRecord for V1 storage layer
+    fn convert_proxima_record_to_vector_record(
+        record: &proximadb_v2::ProximaRecord,
+    ) -> VectorRecord {
+        use crate::proto::proximadb_v1::sql_value::Value;
+
+        let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
+
+        // Convert typed_fields to metadata
+        for (key, typed_value) in &record.typed_fields {
+            if let Some(value) = &typed_value.value {
+                let sql_value = match value {
+                    proximadb_v2::typed_value::Value::TextValue(s) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::StringValue(s.clone())),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::IntegerValue(i) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::Int64Value(*i)),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::FloatValue(f) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::NumberValue(*f)),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::BooleanValue(b) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::BoolValue(*b)),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::TimestampValue(ts) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::Int64Value(*ts)),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::JsonValue(json) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::StringValue(json.clone())),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::BinaryValue(bytes) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::BytesValue(bytes.clone())),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::UuidValue(uuid) => {
+                        let uuid_str = if uuid.len() == 16 {
+                            uuid::Uuid::from_slice(uuid)
+                                .map(|u| u.to_string())
+                                .unwrap_or_else(|_| hex::encode(uuid))
+                        } else {
+                            hex::encode(uuid)
+                        };
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::StringValue(uuid_str)),
+                        }
+                    }
+                    proximadb_v2::typed_value::Value::IsNull(true) => {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::NullValue(0)),
+                        }
+                    }
+                    _ => {
+                        // For other types, serialize to string representation
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(Value::StringValue(format!("{:?}", value))),
+                        }
+                    }
+                };
+                metadata.insert(key.clone(), sql_value);
+            }
+        }
+
+        // Convert text_fields
+        for text_field in &record.text_fields {
+            let sql_value = crate::proto::proximadb_v1::SqlValue {
+                value: Some(Value::StringValue(text_field.content.clone())),
+            };
+            metadata.insert(text_field.name.clone(), sql_value);
+        }
+
+        // Merge flexible_fields
+        for (key, sql_value) in &record.flexible_fields {
+            if !metadata.contains_key(key) {
+                metadata.insert(key.clone(), sql_value.clone());
+            }
+        }
+
+        VectorRecord {
+            id: record.id.clone(),
+            vector: record.vector.clone(),
+            metadata,
+            version: record.version,
+            timestamp: Some(record.timestamp_ms),
+            source: record.source.clone(),
+            updated_at: record.updated_at_ms,
+            expires_at: record.expires_at_ms,
+        }
+    }
+
+    /// Calculate backpressure signal based on buffer utilization
+    fn calculate_backpressure(buffer_percent: u32) -> BackpressureSignal {
+        let (level, suggested_delay_ms) = if buffer_percent >= BACKPRESSURE_CRITICAL_THRESHOLD {
+            (BackpressureLevel::BackpressureCritical, 500)
+        } else if buffer_percent >= BACKPRESSURE_HIGH_THRESHOLD {
+            (BackpressureLevel::BackpressureHigh, 100)
+        } else if buffer_percent >= BACKPRESSURE_MEDIUM_THRESHOLD {
+            (BackpressureLevel::BackpressureMedium, 50)
+        } else if buffer_percent >= BACKPRESSURE_LOW_THRESHOLD {
+            (BackpressureLevel::BackpressureLow, 10)
+        } else {
+            (BackpressureLevel::BackpressureNone, 0)
+        };
+
+        BackpressureSignal {
+            level: level as i32,
+            suggested_delay_ms,
+            buffer_percent,
         }
     }
 }
@@ -576,6 +717,180 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         let stream = ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(stream) as SearchStreamStream))
+    }
+
+    // =========================================================================
+    // Streaming Write Operations
+    // =========================================================================
+
+    /// Bidirectional streaming for high-throughput batch writes
+    ///
+    /// This method provides:
+    /// - Client streaming: Send batches of records continuously
+    /// - Server streaming: Receive acknowledgments with backpressure signals
+    /// - Flow control: Bounded channels prevent memory overflow
+    /// - Error handling: Per-record errors are reported back to the client
+    type BatchWriteStreamStream = BatchWriteStreamStream;
+
+    async fn batch_write_stream(
+        &self,
+        request: Request<Streaming<BatchWriteStreamRequest>>,
+    ) -> Result<Response<Self::BatchWriteStreamStream>, Status> {
+        let mut inbound = request.into_inner();
+
+        // Create a bounded channel for response streaming
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<BatchWriteStreamResponse, Status>>(
+            STREAM_BUFFER_SIZE,
+        );
+
+        // Shared state for tracking progress and backpressure
+        let total_processed = Arc::new(AtomicI64::new(0));
+        let success_count = Arc::new(AtomicI64::new(0));
+        let failed_count = Arc::new(AtomicI64::new(0));
+        // Track pending items for future enhanced backpressure (currently uses channel capacity)
+        let _pending_in_buffer = Arc::new(AtomicU32::new(0));
+
+        // Clone handlers for the processing task
+        let unified_handlers = Arc::clone(&self.unified_handlers);
+
+        // Spawn task to process incoming stream
+        tokio::spawn(async move {
+            let start_time = Instant::now();
+
+            while let Some(batch_result) = inbound.next().await {
+                let batch = match batch_result {
+                    Ok(b) => b,
+                    Err(e) => {
+                        error!("V2 gRPC: BatchWriteStream - stream error: {}", e);
+                        let _ = tx
+                            .send(Err(Status::internal(format!("Stream error: {}", e))))
+                            .await;
+                        break;
+                    }
+                };
+
+                debug!(
+                    "V2 gRPC: BatchWriteStream - processing batch for collection='{}', records={}",
+                    batch.collection_id,
+                    batch.records.len()
+                );
+
+                // Track pending items for potential future backpressure enhancements
+                _pending_in_buffer.fetch_add(batch.records.len() as u32, Ordering::SeqCst);
+
+                // Collect sequences for acknowledgment
+                let mut acked_sequences: Vec<u64> = Vec::with_capacity(batch.records.len());
+                let mut batch_errors: Vec<BatchError> = Vec::new();
+
+                // Process each record in the batch
+                for (idx, stream_record) in batch.records.iter().enumerate() {
+                    let record = match &stream_record.record {
+                        Some(r) => r,
+                        None => {
+                            batch_errors.push(BatchError {
+                                record_index: idx as i32,
+                                record_id: String::new(),
+                                error_code: "MISSING_RECORD".to_string(),
+                                error_message: "StreamWriteRecord has no record".to_string(),
+                            });
+                            failed_count.fetch_add(1, Ordering::SeqCst);
+                            continue;
+                        }
+                    };
+
+                    // Convert to V1 batch for storage
+                    let v1_batch = VectorBatchRequest {
+                        collection_id: batch.collection_id.clone(),
+                        vectors: vec![Self::convert_proxima_record_to_vector_record(record)],
+                    };
+
+                    // Execute the write based on mode
+                    let result = match BatchWriteMode::try_from(stream_record.write_mode) {
+                        Ok(BatchWriteMode::Insert)
+                        | Ok(BatchWriteMode::Unspecified)
+                        | Ok(BatchWriteMode::Upsert)
+                        | Ok(BatchWriteMode::Update) => {
+                            unified_handlers.handle_vector_batch_v1(v1_batch).await
+                        }
+                        Ok(BatchWriteMode::Delete) => {
+                            // Delete not yet supported in batch mode
+                            Err(anyhow::anyhow!(
+                                "DELETE mode not supported in BatchWriteStream"
+                            ))
+                        }
+                        Err(_) => Err(anyhow::anyhow!(
+                            "Invalid write_mode: {}",
+                            stream_record.write_mode
+                        )),
+                    };
+
+                    match result {
+                        Ok(resp) if resp.success => {
+                            acked_sequences.push(stream_record.client_sequence);
+                            success_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Ok(resp) => {
+                            batch_errors.push(BatchError {
+                                record_index: idx as i32,
+                                record_id: record.id.clone(),
+                                error_code: "WRITE_FAILED".to_string(),
+                                error_message: resp
+                                    .error_message
+                                    .unwrap_or_else(|| "Unknown error".to_string()),
+                            });
+                            failed_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Err(e) => {
+                            batch_errors.push(BatchError {
+                                record_index: idx as i32,
+                                record_id: record.id.clone(),
+                                error_code: "INTERNAL_ERROR".to_string(),
+                                error_message: e.to_string(),
+                            });
+                            failed_count.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+
+                    total_processed.fetch_add(1, Ordering::SeqCst);
+                }
+
+                // Update pending count after processing
+                let records_processed = batch.records.len() as u32;
+                _pending_in_buffer.fetch_sub(records_processed, Ordering::SeqCst);
+
+                // Calculate backpressure based on channel utilization
+                let buffer_usage =
+                    ((STREAM_BUFFER_SIZE - tx.capacity()) * 100 / STREAM_BUFFER_SIZE) as u32;
+                let backpressure = Self::calculate_backpressure(buffer_usage);
+
+                // Send acknowledgment response
+                let response = BatchWriteStreamResponse {
+                    acked_sequences,
+                    backpressure: Some(backpressure),
+                    total_processed: total_processed.load(Ordering::SeqCst),
+                    success_count: success_count.load(Ordering::SeqCst),
+                    failed_count: failed_count.load(Ordering::SeqCst),
+                    errors: batch_errors,
+                    server_timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                };
+
+                if tx.send(Ok(response)).await.is_err() {
+                    debug!("V2 gRPC: BatchWriteStream - client disconnected");
+                    break;
+                }
+            }
+
+            info!(
+                "V2 gRPC: BatchWriteStream - completed. Total processed: {}, Success: {}, Failed: {}, Duration: {:?}",
+                total_processed.load(Ordering::SeqCst),
+                success_count.load(Ordering::SeqCst),
+                failed_count.load(Ordering::SeqCst),
+                start_time.elapsed()
+            );
+        });
+
+        let stream = ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream) as BatchWriteStreamStream))
     }
 
     // =========================================================================

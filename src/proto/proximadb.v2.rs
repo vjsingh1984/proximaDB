@@ -682,6 +682,67 @@ pub struct EvolveSchemaResponse {
     #[prost(string, optional, tag = "5")]
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
 }
+/// Single record for streaming write
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StreamWriteRecord {
+    #[prost(message, optional, tag = "1")]
+    pub record: ::core::option::Option<ProximaRecord>,
+    /// INSERT, UPSERT, UPDATE, DELETE
+    #[prost(enumeration = "BatchWriteMode", tag = "2")]
+    pub write_mode: i32,
+    /// Client-side sequence for ordering/ack
+    #[prost(uint64, tag = "3")]
+    pub client_sequence: u64,
+}
+/// Request message for BatchWriteStream RPC
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchWriteStreamRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub records: ::prost::alloc::vec::Vec<StreamWriteRecord>,
+    /// Schema to validate against
+    #[prost(string, optional, tag = "3")]
+    pub schema_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Default: true
+    #[prost(bool, tag = "4")]
+    pub validate_schema: bool,
+}
+/// Response message for BatchWriteStream RPC (streaming acks)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchWriteStreamResponse {
+    /// Acknowledged client sequences
+    #[prost(uint64, repeated, tag = "1")]
+    pub acked_sequences: ::prost::alloc::vec::Vec<u64>,
+    /// Backpressure control
+    #[prost(message, optional, tag = "2")]
+    pub backpressure: ::core::option::Option<BackpressureSignal>,
+    /// Cumulative statistics
+    #[prost(int64, tag = "3")]
+    pub total_processed: i64,
+    #[prost(int64, tag = "4")]
+    pub success_count: i64,
+    #[prost(int64, tag = "5")]
+    pub failed_count: i64,
+    /// Per-record errors (if any in this batch)
+    #[prost(message, repeated, tag = "6")]
+    pub errors: ::prost::alloc::vec::Vec<BatchError>,
+    /// Server timestamp (milliseconds since epoch)
+    #[prost(int64, tag = "7")]
+    pub server_timestamp_ms: i64,
+}
+/// Backpressure signal for flow control
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BackpressureSignal {
+    #[prost(enumeration = "BackpressureLevel", tag = "1")]
+    pub level: i32,
+    /// Suggested delay before next send
+    #[prost(uint32, tag = "2")]
+    pub suggested_delay_ms: u32,
+    /// Current buffer utilization (0-100)
+    #[prost(uint32, tag = "3")]
+    pub buffer_percent: u32,
+}
 /// # =============================================================================
 /// ColumnDataType: Rich data type enum for ProximaRecord columns
 ///
@@ -1183,6 +1244,46 @@ impl FilterLogicOperator {
         }
     }
 }
+/// Backpressure severity levels
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BackpressureLevel {
+    BackpressureNone = 0,
+    /// Buffer 25-50% full
+    BackpressureLow = 1,
+    /// Buffer 50-75% full
+    BackpressureMedium = 2,
+    /// Buffer 75-90% full
+    BackpressureHigh = 3,
+    /// Buffer >90% full, client should pause
+    BackpressureCritical = 4,
+}
+impl BackpressureLevel {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::BackpressureNone => "BACKPRESSURE_NONE",
+            Self::BackpressureLow => "BACKPRESSURE_LOW",
+            Self::BackpressureMedium => "BACKPRESSURE_MEDIUM",
+            Self::BackpressureHigh => "BACKPRESSURE_HIGH",
+            Self::BackpressureCritical => "BACKPRESSURE_CRITICAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BACKPRESSURE_NONE" => Some(Self::BackpressureNone),
+            "BACKPRESSURE_LOW" => Some(Self::BackpressureLow),
+            "BACKPRESSURE_MEDIUM" => Some(Self::BackpressureMedium),
+            "BACKPRESSURE_HIGH" => Some(Self::BackpressureHigh),
+            "BACKPRESSURE_CRITICAL" => Some(Self::BackpressureCritical),
+            _ => None,
+        }
+    }
+}
 /// Generated client implementations.
 pub mod proxima_record_service_client {
     #![allow(
@@ -1380,6 +1481,39 @@ pub mod proxima_record_service_client {
                     GrpcMethod::new("proximadb.v2.ProximaRecordService", "DeleteRecords"),
                 );
             self.inner.unary(req, path, codec).await
+        }
+        /// Streaming write operations
+        /// Client streams batches of records, server streams acknowledgments with backpressure
+        pub async fn batch_write_stream(
+            &mut self,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::BatchWriteStreamRequest,
+            >,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::BatchWriteStreamResponse>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/BatchWriteStream",
+            );
+            let mut req = request.into_streaming_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaRecordService",
+                        "BatchWriteStream",
+                    ),
+                );
+            self.inner.streaming(req, path, codec).await
         }
         /// Search operations
         pub async fn search(
@@ -1579,6 +1713,24 @@ pub mod proxima_record_service_server {
             request: tonic::Request<super::ProximaRecordBatch>,
         ) -> std::result::Result<
             tonic::Response<super::ProximaRecordBatchResponse>,
+            tonic::Status,
+        >;
+        /// Server streaming response type for the BatchWriteStream method.
+        type BatchWriteStreamStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<
+                    super::BatchWriteStreamResponse,
+                    tonic::Status,
+                >,
+            >
+            + std::marker::Send
+            + 'static;
+        /// Streaming write operations
+        /// Client streams batches of records, server streams acknowledgments with backpressure
+        async fn batch_write_stream(
+            &self,
+            request: tonic::Request<tonic::Streaming<super::BatchWriteStreamRequest>>,
+        ) -> std::result::Result<
+            tonic::Response<Self::BatchWriteStreamStream>,
             tonic::Status,
         >;
         /// Search operations
@@ -1891,6 +2043,58 @@ pub mod proxima_record_service_server {
                                 max_encoding_message_size,
                             );
                         let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/BatchWriteStream" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchWriteStreamSvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::StreamingService<super::BatchWriteStreamRequest>
+                    for BatchWriteStreamSvc<T> {
+                        type Response = super::BatchWriteStreamResponse;
+                        type ResponseStream = T::BatchWriteStreamStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                tonic::Streaming<super::BatchWriteStreamRequest>,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::batch_write_stream(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = BatchWriteStreamSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.streaming(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

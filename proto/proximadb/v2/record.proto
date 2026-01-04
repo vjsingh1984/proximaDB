@@ -589,6 +589,61 @@ message EvolveSchemaResponse {
 }
 
 // =============================================================================
+// Streaming write operations
+// =============================================================================
+
+// Single record for streaming write
+message StreamWriteRecord {
+  ProximaRecord record = 1;
+  BatchWriteMode write_mode = 2;       // INSERT, UPSERT, UPDATE, DELETE
+  uint64 client_sequence = 3;          // Client-side sequence for ordering/ack
+}
+
+// Request message for BatchWriteStream RPC
+message BatchWriteStreamRequest {
+  string collection_id = 1;
+  repeated StreamWriteRecord records = 2;
+  optional string schema_id = 3;       // Schema to validate against
+  bool validate_schema = 4;            // Default: true
+}
+
+// Response message for BatchWriteStream RPC (streaming acks)
+message BatchWriteStreamResponse {
+  // Acknowledged client sequences
+  repeated uint64 acked_sequences = 1;
+
+  // Backpressure control
+  BackpressureSignal backpressure = 2;
+
+  // Cumulative statistics
+  int64 total_processed = 3;
+  int64 success_count = 4;
+  int64 failed_count = 5;
+
+  // Per-record errors (if any in this batch)
+  repeated BatchError errors = 6;
+
+  // Server timestamp (milliseconds since epoch)
+  int64 server_timestamp_ms = 7;
+}
+
+// Backpressure signal for flow control
+message BackpressureSignal {
+  BackpressureLevel level = 1;
+  uint32 suggested_delay_ms = 2;       // Suggested delay before next send
+  uint32 buffer_percent = 3;           // Current buffer utilization (0-100)
+}
+
+// Backpressure severity levels
+enum BackpressureLevel {
+  BACKPRESSURE_NONE = 0;
+  BACKPRESSURE_LOW = 1;                // Buffer 25-50% full
+  BACKPRESSURE_MEDIUM = 2;             // Buffer 50-75% full
+  BACKPRESSURE_HIGH = 3;               // Buffer 75-90% full
+  BACKPRESSURE_CRITICAL = 4;           // Buffer >90% full, client should pause
+}
+
+// =============================================================================
 // gRPC Service definition
 // =============================================================================
 service ProximaRecordService {
@@ -597,6 +652,10 @@ service ProximaRecordService {
   rpc UpsertRecords(ProximaRecordBatch) returns (ProximaRecordBatchResponse);
   rpc UpdateRecords(ProximaRecordBatch) returns (ProximaRecordBatchResponse);
   rpc DeleteRecords(ProximaRecordBatch) returns (ProximaRecordBatchResponse);
+
+  // Streaming write operations
+  // Client streams batches of records, server streams acknowledgments with backpressure
+  rpc BatchWriteStream(stream BatchWriteStreamRequest) returns (stream BatchWriteStreamResponse);
 
   // Search operations
   rpc Search(TypedSearchRequest) returns (TypedSearchResponse);
