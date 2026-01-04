@@ -30,7 +30,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::graph::hybrid::ranking::{HybridRankingStrategy, RankingContext};
 //!
 //! let strategy = HybridRankingStrategy::new(

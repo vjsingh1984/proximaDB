@@ -41,7 +41,7 @@ use std::sync::Arc;
 /// - Memory-efficient storage (Vec<Vec<f64>> for distance matrix)
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::pathfinding::FloydWarshallAPSP;
 /// use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 ///

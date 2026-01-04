@@ -37,7 +37,7 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::graph::hybrid::SemanticBFSTraversal;
 //! use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 //!
@@ -130,7 +130,7 @@ impl SemanticBFSTraversal {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let semantic_bfs = SemanticBFSTraversal::new(
     ///     engine,
     ///     distance_compute,

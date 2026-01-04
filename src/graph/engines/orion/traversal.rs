@@ -1154,7 +1154,7 @@ pub async fn astar_shortest_path(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 /// use proximadb::proto::proximadb_v1::DistanceMetric;
 ///

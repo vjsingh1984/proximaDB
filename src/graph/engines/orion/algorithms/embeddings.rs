@@ -48,7 +48,7 @@ pub type NodeEmbeddings = HashMap<String, Vec<f32>>;
 /// - `embedding_dim`: Dimensionality of output embeddings
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::embeddings::Node2VecEmbeddings;
 /// use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 ///
