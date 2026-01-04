@@ -341,6 +341,7 @@ impl RestServer {
 
         // Build service layers conditionally to avoid type mismatch
         let security_coordinator = state.security_coordinator.clone();
+        let state_for_v2 = state.clone();
         let mut base_router = create_router(state);
 
         // Nest metrics router if available
@@ -351,6 +352,11 @@ impl RestServer {
 
         // Add dashboard route
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
+
+        // Add V2 API router with ProximaRecord support
+        let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
+        base_router = base_router.nest("/api/v2", v2_router);
+        tracing::info!("✅ V2 API enabled at /api/v2 (ProximaRecord, typed schema)");
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
@@ -529,6 +535,7 @@ impl RestServer {
         };
 
         // Build base router with all endpoints
+        let state_for_v2 = state.clone();
         let mut base_router = create_router(state);
 
         // Nest metrics router if available
@@ -539,6 +546,11 @@ impl RestServer {
 
         // Add dashboard route
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
+
+        // Add V2 API router with ProximaRecord support
+        let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
+        base_router = base_router.nest("/api/v2", v2_router);
+        tracing::info!("✅ V2 API enabled at /api/v2 (unified mode)");
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
