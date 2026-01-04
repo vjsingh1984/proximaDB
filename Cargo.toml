@@ -90,7 +90,7 @@ arrow-array = { version = "57.1", default-features = false }
 arrow-buffer = { version = "57.1", default-features = false }
 arrow-schema = { version = "57.1", default-features = false }
 arrow-data = { version = "57.1", default-features = false }
-arrow-ipc = { version = "57.1", default-features = false }
+arrow-ipc = { version = "57.1", default-features = false, features = ["lz4", "zstd"] }
 arrow-select = { version = "57.1", default-features = false }
 arrow-ord = { version = "57.1", default-features = false }
 arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
