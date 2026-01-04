@@ -33,11 +33,6 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use proximadb::cluster::{
-    ConsensusConfig, DistributedCollectionOps, DistributedOpsConfig, DistributedSearchRequest,
-    DistributedWriteRequest, MetadataBounds, NodeRegistryConfig, QueryContext, RoutingConfig,
-    SearchResult, Shard, ShardConfig, ShardPlacement, ShardState, WriteRecord,
-};
 use proximadb::cluster::consensus::RaftConsensus;
 use proximadb::cluster::node_registry::NodeRegistry;
 use proximadb::cluster::routing::RoutingService;
@@ -47,10 +42,15 @@ use proximadb::cluster::rpc::{
     ShardSearchResponse, ShardSearchResult, WriteRecord as RpcWriteRecord,
 };
 use proximadb::cluster::shard::ShardManager;
+use proximadb::cluster::{
+    ConsensusConfig, DistributedCollectionOps, DistributedOpsConfig, DistributedSearchRequest,
+    DistributedWriteRequest, MetadataBounds, NodeRegistryConfig, QueryContext, RoutingConfig,
+    SearchResult, Shard, ShardConfig, ShardPlacement, ShardState, WriteRecord,
+};
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
 
@@ -603,7 +603,12 @@ async fn test_forward_write_failure_via_fanout() {
     let result = fanout.forward_write(&endpoint, req).await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().message().contains("Simulated write failure"));
+    assert!(
+        result
+            .unwrap_err()
+            .message()
+            .contains("Simulated write failure")
+    );
 }
 
 #[tokio::test]
@@ -642,7 +647,10 @@ async fn test_forward_write_batch_via_fanout() {
         },
     ];
 
-    let responses = fanout.forward_write_batch(&endpoint, requests).await.unwrap();
+    let responses = fanout
+        .forward_write_batch(&endpoint, requests)
+        .await
+        .unwrap();
 
     assert_eq!(responses.len(), 2);
     for response in &responses {
@@ -1082,7 +1090,9 @@ fn prune_shards_helper(shards: &[Shard], query_context: &Option<QueryContext>) -
 
     shards
         .iter()
-        .filter(|shard| shard.may_contain_data(context.tenant_id.as_deref(), context.domain_id.as_deref()))
+        .filter(|shard| {
+            shard.may_contain_data(context.tenant_id.as_deref(), context.domain_id.as_deref())
+        })
         .cloned()
         .collect()
 }
@@ -1175,8 +1185,12 @@ async fn test_partition_records_with_tenant_context() {
         Shard::new("test-collection", 1),
     ];
 
-    let partitioned =
-        partition_records_with_context_helper(&records, &shards, Some("tenant-1"), Some("domain-1"));
+    let partitioned = partition_records_with_context_helper(
+        &records,
+        &shards,
+        Some("tenant-1"),
+        Some("domain-1"),
+    );
 
     // All records should have tenant/domain metadata injected
     let total: usize = partitioned.values().map(|v| v.len()).sum();
@@ -1207,7 +1221,10 @@ fn partition_records_helper(
         let shard_idx = (hash as usize) % shards.len();
         let shard_id = shards[shard_idx].id.id().to_string();
 
-        partitioned.entry(shard_id).or_default().push(record.clone());
+        partitioned
+            .entry(shard_id)
+            .or_default()
+            .push(record.clone());
     }
 
     partitioned
@@ -1630,14 +1647,12 @@ async fn test_shard_search_response_creation() {
     let response = ShardSearchResponse {
         request_id: "req-123".to_string(),
         shard_id: "shard-0".to_string(),
-        results: vec![
-            ShardSearchResult {
-                id: "vec-1".to_string(),
-                score: 0.95,
-                vector: Some(vec![0.1, 0.2, 0.3]),
-                metadata: Some(r#"{"key":"value"}"#.to_string()),
-            },
-        ],
+        results: vec![ShardSearchResult {
+            id: "vec-1".to_string(),
+            score: 0.95,
+            vector: Some(vec![0.1, 0.2, 0.3]),
+            metadata: Some(r#"{"key":"value"}"#.to_string()),
+        }],
         vectors_scanned: 1000,
         latency: Duration::from_millis(5),
         truncated: false,

@@ -75,7 +75,10 @@ fn test_cache_miss_for_unknown_query() {
     let key = QueryKey::from_sql("SELECT * FROM unknown_table");
 
     let cached = cache.get(&key);
-    assert!(cached.is_none(), "Cache should return miss for unknown query");
+    assert!(
+        cached.is_none(),
+        "Cache should return miss for unknown query"
+    );
 
     let stats = cache.stats();
     assert_eq!(stats.misses, 1);
@@ -160,11 +163,7 @@ fn test_cleanup_expired_batch_removal() {
     for i in 0..5 {
         let key = QueryKey::from_sql(&format!("SELECT * FROM table_{}", i));
         cache
-            .insert(
-                key,
-                create_simple_result(),
-                vec![format!("table_{}", i)],
-            )
+            .insert(key, create_simple_result(), vec![format!("table_{}", i)])
             .expect("Insert should succeed");
     }
 
@@ -259,7 +258,10 @@ fn test_invalidation_on_collection_write() {
 
     assert_eq!(invalidated, 1);
     assert_eq!(cache.len(), 1);
-    assert!(!cache.contains(&key1), "products query should be invalidated");
+    assert!(
+        !cache.contains(&key1),
+        "products query should be invalidated"
+    );
     assert!(cache.contains(&key2), "users query should still be cached");
 }
 
@@ -273,11 +275,7 @@ fn test_direct_collection_invalidation() {
     for collection in &["orders", "inventory", "shipments"] {
         let key = QueryKey::from_sql(&format!("SELECT * FROM {}", collection));
         cache
-            .insert(
-                key,
-                create_simple_result(),
-                vec![collection.to_string()],
-            )
+            .insert(key, create_simple_result(), vec![collection.to_string()])
             .expect("Insert should succeed");
     }
 
@@ -342,11 +340,7 @@ fn test_change_operations_trigger_invalidation() {
     for (collection, _op) in &operations {
         let key = QueryKey::from_sql(&format!("SELECT * FROM {}", collection));
         cache
-            .insert(
-                key,
-                create_simple_result(),
-                vec![collection.to_string()],
-            )
+            .insert(key, create_simple_result(), vec![collection.to_string()])
             .expect("Insert should succeed");
     }
 
@@ -372,7 +366,8 @@ fn test_multi_collection_query_invalidation() {
     let cache = QueryResultCache::with_defaults();
 
     // Query depends on multiple collections (join query)
-    let join_key = QueryKey::from_sql("SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id");
+    let join_key =
+        QueryKey::from_sql("SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id");
     cache
         .insert(
             join_key.clone(),
@@ -406,9 +401,7 @@ fn test_triple_dependency_invalidation() {
     let cache = QueryResultCache::with_defaults();
 
     // Query depends on three collections
-    let key = QueryKey::from_sql(
-        "SELECT * FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id",
-    );
+    let key = QueryKey::from_sql("SELECT * FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id");
     cache
         .insert(
             key.clone(),
@@ -473,11 +466,7 @@ fn test_lru_eviction_on_capacity() {
     for i in 0..3 {
         let key = QueryKey::from_sql(&format!("SELECT * FROM table_{}", i));
         cache
-            .insert(
-                key,
-                create_simple_result(),
-                vec![format!("table_{}", i)],
-            )
+            .insert(key, create_simple_result(), vec![format!("table_{}", i)])
             .expect("Insert should succeed");
         // Small delay to ensure different creation times
         std::thread::sleep(Duration::from_millis(5));
@@ -500,7 +489,10 @@ fn test_lru_eviction_on_capacity() {
 
     // Check that oldest entry was evicted
     let key_oldest = QueryKey::from_sql("SELECT * FROM table_0");
-    assert!(!cache.contains(&key_oldest), "Oldest entry should be evicted");
+    assert!(
+        !cache.contains(&key_oldest),
+        "Oldest entry should be evicted"
+    );
 
     let stats = cache.stats();
     assert!(stats.evictions > 0);
@@ -520,11 +512,7 @@ fn test_eviction_prioritizes_expired() {
     for i in 0..3 {
         let key = QueryKey::from_sql(&format!("SELECT * FROM table_{}", i));
         cache
-            .insert(
-                key,
-                create_simple_result(),
-                vec![format!("table_{}", i)],
-            )
+            .insert(key, create_simple_result(), vec![format!("table_{}", i)])
             .expect("Insert should succeed");
     }
 
@@ -636,8 +624,8 @@ fn test_transaction_aware_invalidation_deferred() {
         .expect("Insert should succeed");
 
     // Event with transaction ID - should be deferred
-    let event = InvalidationEvent::new("orders", ChangeOperation::Update)
-        .with_transaction_id("txn_12345");
+    let event =
+        InvalidationEvent::new("orders", ChangeOperation::Update).with_transaction_id("txn_12345");
     let invalidated = invalidator.on_change_event(event);
 
     assert_eq!(invalidated, 0, "Invalidation should be deferred");
@@ -676,7 +664,10 @@ fn test_transaction_commit_triggers_invalidation() {
     let invalidated = invalidator.on_transaction_commit("txn_commit_test");
 
     assert_eq!(invalidated, 1);
-    assert!(!cache.contains(&key), "Entry should be invalidated after commit");
+    assert!(
+        !cache.contains(&key),
+        "Entry should be invalidated after commit"
+    );
 }
 
 /// Test transaction rollback discards pending invalidation
@@ -727,20 +718,12 @@ fn test_cache_statistics_accuracy() {
     // Insert
     let key1 = QueryKey::from_sql("SELECT 1");
     cache
-        .insert(
-            key1.clone(),
-            create_simple_result(),
-            vec!["t1".to_string()],
-        )
+        .insert(key1.clone(), create_simple_result(), vec!["t1".to_string()])
         .expect("Insert should succeed");
 
     let key2 = QueryKey::from_sql("SELECT 2");
     cache
-        .insert(
-            key2.clone(),
-            create_simple_result(),
-            vec!["t2".to_string()],
-        )
+        .insert(key2.clone(), create_simple_result(), vec!["t2".to_string()])
         .expect("Insert should succeed");
 
     // Hits

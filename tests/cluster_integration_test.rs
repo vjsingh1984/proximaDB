@@ -39,8 +39,8 @@ use proximadb::cluster::{
     },
 };
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -1212,8 +1212,7 @@ async fn test_raft_consensus_start_stop_lifecycle() {
         ..Default::default()
     };
 
-    let mut consensus =
-        RaftConsensus::with_transport(config, "node-1", transport, peers).unwrap();
+    let mut consensus = RaftConsensus::with_transport(config, "node-1", transport, peers).unwrap();
 
     // Start should succeed
     let result = consensus.start().await;
