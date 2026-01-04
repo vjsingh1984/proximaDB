@@ -558,6 +558,11 @@ pub fn build_collection_config(
         description: None,
         tags: vec![],
         owner: None,
+        // ProximaRecord schema configuration (NEW)
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
     };
 
     // Apply smart defaults from proto comments

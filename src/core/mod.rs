@@ -108,6 +108,10 @@ pub mod metadata_types;
 /// Includes: Circuit Breaker, Retry with Exponential Backoff
 pub mod resilience;
 
+/// Rich type system for ProximaRecord
+/// Includes: ColumnDataType, TypedValue, validators, TEXT storage strategies
+pub mod types;
+
 #[cfg(test)]
 mod config_tests;
 
