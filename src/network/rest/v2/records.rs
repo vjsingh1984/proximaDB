@@ -111,6 +111,215 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json
     }
 }
 
+/// Convert a JSON value to a FilterClause value
+fn json_to_filter_clause_value(
+    value: &serde_json::Value,
+) -> Option<crate::proto::proximadb_v1::filter_clause::Value> {
+    use crate::proto::proximadb_v1::filter_clause::Value;
+
+    match value {
+        serde_json::Value::String(s) => Some(Value::StringValue(s.clone())),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(Value::IntValue(i))
+            } else if let Some(f) = n.as_f64() {
+                Some(Value::DoubleValue(f))
+            } else {
+                None
+            }
+        }
+        serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
+        _ => None, // Arrays and objects not directly supported in FilterClause
+    }
+}
+
+/// Convert TypedFilter list to FilterClause list for MetadataFilter
+///
+/// Supports the following operators:
+/// - eq: Equals
+/// - neq: Not equals
+/// - gt: Greater than
+/// - gte: Greater than or equal
+/// - lt: Less than
+/// - lte: Less than or equal
+/// - contains: String/array contains (substring match)
+/// - in: Value is in a list
+/// - between: Value is between two bounds (converted to gte + lte)
+/// - starts_with: String starts with prefix (converted to contains)
+/// - ends_with: String ends with suffix (converted to contains)
+fn convert_typed_filters_to_clauses(
+    typed_filters: &[TypedFilter],
+) -> Result<Vec<crate::proto::proximadb_v1::FilterClause>, ApiError> {
+    use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp, FilterClause};
+
+    let mut clauses = Vec::new();
+
+    for filter in typed_filters {
+        match filter.op.as_str() {
+            "eq" => {
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Eq as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "neq" => {
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Ne as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "gt" => {
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Gt as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "gte" => {
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Gte as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "lt" => {
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Lt as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "lte" => {
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Lte as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "between" => {
+                // "between" requires both value and value_upper
+                // Convert to two clauses: field >= value AND field <= value_upper
+                let value_upper = filter.value_upper.as_ref().ok_or_else(|| {
+                    ApiError::InvalidArgument(
+                        "Filter operator 'between' requires 'value_upper' to be specified"
+                            .to_string(),
+                    )
+                })?;
+
+                if let Some(lower_value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Gte as i32,
+                        value: Some(lower_value),
+                    });
+                }
+
+                if let Some(upper_value) = json_to_filter_clause_value(value_upper) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Lte as i32,
+                        value: Some(upper_value),
+                    });
+                }
+            }
+            "contains" => {
+                // Contains for string substring matching
+                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Contains as i32,
+                        value: Some(value),
+                    });
+                }
+            }
+            "starts_with" => {
+                // starts_with is implemented using Contains operator
+                // The backend should interpret this as prefix matching
+                // We encode the intent by using Contains with the prefix value
+                if let serde_json::Value::String(s) = &filter.value {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Contains as i32,
+                        value: Some(Value::StringValue(format!("^{}", s))),
+                    });
+                } else {
+                    return Err(ApiError::InvalidArgument(
+                        "Filter operator 'starts_with' requires a string value".to_string(),
+                    ));
+                }
+            }
+            "ends_with" => {
+                // ends_with is implemented using Contains operator
+                // The backend should interpret this as suffix matching
+                // We encode the intent by using Contains with the suffix value
+                if let serde_json::Value::String(s) = &filter.value {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Contains as i32,
+                        value: Some(Value::StringValue(format!("{}$", s))),
+                    });
+                } else {
+                    return Err(ApiError::InvalidArgument(
+                        "Filter operator 'ends_with' requires a string value".to_string(),
+                    ));
+                }
+            }
+            "in" => {
+                // "in" operator: value should be an array
+                // We use the In comparison operator
+                if let serde_json::Value::Array(arr) = &filter.value {
+                    // For the "in" operator, we need to pass the array of values
+                    // The FilterClause only supports single values, so we convert
+                    // the array to a comma-separated string representation
+                    // that the backend can parse
+                    let values_str: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| match v {
+                            serde_json::Value::String(s) => Some(format!("\"{}\"", s)),
+                            serde_json::Value::Number(n) => Some(n.to_string()),
+                            serde_json::Value::Bool(b) => Some(b.to_string()),
+                            _ => None,
+                        })
+                        .collect();
+
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::In as i32,
+                        value: Some(Value::StringValue(format!("[{}]", values_str.join(",")))),
+                    });
+                } else {
+                    return Err(ApiError::InvalidArgument(
+                        "Filter operator 'in' requires an array value".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                // Unknown operator - this should have been caught in validation
+                return Err(ApiError::InvalidArgument(format!(
+                    "Unsupported filter operator: {}",
+                    filter.op
+                )));
+            }
+        }
+    }
+
+    Ok(clauses)
+}
+
 /// Request to insert ProximaRecords
 ///
 /// ## Example JSON
@@ -587,16 +796,28 @@ pub async fn search_with_typed_filters(
         request.filters.as_ref().map(|f| f.len())
     );
 
-    // Convert typed filters to v1 filter format
+    // Convert typed filters to MetadataFilter format with advanced filter support
+    let advanced_filter = if let Some(ref typed_filters) = request.filters {
+        let clauses = convert_typed_filters_to_clauses(typed_filters)?;
+        if clauses.is_empty() {
+            None
+        } else {
+            Some(crate::proto::proximadb_v1::MetadataFilter {
+                clauses,
+                op: crate::proto::proximadb_v1::LogicalOp::And as i32,
+            })
+        }
+    } else {
+        None
+    };
+
+    // Keep simple equality filters in the filters map for backward compatibility
     let filters = if let Some(ref typed_filters) = request.filters {
         let mut filter_map: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
         for filter in typed_filters {
-            // For simple eq filters, add to filter map
             if filter.op == "eq" {
                 filter_map.insert(filter.field.clone(), json_to_sql_value(&filter.value));
             }
-            // For range filters, we encode the operation in the key
-            // Note: Full filter support would require AdvancedFilter proto
         }
         filter_map
     } else {
@@ -607,7 +828,7 @@ pub async fn search_with_typed_filters(
     let search_query = SearchQuery {
         vector: request.vector.clone(),
         filters,
-        advanced_filter: None, // Could be extended for complex filters
+        advanced_filter,
     };
 
     let search_request = VectorSearchRequest {
@@ -888,5 +1109,297 @@ mod tests {
         let filter: TypedFilter = serde_json::from_str(json).unwrap();
         assert_eq!(filter.op, "between");
         assert!(filter.value_upper.is_some());
+    }
+
+    #[test]
+    fn test_convert_eq_filter() {
+        use crate::proto::proximadb_v1::ComparisonOp;
+
+        let filters = vec![TypedFilter {
+            field: "status".to_string(),
+            op: "eq".to_string(),
+            value: serde_json::json!("active"),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].field, "status");
+        assert_eq!(clauses[0].op, ComparisonOp::Eq as i32);
+    }
+
+    #[test]
+    fn test_convert_range_filters() {
+        use crate::proto::proximadb_v1::ComparisonOp;
+
+        let filters = vec![
+            TypedFilter {
+                field: "price".to_string(),
+                op: "gt".to_string(),
+                value: serde_json::json!(100),
+                value_upper: None,
+            },
+            TypedFilter {
+                field: "price".to_string(),
+                op: "gte".to_string(),
+                value: serde_json::json!(100),
+                value_upper: None,
+            },
+            TypedFilter {
+                field: "price".to_string(),
+                op: "lt".to_string(),
+                value: serde_json::json!(500),
+                value_upper: None,
+            },
+            TypedFilter {
+                field: "price".to_string(),
+                op: "lte".to_string(),
+                value: serde_json::json!(500),
+                value_upper: None,
+            },
+        ];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 4);
+        assert_eq!(clauses[0].op, ComparisonOp::Gt as i32);
+        assert_eq!(clauses[1].op, ComparisonOp::Gte as i32);
+        assert_eq!(clauses[2].op, ComparisonOp::Lt as i32);
+        assert_eq!(clauses[3].op, ComparisonOp::Lte as i32);
+    }
+
+    #[test]
+    fn test_convert_between_filter() {
+        use crate::proto::proximadb_v1::ComparisonOp;
+
+        let filters = vec![TypedFilter {
+            field: "price".to_string(),
+            op: "between".to_string(),
+            value: serde_json::json!(100),
+            value_upper: Some(serde_json::json!(500)),
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        // between is converted to two clauses: gte and lte
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[0].field, "price");
+        assert_eq!(clauses[0].op, ComparisonOp::Gte as i32);
+        assert_eq!(clauses[1].field, "price");
+        assert_eq!(clauses[1].op, ComparisonOp::Lte as i32);
+    }
+
+    #[test]
+    fn test_convert_between_filter_missing_upper() {
+        let filters = vec![TypedFilter {
+            field: "price".to_string(),
+            op: "between".to_string(),
+            value: serde_json::json!(100),
+            value_upper: None, // Missing upper bound
+        }];
+
+        let result = convert_typed_filters_to_clauses(&filters);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_contains_filter() {
+        use crate::proto::proximadb_v1::ComparisonOp;
+
+        let filters = vec![TypedFilter {
+            field: "description".to_string(),
+            op: "contains".to_string(),
+            value: serde_json::json!("search term"),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
+    }
+
+    #[test]
+    fn test_convert_starts_with_filter() {
+        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+
+        let filters = vec![TypedFilter {
+            field: "name".to_string(),
+            op: "starts_with".to_string(),
+            value: serde_json::json!("pre"),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
+        // Verify the value is prefixed with ^
+        if let Some(Value::StringValue(s)) = &clauses[0].value {
+            assert_eq!(s, "^pre");
+        } else {
+            panic!("Expected StringValue");
+        }
+    }
+
+    #[test]
+    fn test_convert_ends_with_filter() {
+        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+
+        let filters = vec![TypedFilter {
+            field: "name".to_string(),
+            op: "ends_with".to_string(),
+            value: serde_json::json!("suffix"),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
+        // Verify the value is suffixed with $
+        if let Some(Value::StringValue(s)) = &clauses[0].value {
+            assert_eq!(s, "suffix$");
+        } else {
+            panic!("Expected StringValue");
+        }
+    }
+
+    #[test]
+    fn test_convert_in_filter() {
+        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+
+        let filters = vec![TypedFilter {
+            field: "status".to_string(),
+            op: "in".to_string(),
+            value: serde_json::json!(["active", "pending", "review"]),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].op, ComparisonOp::In as i32);
+        // Verify the value is a JSON array string
+        if let Some(Value::StringValue(s)) = &clauses[0].value {
+            assert!(s.starts_with('['));
+            assert!(s.ends_with(']'));
+            assert!(s.contains("active"));
+            assert!(s.contains("pending"));
+            assert!(s.contains("review"));
+        } else {
+            panic!("Expected StringValue");
+        }
+    }
+
+    #[test]
+    fn test_convert_in_filter_with_numbers() {
+        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+
+        let filters = vec![TypedFilter {
+            field: "priority".to_string(),
+            op: "in".to_string(),
+            value: serde_json::json!([1, 2, 3]),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].op, ComparisonOp::In as i32);
+        if let Some(Value::StringValue(s)) = &clauses[0].value {
+            assert!(s.contains("1"));
+            assert!(s.contains("2"));
+            assert!(s.contains("3"));
+        } else {
+            panic!("Expected StringValue");
+        }
+    }
+
+    #[test]
+    fn test_convert_in_filter_non_array_error() {
+        let filters = vec![TypedFilter {
+            field: "status".to_string(),
+            op: "in".to_string(),
+            value: serde_json::json!("not_an_array"),
+            value_upper: None,
+        }];
+
+        let result = convert_typed_filters_to_clauses(&filters);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_neq_filter() {
+        use crate::proto::proximadb_v1::ComparisonOp;
+
+        let filters = vec![TypedFilter {
+            field: "status".to_string(),
+            op: "neq".to_string(),
+            value: serde_json::json!("deleted"),
+            value_upper: None,
+        }];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(clauses[0].op, ComparisonOp::Ne as i32);
+    }
+
+    #[test]
+    fn test_convert_multiple_filters() {
+        use crate::proto::proximadb_v1::ComparisonOp;
+
+        let filters = vec![
+            TypedFilter {
+                field: "category".to_string(),
+                op: "eq".to_string(),
+                value: serde_json::json!("electronics"),
+                value_upper: None,
+            },
+            TypedFilter {
+                field: "price".to_string(),
+                op: "lt".to_string(),
+                value: serde_json::json!(1000),
+                value_upper: None,
+            },
+            TypedFilter {
+                field: "in_stock".to_string(),
+                op: "eq".to_string(),
+                value: serde_json::json!(true),
+                value_upper: None,
+            },
+        ];
+
+        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        assert_eq!(clauses.len(), 3);
+        assert_eq!(clauses[0].op, ComparisonOp::Eq as i32);
+        assert_eq!(clauses[1].op, ComparisonOp::Lt as i32);
+        assert_eq!(clauses[2].op, ComparisonOp::Eq as i32);
+    }
+
+    #[test]
+    fn test_json_to_filter_clause_value_types() {
+        use crate::proto::proximadb_v1::filter_clause::Value;
+
+        // String
+        let string_val = json_to_filter_clause_value(&serde_json::json!("test"));
+        assert!(matches!(string_val, Some(Value::StringValue(_))));
+
+        // Integer
+        let int_val = json_to_filter_clause_value(&serde_json::json!(42));
+        assert!(matches!(int_val, Some(Value::IntValue(42))));
+
+        // Float
+        let float_val = json_to_filter_clause_value(&serde_json::json!(3.14));
+        assert!(matches!(float_val, Some(Value::DoubleValue(_))));
+
+        // Boolean
+        let bool_val = json_to_filter_clause_value(&serde_json::json!(true));
+        assert!(matches!(bool_val, Some(Value::BoolValue(true))));
+
+        // Null returns None
+        let null_val = json_to_filter_clause_value(&serde_json::json!(null));
+        assert!(null_val.is_none());
+
+        // Array returns None (not directly supported)
+        let array_val = json_to_filter_clause_value(&serde_json::json!([1, 2, 3]));
+        assert!(array_val.is_none());
+
+        // Object returns None (not directly supported)
+        let object_val = json_to_filter_clause_value(&serde_json::json!({"key": "value"}));
+        assert!(object_val.is_none());
     }
 }
