@@ -123,6 +123,7 @@ pub mod explain;
 pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
 pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
 pub mod materialized_view; // A1: Materialized views for complex dashboard queries
+pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
@@ -203,4 +204,16 @@ pub use materialized_view::{
     MaterializedViewError, MaterializedViewId, MaterializedViewParser, MaterializedViewResult,
     MaterializedViewState, MaterializedViewStatement, MaterializedViewStats, RefreshContext,
     RefreshEvent, RefreshEventType, RefreshResult, RefreshScheduler, RefreshStrategy,
+};
+
+// Re-export parser types - MongoDB query language support
+pub use parsers::{
+    AstVisitor, MongoDBExpression, MongoDBParseResult, MongoDBParser, MongoDBPipelineStage,
+    MongoDBProjection, MongoDBQuery, MongoDBVisitor, QueryParser, ToDocumentFilter, ToFilter,
+};
+
+// Re-export Cypher parser types - Graph query language support
+pub use parsers::{
+    CypherFunction, CypherLexer, CypherParser, CypherQueryValidator, CypherToken, CypherVisitor,
+    GraphQuery, GraphQueryType, LocatedToken, ToGraphQuery, cypher_to_graph_query,
 };
