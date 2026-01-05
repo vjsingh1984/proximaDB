@@ -23,6 +23,9 @@ COPY Cargo.toml Cargo.lock build.rs ./
 # Copy proto files (needed for build.rs)
 COPY proto/ ./proto/
 
+# Copy Rust SDK (workspace member required by Cargo.toml)
+COPY clients/rust/ ./clients/rust/
+
 # Create dummy source for dependency building
 RUN mkdir -p src/bin src/proto && \
     echo 'fn main() {}' > src/bin/server.rs && \
