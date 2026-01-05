@@ -567,6 +567,11 @@ harness = false
 path = "benches/bench_21_query_cache.rs"
 
 [[bench]]
+name = "bench_22_multimodal_queries"
+harness = false
+path = "benches/bench_22_multimodal_queries.rs"
+
+[[bench]]
 name = "streaming_search_bench"
 harness = false
 path = "benches/streaming_search_bench.rs"
