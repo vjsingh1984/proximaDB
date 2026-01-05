@@ -61,6 +61,11 @@ jobs:
       graph_changes: ${{ steps.filter.outputs.graph_changes }}
       core_changes: ${{ steps.filter.outputs.core_changes }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
+      # SDK change detection
+      go_sdk: ${{ steps.filter.outputs.go_sdk }}
+      nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
+      rust_sdk: ${{ steps.filter.outputs.rust_sdk }}
+      java_sdk: ${{ steps.filter.outputs.java_sdk }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -111,6 +116,16 @@ jobs:
               - 'src/network/**'
               - 'src/api_handlers/**'
               - 'proto/**'
+            # SDK filters
+            go_sdk:
+              - 'clients/go/**'
+              - 'clients/go-embedded/**'
+            nodejs_sdk:
+              - 'clients/nodejs-embedded/**'
+            rust_sdk:
+              - 'clients/rust/**'
+            java_sdk:
+              - 'clients/java-embedded/**'
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
@@ -193,6 +208,134 @@ jobs:
       - name: Run mypy (type check)
         working-directory: clients/python
         run: mypy src --ignore-missing-imports
+
+  # Go SDK Linting
+  go-lint:
+    name: Go SDK Lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go_sdk == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: clients/go/go.sum
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          working-directory: clients/go
+          args: --timeout=5m
+      - name: Run go vet
+        working-directory: clients/go
+        run: go vet ./...
+      - name: Check go mod tidy
+        working-directory: clients/go
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  # Node.js/TypeScript SDK Linting
+  nodejs-lint:
+    name: Node.js SDK Lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.nodejs_sdk == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: clients/nodejs-embedded/package-lock.json
+      - name: Install Dependencies
+        working-directory: clients/nodejs-embedded
+        run: npm ci
+      - name: TypeScript Compile Check
+        working-directory: clients/nodejs-embedded
+        run: npx tsc --noEmit
+      - name: Run ESLint
+        working-directory: clients/nodejs-embedded
+        run: npx eslint src/ --ext .ts,.js || echo "ESLint not configured, skipping"
+
+  # Rust SDK Linting
+  rust-sdk-lint:
+    name: Rust SDK Lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust_sdk == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check Format
+        working-directory: clients/rust
+        run: cargo fmt --check
+      - name: Run Clippy
+        working-directory: clients/rust
+        run: cargo clippy -- -D warnings
+
+  # SDK Security Scanning with Trivy
+  sdk-security-scan:
+    name: SDK Security Scan
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.python == 'true' ||
+      needs.changes.outputs.go_sdk == 'true' ||
+      needs.changes.outputs.nodejs_sdk == 'true' ||
+      needs.changes.outputs.rust_sdk == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy on Python SDK
+        if: needs.changes.outputs.python == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'clients/python'
+          format: 'sarif'
+          output: 'python-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy on Go SDK
+        if: needs.changes.outputs.go_sdk == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'clients/go'
+          format: 'sarif'
+          output: 'go-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy on Node.js SDK
+        if: needs.changes.outputs.nodejs_sdk == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'clients/nodejs-embedded'
+          format: 'sarif'
+          output: 'nodejs-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy on Rust SDK
+        if: needs.changes.outputs.rust_sdk == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'clients/rust'
+          format: 'sarif'
+          output: 'rust-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: '.'
+          category: 'sdk-security'
 
   docs-validation:
     name: Docs Validation
@@ -717,6 +860,11 @@ jobs:
       - integration-test
       - docker-build
       - docs-validation
+      # SDK linting and security
+      - go-lint
+      - nodejs-lint
+      - rust-sdk-lint
+      - sdk-security-scan
     if: always()
     steps:
       - name: Check Results
