@@ -288,6 +288,9 @@ docs/log/
 !package.json
 !config.json
 !clients/**/package.json
+!clients/**/tsconfig.json
+!clients/**/tsconfig.*.json
+!clients/**/package-lock.json
 !examples/**/*.json
 bert_*.json
 msmarco_*.json
