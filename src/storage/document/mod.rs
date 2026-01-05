@@ -5,11 +5,13 @@
 // - Array indexing (inverted index for containment queries)
 // - Full-text search (Tantivy integration)
 // - Schema validation and evolution
+// - Aggregation pipeline (GROUP BY, COUNT, SUM, AVG, MIN, MAX)
 //
 // Storage strategy:
 // - Hot tier: SST engine with document-optimized blocks
 // - Cold tier: VIPER/Parquet columnar storage
 
+pub mod aggregation;
 pub mod indexes;
 pub mod query;
 pub mod service;
@@ -180,6 +182,15 @@ pub struct FlushToStorageResult {
     pub duration_ms: u64,
     /// Whether the operation was successful
     pub success: bool,
+}
+
+/// Result of a document aggregation pipeline
+#[derive(Debug, Clone)]
+pub struct AggregateResult {
+    /// Aggregated result documents (output of the pipeline)
+    pub results: Vec<SqlObject>,
+    /// Query execution time in milliseconds
+    pub query_time_ms: u64,
 }
 
 #[cfg(test)]
