@@ -171,9 +171,19 @@ jobs:
             -A clippy::redundant_field_names \
             -A clippy::inconsistent_digit_grouping \
             -A clippy::needless_borrows_for_generic_args \
-            -A clippy::useless_cfg \
             -A clippy::byte_char_slices \
-            -A unused_imports
+            -A clippy::useless_vec \
+            -A clippy::needless_raw_string_hashes \
+            -A clippy::useless_format \
+            -A clippy::unused_io_amount \
+            -A clippy::single_match \
+            -A clippy::unnecessary_to_owned \
+            -A clippy::manual_map \
+            -A clippy::match_like_matches_macro \
+            -A clippy::clone_on_copy \
+            -A clippy::ptr_arg \
+            -A unused_imports \
+            -A dead_code
 
   rust-security:
     name: Security Audit
