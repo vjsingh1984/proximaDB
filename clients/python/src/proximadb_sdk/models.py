@@ -20,10 +20,11 @@ limitations under the License.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
 from enum import Enum
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Type aliases for convenience
 VectorArray = Union[List[List[float]], np.ndarray]

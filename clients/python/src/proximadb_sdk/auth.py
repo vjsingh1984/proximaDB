@@ -12,11 +12,11 @@ import asyncio
 import json
 import logging
 import time
+import warnings
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union, Callable
-from dataclasses import dataclass, asdict
-import warnings
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import requests
 from requests.adapters import HTTPAdapter

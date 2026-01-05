@@ -5,6 +5,7 @@ Provides async REST methods for graph operations with per-call prefetch override
 """
 
 from typing import Any, Dict, List, Optional
+
 import httpx
 
 

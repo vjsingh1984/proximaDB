@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Storage engine types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageEngine {
     /// SST - Write-optimized, real-time workloads
+    #[default]
     Sst,
     /// HELIX - Locality-optimized with Hilbert curves
     Helix,
@@ -58,17 +59,12 @@ impl std::str::FromStr for StorageEngine {
     }
 }
 
-impl Default for StorageEngine {
-    fn default() -> Self {
-        StorageEngine::Sst
-    }
-}
-
 /// Index type for collections
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum IndexType {
     /// HNSW - Hierarchical Navigable Small World
+    #[default]
     Hnsw,
     /// IVF - Inverted File Index
     Ivf,
@@ -90,30 +86,19 @@ impl IndexType {
     }
 }
 
-impl Default for IndexType {
-    fn default() -> Self {
-        IndexType::Hnsw
-    }
-}
-
 /// Distance metric for similarity search
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DistanceMetric {
     /// L2 (Euclidean) distance
     L2,
     /// Cosine similarity
+    #[default]
     Cosine,
     /// Dot product
     DotProduct,
     /// Inner product (alias for dot product)
     InnerProduct,
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        DistanceMetric::Cosine
-    }
 }
 
 /// Builder for creating collections

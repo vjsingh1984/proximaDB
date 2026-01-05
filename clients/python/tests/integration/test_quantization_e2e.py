@@ -6,23 +6,27 @@ This test verifies that the complete quantization flow works correctly
 from client SDK through to storage engines.
 """
 
-import pytest
-import time
-import numpy as np
-from ..embedding_utils import embed_seed, embed_many
 import logging
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
-from proximadb_sdk import connect_rest, connect_grpc
+import numpy as np
+import pytest
+
+from proximadb_sdk import connect_grpc, connect_rest
+
+from ..embedding_utils import embed_many, embed_seed
 
 logger = logging.getLogger(__name__)
 from proximadb_sdk import (
     CollectionConfig,
     DistanceMetric,
     QuantizationConfig,
-    QuantizationType,
-    SearchOptimization as SearchOptimizationHints,
     QuantizationHint,
+    QuantizationType,
+)
+from proximadb_sdk import SearchOptimization as SearchOptimizationHints
+from proximadb_sdk import (
     VectorRecord,
 )
 

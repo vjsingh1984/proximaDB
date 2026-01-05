@@ -35,10 +35,10 @@ Top providers:
 # Core components
 from .core import (
     BaseEmbeddingProvider,
-    ProviderConfig,
-    ModelMetadata,
-    ProviderRegistry,
     ModelCache,
+    ModelMetadata,
+    ProviderConfig,
+    ProviderRegistry,
 )
 
 # Import providers to trigger registration

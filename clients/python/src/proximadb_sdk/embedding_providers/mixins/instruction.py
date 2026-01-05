@@ -4,9 +4,10 @@ Instruction mixin
 Provides query instruction support for retrieval-optimized models.
 """
 
-from typing import List
-import numpy as np
 import logging
+from typing import List
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 

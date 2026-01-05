@@ -5,8 +5,9 @@ Chunks text at sentence boundaries while respecting size constraints.
 """
 
 import re
-from typing import List, Dict, Any, Optional
-from .base import ChunkingStrategyInterface, TextChunk, ChunkingConfig
+from typing import Any, Dict, List, Optional
+
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
 
 class SentenceStrategy(ChunkingStrategyInterface):

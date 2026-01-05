@@ -11,170 +11,158 @@ Licensed under the Apache License, Version 2.0
 __version__ = "1.0.0"
 __author__ = "ProximaDB Contributors"
 
-# Core client and configuration
-from .unified_client import ProximaDBClient
-from .unified_client_v2 import ProximaDBClient as ProximaDBClientV2
-from .unified_client_v2 import connect_embedded
-from .client_v1 import ProximaDBClientV1
-from .config import Protocol, PortMode
-from .config import (
-    ClientConfig,
-    LogLevel,
-    ConnectionConfig,
-    TLSConfig,
-    load_config,
-    load_config_file,
-)
-
 # Protocol adapters
 from .adapters import (
     BaseProtocolAdapter,
     create_adapter,
 )
 
-# Models
-from .models import (
-    # Collection models
-    Collection,
-    CollectionConfig,
-    CollectionStats,
-    CollectionInfo,
-    # Vector models
-    VectorRecord,
-    SearchResult,
-    # Operation responses
-    OperationMetrics,
-    VectorOperationResponse,
-    HealthStatus,
-    # Enums
-    DistanceMetric,
-    StorageEngine,
-    IndexingAlgorithm,
-    IndexingAlgorithm as IndexType,  # Alias for compatibility
-    # Quantization
-    QuantizationConfig,
-    QuantizationType,
-    QuantizationHint,
-    # Search optimization
-    SearchOptimization,
-    # Additional models
-    IndexConfiguration,
-    FlushConfig,
-    StorageConfig,
-    CompressionType,
-    FilterableColumn,
-    FilterableDataType,
-    ServerCapabilities,
-    # Type aliases
-    VectorArray,
-    MetadataDict,
-    FilterDict,
+# Authentication
+from .auth import (
+    AuthConfig,
+    AuthMethod,
+    AuthResult,
+    Permission,
+    ProximaDBAuth,
 )
 
-# v2 Models - ProximaRecord and typed schema support
-from .models_v2 import (
-    # Core record type
-    ProximaRecord,
-    # Typed values
-    TypedValue,
-    ColumnDataType,
-    # Text storage
-    TextField,
-    TextStorageStrategy,
-    TextColumnConfig,
-    # Text column convenience functions
-    create_text_column_schema,
-    text_column,
-    # Schema
-    RecordSchema,
-    ColumnDefinition,
-    SchemaEnforcement,
-    # Typed filters
-    FilterBuilderV2,
-    TypedFilterCondition,
-    FilterOperator as FilterOperatorV2,
-    # Search
-    SearchRequestV2,
+# Builders
+from .builders import (
+    CollectionBuilder,
+    InsertBuilder,
+    SearchBuilder,
+)
+from .client_v1 import ProximaDBClientV1
+from .config import (
+    ClientConfig,
+    ConnectionConfig,
+    LogLevel,
+    PortMode,
+    Protocol,
+    TLSConfig,
+    load_config,
+    load_config_file,
+)
+
+# Ultra-efficient enum packing (75% storage savings)
+from .enum_packing import (  # Enum classes; Packing functions; Helper functions
+    ContentCategory,
+    DataSource,
+    ExtractionMethod,
+    LanguageCode,
+    ProcessingStatus,
+    QualityLevel,
+    create_processing_info,
+    create_source_content,
+    create_text_content,
+    pack_language_code,
+    pack_processing_enums,
+    pack_source_attributes,
+    storage_efficiency_analysis,
+    unpack_language_code,
+    unpack_processing_enums,
+    unpack_source_attributes,
 )
 
 # Exceptions
 from .exceptions import (
-    ProximaDBError,
-    CollectionNotFoundError,
-    CollectionExistsError,
-    VectorNotFoundError,
-    VectorDimensionError,
-    InvalidVectorError,
     AuthenticationError,
     AuthorizationError,
-    RateLimitError,
-    QuotaExceededError,
-    ValidationError,
-    ServerError,
-    NetworkError,
-    TransportError,
-    TimeoutError,
-    ConfigurationError,
-    IndexError as ProximaIndexError,
     BatchError,
-    WALError,
+    CollectionExistsError,
+    CollectionNotFoundError,
+    ConfigurationError,
+)
+from .exceptions import IndexError as ProximaIndexError
+from .exceptions import (
+    InvalidVectorError,
+    NetworkError,
+    ProximaDBError,
+    QuotaExceededError,
+    RateLimitError,
+    ServerError,
     StreamingError,
-    map_http_error,
+    TimeoutError,
+    TransportError,
+    ValidationError,
+    VectorDimensionError,
+    VectorNotFoundError,
+    WALError,
     map_grpc_error,
+    map_http_error,
 )
 
 # Filter API
 from .filters import (
     FilterBuilder,
-    FilterOp,
-    LogicalOp,
     FilterCondition,
     FilterGroup,
+    FilterOp,
+    LogicalOp,
+    and_filters,
     eq,
     gt,
-    lt,
     in_list,
-    and_filters,
+    lt,
     or_filters,
 )
 
-# Builders
-from .builders import (
-    SearchBuilder,
-    CollectionBuilder,
-    InsertBuilder,
+# Models
+from .models import (
+    Collection,
+    CollectionConfig,
+    CollectionInfo,
+    CollectionStats,
+    CompressionType,
+    DistanceMetric,
+    FilterableColumn,
+    FilterableDataType,
+    FilterDict,
+    FlushConfig,
+    HealthStatus,
+    IndexConfiguration,
+)
+from .models import (
+    IndexingAlgorithm,  # Collection models; Vector models; Operation responses; Enums; Quantization; Search optimization; Additional models; Type aliases
+)
+from .models import IndexingAlgorithm as IndexType  # Alias for compatibility
+from .models import (
+    MetadataDict,
+    OperationMetrics,
+    QuantizationConfig,
+    QuantizationHint,
+    QuantizationType,
+    SearchOptimization,
+    SearchResult,
+    ServerCapabilities,
+    StorageConfig,
+    StorageEngine,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 
-# Authentication
-from .auth import (
-    ProximaDBAuth,
-    AuthConfig,
-    AuthMethod,
-    AuthResult,
-    Permission,
+# v2 Models - ProximaRecord and typed schema support
+from .models_v2 import (
+    ColumnDataType,
+    ColumnDefinition,
+    FilterBuilderV2,
 )
-
-# Ultra-efficient enum packing (75% storage savings)
-from .enum_packing import (
-    # Enum classes
-    ExtractionMethod,
-    ProcessingStatus,
-    QualityLevel,
-    DataSource,
-    ContentCategory,
-    LanguageCode,
-    # Packing functions
-    pack_processing_enums,
-    unpack_processing_enums,
-    pack_source_attributes,
-    unpack_source_attributes,
-    pack_language_code,
-    unpack_language_code,
-    # Helper functions
-    create_processing_info,
-    create_source_content,
-    create_text_content,
-    storage_efficiency_analysis,
+from .models_v2 import (
+    FilterOperator as FilterOperatorV2,  # Core record type; Typed values; Text storage; Text column convenience functions; Schema; Typed filters; Search
+)
+from .models_v2 import (
+    ProximaRecord,
+    RecordSchema,
+    SchemaEnforcement,
+    SearchRequestV2,
+    TextColumnConfig,
+    TextField,
+    TextStorageStrategy,
+    TypedFilterCondition,
+    TypedValue,
+    create_text_column_schema,
+    text_column,
 )
 
 # Centralized proto type conversion
@@ -182,11 +170,16 @@ from .proto_conversion import (
     ProtoConverter,
     distance_metric_to_int,
     distance_metric_to_str,
-    storage_engine_to_int,
-    storage_engine_to_str,
     index_type_to_int,
     index_type_to_str,
+    storage_engine_to_int,
+    storage_engine_to_str,
 )
+
+# Core client and configuration
+from .unified_client import ProximaDBClient
+from .unified_client_v2 import ProximaDBClient as ProximaDBClientV2
+from .unified_client_v2 import connect_embedded
 
 
 # Convenience factory functions
@@ -265,14 +258,14 @@ def connect_arrow_flight(url: str = None, **kwargs) -> ProximaDBClient:
 # Text chunking utilities (if available)
 try:
     from .chunking import (
-        TextChunker,
-        ChunkingStrategy,
         ChunkingConfig,
+        ChunkingStrategy,
         TextChunk,
-        create_chunker,
-        chunk_by_sentences,
+        TextChunker,
         chunk_by_paragraphs,
+        chunk_by_sentences,
         chunk_sliding_window,
+        create_chunker,
         prepare_vector_records,
     )
 
@@ -283,15 +276,15 @@ except ImportError:
 # Code-aware chunking and knowledge builder (if available)
 try:
     from .chunking_strategies import (
-        CodeChunkingStrategy,
         CodeChunkingConfig,
-        CodeSymbol,
-        CodeSymbolType,
+        CodeChunkingStrategy,
         CodeRelation,
         CodeRelationType,
+        CodeSymbol,
+        CodeSymbolType,
         create_code_chunker,
-        get_supported_languages,
         get_supported_extensions,
+        get_supported_languages,
         register_language_parser,
     )
 
@@ -302,8 +295,8 @@ except ImportError:
 # Code knowledge builder (if available)
 try:
     from .code_knowledge import (
-        CodeKnowledgeBuilder,
         CodeIndexConfig,
+        CodeKnowledgeBuilder,
         CodeSearchResult,
         IndexingResult,
         create_code_knowledge_store,
@@ -315,11 +308,11 @@ except ImportError:
 
 # Additional config classes
 try:
-    from .config import RetryConfig, CompressionConfig
+    from .config import CompressionConfig, RetryConfig
     from .resilience import (
-        NetworkRetryPolicy,
         AdvancedRetryPolicy,
         CircuitBreakerPolicy,
+        NetworkRetryPolicy,
         ResilienceConfig,
         RetryStrategy,
     )
@@ -494,14 +487,14 @@ if _code_knowledge_available:
 # Advanced features (batching, streaming, cache, circuit breaker)
 try:
     from .batching import (
-        RequestBatcher,
-        BatchStrategy,
         BatchConfig,
-        BatchRequest,
         BatchMetrics,
+        BatchRequest,
+        BatchStrategy,
         Pipeline,
-        create_vector_batcher,
+        RequestBatcher,
         batch_insert_vectors,
+        create_vector_batcher,
     )
 
     _batching_available = True
@@ -513,9 +506,9 @@ _streaming_available = False
 
 try:
     from .cache import (
-        SmartCache,
-        CacheStrategy,
         CacheMetrics,
+        CacheStrategy,
+        SmartCache,
     )
 
     _cache_available = True
@@ -525,12 +518,12 @@ except ImportError:
 try:
     from .circuit_breaker import (
         CircuitBreaker,
-        RetryMechanism,
         ResilientClient,
+        RetryMechanism,
         circuit_breaker,
-        retry,
-        resilient,
         create_resilient_client,
+        resilient,
+        retry,
     )
 
     _circuit_breaker_available = True
@@ -605,18 +598,18 @@ __all__.extend(
 # Graph Analytics
 try:
     from .graph_analytics import (
-        GraphAnalytics,
         AlgorithmConfig,
-        SemanticTraversalConfig,
+        AlgorithmResult,
+        GraphAlgorithm,
+        GraphAnalytics,
         GraphPattern,
         PatternElement,
-        RelationshipPattern,
-        AlgorithmResult,
-        SemanticTraversalResult,
-        PatternMatchResult,
-        GraphAlgorithm,
-        TraversalDirection,
         PatternMatchMode,
+        PatternMatchResult,
+        RelationshipPattern,
+        SemanticTraversalConfig,
+        SemanticTraversalResult,
+        TraversalDirection,
         node,
         relationship,
     )
@@ -647,18 +640,18 @@ if _graph_analytics_available:
 
 # Observability (OpenTelemetry, Prometheus, Tracing)
 try:
+    from .observability import LogLevel as ObsLogLevel
     from .observability import (
-        Observability,
-        MetricsCollector,
-        Tracer,
-        StructuredLogger,
         MetricDefinition,
-        SpanContext,
-        Span,
+        MetricsCollector,
         MetricType,
-        LogLevel as ObsLogLevel,
-        traced,
+        Observability,
+        Span,
+        SpanContext,
+        StructuredLogger,
+        Tracer,
         metered,
+        traced,
     )
 
     _observability_available = True
@@ -686,15 +679,15 @@ if _observability_available:
 try:
     from .automl import (
         AutoML,
-        WorkloadPredictor,
-        EngineSelector,
-        HyperparameterOptimizer,
-        WorkloadCharacteristics,
         EngineRecommendation,
+        EngineSelector,
         HyperparameterConfig,
-        OptimizationResult,
-        WorkloadType,
+        HyperparameterOptimizer,
         OptimizationGoal,
+        OptimizationResult,
+        WorkloadCharacteristics,
+        WorkloadPredictor,
+        WorkloadType,
     )
 
     _automl_available = True
@@ -719,24 +712,21 @@ if _automl_available:
 
 # Embedded mode and embedding models
 try:
-    from .embedded import (
-        # Core embedded classes
-        EmbeddedProximaDB,
+    from .embedded import (  # Core embedded classes; Embedding model classes; Protocols
+        AsyncEmbeddingFunction,
+        BaseEmbeddingModel,
+        BatchEmbeddingFunction,
         EmbeddedCollection,
         EmbeddedConfig,
         EmbeddedMultiModalQueryExecutor,
-        connect_embedded,
-        # Embedding model classes
-        BaseEmbeddingModel,
-        SentenceTransformerModel,
+        EmbeddedProximaDB,
+        EmbeddingFunction,
+        FunctionEmbeddingModel,
         OllamaEmbeddingModel,
         OpenAIEmbeddingModel,
-        FunctionEmbeddingModel,
+        SentenceTransformerModel,
+        connect_embedded,
         create_embedding_model,
-        # Protocols
-        EmbeddingFunction,
-        AsyncEmbeddingFunction,
-        BatchEmbeddingFunction,
     )
 
     _embedded_available = True
@@ -768,47 +758,41 @@ if _embedded_available:
 
 # Multi-Modal Query API (Phase 13.4)
 try:
-    from .multimodal_query import (
-        # Core classes
-        MultiModalQueryBuilder,
-        MultiModalQuery,
-        MultiModalQueryResult,
-        MultiModalQueryExecutor,
-        # Query components
-        VectorQueryComponent,
-        GraphQueryComponent,
-        DocumentQueryComponent,
-        LogQueryComponent,
-        MetricQueryComponent,
-        SemanticJoin,
-        # Enums
-        QueryType,
-        FusionStrategy,
-        JoinType,
-        TimeDecayFunction,
-        # Cross-Modal Reranking
+    from .multimodal_query import (  # Core classes; Query components; Enums; Cross-Modal Reranking; Learned Fusion (ML-based); Convenience functions
         CrossModalReranker,
-        RerankConfig,
-        QueryContext,
-        QueryIntent,
-        TemporalPreference,
-        ScoreComponent,
-        RerankExplanation,
-        RerankedResult,
-        # Learned Fusion (ML-based)
+        DocumentQueryComponent,
+        FeatureExtractor,
+        FeedbackSignal,
+        FeedbackType,
+        FusionFeatures,
+        FusionModelType,
+        FusionStrategy,
+        GraphQueryComponent,
+        JoinType,
         LearnedFusion,
         LearnedFusionConfig,
-        FusionModelType,
-        FusionFeatures,
-        FeedbackType,
-        FeedbackSignal,
-        TrainingSample,
+        LogQueryComponent,
+        MetricQueryComponent,
+        MultiModalQuery,
+        MultiModalQueryBuilder,
+        MultiModalQueryExecutor,
+        MultiModalQueryResult,
+        QueryContext,
+        QueryIntent,
+        QueryType,
+        RerankConfig,
+        RerankedResult,
+        RerankExplanation,
+        ScoreComponent,
+        SemanticJoin,
+        TemporalPreference,
+        TimeDecayFunction,
         TrainingMetrics,
-        FeatureExtractor,
-        # Convenience functions
-        semantic_search_with_graph,
+        TrainingSample,
+        VectorQueryComponent,
         knowledge_graph_search,
         logs_with_context,
+        semantic_search_with_graph,
     )
 
     _multimodal_query_available = True
@@ -863,31 +847,26 @@ if _multimodal_query_available:
 
 # Security Module (Phase 13.5)
 try:
-    from .security import (
-        # OAuth2
-        OAuth2TokenManager,
-        OAuth2Config,
-        OAuth2TokenResponse,
-        OAuth2GrantType,
-        OAuth2Provider,
-        OAuth2Error,
-        # RBAC
-        RBACManager,
-        RoleDefinition,
-        Role,
-        # Security Context
-        SecurityContext,
-        SecurityManager,
-        security_context,
-        get_current_security_context,
-        set_security_context,
-        clear_security_context,
-        # Audit
-        AuditLogger,
+    from .security import (  # OAuth2; RBAC; Security Context; Audit; mTLS
         AuditEvent,
         AuditEventType,
-        # mTLS
+        AuditLogger,
         MTLSConfig,
+        OAuth2Config,
+        OAuth2Error,
+        OAuth2GrantType,
+        OAuth2Provider,
+        OAuth2TokenManager,
+        OAuth2TokenResponse,
+        RBACManager,
+        Role,
+        RoleDefinition,
+        SecurityContext,
+        SecurityManager,
+        clear_security_context,
+        get_current_security_context,
+        security_context,
+        set_security_context,
     )
 
     _security_available = True
@@ -931,8 +910,8 @@ try:
         FileFormat,
         FileInfo,
         connect_arrow,
-        read_proximadb_file,
         read_proximadb_collection,
+        read_proximadb_file,
     )
 
     _arrow_export_available = True

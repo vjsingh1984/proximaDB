@@ -6,7 +6,7 @@ Each enum uses only 1 byte (0-255) instead of 4 bytes, matching the Rust impleme
 """
 
 from enum import IntEnum
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 
 class ExtractionMethod(IntEnum):

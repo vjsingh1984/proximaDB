@@ -6,8 +6,9 @@ This strategy focuses on text-based semantic analysis without embeddings.
 """
 
 import re
-from typing import List, Dict, Any, Optional, Tuple
-from .base import ChunkingStrategyInterface, TextChunk, ChunkingConfig
+from typing import Any, Dict, List, Optional, Tuple
+
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
 
 class SemanticStrategy(ChunkingStrategyInterface):

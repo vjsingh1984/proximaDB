@@ -4,15 +4,16 @@ Focuses on improving code coverage for uncovered functionality
 """
 
 import pytest
+
 from proximadb_sdk.chunking import (
+    ChunkingConfig,
     ChunkingStrategy,
     TextChunk,
-    ChunkingConfig,
     TextChunker,
-    create_chunker,
-    chunk_by_sentences,
     chunk_by_paragraphs,
+    chunk_by_sentences,
     chunk_sliding_window,
+    create_chunker,
 )
 
 

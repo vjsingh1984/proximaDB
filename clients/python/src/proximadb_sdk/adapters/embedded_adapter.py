@@ -15,22 +15,22 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Union
 
-from .base import BaseProtocolAdapter
 from ..models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
-    FilterDict,
-    OperationMetrics,
     DistanceMetric,
+    FilterDict,
+    HealthStatus,
+    MetadataDict,
+    OperationMetrics,
+    SearchResult,
     StorageEngine,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 from ..proto_conversion import ProtoConverter
+from .base import BaseProtocolAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """
         try:
             # Import the PyO3 bindings
-            from ..embedded import EmbeddedProximaDB, EmbeddedConfig
+            from ..embedded import EmbeddedConfig, EmbeddedProximaDB
 
             # Build config
             if config:

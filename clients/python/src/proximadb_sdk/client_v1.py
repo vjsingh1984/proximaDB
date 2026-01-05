@@ -5,30 +5,31 @@ This client uses the v1 proto messages that align with the server's unified hand
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urljoin, urlparse
+
 import grpc
 import requests
-from urllib.parse import urlparse, urljoin
 
-from .v1 import (
-    vector_pb2,
-    vector_pb2_grpc,
-    collection_pb2_grpc,
-    collection_types_pb2,
-    vector_types_pb2,
-    types_pb2,
-    sql_pb2_grpc,
-    graph_pb2,
-    graph_pb2_grpc,
-)
+from .exceptions import AuthenticationError, NetworkError, ProximaDBError
 from .models import (
-    VectorRecord,
-    SearchResult,
     Collection,
     DistanceMetric,
+    SearchResult,
     StorageEngine,
+    VectorRecord,
 )
-from .exceptions import ProximaDBError, NetworkError, AuthenticationError
+from .v1 import (
+    collection_pb2_grpc,
+    collection_types_pb2,
+    graph_pb2,
+    graph_pb2_grpc,
+    sql_pb2_grpc,
+    types_pb2,
+    vector_pb2,
+    vector_pb2_grpc,
+    vector_types_pb2,
+)
 
 logger = logging.getLogger(__name__)
 

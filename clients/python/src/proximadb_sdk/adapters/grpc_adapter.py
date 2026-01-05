@@ -11,20 +11,20 @@ Licensed under the Apache License, Version 2.0
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from .base import BaseProtocolAdapter
 from ..models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
     FilterDict,
+    HealthStatus,
+    MetadataDict,
     OperationMetrics,
+    SearchResult,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 from ..proto_conversion import ProtoConverter
+from .base import BaseProtocolAdapter
 
 logger = logging.getLogger(__name__)
 

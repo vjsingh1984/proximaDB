@@ -5,17 +5,17 @@ Compares ProximaDB, NetworkX, and igraph using actual embedded APIs
 """
 
 import gc
-import os
-import sys
-import time
-import tempfile
-import shutil
-import random
 import json
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass, asdict
-from collections import defaultdict
+import os
+import random
+import shutil
+import sys
+import tempfile
+import time
 import traceback
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 

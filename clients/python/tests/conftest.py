@@ -11,12 +11,12 @@ sys.path manipulation for consistent imports.
 """
 
 import asyncio
+import logging
 import os
 import tempfile
 import time
-import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -115,7 +115,7 @@ def embedded_db(embedded_db_config):
             ...
     """
     try:
-        from proximadb_sdk.embedded import EmbeddedProximaDB, EmbeddedConfig
+        from proximadb_sdk.embedded import EmbeddedConfig, EmbeddedProximaDB
     except ImportError:
         pytest.skip("Embedded database not available")
         return
@@ -173,7 +173,7 @@ def embedded_db(embedded_db_config):
 @pytest.fixture
 def embedded_rest_client(embedded_db, embedded_db_config):
     """REST client connected to embedded database."""
-    from proximadb_sdk import ProximaDBClient, Protocol
+    from proximadb_sdk import Protocol, ProximaDBClient
     from proximadb_sdk.config import ClientConfig
 
     config = ClientConfig(
@@ -189,7 +189,7 @@ def embedded_rest_client(embedded_db, embedded_db_config):
 @pytest.fixture
 def embedded_grpc_client(embedded_db, embedded_db_config):
     """gRPC client connected to embedded database."""
-    from proximadb_sdk import ProximaDBClient, Protocol
+    from proximadb_sdk import Protocol, ProximaDBClient
     from proximadb_sdk.config import ClientConfig
 
     config = ClientConfig(

@@ -6,15 +6,16 @@ chunks optimized for code search and understanding.
 """
 
 import sys
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading
-from loader import code_module, RESOURCES_DIR, read_resource_file
+from loader import RESOURCES_DIR, code_module, read_resource_file
 
 # Get references from the loaded module
 CodeChunkingStrategy = code_module.CodeChunkingStrategy

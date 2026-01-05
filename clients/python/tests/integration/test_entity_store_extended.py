@@ -13,13 +13,14 @@ that were not covered by the basic tests, specifically targeting:
 import os
 import time
 import uuid
-import pytest
 from typing import List
 
 import numpy as np
-from ..embedding_utils import embed_seed
+import pytest
 
 from proximadb_sdk import ProximaDBClient, VectorRecord
+
+from ..embedding_utils import embed_seed
 
 
 def _server_available(url: str) -> bool:

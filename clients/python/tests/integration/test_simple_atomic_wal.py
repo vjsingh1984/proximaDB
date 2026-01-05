@@ -7,8 +7,10 @@ requiring a running ProximaDB server at localhost:5678.
 """
 
 import json
-import requests
+
 import numpy as np
+import requests
+
 from ..embedding_utils import embed_seed
 
 

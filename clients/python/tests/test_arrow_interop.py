@@ -5,9 +5,10 @@ This test verifies that Arrow IPC files produced by ProximaDB can be read
 by standard PyArrow, DuckDB, and Polars tools.
 """
 
-import os
 import json
+import os
 import tempfile
+
 import pytest
 
 # Check if pyarrow is available

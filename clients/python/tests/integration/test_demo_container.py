@@ -10,13 +10,14 @@ Tests the Docker demo container functionality including:
 - Performance validation
 """
 
+import json
+import os
+import subprocess
+import time
+from typing import Dict, List, Optional
+
 import pytest
 import requests
-import time
-import json
-import subprocess
-from typing import Dict, List, Optional
-import os
 
 
 class TestDockerDemoContainer:
@@ -137,8 +138,7 @@ class TestDockerDemoContainer:
         collection_name = f"vector_test_collection_{int(time.time())}"
 
         # Use SDK instead of raw REST calls for proper metadata handling
-        from proximadb_sdk import ProximaDBClient
-        from proximadb_sdk import VectorRecord
+        from proximadb_sdk import ProximaDBClient, VectorRecord
 
         client = ProximaDBClient(url=base_url, force_protocol="rest")
 

@@ -4,11 +4,12 @@ Per-Engine Search Operation Tests
 Tests each storage engine (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX) with and without metadata
 """
 
-import pytest
-import numpy as np
 import time
-from proximadb_sdk import connect_rest, connect_grpc, StorageEngine, VectorRecord
 
+import numpy as np
+import pytest
+
+from proximadb_sdk import StorageEngine, VectorRecord, connect_grpc, connect_rest
 
 # Test parameters for each engine
 ENGINES_TO_TEST = [

@@ -101,8 +101,8 @@ class EmbeddingService:
         """Initialize OpenAI embedding client."""
         try:
             from victor.vector_stores.models import (
-                OpenAIEmbeddingModel,
                 EmbeddingModelConfig,
+                OpenAIEmbeddingModel,
             )
 
             config = EmbeddingModelConfig(
@@ -160,8 +160,8 @@ class EmbeddingService:
         """Initialize Ollama embedding client."""
         try:
             from victor.vector_stores.models import (
-                OllamaEmbeddingModel,
                 EmbeddingModelConfig,
+                OllamaEmbeddingModel,
             )
 
             config = EmbeddingModelConfig(

@@ -23,21 +23,21 @@ Design Patterns:
 - Factory: Tool selection based on availability
 """
 
+import hashlib
+import logging
 import os
+import platform
 import re
 import shutil
 import subprocess
 import tempfile
-import platform
-import hashlib
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple, Union
 from enum import Enum, auto
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from .parser_utils import BaseLanguageParser, ParserError, ParseError
+from .parser_utils import BaseLanguageParser, ParseError, ParserError
 
 logger = logging.getLogger(__name__)
 
@@ -845,7 +845,7 @@ class BinaryParser(BaseLanguageParser):
 
     def parse(self, content: str, file_path: str):
         """Parse binary file and extract symbols"""
-        from .code import ParsedCode, CodeSymbol, CodeSymbolType, SourceLocation
+        from .code import CodeSymbol, CodeSymbolType, ParsedCode, SourceLocation
 
         # For binary files, content is ignored - we read the file directly
         if not os.path.exists(file_path):
@@ -987,7 +987,7 @@ class DocumentParser(BaseLanguageParser):
 
     def parse(self, content: str, file_path: str):
         """Parse document and extract text"""
-        from .code import ParsedCode, CodeSymbol, CodeSymbolType, SourceLocation
+        from .code import CodeSymbol, CodeSymbolType, ParsedCode, SourceLocation
 
         if not os.path.exists(file_path):
             raise ParseError(f"File not found: {file_path}", file_path=file_path)

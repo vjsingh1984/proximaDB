@@ -11,20 +11,20 @@ Licensed under the Apache License, Version 2.0
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from .base import BaseProtocolAdapter
 from ..models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
     FilterDict,
+    HealthStatus,
+    MetadataDict,
     OperationMetrics,
+    SearchResult,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 from ..proto_conversion import ProtoConverter
+from .base import BaseProtocolAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +51,8 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             timeout: Request timeout in seconds
             **kwargs: Additional configuration passed to underlying client
         """
-        from ..protocols.rest_sync import ProximaDBClient
         from ..config import ClientConfig, load_config
+        from ..protocols.rest_sync import ProximaDBClient
 
         # Load config with provided parameters
         config = load_config(url=url, api_key=api_key, timeout=timeout, **kwargs)

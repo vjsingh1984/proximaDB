@@ -14,12 +14,13 @@ Run quick smoke test only:
 
 import os
 import sys
-import time
 import tempfile
-import pytest
-import numpy as np
+import time
 from dataclasses import dataclass
-from typing import List, Set, Optional
+from typing import List, Optional, Set
+
+import numpy as np
+import pytest
 
 # Add proximadb to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -28,7 +29,6 @@ import proximadb
 
 proximadb.init_logging("warn")
 from proximadb import ProximaDB as EmbeddedProximaDB
-
 
 # Test configuration
 ENGINES = ["sst", "helix", "viper", "swift", "nova", "raptor"]

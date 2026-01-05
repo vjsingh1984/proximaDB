@@ -10,11 +10,12 @@ Top SFR Models (Open Source):
 - Salesforce/SFR-Embedding-Mistral: Excellent quality (4096 dims) - Mistral-based
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

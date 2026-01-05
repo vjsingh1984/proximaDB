@@ -6,11 +6,10 @@ Ranks #1 on MTEB for both English and Chinese.
 """
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-from ...mixins.sentence_transformer import SentenceTransformerMixin
 from ...mixins.instruction import InstructionMixin
-
+from ...mixins.sentence_transformer import SentenceTransformerMixin
 
 # Model catalog
 GTE_QWEN_MODELS = {

@@ -6,10 +6,9 @@ Use this for models not covered by specialized providers.
 """
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
 from ...mixins.sentence_transformer import SentenceTransformerMixin
-
 
 # Popular models
 SENTENCE_TRANSFORMER_MODELS = {

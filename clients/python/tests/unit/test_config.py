@@ -3,17 +3,19 @@ Test suite for ProximaDB configuration
 """
 
 import os
+
 import pytest
 from pydantic import ValidationError
+
 from proximadb_sdk import (
-    Protocol,
-    PortMode,
-    LogLevel,
-    RetryConfig,
-    ConnectionConfig,
-    CompressionConfig,
-    TLSConfig,
     ClientConfig,
+    CompressionConfig,
+    ConnectionConfig,
+    LogLevel,
+    PortMode,
+    Protocol,
+    RetryConfig,
+    TLSConfig,
     load_config,
     load_config_file,
 )

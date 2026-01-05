@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import logging
 import mimetypes
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -42,7 +43,6 @@ from typing import (
     TypeVar,
     Union,
 )
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -623,8 +623,8 @@ class CodeDocumentProcessor(DocumentProcessor):
         """Lazy initialization of code chunker"""
         if self._chunker is None:
             from .chunking_strategies.code import (
-                CodeChunkingStrategy,
                 CodeChunkingConfig,
+                CodeChunkingStrategy,
             )
 
             # Map ProcessorConfig settings to CodeChunkingConfig parameters
@@ -751,8 +751,8 @@ class TextDocumentProcessor(DocumentProcessor):
     def _get_chunker(self):
         """Lazy initialization of text chunker"""
         if self._chunker is None:
-            from .chunking_strategies.semantic import SemanticStrategy
             from .chunking_strategies.base import ChunkingConfig, ChunkingStrategy
+            from .chunking_strategies.semantic import SemanticStrategy
 
             config = ChunkingConfig(
                 strategy=ChunkingStrategy.SEMANTIC,

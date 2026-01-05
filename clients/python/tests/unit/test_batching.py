@@ -5,38 +5,40 @@ Uses real ProximaDB server connections to test request batching,
 dynamic batch sizing, and performance optimizations.
 """
 
-import pytest
-import time
 import asyncio
-import numpy as np
-from ..embedding_utils import embed_seed
-from pathlib import Path
 import sys
-from typing import List, Dict, Any
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+import pytest
+
+from ..embedding_utils import embed_seed
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb_sdk.batching_unified import (
-    BatchStrategy,
-    BatchOperationType,
-    BatchConfig,
-    BatchRequest,
-    UnifiedBatchManager,
-    BatchMetrics,
-    AsyncBatchProcessor,
-    ThreadedBatchProcessor,
-    create_vector_batcher,
-    batch_insert_vectors,
-)
+from proximadb_sdk import ProximaDBClient
 
 # Backward compatibility import
 from proximadb_sdk.batching import RequestBatcher
+from proximadb_sdk.batching_unified import (
+    AsyncBatchProcessor,
+    BatchConfig,
+    BatchMetrics,
+    BatchOperationType,
+    BatchRequest,
+    BatchStrategy,
+    ThreadedBatchProcessor,
+    UnifiedBatchManager,
+    batch_insert_vectors,
+    create_vector_batcher,
+)
 from proximadb_sdk.models import VectorRecord
-from proximadb_sdk import ProximaDBClient
 
 
 class TestBatchConfig(BaseProximaDBTest):

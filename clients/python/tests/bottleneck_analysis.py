@@ -14,12 +14,13 @@ This will reveal:
 - What's the real bottleneck?
 """
 
-import proximadb
-import tempfile
-import shutil
-import time
 import os
+import shutil
 import subprocess
+import tempfile
+import time
+
+import proximadb
 
 
 def run_test(parallel: bool, wal: bool, nodes: int, edges: int):

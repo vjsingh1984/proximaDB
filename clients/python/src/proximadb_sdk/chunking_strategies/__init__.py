@@ -16,146 +16,123 @@ For code-aware chunking, use the CodeChunkingStrategy which provides:
 - Robust error handling with fallback strategies
 """
 
-from .base import ChunkingStrategy, ChunkingStrategyInterface, TextChunk, ChunkingConfig
-from .sliding_window import SlidingWindowStrategy
-from .sentence import SentenceStrategy
-from .paragraph import ParagraphStrategy
-from .semantic import SemanticStrategy
-from .recursive import RecursiveStrategy
-from .factory import ChunkingStrategyFactory, get_chunking_strategy
-
-# Parser utilities (enhanced design patterns)
-from .parser_utils import (
-    # Errors
-    ParserError,
-    ParserInitializationError,
-    ParseError,
-    UnsupportedLanguageError,
-    # Fallback strategies
-    FallbackStrategy,
-    FallbackConfig,
-    # Metrics
-    ParserMetrics,
-    MetricsCollector,
-    get_metrics_collector,
-    # Cache
-    ParserCache,
-    get_parser_cache,
-    # Decorators
-    with_metrics,
-    with_fallback,
-    cached_parser,
-    # Parser base classes
-    BaseLanguageParser,
-    CFamilyParser,
-    JVMFamilyParser,
-    DynamicLanguageParser,
-    FunctionalLanguageParser,
-    MarkupParser,
-    # Plugin system
-    ParserPlugin,
-    ParserPluginRegistry,
-    get_plugin_registry,
-    # Validation
-    ValidationResult,
-    ConfigValidator,
-    # Utilities
-    parser_context,
-    detect_language_from_content,
-)
+from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
 
 # Code-aware chunking
-from .code import (
-    CodeChunkingStrategy,
+from .code import (  # Parser classes - Primary languages; Parser classes - Additional languages; Registry functions; Constants
+    EXTENSION_TO_LANGUAGE,
+    LANGUAGE_PARSERS,
+    BashParser,
     CodeChunkingConfig,
-    CodeSymbol,
-    CodeSymbolType,
+    CodeChunkingStrategy,
     CodeRelation,
     CodeRelationType,
-    ParsedCode,
-    SourceLocation,
-    LanguageParser,
-    # Parser classes - Primary languages
-    PythonParser,
-    RustParser,
+    CodeSymbol,
+    CodeSymbolType,
+    CppParser,
+    CSharpParser,
+    ElixirParser,
     GoParser,
+    HaskellParser,
     JavaParser,
     JavaScriptParser,
-    CppParser,
-    RubyParser,
-    # Parser classes - Additional languages
-    CSharpParser,
-    PhpParser,
-    SwiftParser,
-    KotlinParser,
-    ScalaParser,
-    BashParser,
-    SqlParser,
-    YamlParser,
     JsonParser,
-    XmlParser,
-    PerlParser,
+    KotlinParser,
+    LanguageParser,
     LuaParser,
-    HaskellParser,
-    ElixirParser,
-    # Registry functions
-    register_language_parser,
-    register_file_extension,
-    get_supported_languages,
-    get_supported_extensions,
+    ParsedCode,
+    PerlParser,
+    PhpParser,
+    PythonParser,
+    RubyParser,
+    RustParser,
+    ScalaParser,
+    SourceLocation,
+    SqlParser,
+    SwiftParser,
+    XmlParser,
+    YamlParser,
     create_code_chunker,
-    # Constants
-    LANGUAGE_PARSERS,
-    EXTENSION_TO_LANGUAGE,
+    get_supported_extensions,
+    get_supported_languages,
+    register_file_extension,
+    register_language_parser,
 )
 
 # Document and binary parsers (OCR, reverse engineering)
-from .document_parsers import (
-    # Enums
-    BinaryType,
-    DocumentType,
-    # Data structures
-    BinarySymbol,
+from .document_parsers import (  # Enums; Data structures; Tool detection; Parsers; Factory functions
     BinaryAnalysis,
-    OCRResult,
-    BinaryParserConfig,
-    OCRConfig,
-    # Tool detection
-    ToolDetector,
-    # Parsers
     BinaryParser,
+    BinaryParserConfig,
+    BinarySymbol,
+    BinaryType,
     DocumentParser,
-    # Factory functions
+    DocumentType,
+    OCRConfig,
+    OCRResult,
+    ToolDetector,
     create_binary_parser,
     create_document_parser,
     get_available_tools,
 )
+from .factory import ChunkingStrategyFactory, get_chunking_strategy
+from .paragraph import ParagraphStrategy
+
+# Parser utilities (enhanced design patterns)
+from .parser_utils import (  # Errors; Fallback strategies; Metrics; Cache; Decorators; Parser base classes; Plugin system; Validation; Utilities
+    BaseLanguageParser,
+    CFamilyParser,
+    ConfigValidator,
+    DynamicLanguageParser,
+    FallbackConfig,
+    FallbackStrategy,
+    FunctionalLanguageParser,
+    JVMFamilyParser,
+    MarkupParser,
+    MetricsCollector,
+    ParseError,
+    ParserCache,
+    ParserError,
+    ParserInitializationError,
+    ParserMetrics,
+    ParserPlugin,
+    ParserPluginRegistry,
+    UnsupportedLanguageError,
+    ValidationResult,
+    cached_parser,
+    detect_language_from_content,
+    get_metrics_collector,
+    get_parser_cache,
+    get_plugin_registry,
+    parser_context,
+    with_fallback,
+    with_metrics,
+)
 
 # Unified pipeline (orchestration, batch processing, streaming)
-from .pipeline import (
-    # Configuration
-    ProcessingMode,
+from .pipeline import (  # Configuration; Pipeline stages; Core components; Factory functions; Context managers
+    BatchEmbedder,
+    BatchResult,
+    ChunkingPipeline,
+    EnrichmentStage,
     ErrorHandling,
+    FilterStage,
     PipelineConfig,
     PipelineResult,
-    BatchResult,
-    # Pipeline stages
     PipelineStage,
-    ValidationStage,
-    EnrichmentStage,
-    FilterStage,
-    # Core components
-    BatchEmbedder,
+    ProcessingMode,
     ProgressTracker,
-    ChunkingPipeline,
-    # Factory functions
-    create_pipeline,
+    ValidationStage,
+    async_pipeline_context,
     create_code_pipeline,
     create_document_pipeline,
-    # Context managers
+    create_pipeline,
     pipeline_context,
-    async_pipeline_context,
 )
+from .recursive import RecursiveStrategy
+from .semantic import SemanticStrategy
+from .sentence import SentenceStrategy
+from .sliding_window import SlidingWindowStrategy
 
 __all__ = [
     # Base classes

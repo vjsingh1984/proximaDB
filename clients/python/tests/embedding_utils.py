@@ -5,7 +5,7 @@ Falls back to a clear error if the dependency is missing. To install:
     pip install sentence-transformers
 """
 
-from typing import List, Dict, Tuple
+from typing import Dict, List, Tuple
 
 try:
     from sentence_transformers import SentenceTransformer

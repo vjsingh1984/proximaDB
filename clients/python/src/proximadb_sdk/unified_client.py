@@ -16,16 +16,37 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
-from .config import ClientConfig, load_config, Protocol, PortMode
-from .protocol_selector import (
-    ProtocolSelector,
-    SelectionStrategy,
-    create_protocol_selector,
+from .adapters import BaseProtocolAdapter, create_adapter
+from .auth import AuthConfig, AuthMethod, ProximaDBAuth
+from .config import ClientConfig, PortMode, Protocol, load_config
+from .exceptions import (
+    NetworkError,
+    ProximaDBError,
+    RateLimitError,
+    TimeoutError,
+    map_http_error,
+)
+from .models import (
+    Collection,
+    CollectionConfig,
+    DistanceMetric,
+    FilterDict,
+    HealthStatus,
+    IndexingAlgorithm,
+    MetadataDict,
+    OperationMetrics,
+    QuantizationConfig,
+    QuantizationType,
+    SearchResult,
+    StorageEngine,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 from .operation_router import (
     OperationRouter,
@@ -33,38 +54,17 @@ from .operation_router import (
     RoutingStrategy,
     create_operation_router,
 )
-from .models import (
-    Collection,
-    CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    OperationMetrics,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
-    FilterDict,
-    DistanceMetric,
-    StorageEngine,
-    IndexingAlgorithm,
-    QuantizationConfig,
-    QuantizationType,
-)
 from .proto_conversion import ProtoConverter
-from .exceptions import (
-    ProximaDBError,
-    NetworkError,
-    TimeoutError,
-    RateLimitError,
-    map_http_error,
+from .protocol_selector import (
+    ProtocolSelector,
+    SelectionStrategy,
+    create_protocol_selector,
 )
-from .auth import ProximaDBAuth, AuthConfig, AuthMethod
-from .adapters import create_adapter, BaseProtocolAdapter
 
 try:
     from .v1 import collection_types_pb2 as v1_collection_types_pb2
-    from .v1 import vector_types_pb2 as v1_vector_types_pb2
     from .v1 import types_pb2 as v1_types_pb2
+    from .v1 import vector_types_pb2 as v1_vector_types_pb2
 
     GRPC_AVAILABLE = True
 except ImportError:
@@ -510,8 +510,8 @@ class ProximaDBClient:
 
     def _create_grpc_client(self):
         """Create gRPC client with authentication support"""
-        from .protocols.grpc_sync import ProximaDBSyncGrpcClient
         from .config import Protocol
+        from .protocols.grpc_sync import ProximaDBSyncGrpcClient
 
         # Use the proper protocol URL generation for gRPC
         grpc_url = self.config.get_protocol_url(Protocol.GRPC)

@@ -5,10 +5,11 @@ Tests filter conversion and SearchParams conversion with v1 proto structure.
 """
 
 import pytest
+
 from proximadb_sdk.filters import FilterBuilder, FilterOp, LogicalOp
 from proximadb_sdk.search_utils import (
-    build_search_params_grpc,
     _python_value_to_sql_value,
+    build_search_params_grpc,
 )
 
 
@@ -292,8 +293,9 @@ class TestSqlValueConversion:
 
     def test_none_value(self):
         """Test None to SqlValue"""
-        from proximadb_sdk.v1 import types_pb2
         from google.protobuf import struct_pb2
+
+        from proximadb_sdk.v1 import types_pb2
 
         sql_value = _python_value_to_sql_value(None, types_pb2)
         assert sql_value.null_value == struct_pb2.NULL_VALUE

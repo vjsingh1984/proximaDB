@@ -26,14 +26,14 @@ Comparison databases (when available):
 
 import gc
 import os
-import sys
-import time
-import tempfile
-import shutil
 import random
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+import shutil
+import sys
+import tempfile
+import time
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 

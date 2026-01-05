@@ -23,12 +23,12 @@ Test configurations: 1024, 5000, and 10000 vectors (dimension=384)
 
 import gc
 import os
-import sys
-import time
-import tempfile
 import shutil
+import sys
+import tempfile
+import time
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -71,7 +71,7 @@ except ImportError:
 # Qdrant
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct
+    from qdrant_client.models import Distance, PointStruct, VectorParams
 
     QDRANT_AVAILABLE = True
 except ImportError:

@@ -4,14 +4,19 @@ ProximaDB REST API Completeness Test
 Test all REST endpoints to identify which are implemented vs missing (501/500 errors)
 """
 
-import pytest
 import time
-import numpy as np
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from proximadb_sdk import connect_rest
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError, CollectionNotFoundError
+import numpy as np
+import pytest
+
+from proximadb_sdk import (
+    CollectionConfig,
+    CollectionNotFoundError,
+    DistanceMetric,
+    ProximaDBError,
+    connect_rest,
+)
 
 
 class TestRESTAPICompleteness:

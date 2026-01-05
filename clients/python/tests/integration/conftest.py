@@ -7,16 +7,21 @@ Note: Tests rely on the editable install (pip install -e .)
 rather than sys.path manipulation for consistent imports.
 """
 
-import pytest
 import logging
-import time
 import os
-from typing import Generator, Dict, Any
+import time
+from typing import Any, Dict, Generator
 
-from proximadb_sdk import ProximaDBClient, connect_rest, connect_grpc
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError
+import pytest
 
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    ProximaDBClient,
+    ProximaDBError,
+    connect_grpc,
+    connect_rest,
+)
 
 # Configure logging for tests
 logging.basicConfig(

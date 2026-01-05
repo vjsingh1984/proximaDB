@@ -5,9 +5,9 @@ Provides thread-safe caching of loaded models to reduce memory usage
 and improve initialization performance.
 """
 
-from typing import Optional, Any, Callable, Dict
-import threading
 import logging
+import threading
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 

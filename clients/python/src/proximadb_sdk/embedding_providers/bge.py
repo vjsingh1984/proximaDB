@@ -12,11 +12,12 @@ Top BGE Models (Open Source):
 - BAAI/bge-m3: Multilingual (1024 dims) - Supports 100+ languages
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

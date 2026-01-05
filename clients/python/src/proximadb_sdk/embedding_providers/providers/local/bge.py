@@ -6,11 +6,10 @@ Excellent performance on semantic search tasks.
 """
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-from ...mixins.sentence_transformer import SentenceTransformerMixin
 from ...mixins.instruction import InstructionMixin
-
+from ...mixins.sentence_transformer import SentenceTransformerMixin
 
 BGE_MODELS = {
     "BAAI/bge-large-en-v1.5": ModelMetadata(

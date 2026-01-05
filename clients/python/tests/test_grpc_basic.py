@@ -5,8 +5,10 @@ Tests fundamental gRPC operations using unified client
 """
 
 import time
+
 import numpy as np
-from proximadb_sdk import ProximaDBClient, Protocol, VectorRecord
+
+from proximadb_sdk import Protocol, ProximaDBClient, VectorRecord
 
 
 def test_grpc_basic():

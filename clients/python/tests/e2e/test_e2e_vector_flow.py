@@ -8,16 +8,23 @@ Based on current gRPC specifications and SDK implementation.
 # To run this script, set PYTHONPATH to include the src directory:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/e2e/test_e2e_vector_flow.py
 
+import glob
+import json
 import os
 import sys
 import time
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
-import json
-import glob
 
-from proximadb_sdk import ProximaDBClient, Protocol
-from proximadb_sdk import VectorRecord, CollectionConfig, DistanceMetric, StorageEngine
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    Protocol,
+    ProximaDBClient,
+    StorageEngine,
+    VectorRecord,
+)
 
 
 def generate_bert_embeddings(texts, model_name="all-MiniLM-L6-v2"):

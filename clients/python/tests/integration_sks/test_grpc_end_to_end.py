@@ -1,11 +1,12 @@
 import os
 import uuid
+
 import numpy as np
 import pytest
 
+from proximadb_sdk.models import DistanceMetricType, IndexType, StorageEngineType
 from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 from proximadb_sdk.v1 import collection_types_pb2 as v1_collection_types_pb2
-from proximadb_sdk.models import IndexType, DistanceMetricType, StorageEngineType
 
 
 def grpc_available(addr: str) -> bool:

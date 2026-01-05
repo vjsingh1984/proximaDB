@@ -37,7 +37,9 @@ Usage:
 
 import asyncio
 import logging
+import threading
 import time
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -53,23 +55,21 @@ from typing import (
     Tuple,
     Union,
 )
-import threading
-from contextlib import asynccontextmanager, contextmanager
 
 from .document_processor import (
-    DocumentType,
     DocumentProcessor,
-    ProcessorConfig,
-    ProcessingResult,
-    ProcessedChunk,
-    VectorRecord,
+    DocumentProcessorRegistry,
+    DocumentType,
     EmbeddingProviderAdapter,
     PlaceholderEmbeddingProvider,
-    DocumentProcessorRegistry,
-    get_processor_registry,
-    detect_document_type,
-    create_processor,
+    ProcessedChunk,
+    ProcessingResult,
+    ProcessorConfig,
+    VectorRecord,
     create_embedding_adapter,
+    create_processor,
+    detect_document_type,
+    get_processor_registry,
 )
 
 logger = logging.getLogger(__name__)

@@ -10,18 +10,18 @@ Clean, extensible embedding provider system with:
 # Core components
 from .core import (
     BaseEmbeddingProvider,
-    ProviderConfig,
-    ModelMetadata,
-    ProviderRegistry,
     ModelCache,
+    ModelMetadata,
+    ProviderConfig,
+    ProviderRegistry,
 )
+from .providers.local.bge import BGEProvider
+from .providers.local.e5 import E5Provider
 
 # Import providers to trigger registration
 from .providers.local.gte_qwen import GTEQwenProvider
-from .providers.local.bge import BGEProvider
-from .providers.local.e5 import E5Provider
-from .providers.local.sfr import SFRProvider
 from .providers.local.sentence_transformer import SentenceTransformerProvider
+from .providers.local.sfr import SFRProvider
 from .providers.testing.simulated import SimulatedEmbeddingProvider
 
 

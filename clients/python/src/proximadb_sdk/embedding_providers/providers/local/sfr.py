@@ -5,11 +5,10 @@ Salesforce's top-tier embeddings with best MTEB accuracy.
 """
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-from ...mixins.sentence_transformer import SentenceTransformerMixin
 from ...mixins.instruction import InstructionMixin
-
+from ...mixins.sentence_transformer import SentenceTransformerMixin
 
 SFR_MODELS = {
     "Salesforce/SFR-Embedding-2_R": ModelMetadata(

@@ -1,7 +1,7 @@
 import numpy as np
 
+from proximadb_sdk.models import IncludeFields, SearchQuery, VectorSearchRequest
 from proximadb_sdk.protocols.rest_sync import ProximaDBClient
-from proximadb_sdk.models import IncludeFields, VectorSearchRequest, SearchQuery
 
 
 def test_convert_metadata_to_rest_format_roundtrip():

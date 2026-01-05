@@ -5,28 +5,28 @@ Tests the new core infrastructure (base, config, registry, cache, mixins)
 and the refactored gte-Qwen provider.
 """
 
-import pytest
 import numpy as np
+import pytest
 
 # Core components
 from proximadb_sdk.embedding_providers.core import (
     BaseEmbeddingProvider,
-    ProviderConfig,
-    ModelMetadata,
-    ProviderRegistry,
     ModelCache,
+    ModelMetadata,
+    ProviderConfig,
+    ProviderRegistry,
 )
 
 # Mixins
 from proximadb_sdk.embedding_providers.mixins import (
-    NormalizationMixin,
     InstructionMixin,
+    NormalizationMixin,
 )
 
 # Import the new provider
 from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
-    GTEQwenProvider,
     GTE_QWEN_MODELS,
+    GTEQwenProvider,
 )
 
 

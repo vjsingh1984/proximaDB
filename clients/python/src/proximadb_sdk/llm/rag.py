@@ -7,7 +7,7 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from proximadb_sdk.llm.config import EmbeddingConfig, LLMConfig, RAGConfig
 from proximadb_sdk.llm.embedding import EmbeddingService

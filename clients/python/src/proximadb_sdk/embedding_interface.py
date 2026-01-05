@@ -6,8 +6,9 @@ to enable embedding-aware semantic chunking and other features.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Union, Dict, Any, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 
 

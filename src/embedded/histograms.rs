@@ -652,9 +652,18 @@ mod tests {
 
     #[test]
     fn test_rolling_window_duration() {
-        assert_eq!(RollingWindow::OneMinute.duration(), Some(Duration::from_secs(60)));
-        assert_eq!(RollingWindow::FiveMinutes.duration(), Some(Duration::from_secs(300)));
-        assert_eq!(RollingWindow::OneHour.duration(), Some(Duration::from_secs(3600)));
+        assert_eq!(
+            RollingWindow::OneMinute.duration(),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(
+            RollingWindow::FiveMinutes.duration(),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            RollingWindow::OneHour.duration(),
+            Some(Duration::from_secs(3600))
+        );
         assert_eq!(RollingWindow::AllTime.duration(), None);
     }
 

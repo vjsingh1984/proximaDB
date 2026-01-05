@@ -5,12 +5,13 @@ Tests response caching, smart caching, and object pooling using
 the new unified cache system.
 """
 
-import pytest
-import time
-import threading
-from pathlib import Path
 import sys
-from unittest.mock import Mock, patch, MagicMock
+import threading
+import time
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -18,15 +19,15 @@ from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.cache import (
-    CacheStrategy,
+    CacheEntry,
     CacheLevel,
     CacheMetrics,
-    CacheEntry,
+    CacheStrategy,
     MemoryCacheBackend,
-    ResponseCache,
-    SmartCache,
     ObjectPool,
     ObjectPoolMetrics,
+    ResponseCache,
+    SmartCache,
 )
 
 # Legacy imports removed - using unified cache system only

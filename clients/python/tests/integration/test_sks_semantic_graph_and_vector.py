@@ -1,10 +1,9 @@
 import os
 import uuid
-import pytest
-
 from typing import List
 
 import numpy as np
+import pytest
 
 from proximadb_sdk import ProximaDBClient, VectorRecord
 

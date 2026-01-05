@@ -24,21 +24,21 @@ Usage:
     records = chunk_and_embed_text(text, source_id, embedding_provider, config)
 """
 
-import time
 import threading
-from typing import List, Dict, Any, Optional, Union, Callable
+import time
 from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # Import from chunking strategies for clean separation
 from .chunking_strategies import (
-    ChunkingStrategy,
     ChunkingConfig,
-    TextChunk,
+    ChunkingStrategy,
     ChunkingStrategyInterface,
+    TextChunk,
     get_chunking_strategy,
 )
 from .models import VectorRecord
-from .resource_pool import ResourcePool, ResourceFactory
+from .resource_pool import ResourceFactory, ResourcePool
 
 
 class ChunkerFactory(ResourceFactory):

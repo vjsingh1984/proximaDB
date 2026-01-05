@@ -178,9 +178,9 @@ impl FilterGroup {
         let exprs: Vec<String> = self
             .conditions
             .iter()
-            .filter_map(|node| match node {
-                FilterNode::Condition(c) => Some(c.to_expression()),
-                FilterNode::Group(g) => Some(format!("({})", g.to_expression())),
+            .map(|node| match node {
+                FilterNode::Condition(c) => c.to_expression(),
+                FilterNode::Group(g) => format!("({})", g.to_expression()),
             })
             .collect();
 
@@ -199,12 +199,12 @@ impl FilterCondition {
         match self.value.as_ref() {
             Some(v) => {
                 let val_str = match v {
-                    Value::String(s) => format!("'{}'", s),
+                    Value::String(s) => format!("'{s}'"),
                     Value::Array(arr) => {
                         let items: Vec<String> = arr
                             .iter()
                             .map(|x| match x {
-                                Value::String(s) => format!("'{}'", s),
+                                Value::String(s) => format!("'{s}'"),
                                 _ => x.to_string(),
                             })
                             .collect();

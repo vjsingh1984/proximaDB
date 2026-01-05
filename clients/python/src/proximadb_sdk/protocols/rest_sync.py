@@ -16,62 +16,61 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import logging
-import time
 import gzip
 import json
-from typing import Any, Dict, List, Optional, Union, Iterator, Tuple
+import logging
+import time
 import warnings
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
-import numpy as np
 import httpx
+import numpy as np
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
-from ..config import ClientConfig, load_config
-from ..metadata_utils import json_compatible_value
 from ..batching_unified import (
-    ThreadedBatchProcessor,
     BatchConfig,
     BatchStrategy,
+    ThreadedBatchProcessor,
     UnifiedBatchManager,
 )
-from ..cache import ResponseCache, CacheStrategy
-from ..models import (
-    Collection,
-    CollectionConfig,
-    SearchResult,
-    BatchResult,
-    DeleteResult,
-    CollectionStats,
-    HealthStatus,
-    VectorArray,
-    MetadataDict,
-    FilterDict,
-    VectorSearchRequest,
-    SearchQuery,
-    IncludeFields,
-    MetadataFilter,
-    ServerCapabilities,
-    OperationMetrics,
-    FilterCondition,
-    FilterOperator,
-    FilterOperation,
-    VectorBatchRequest,
-    VectorRecord,
-)
+from ..cache import CacheStrategy, ResponseCache
+from ..config import ClientConfig, load_config
 from ..exceptions import (
-    ProximaDBError,
     NetworkError,
-    TimeoutError,
+    ProximaDBError,
     RateLimitError,
+    TimeoutError,
     map_http_error,
 )
-
+from ..metadata_utils import json_compatible_value
+from ..models import (
+    BatchResult,
+    Collection,
+    CollectionConfig,
+    CollectionStats,
+    DeleteResult,
+    FilterCondition,
+    FilterDict,
+    FilterOperation,
+    FilterOperator,
+    HealthStatus,
+    IncludeFields,
+    MetadataDict,
+    MetadataFilter,
+    OperationMetrics,
+    SearchQuery,
+    SearchResult,
+    ServerCapabilities,
+    VectorArray,
+    VectorBatchRequest,
+    VectorRecord,
+    VectorSearchRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2659,7 +2658,7 @@ class ProximaDBClient:
             }
             vector_data.append(item)
 
-        from proximadb_sdk.batching_unified import BatchRequest, BatchOperationType
+        from proximadb_sdk.batching_unified import BatchOperationType, BatchRequest
 
         request = BatchRequest(
             operation=BatchOperationType.INSERT_VECTORS,
@@ -2719,7 +2718,7 @@ class ProximaDBClient:
             }
             vector_data.append(item)
 
-        from proximadb_sdk.batching_unified import BatchRequest, BatchOperationType
+        from proximadb_sdk.batching_unified import BatchOperationType, BatchRequest
 
         request = BatchRequest(
             operation=BatchOperationType.UPSERT_VECTORS,
@@ -2753,7 +2752,7 @@ class ProximaDBClient:
                 "Batching is not enabled. Initialize client with enable_batching=True"
             )
 
-        from proximadb_sdk.batching_unified import BatchRequest, BatchOperationType
+        from proximadb_sdk.batching_unified import BatchOperationType, BatchRequest
 
         request = BatchRequest(
             operation=BatchOperationType.DELETE_VECTORS,

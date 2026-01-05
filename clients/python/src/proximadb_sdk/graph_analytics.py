@@ -8,10 +8,10 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union, Callable
-import json
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 class GraphAlgorithm(str, Enum):

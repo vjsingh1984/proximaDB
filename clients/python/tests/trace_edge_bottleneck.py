@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Trace edge insertion bottleneck with detailed timing"""
 
-import proximadb
-import tempfile
 import shutil
+import tempfile
 import time
+
+import proximadb
 
 temp_dir = tempfile.mkdtemp(prefix="proximadb_trace_")
 print(f"Temp dir: {temp_dir}")

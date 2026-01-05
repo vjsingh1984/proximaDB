@@ -4,8 +4,8 @@ Provider registry system
 Provides dynamic provider registration and discovery via decorators.
 """
 
-from typing import Dict, Type, List, Optional
 import logging
+from typing import Dict, List, Optional, Type
 
 from .base import BaseEmbeddingProvider
 from .config import ModelMetadata

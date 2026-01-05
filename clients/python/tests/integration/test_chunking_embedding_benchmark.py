@@ -4,19 +4,20 @@ Simplified benchmark test for chunking and embedding strategies
 Tests different combinations and measures accuracy and performance.
 """
 
-import pytest
-import time
-import numpy as np
-import os
-from typing import List, Dict, Any, Tuple
-from dataclasses import dataclass, field
 import json
+import os
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import pytest
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.chunking import (
-    TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
+    TextChunker,
     chunk_and_embed_text,
 )
 from proximadb_sdk.embedding_providers import get_embedding_provider

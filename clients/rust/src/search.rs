@@ -60,9 +60,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 /// Search mode for controlling recall vs performance tradeoff
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchMode {
     /// Exact search - 100% recall, searches all partitions
+    #[default]
     Exact,
     /// Approximate search - faster with ~95% recall
     Approximate {
@@ -76,20 +77,14 @@ pub enum SearchMode {
     },
 }
 
-impl Default for SearchMode {
-    fn default() -> Self {
-        SearchMode::Exact
-    }
-}
-
 impl SearchMode {
     /// Convert to string representation for API
     pub fn as_str(&self) -> String {
         match self {
             SearchMode::Exact => "exact".to_string(),
             SearchMode::Approximate { nprobe: None } => "approximate".to_string(),
-            SearchMode::Approximate { nprobe: Some(n) } => format!("approximate:{}", n),
-            SearchMode::Adaptive { threshold } => format!("adaptive:{}", threshold),
+            SearchMode::Approximate { nprobe: Some(n) } => format!("approximate:{n}"),
+            SearchMode::Adaptive { threshold } => format!("adaptive:{threshold}"),
         }
     }
 }

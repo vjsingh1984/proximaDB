@@ -13,10 +13,10 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Iterator, List, Optional, Union
-import logging
 
 logger = logging.getLogger(__name__)
 

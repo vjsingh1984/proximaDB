@@ -1,7 +1,7 @@
 """Search utilities for ProximaDB Python SDK."""
 
-from typing import Optional, Dict, Any, Union
 import logging
+from typing import Any, Dict, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def build_search_params_grpc(
         ImportError: If gRPC proto modules are not available
     """
     try:
-        from proximadb_sdk.v1 import vector_types_pb2, types_pb2
+        from proximadb_sdk.v1 import types_pb2, vector_types_pb2
     except ImportError as e:
         raise ImportError(
             "Proto modules not available. Install with: pip install proximadb[grpc]"

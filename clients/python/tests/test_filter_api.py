@@ -2,18 +2,20 @@
 Test the enhanced filter API for complex metadata queries
 """
 
-import pytest
-import numpy as np
 import time
+
+import numpy as np
+import pytest
+
 from proximadb_sdk import (
-    ProximaDBClient,
     FilterBuilder,
+    ProximaDBClient,
     VectorRecord,
+    and_filters,
     eq,
     gt,
-    lt,
     in_list,
-    and_filters,
+    lt,
     or_filters,
 )
 

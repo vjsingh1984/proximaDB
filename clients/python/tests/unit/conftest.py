@@ -6,19 +6,20 @@ Uses embedded ProximaDB (PyO3/maturin) instead of requiring a running server.
 All tests run against the embedded database for faster, more reliable testing.
 """
 
-import pytest
 import logging
-import time
 import os
-import tempfile
 import shutil
-from typing import Generator, Dict, Any, List, Optional
-from pathlib import Path
-import numpy as np
 
 # Import decoupled test helpers (no SDK dependency)
 # Use sys.path manipulation to handle different pytest invocation contexts
 import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any, Dict, Generator, List, Optional
+
+import numpy as np
+import pytest
 
 _tests_root = Path(__file__).parent.parent
 if str(_tests_root) not in sys.path:
@@ -27,8 +28,8 @@ if str(_tests_root) not in sys.path:
 from utils.test_helpers import (
     CollectionInfo,
     InsertResult,
-    SearchResult,
     ProximaDBTestError,
+    SearchResult,
     assert_proximadb_error,
 )
 
@@ -45,8 +46,8 @@ def _ensure_sdk_loaded():
             from proximadb_sdk import (
                 CollectionConfig,
                 DistanceMetric,
-                StorageEngine,
                 ProximaDBError,
+                StorageEngine,
             )
 
             _SDK_TYPES["CollectionConfig"] = CollectionConfig
@@ -77,8 +78,8 @@ try:
     from proximadb_sdk import (
         CollectionConfig,
         DistanceMetric,
-        StorageEngine,
         ProximaDBError,
+        StorageEngine,
     )
 except Exception:
     pass

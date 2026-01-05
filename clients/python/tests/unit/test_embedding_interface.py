@@ -5,12 +5,13 @@ Tests the embedding provider abstraction, factory pattern, and integration
 with semantic chunking using real BERT embeddings and ProximaDB server.
 """
 
-import pytest
-import numpy as np
-import time
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
+
+import numpy as np
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -18,12 +19,12 @@ from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.embedding_interface import (
-    EmbeddingProvider,
-    EmbeddingConfig,
     BERTEmbeddingProvider,
-    SimulatedEmbeddingProvider,
     CohereEmbeddingProvider,
+    EmbeddingConfig,
+    EmbeddingProvider,
     EmbeddingProviderFactory,
+    SimulatedEmbeddingProvider,
     create_embedding_provider,
     get_default_embedding_provider,
 )
@@ -406,7 +407,7 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     def test_semantic_chunking_with_real_embeddings(self):
         """Test semantic chunking with real embedding providers"""
         # Note: Enhanced semantic chunking consolidated - using standard semantic strategy
-        from proximadb_sdk.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
+        from proximadb_sdk.chunking import ChunkingConfig, ChunkingStrategy, TextChunker
 
         # Get default provider (BERT or simulated)
         provider = get_default_embedding_provider()
@@ -492,7 +493,7 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     def test_topic_boundary_with_real_embeddings(self):
         """Test topic boundary detection with real embeddings"""
         # Note: Enhanced semantic chunking consolidated - using standard semantic strategy
-        from proximadb_sdk.chunking import TextChunker, ChunkingConfig, ChunkingStrategy
+        from proximadb_sdk.chunking import ChunkingConfig, ChunkingStrategy, TextChunker
 
         # Use BERT if available, otherwise simulated
         provider = get_default_embedding_provider()

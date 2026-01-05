@@ -5,9 +5,10 @@ Fluent interface for building batch insert operations.
 """
 
 from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 
-from ..models import VectorRecord, MetadataDict
+from ..models import MetadataDict, VectorRecord
 
 
 class InsertBuilder:

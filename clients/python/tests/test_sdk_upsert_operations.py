@@ -14,16 +14,23 @@ Test Coverage:
 - Concurrent operation safety
 """
 
-import pytest
 import time
 import uuid
-import numpy as np
-from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List
 
-from proximadb_sdk import ProximaDBClient, Protocol
-from proximadb_sdk import CollectionConfig, VectorRecord, DistanceMetric, StorageEngine
-from proximadb_sdk import ProximaDBError
+import numpy as np
+import pytest
+
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    Protocol,
+    ProximaDBClient,
+    ProximaDBError,
+    StorageEngine,
+    VectorRecord,
+)
 
 
 class TestSDKUpsertOperations:

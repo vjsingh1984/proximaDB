@@ -1,9 +1,10 @@
-import pytest
+import types
 from unittest.mock import Mock, patch
 
-import types
-from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
+import pytest
+
 import proximadb_sdk.protocols.grpc_sync as grpc_mod
+from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
 
 class MockResourcePool:
@@ -81,8 +82,8 @@ def test_grpc_metadata_overrides(monkeypatch):
 
     # Patch connection pool to bypass real channels
     from proximadb_sdk.protocols.connection_pools import (
-        GrpcConnectionPool,
         GrpcChannelContext,
+        GrpcConnectionPool,
     )
 
     class FakePool:

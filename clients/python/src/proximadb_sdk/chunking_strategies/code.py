@@ -11,15 +11,15 @@ Unlike text-based chunking, this:
 - Preserves documentation and type annotations
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from enum import IntEnum
-from typing import List, Dict, Optional, Any, Tuple, Set
 import hashlib
 import os
 import re
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from enum import IntEnum
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .base import ChunkingStrategyInterface, TextChunk, ChunkingConfig
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
 
 class CodeSymbolType(IntEnum):
@@ -189,7 +189,7 @@ class PythonParser(LanguageParser):
     def _init_parser(self):
         """Initialize tree-sitter parser for Python"""
         try:
-            from tree_sitter_language_pack import get_parser, get_language
+            from tree_sitter_language_pack import get_language, get_parser
 
             self._parser = get_parser("python")
             self._language = get_language("python")

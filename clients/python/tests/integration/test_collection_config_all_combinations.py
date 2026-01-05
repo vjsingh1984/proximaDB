@@ -7,24 +7,25 @@ NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
 requiring REST/gRPC client connections to a running server.
 """
 
-import pytest
-import time
 import logging
-from typing import List, Dict, Any, Optional
+import time
+from typing import Any, Dict, List, Optional
+
+import pytest
 
 from proximadb_sdk import (
-    connect_rest,
-    connect_grpc,
     CollectionConfig,
     DistanceMetric,
-    StorageEngine,
-    IndexingAlgorithm,
     FilterableColumn,
     FilterableDataType,
     IndexConfiguration,
+    IndexingAlgorithm,
+    ProximaDBError,
     QuantizationConfig,
     QuantizationType,
-    ProximaDBError,
+    StorageEngine,
+    connect_grpc,
+    connect_rest,
 )
 
 logger = logging.getLogger(__name__)

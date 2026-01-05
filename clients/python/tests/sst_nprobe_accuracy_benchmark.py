@@ -12,10 +12,11 @@ Reports:
 - Recall@k accuracy
 """
 
-import time
-import numpy as np
-from typing import List, Tuple, Dict, Any
 import statistics
+import time
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
 
 # Import embedded ProximaDB
 try:

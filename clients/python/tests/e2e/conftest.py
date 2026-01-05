@@ -4,19 +4,23 @@ ProximaDB Python SDK Test Configuration
 Shared fixtures and configuration for all test modules
 """
 
-import pytest
 import logging
-import time
 
 # import sys  # Removed - using editable install
 import os
-from typing import Generator, Dict, Any
+import time
+from typing import Any, Dict, Generator
 
+import pytest
 
-from proximadb_sdk import ProximaDBClient, connect_rest, connect_grpc
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError
-
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    ProximaDBClient,
+    ProximaDBError,
+    connect_grpc,
+    connect_rest,
+)
 
 # Configure logging for tests
 logging.basicConfig(

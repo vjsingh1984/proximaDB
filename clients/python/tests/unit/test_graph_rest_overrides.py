@@ -1,4 +1,5 @@
 import types
+
 from proximadb_sdk.protocols import rest_sync
 
 

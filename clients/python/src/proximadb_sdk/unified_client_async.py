@@ -4,11 +4,11 @@ ProximaDB Unified Async Python Client
 Picks between gRPC async client (if available) and REST async client for graph operations.
 """
 
-from typing import Optional, List
-from enum import Enum
 import logging
+from enum import Enum
+from typing import List, Optional
 
-from .config import Protocol, load_config, ClientConfig
+from .config import ClientConfig, Protocol, load_config
 
 logger = logging.getLogger(__name__)
 

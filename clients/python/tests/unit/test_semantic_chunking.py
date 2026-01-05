@@ -5,32 +5,33 @@ Uses real BERT embeddings and ProximaDB server to test semantic chunking,
 topic boundary detection, and content analysis.
 """
 
-import pytest
-import numpy as np
-from pathlib import Path
 import sys
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
+from proximadb_sdk.chunking import (
+    ChunkingConfig,
+    ChunkingStrategy,
+    TextChunk,
+    TextChunker,
+)
+
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
 from proximadb_sdk.chunking_strategies import SemanticStrategy
-from proximadb_sdk.chunking import ChunkingConfig, ChunkingStrategy
-from proximadb_sdk.chunking import (
-    TextChunk,
-    ChunkingConfig,
-    ChunkingStrategy,
-    TextChunker,
-)
 from proximadb_sdk.embedding_interface import (
-    create_embedding_provider,
-    get_default_embedding_provider,
     BERTEmbeddingProvider,
     SimulatedEmbeddingProvider,
+    create_embedding_provider,
+    get_default_embedding_provider,
 )
 
 

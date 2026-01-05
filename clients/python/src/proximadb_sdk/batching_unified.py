@@ -20,16 +20,16 @@ import asyncio
 import logging
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
-import uuid
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from .models import VectorRecord, VectorOperationResponse
-from .exceptions import ProximaDBError, BatchError
+from .exceptions import BatchError, ProximaDBError
+from .models import VectorOperationResponse, VectorRecord
 
 logger = logging.getLogger(__name__)
 

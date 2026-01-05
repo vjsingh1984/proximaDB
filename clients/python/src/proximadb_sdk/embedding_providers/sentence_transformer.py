@@ -5,11 +5,12 @@ Uses the sentence-transformers library (Apache 2.0 license) to provide
 access to hundreds of free embedding models including BERT variants.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

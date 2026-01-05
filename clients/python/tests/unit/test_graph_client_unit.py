@@ -5,12 +5,13 @@ Tests client-side logic, parameter validation, and data transformation
 using the embedded database for actual graph operations.
 """
 
-import pytest
 import time
-from unittest.mock import Mock, MagicMock, patch
-from typing import Dict, Any
+from typing import Any, Dict
+from unittest.mock import MagicMock, Mock, patch
 
-from proximadb_sdk import ProximaDBClient, CollectionConfig
+import pytest
+
+from proximadb_sdk import CollectionConfig, ProximaDBClient
 from proximadb_sdk.exceptions import ProximaDBError
 
 

@@ -5,9 +5,9 @@ Splits text into chunks of exactly the specified size without regard to
 sentence or paragraph boundaries.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
-from .base import ChunkingStrategyInterface, ChunkingConfig, TextChunk
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
 
 class FixedSizeStrategy(ChunkingStrategyInterface):

@@ -14,14 +14,15 @@ Usage:
 """
 
 import argparse
-import numpy as np
-import tempfile
 import shutil
-import time
 import sys
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
+import tempfile
+import time
 import traceback
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 # Add SDK to path
 sys.path.insert(0, "clients/python/src")

@@ -13,14 +13,16 @@ This test checks that:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/test_unified_client.py
 
 import pytest
-from proximadb_sdk import ProximaDBClient, Protocol
+
 from proximadb_sdk import (
     CollectionConfig,
     DistanceMetric,
-    StorageEngine,
     IndexingAlgorithm,
-    VectorRecord,
+    Protocol,
+    ProximaDBClient,
     ProximaDBError,
+    StorageEngine,
+    VectorRecord,
 )
 
 

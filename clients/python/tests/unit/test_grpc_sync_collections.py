@@ -4,9 +4,10 @@ Tests for gRPC sync client collection operations
 These tests verify collection CRUD operations using mocked gRPC stubs.
 """
 
-import pytest
 import types
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 try:
     import grpc
@@ -130,8 +131,8 @@ def test_grpc_sync_collection_ops(monkeypatch):
         "proximadb_sdk.protocols.connection_pools.GrpcChannelContext", FakeCtx
     )
 
-    from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
     from proximadb_sdk.models import DistanceMetricType, StorageEngineType
+    from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
     client = ProximaDBSyncGrpcClient("localhost:5679")
 

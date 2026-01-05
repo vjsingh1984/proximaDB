@@ -4,26 +4,31 @@ ProximaDB Collection Operations Test Suite
 Consolidated tests for collection CRUD operations, configuration, and lifecycle management
 """
 
-import pytest
 import time
-from typing import Dict, Any
+from typing import Any, Dict
 
-from proximadb_sdk import ProximaDBClient, Protocol, connect_rest, connect_grpc
+import pytest
+
 from proximadb_sdk import (
+    ClientConfig,
     CollectionConfig,
-    IndexConfiguration,
-    FlushConfig,
-    DistanceMetric,
-    IndexType,
-    StorageEngine,
+    CollectionNotFoundError,
     CompressionType,
+    DistanceMetric,
+    FlushConfig,
+    IndexConfiguration,
+    IndexType,
+    Protocol,
+    ProximaDBClient,
+    ProximaDBError,
     StorageConfig,
+    StorageEngine,
+    connect_grpc,
+    connect_rest,
 )
-from proximadb_sdk.models import (
+from proximadb_sdk.models import (  # Import from models to avoid namespace conflict
     CompressionConfig,
-)  # Import from models to avoid namespace conflict
-from proximadb_sdk import ProximaDBError, CollectionNotFoundError
-from proximadb_sdk import ClientConfig
+)
 
 
 class TestCollectionCRUD:

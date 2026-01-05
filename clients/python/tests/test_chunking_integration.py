@@ -2,23 +2,24 @@
 Test chunking integration with SDK methods
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 import json
-from pathlib import Path
+import logging
 import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
+import pytest
+from sentence_transformers import SentenceTransformer
+
+from proximadb_sdk import VectorRecord
 from proximadb_sdk.chunking import (
-    TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
+    TextChunker,
     create_vector_records,
     prepare_vector_records,
 )
-from proximadb_sdk import VectorRecord
-from proximadb_sdk.models import CollectionConfig, StorageEngine, DistanceMetric
-import logging
-from sentence_transformers import SentenceTransformer
+from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine
 
 
 def get_bert_embeddings(texts, logger=None):
@@ -147,9 +148,10 @@ class TestChunkingIntegration:
 
     def test_real_integration_rest_grpc_sql(self):
         """REAL integration test: chunking → VectorRecord → REST/gRPC insert → REST/gRPC/SQL search"""
-        from proximadb_sdk import ProximaDBClient, Protocol
-        import time
         import random
+        import time
+
+        from proximadb_sdk import Protocol, ProximaDBClient
 
         # Generate unique collection name to avoid conflicts
         collection_name = f"chunking_integration_{int(time.time())}"
@@ -419,8 +421,9 @@ class TestChunkingIntegration:
 
     def test_all_chunking_strategies_with_real_server(self):
         """Test all chunking strategies produce 10+ chunks and work with real server"""
-        from proximadb_sdk import ProximaDBClient, Protocol
         import time
+
+        from proximadb_sdk import Protocol, ProximaDBClient
 
         # Long test text designed to produce many chunks
         long_text = """
@@ -498,10 +501,11 @@ class TestChunkingIntegration:
 
     def test_chunking_strategy_comparison(self):
         """COMPARATIVE TEST: Same text chunked with different strategies, compare search performance"""
-        from proximadb_sdk import ProximaDBClient, Protocol
-        import time
-        import random
         import logging
+        import random
+        import time
+
+        from proximadb_sdk import Protocol, ProximaDBClient
 
         # Setup logger for detailed results
         logging.basicConfig(level=logging.INFO)
@@ -558,8 +562,8 @@ class TestChunkingIntegration:
             # Create collection
             from proximadb_sdk.models import (
                 CollectionConfig,
-                StorageEngine,
                 DistanceMetric,
+                StorageEngine,
             )
 
             collection_config = CollectionConfig(
@@ -798,10 +802,11 @@ class TestChunkingIntegration:
 
     def test_comprehensive_chunking_all_engines_protocols(self):
         """COMPREHENSIVE TEST: All chunking strategies × All engines × All protocols × SQL"""
-        from proximadb_sdk import ProximaDBClient, Protocol
-        import time
-        import random
         import json
+        import random
+        import time
+
+        from proximadb_sdk import Protocol, ProximaDBClient
 
         # Long test text for comprehensive chunking
         comprehensive_text = """

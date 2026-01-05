@@ -7,7 +7,7 @@ Defines the core abstractions for text chunking without any embedding concerns.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 
 class ChunkingStrategy(Enum):

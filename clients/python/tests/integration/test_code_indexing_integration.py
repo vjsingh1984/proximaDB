@@ -16,16 +16,17 @@ Run with:
     PYTHONPATH=src pytest tests/integration/test_code_indexing_integration.py -v -s
 """
 
-import pytest
-import sys
 import asyncio
-import time
 import hashlib
-import requests
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+import sys
+import time
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
+
+import pytest
+import requests
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))

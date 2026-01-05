@@ -3,11 +3,12 @@
 Detailed timing analysis to find the real bottleneck
 """
 
-import proximadb
-import tempfile
-import shutil
-import time
 import os
+import shutil
+import tempfile
+import time
+
+import proximadb
 
 # Enable detailed logging
 os.environ["RUST_LOG"] = "info,proximadb::graph=debug"

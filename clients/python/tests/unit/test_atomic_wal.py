@@ -7,12 +7,15 @@ Verifies that WAL writes are properly atomic between memtable and disk
 # To run this script, set PYTHONPATH to include the src directory:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/unit/test_atomic_wal.py
 
-import time
-import requests
 import json
+import time
+
 import numpy as np
+import requests
+
+from proximadb_sdk import Protocol, ProximaDBClient
+
 from ..embedding_utils import embed_seed
-from proximadb_sdk import ProximaDBClient, Protocol
 
 
 def test_atomic_wal_behavior():

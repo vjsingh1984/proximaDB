@@ -5,13 +5,14 @@ Uses Cohere's embedding API.
 WARNING: Requires API key and incurs costs per token.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any, Literal
 import logging
 import os
 import warnings
+from typing import Any, Dict, List, Literal, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

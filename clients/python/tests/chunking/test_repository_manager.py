@@ -8,15 +8,16 @@ This module tests:
 - Blame and history operations
 """
 
-import pytest
-import sys
-import subprocess
-import tempfile
-import shutil
-from pathlib import Path
-from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
 import importlib.util
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Load repository_manager directly without going through proximadb package
 # This avoids protobuf import issues

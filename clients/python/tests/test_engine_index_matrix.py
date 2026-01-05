@@ -11,10 +11,11 @@ This validates that each engine+index combination works correctly.
 """
 
 import os
-import time
 import tempfile
-import pytest
+import time
+
 import numpy as np
+import pytest
 
 # Import ProximaDB - handle both installed and local dev modes
 try:

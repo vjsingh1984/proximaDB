@@ -6,14 +6,20 @@ Tests for vector CRUD operations, batch insertions, and large-scale operations
 Tests run against embedded ProximaDB database for fast, reliable testing.
 """
 
-import pytest
-import time
-import numpy as np
 import logging
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
-from proximadb_sdk import CollectionConfig, DistanceMetric, StorageEngine
-from proximadb_sdk import ProximaDBError, VectorDimensionError
+import numpy as np
+import pytest
+
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    ProximaDBError,
+    StorageEngine,
+    VectorDimensionError,
+)
 
 logger = logging.getLogger(__name__)
 

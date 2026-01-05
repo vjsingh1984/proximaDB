@@ -17,8 +17,8 @@ limitations under the License.
 """
 
 import json
-from typing import Dict, List, Optional, Any, Iterator, Tuple
 from dataclasses import dataclass
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 try:
     import pyarrow as pa

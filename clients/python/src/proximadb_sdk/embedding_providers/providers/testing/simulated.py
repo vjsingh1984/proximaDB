@@ -4,14 +4,14 @@ Simulated Embedding Provider
 Fast deterministic embeddings for testing without model downloads.
 """
 
-from typing import List
-import numpy as np
 import hashlib
+from typing import List
+
+import numpy as np
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-
 
 SIMULATED_MODELS = {
     "simulated-embeddings": ModelMetadata(

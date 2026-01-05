@@ -11,20 +11,21 @@ This test evaluates different combinations of:
 Uses real documentation content (~100KB) for realistic testing.
 """
 
-import pytest
-import time
-import numpy as np
-from typing import List, Dict, Any, Tuple
-from dataclasses import dataclass
 import logging
 import os
+import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import pytest
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.chunking import (
-    TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
+    TextChunker,
     chunk_and_embed_text,
 )
 from proximadb_sdk.embedding_providers import get_provider
@@ -34,8 +35,8 @@ from proximadb_sdk.embedding_providers.core import (
 from proximadb_sdk.models import (
     CollectionConfig,
     DistanceMetric,
-    StorageEngine,
     SearchQuery,
+    StorageEngine,
     VectorRecord,
 )
 

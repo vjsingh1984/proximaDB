@@ -12,14 +12,14 @@ This is the refactored version using the new architecture:
 """
 
 from typing import List
+
 import numpy as np
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-from ...mixins.sentence_transformer import SentenceTransformerMixin
 from ...mixins.instruction import InstructionMixin
-
+from ...mixins.sentence_transformer import SentenceTransformerMixin
 
 # Model metadata catalog
 GTE_QWEN_MODELS = {

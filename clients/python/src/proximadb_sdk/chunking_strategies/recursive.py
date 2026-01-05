@@ -4,8 +4,9 @@ Recursive chunking strategy
 Applies multiple strategies recursively to achieve optimal chunk sizes.
 """
 
-from typing import List, Dict, Any, Optional
-from .base import ChunkingStrategyInterface, TextChunk, ChunkingConfig, ChunkingStrategy
+from typing import Any, Dict, List, Optional
+
+from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
 from .paragraph import ParagraphStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy

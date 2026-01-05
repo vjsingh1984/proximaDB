@@ -3,9 +3,10 @@
 Test module to verify all ProximaDB SDK imports are working correctly
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add the src directory to path if running directly
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -24,11 +25,11 @@ class TestImports:
     def test_client_imports(self):
         """Test client imports"""
         from proximadb_sdk import (
+            Protocol,
             ProximaDBClient,
             connect,
             connect_grpc,
             connect_rest,
-            Protocol,
         )
 
         assert ProximaDBClient is not None
@@ -41,7 +42,7 @@ class TestImports:
     def test_config_imports(self):
         """Test configuration imports"""
         from proximadb_sdk import ClientConfig, CompressionConfig
-        from proximadb_sdk.config import Protocol, LogLevel, RetryConfig
+        from proximadb_sdk.config import LogLevel, Protocol, RetryConfig
 
         # Test ClientConfig
         config = ClientConfig(url="http://localhost:5678")
@@ -57,21 +58,21 @@ class TestImports:
         from proximadb_sdk import (
             Collection,
             CollectionConfig,
-            IndexConfiguration,
-            SearchResult,
-            VectorOperationResponse,
-            OperationMetrics,
             DistanceMetric,
-            IndexingAlgorithm,
-            StorageEngine,
-            VectorRecord,
-            HealthStatus,
-            VectorArray,
-            MetadataDict,
             FilterDict,
+            HealthStatus,
+            IndexConfiguration,
+            IndexingAlgorithm,
+            MetadataDict,
+            OperationMetrics,
             QuantizationConfig,
             QuantizationType,
             SearchOptimization,
+            SearchResult,
+            StorageEngine,
+            VectorArray,
+            VectorOperationResponse,
+            VectorRecord,
         )
 
         # Test enums
@@ -83,13 +84,13 @@ class TestImports:
     def test_exception_imports(self):
         """Test exception imports"""
         from proximadb_sdk import (
-            ProximaDBError,
             AuthenticationError,
             CollectionNotFoundError,
-            VectorDimensionError,
+            NetworkError,
+            ProximaDBError,
             RateLimitError,
             ServerError,
-            NetworkError,
+            VectorDimensionError,
         )
 
         # Test exception hierarchy
@@ -99,14 +100,14 @@ class TestImports:
     def test_chunking_imports(self):
         """Test text chunking imports"""
         from proximadb_sdk import (
-            TextChunker,
-            ChunkingStrategy,
             ChunkingConfig,
+            ChunkingStrategy,
             TextChunk,
-            create_chunker,
-            chunk_by_sentences,
+            TextChunker,
             chunk_by_paragraphs,
+            chunk_by_sentences,
             chunk_sliding_window,
+            create_chunker,
         )
 
         # Test ChunkingStrategy enum
@@ -123,11 +124,11 @@ class TestImports:
             FilterBuilder,
             FilterOp,
             LogicalOp,
+            and_filters,
             eq,
             gt,
-            lt,
             in_list,
-            and_filters,
+            lt,
             or_filters,
         )
 
@@ -162,8 +163,7 @@ class TestImports:
 
     def test_backwards_compatibility(self):
         """Test backwards compatibility aliases"""
-        from proximadb_sdk import IndexConfig, Vector
-        from proximadb_sdk import IndexConfiguration, VectorRecord
+        from proximadb_sdk import IndexConfig, IndexConfiguration, Vector, VectorRecord
 
         # These should be the same
         assert IndexConfig is IndexConfiguration
@@ -172,13 +172,13 @@ class TestImports:
     def test_from_import_patterns(self):
         """Test common from-import patterns"""
         # Pattern 1: Import everything from proximadb
-        from proximadb_sdk import ProximaDBClient, CollectionConfig, DistanceMetric
+        from proximadb_sdk import CollectionConfig, DistanceMetric, ProximaDBClient
+        from proximadb_sdk.chunking import TextChunker
 
         # Pattern 2: Import from submodules
         from proximadb_sdk.config import ClientConfig, CompressionConfig
-        from proximadb_sdk.models import Collection, SearchResult
         from proximadb_sdk.exceptions import ProximaDBError
-        from proximadb_sdk.chunking import TextChunker
+        from proximadb_sdk.models import Collection, SearchResult
 
         # All imports should work
         assert ClientConfig is not None

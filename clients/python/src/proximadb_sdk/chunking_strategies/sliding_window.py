@@ -4,8 +4,9 @@ Sliding window chunking strategy
 Simple overlapping window approach for text chunking.
 """
 
-from typing import List, Dict, Any, Optional
-from .base import ChunkingStrategyInterface, TextChunk, ChunkingConfig
+from typing import Any, Dict, List, Optional
+
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
 
 class SlidingWindowStrategy(ChunkingStrategyInterface):

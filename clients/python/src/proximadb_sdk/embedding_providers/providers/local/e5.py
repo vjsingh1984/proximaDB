@@ -5,11 +5,10 @@ Microsoft's excellent general-purpose embeddings with query/passage prefix suppo
 """
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-from ...mixins.sentence_transformer import SentenceTransformerMixin
 from ...mixins.instruction import InstructionMixin
-
+from ...mixins.sentence_transformer import SentenceTransformerMixin
 
 E5_MODELS = {
     "intfloat/e5-large-v2": ModelMetadata(

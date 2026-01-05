@@ -14,13 +14,13 @@ from typing import Any, Dict, List, Optional, Union
 from ..models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
     FilterDict,
+    HealthStatus,
+    MetadataDict,
+    SearchResult,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 
 

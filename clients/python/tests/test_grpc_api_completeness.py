@@ -4,15 +4,20 @@ ProximaDB gRPC API Completeness Test
 Test all gRPC endpoints to identify which are implemented vs missing, and handle async issues
 """
 
-import pytest
-import time
-import numpy as np
 import asyncio
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
-from proximadb_sdk import connect_grpc
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError, CollectionNotFoundError
+import numpy as np
+import pytest
+
+from proximadb_sdk import (
+    CollectionConfig,
+    CollectionNotFoundError,
+    DistanceMetric,
+    ProximaDBError,
+    connect_grpc,
+)
 
 
 class TestGRPCAPICompleteness:

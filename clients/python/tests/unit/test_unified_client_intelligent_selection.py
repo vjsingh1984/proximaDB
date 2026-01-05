@@ -6,19 +6,20 @@ Tests pass individually but timeout when run as a module. Skipping for now until
 are resolved in the IntelligentRouter implementation.
 """
 
-import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 pytest.skip(
     "Tests hang due to IntelligentRouter background thread cleanup issues - tests pass individually",
     allow_module_level=True,
 )
 
-from proximadb_sdk.unified_client import ProximaDBClient
-from proximadb_sdk.config import Protocol, ClientConfig
-from proximadb_sdk.protocol_selector import SelectionStrategy
+from proximadb_sdk.config import ClientConfig, Protocol
 from proximadb_sdk.exceptions import ProximaDBError
+from proximadb_sdk.protocol_selector import SelectionStrategy
+from proximadb_sdk.unified_client import ProximaDBClient
 
 
 class TestUnifiedClientIntelligentSelection:

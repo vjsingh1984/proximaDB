@@ -5,21 +5,22 @@ Tests for SDK-driven compression integration
 Copyright 2025 ProximaDB
 """
 
-import pytest
-import numpy as np
 from typing import List
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
+
+import numpy as np
+import pytest
 
 from proximadb_sdk.models import (
     CollectionConfig,
-    CompressionConfig,
     CompressionAlgorithm,
+    CompressionConfig,
     CompressionLevel,
     DistanceMetric,
-    StorageEngine,
-    VectorRecord,
     SearchOptimization,
     SearchResult,
+    StorageEngine,
+    VectorRecord,
 )
 
 

@@ -5,11 +5,12 @@ Uses the InstructorEmbedding library (Apache 2.0 license) for
 instruction-following embedding models.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any, Union
 import logging
+from typing import Any, Dict, List, Optional, Union
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

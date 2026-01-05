@@ -5,13 +5,14 @@ Uses OpenAI's embedding API.
 WARNING: Requires API key and incurs costs per token.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
 import os
 import warnings
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

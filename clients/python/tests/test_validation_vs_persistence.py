@@ -14,10 +14,11 @@ This will show us:
 - What's the real bottleneck?
 """
 
-import proximadb
-import tempfile
 import shutil
+import tempfile
 import time
+
+import proximadb
 
 
 def test_configuration(async_validation: bool, persistence: bool, graph_size: dict):

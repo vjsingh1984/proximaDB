@@ -6,25 +6,24 @@ for handling failures and preventing cascading system failures.
 """
 
 import asyncio
+import logging
+import random
 import time
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Union
-import random
-import logging
-from contextlib import asynccontextmanager
 
 from pydantic import BaseModel, Field
 
-from .exceptions import ProximaDBError, NetworkError, ServerError, TimeoutError
+from .exceptions import NetworkError, ProximaDBError, ServerError, TimeoutError
 from .resilience import (
     AdvancedRetryPolicy,
     CircuitBreakerPolicy,
-    RetryStrategy,
     CircuitState,
+    RetryStrategy,
 )
-
 
 # Enums and policies imported from resilience module
 

@@ -10,17 +10,17 @@ FinBERT models available:
 3. ahmedrachid/FinancialBERT - Financial document focused
 """
 
-import os
 import logging
-from typing import List, Union, Optional, Dict, Any
-import numpy as np
+import os
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
 import torch
-from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
+from transformers import AutoModel, AutoTokenizer
 
-from .base import EmbeddingProvider, EmbeddingConfig
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

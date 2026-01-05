@@ -3,28 +3,29 @@ Test suite for ProximaDB exception classes
 """
 
 import pytest
+
 from proximadb_sdk import (
-    ProximaDBError,
     AuthenticationError,
     AuthorizationError,
-    CollectionNotFoundError,
-    CollectionExistsError,
-    VectorNotFoundError,
-    VectorDimensionError,
-    InvalidVectorError,
-    RateLimitError,
-    QuotaExceededError,
-    ValidationError,
-    ServerError,
-    NetworkError,
-    TimeoutError,
-    ConfigurationError,
-    ProximaIndexError,
     BatchError,
-    WALError,
+    CollectionExistsError,
+    CollectionNotFoundError,
+    ConfigurationError,
+    InvalidVectorError,
+    NetworkError,
+    ProximaDBError,
+    ProximaIndexError,
+    QuotaExceededError,
+    RateLimitError,
+    ServerError,
     StreamingError,
-    map_http_error,
+    TimeoutError,
+    ValidationError,
+    VectorDimensionError,
+    VectorNotFoundError,
+    WALError,
     map_grpc_error,
+    map_http_error,
 )
 
 

@@ -3,7 +3,7 @@ Metadata conversion utilities for ProximaDB Python client.
 Handles conversion between Python dict and typed proto MetadataItem.
 """
 
-from typing import Dict, List, Any, Union
+from typing import Any, Dict, List, Union
 
 try:
     from proximadb_sdk.v1 import types_pb2 as v1_types_pb2

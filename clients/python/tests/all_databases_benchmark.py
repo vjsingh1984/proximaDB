@@ -4,12 +4,13 @@ All Databases Benchmark: ProximaDB vs Neo4j vs TigerGraph vs NetworkX vs igraph
 Focus on core CRUD operations for apple-to-apples comparison
 """
 
-import time
-import tempfile
-import shutil
-import random
 import json
+import random
+import shutil
+import tempfile
+import time
 from dataclasses import dataclass
+
 import numpy as np
 
 # Database imports

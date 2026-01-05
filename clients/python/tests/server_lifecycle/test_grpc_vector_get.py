@@ -3,13 +3,15 @@
 Test gRPC VectorGet functionality after fix
 """
 
-import time
-import numpy as np
-from proximadb_sdk import ProximaDBClient
-import subprocess
+import atexit
 import os
 import signal
-import atexit
+import subprocess
+import time
+
+import numpy as np
+
+from proximadb_sdk import ProximaDBClient
 
 # Server process
 server_process = None

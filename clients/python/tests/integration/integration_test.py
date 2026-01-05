@@ -10,13 +10,12 @@ Tests the client SDK against a running ProximaDB server
 import os
 import subprocess
 import time
-import requests
-import numpy as np
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from proximadb_sdk import ProximaDBClient, connect
-from proximadb_sdk import ProximaDBError
-from proximadb_sdk import CollectionConfig
+import numpy as np
+import requests
+
+from proximadb_sdk import CollectionConfig, ProximaDBClient, ProximaDBError, connect
 
 
 class IntegrationTest:

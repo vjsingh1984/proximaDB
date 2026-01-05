@@ -1,10 +1,11 @@
 import os
 import uuid
+
 import numpy as np
 import pytest
 
-from proximadb_sdk.unified_client import ProximaDBClient
 from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.unified_client import ProximaDBClient
 
 
 def rest_available(url: str) -> bool:

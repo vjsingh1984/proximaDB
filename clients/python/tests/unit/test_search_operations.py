@@ -6,14 +6,14 @@ Tests for ID-based search, metadata filtering, and proximity/similarity search
 Tests run against embedded ProximaDB database for fast, reliable testing.
 """
 
-import pytest
-import time
-import numpy as np
 import logging
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError
+import numpy as np
+import pytest
+
+from proximadb_sdk import CollectionConfig, DistanceMetric, ProximaDBError
 
 logger = logging.getLogger(__name__)
 

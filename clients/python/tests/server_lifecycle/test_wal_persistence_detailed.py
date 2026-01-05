@@ -18,11 +18,11 @@ Test procedure:
 - Verify data recovered from WAL
 """
 
+import json
 import os
+import subprocess
 import sys
 import time
-import subprocess
-import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))

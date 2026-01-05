@@ -4,10 +4,11 @@ Base classes for embedding providers
 Provides abstract base classes and protocols that all embedding providers must implement.
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any, Protocol, runtime_checkable
-import numpy as np
 import logging
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+
+import numpy as np
 
 from .config import ProviderConfig
 

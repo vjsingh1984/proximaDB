@@ -14,6 +14,7 @@ that external tools can correctly parse the data, extract vectors, and run queri
 import json
 import os
 import tempfile
+
 import pytest
 
 # Check if pyarrow is available

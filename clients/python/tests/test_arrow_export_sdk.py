@@ -7,11 +7,12 @@ via Arrow Flight.
 Run with: PYTHONPATH=clients/python/src pytest clients/python/tests/test_arrow_export_sdk.py -v
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 # Test imports and availability
@@ -22,8 +23,8 @@ def test_arrow_export_imports():
         FileFormat,
         FileInfo,
         connect_arrow,
-        read_proximadb_file,
         read_proximadb_collection,
+        read_proximadb_file,
     )
 
     assert ArrowExportClient is not None
@@ -41,7 +42,7 @@ def test_file_format_enum():
 
 def test_file_info_dataclass():
     """Test FileInfo dataclass creation."""
-    from proximadb_sdk.arrow_export import FileInfo, FileFormat
+    from proximadb_sdk.arrow_export import FileFormat, FileInfo
 
     info = FileInfo(
         path="collection/data/block_0.arrow",

@@ -4,15 +4,25 @@ ProximaDB Client & SDK Test Suite
 Consolidated tests for client creation, configuration, error handling, and SDK features
 """
 
-import pytest
 import asyncio
 import time
-from typing import Dict, Any
+from typing import Any, Dict
 
-from proximadb_sdk import ProximaDBClient, connect, connect_grpc, connect_rest, Protocol
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError, CollectionNotFoundError
-from proximadb_sdk import ClientConfig, RetryConfig
+import pytest
+
+from proximadb_sdk import (
+    ClientConfig,
+    CollectionConfig,
+    CollectionNotFoundError,
+    DistanceMetric,
+    Protocol,
+    ProximaDBClient,
+    ProximaDBError,
+    RetryConfig,
+    connect,
+    connect_grpc,
+    connect_rest,
+)
 
 
 class TestClientCreation:

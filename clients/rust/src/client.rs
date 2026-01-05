@@ -269,7 +269,7 @@ impl ProximaClient {
         let mut request = self.inner.http_client.get(url);
 
         if let Some(ref api_key) = self.inner.config.api_key {
-            request = request.header("Authorization", format!("Bearer {}", api_key));
+            request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
         let response = request.send().await?;
@@ -285,7 +285,7 @@ impl ProximaClient {
         let mut request = self.inner.http_client.post(url).json(body);
 
         if let Some(ref api_key) = self.inner.config.api_key {
-            request = request.header("Authorization", format!("Bearer {}", api_key));
+            request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
         let response = request.send().await?;
@@ -297,7 +297,7 @@ impl ProximaClient {
         let mut request = self.inner.http_client.delete(url);
 
         if let Some(ref api_key) = self.inner.config.api_key {
-            request = request.header("Authorization", format!("Bearer {}", api_key));
+            request = request.header("Authorization", format!("Bearer {api_key}"));
         }
 
         let response = request.send().await?;

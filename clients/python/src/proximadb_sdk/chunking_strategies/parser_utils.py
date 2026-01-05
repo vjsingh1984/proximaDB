@@ -17,29 +17,29 @@ Design Patterns Used:
 - Decorator: Performance monitoring and error handling
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import (
-    Dict,
-    List,
-    Optional,
-    Any,
-    Type,
-    Callable,
-    TypeVar,
-    Generic,
-    Set,
-    Tuple,
-    Union,
-)
-from functools import wraps, lru_cache
-from enum import Enum, auto
-import time
+import hashlib
 import logging
 import re
-import hashlib
 import threading
+import time
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from functools import lru_cache, wraps
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 from weakref import WeakValueDictionary
 
 # Configure logging
@@ -429,7 +429,7 @@ class BaseLanguageParser(ABC):
     def _init_tree_sitter(self):
         """Initialize tree-sitter parser"""
         try:
-            from tree_sitter_language_pack import get_parser, get_language
+            from tree_sitter_language_pack import get_language, get_parser
 
             self._parser = get_parser(self.tree_sitter_language_name)
             self._language_binding = get_language(self.tree_sitter_language_name)

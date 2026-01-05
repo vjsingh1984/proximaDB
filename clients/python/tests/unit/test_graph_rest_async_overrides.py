@@ -1,6 +1,7 @@
 import json
-import pytest
+
 import httpx
+import pytest
 
 from proximadb_sdk.protocols.rest_async import ProximaDBAsyncClient
 

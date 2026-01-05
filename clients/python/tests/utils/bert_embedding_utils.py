@@ -4,10 +4,12 @@ BERT Embedding Utilities for Performance Tests
 Provides real text corpus generation and BERT embeddings
 """
 
-import numpy as np
-from ..embedding_utils import embed_text
 import time
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+
+from ..embedding_utils import embed_text
 
 
 def generate_text_corpus(size: int) -> List[Dict[str, Any]]:

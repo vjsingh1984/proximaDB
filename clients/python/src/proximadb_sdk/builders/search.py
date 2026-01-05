@@ -4,8 +4,8 @@ Search Builder
 Fluent interface for building complex search operations.
 """
 
-from typing import Any, Dict, List, Optional, Union
-from typing import TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, Union
+
 from ..models import MetadataFilter
 
 FilterDict = Dict[str, Any]

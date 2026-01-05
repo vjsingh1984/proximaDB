@@ -4,9 +4,10 @@ Batching mixin
 Provides intelligent batching strategies for embedding generation.
 """
 
-from typing import List, Iterator, Optional
-import numpy as np
 import logging
+from typing import Iterator, List, Optional
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 

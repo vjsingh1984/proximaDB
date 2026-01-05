@@ -20,8 +20,9 @@ pytest.skip(
     "Tests require sentence-transformers and model downloads. Use --run-slow to enable.",
     allow_module_level=True,
 )
-import numpy as np
 from typing import List
+
+import numpy as np
 
 try:
     import sentence_transformers
@@ -30,23 +31,23 @@ try:
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
-from proximadb_sdk.embedding_providers.core import ProviderConfig, ModelMetadata
+from proximadb_sdk.embedding_providers.core import ModelMetadata, ProviderConfig
+from proximadb_sdk.embedding_providers.providers.local.bge import (
+    BGE_MODELS,
+    BGEProvider,
+)
+from proximadb_sdk.embedding_providers.providers.local.e5 import E5_MODELS, E5Provider
 from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
-    GTEQwenProvider,
     GTE_QWEN_MODELS,
+    GTEQwenProvider,
+)
+from proximadb_sdk.embedding_providers.providers.local.sentence_transformer import (
+    SENTENCE_TRANSFORMER_MODELS,
+    SentenceTransformerProvider,
 )
 from proximadb_sdk.embedding_providers.providers.local.sfr import (
-    SFRProvider,
     SFR_MODELS,
-)
-from proximadb_sdk.embedding_providers.providers.local.bge import (
-    BGEProvider,
-    BGE_MODELS,
-)
-from proximadb_sdk.embedding_providers.providers.local.e5 import E5Provider, E5_MODELS
-from proximadb_sdk.embedding_providers.providers.local.sentence_transformer import (
-    SentenceTransformerProvider,
-    SENTENCE_TRANSFORMER_MODELS,
+    SFRProvider,
 )
 
 # Mark all tests in this module as requiring models

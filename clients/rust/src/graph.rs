@@ -150,21 +150,16 @@ impl GraphEdge {
 }
 
 /// Traversal direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TraversalDirection {
     /// Traverse outgoing edges
+    #[default]
     Outgoing,
     /// Traverse incoming edges
     Incoming,
     /// Traverse both directions
     Both,
-}
-
-impl Default for TraversalDirection {
-    fn default() -> Self {
-        TraversalDirection::Outgoing
-    }
 }
 
 /// Graph traversal result

@@ -9,6 +9,7 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
+
 _runtime_version.ValidateProtobufRuntimeVersion(
     _runtime_version.Domain.PUBLIC,
     6,
@@ -23,7 +24,6 @@ _sym_db = _symbol_database.Default()
 
 
 from proximadb.v1 import types_pb2 as proximadb_dot_v1_dot_types__pb2
-
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16proximadb/v1/sql.proto\x12\x0cproximadb.v1\x1a\x18proximadb/v1/types.proto2]\n\nSqlService\x12O\n\nExecuteSql\x12\x1f.proximadb.v1.ExecuteSqlRequest\x1a .proximadb.v1.ExecuteSqlResponseb\x06proto3')
 

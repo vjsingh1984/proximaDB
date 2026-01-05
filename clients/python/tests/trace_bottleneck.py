@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Trace where time is spent in edge insertion"""
 
-import proximadb
-import tempfile
 import shutil
+import tempfile
 import time
+
+import proximadb
 
 temp_dir = tempfile.mkdtemp(prefix="proximadb_trace_")
 try:

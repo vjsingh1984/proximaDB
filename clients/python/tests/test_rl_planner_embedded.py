@@ -10,10 +10,11 @@ Verifies that:
 """
 
 import os
-import sys
-import time
-import tempfile
 import shutil
+import sys
+import tempfile
+import time
+
 import numpy as np
 
 # Import the native Rust PyO3 bindings

@@ -4,15 +4,16 @@ BERT Embedding Service for ProximaDB
 Generates 384, 768, or 1024 dimensional embeddings from text using sentence-transformers
 """
 
-import sys
-import os
-import json
-import time
 import hashlib
-import pickle
+import json
 import logging
+import os
+import pickle
+import sys
+import time
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 
 logger = logging.getLogger(__name__)

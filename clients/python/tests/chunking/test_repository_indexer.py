@@ -8,16 +8,17 @@ This module tests:
 - Search with git context
 """
 
-import pytest
-import sys
-import subprocess
-import shutil
 import asyncio
-import types
-from pathlib import Path
-from datetime import datetime
-from unittest.mock import Mock, MagicMock, AsyncMock, patch
 import importlib.util
+import shutil
+import subprocess
+import sys
+import types
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+import pytest
 
 # Load modules directly to avoid protobuf issues
 src_path = Path(__file__).parent.parent.parent / "src"

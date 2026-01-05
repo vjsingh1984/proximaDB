@@ -9,19 +9,20 @@ This module tests:
 - Document/OCR parser (with mocking)
 """
 
-import pytest
-import sys
 import os
+import sys
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading (also loads document_parsers)
-from loader import code_module, RESOURCES_DIR
+from loader import RESOURCES_DIR, code_module
 
 # Get document parsers from sys.modules (loader has already set it up)
 doc_parsers = sys.modules["proximadb.chunking_strategies.document_parsers"]

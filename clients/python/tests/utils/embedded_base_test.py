@@ -8,14 +8,15 @@ Note: The SDK is now named `proximadb_sdk` to avoid conflict with the
 native `proximadb` module (PyO3/maturin-based embedded database).
 """
 
-import pytest
+import shutil
+import tempfile
 import time
 import uuid
-import tempfile
-import shutil
-from typing import Optional, List, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 import numpy as np
+import pytest
 
 # Import native ProximaDB module directly
 # SDK is now proximadb_sdk, so no namespace conflict

@@ -13,28 +13,28 @@ Licensed under the Apache License, Version 2.0
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
-from .config import ClientConfig, load_config, Protocol
+from .adapters import BaseProtocolAdapter, create_adapter
+from .config import ClientConfig, Protocol, load_config
+from .exceptions import ProximaDBError
 from .models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    OperationMetrics,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
-    FilterDict,
     DistanceMetric,
+    FilterDict,
+    HealthStatus,
+    MetadataDict,
+    OperationMetrics,
+    SearchResult,
     StorageEngine,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
-from .exceptions import ProximaDBError
-from .adapters import BaseProtocolAdapter, create_adapter
 
 logger = logging.getLogger(__name__)
 

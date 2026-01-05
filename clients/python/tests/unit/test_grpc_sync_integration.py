@@ -11,7 +11,7 @@ pytest.skip(
     "Tests access internal implementation details - need refactoring for public API",
     allow_module_level=True,
 )
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 try:
     import grpc
@@ -20,8 +20,8 @@ try:
 except ImportError:
     GRPC_AVAILABLE = False
 
-from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 from proximadb_sdk.exceptions import ProximaDBError
+from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
 
 class TestGrpcSyncIntegration:

@@ -5,21 +5,22 @@ Tests comprehensive vector operations (insert, get, search) via both REST and gR
 using real data with chunking and different storage engines.
 """
 
-import pytest
-import numpy as np
+import logging
 import time
 import uuid
-import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from proximadb_sdk import ProximaDBClient, VectorRecord, Collection
-from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine
+import numpy as np
+import pytest
+
+from proximadb_sdk import Collection, ProximaDBClient, VectorRecord
 from proximadb_sdk.chunking import (
-    TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
+    TextChunker,
     prepare_vector_records,
 )
+from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine
 
 logger = logging.getLogger(__name__)
 
@@ -599,9 +600,9 @@ class TestVectorOperationsSDK:
             # Mock the ingest_text function behavior since we can't use real embedding service
             # In real usage, this would call the embedding service
             from proximadb_sdk.chunking import (
-                TextChunker,
                 ChunkingConfig,
                 ChunkingStrategy,
+                TextChunker,
             )
 
             # Create chunker

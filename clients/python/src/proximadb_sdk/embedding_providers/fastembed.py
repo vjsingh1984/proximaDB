@@ -5,11 +5,12 @@ Uses the fastembed library (Apache 2.0 license) for fast,
 lightweight embedding models with ONNX runtime.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

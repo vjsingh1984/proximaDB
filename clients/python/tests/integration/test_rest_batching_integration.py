@@ -6,17 +6,18 @@ Full end-to-end batching tests would require a live server and are better suited
 for E2E test suites.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
-from proximadb_sdk.protocols.rest_sync import ProximaDBClient
+import pytest
+
 from proximadb_sdk.batching_unified import (
     BatchConfig,
-    BatchStrategy,
     BatchMetrics,
+    BatchStrategy,
     ThreadedBatchProcessor,
 )
 from proximadb_sdk.config import ClientConfig
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
 
 class TestRestBatchingConfiguration:

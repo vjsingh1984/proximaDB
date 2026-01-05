@@ -5,9 +5,10 @@ Unit tests for ProximaDB SDK imports and exports
 This ensures all public APIs are properly exported and accessible.
 """
 
-import pytest
 import importlib
 import sys
+
+import pytest
 
 
 class TestSDKImports:
@@ -53,16 +54,18 @@ class TestSDKImports:
     def test_demo_setup_imports(self):
         """Test the exact import pattern from demo_setup.py"""
         try:
-            from proximadb_sdk import ProximaDBClient, Protocol
-            from proximadb_sdk import ClientConfig, CompressionConfig
             from proximadb_sdk import (
+                ClientConfig,
                 CollectionConfig,
+                CompressionConfig,
                 DistanceMetric,
-                StorageEngine,
-                VectorRecord,
+                Protocol,
+                ProximaDBClient,
                 QuantizationConfig,
                 QuantizationType,
                 SearchOptimization,
+                StorageEngine,
+                VectorRecord,
             )
 
             # All imports should succeed

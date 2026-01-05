@@ -20,17 +20,17 @@ Performance Target: 20-40% improvement in overall throughput and reliability
 
 import asyncio
 import logging
+import statistics
 import threading
 import time
-from typing import Any, Dict, List, Optional, Union, Tuple, Callable, Set
+import weakref
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict, deque
-import statistics
-import weakref
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
-from .config import Protocol, ClientConfig
-from .exceptions import ProximaDBError, NetworkError, TimeoutError
+from .config import ClientConfig, Protocol
+from .exceptions import NetworkError, ProximaDBError, TimeoutError
 
 logger = logging.getLogger(__name__)
 

@@ -6,14 +6,15 @@ This module tests the AST-aware code parsing functionality for all supported lan
 
 import os
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading
-from loader import code_module, RESOURCES_DIR, read_resource_file
+from loader import RESOURCES_DIR, code_module, read_resource_file
 
 # Get references to classes and functions from the loaded module
 CodeSymbol = code_module.CodeSymbol

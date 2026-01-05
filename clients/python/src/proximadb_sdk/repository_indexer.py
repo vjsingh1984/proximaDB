@@ -38,37 +38,37 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum, auto
-from pathlib import Path
-from typing import List, Dict, Optional, Any, Set, Tuple, Callable, Union, AsyncIterator
 import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum, auto
+from pathlib import Path
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, Union
 
-from .repository_manager import (
-    RepositoryManager,
-    IndexState,
-    FileChange,
-    ChangeType,
-    VCSType,
-    Author,
-    Commit,
-    repository_context,
-    is_git_repository,
-    get_file_git_info,
-)
-from .code_knowledge import (
-    CodeKnowledgeBuilder,
-    CodeIndexConfig,
-    IndexingResult,
-    CodeSearchResult,
-)
 from .chunking_strategies.code import (
     EXTENSION_TO_LANGUAGE,
     get_supported_extensions,
+)
+from .code_knowledge import (
+    CodeIndexConfig,
+    CodeKnowledgeBuilder,
+    CodeSearchResult,
+    IndexingResult,
+)
+from .repository_manager import (
+    Author,
+    ChangeType,
+    Commit,
+    FileChange,
+    IndexState,
+    RepositoryManager,
+    VCSType,
+    get_file_git_info,
+    is_git_repository,
+    repository_context,
 )
 
 logger = logging.getLogger(__name__)

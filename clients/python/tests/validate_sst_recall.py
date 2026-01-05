@@ -13,12 +13,13 @@ Usage:
     PYTHONPATH=clients/python/src python3 clients/python/tests/validate_sst_recall.py
 """
 
-import numpy as np
-import time
-import sys
 import os
-import tempfile
 import shutil
+import sys
+import tempfile
+import time
+
+import numpy as np
 
 # Import the native Rust-backed ProximaDB
 import proximadb

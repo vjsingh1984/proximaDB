@@ -10,12 +10,12 @@ Performance Targets:
 """
 
 import logging
-import time
 import threading
-from typing import Optional, Dict, Any, List
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -26,9 +26,10 @@ try:
 except ImportError:
     GRPC_AVAILABLE = False
 
-from ..config import ClientConfig
-from ..resource_pool import ResourcePool, ResourceFactory
 from contextlib import contextmanager
+
+from ..config import ClientConfig
+from ..resource_pool import ResourceFactory, ResourcePool
 
 logger = logging.getLogger(__name__)
 

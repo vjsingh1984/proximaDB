@@ -5,8 +5,9 @@ Chunks text at paragraph boundaries while respecting size constraints.
 """
 
 import re
-from typing import List, Dict, Any, Optional, Tuple
-from .base import ChunkingStrategyInterface, TextChunk, ChunkingConfig
+from typing import Any, Dict, List, Optional, Tuple
+
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
 
 class ParagraphStrategy(ChunkingStrategyInterface):

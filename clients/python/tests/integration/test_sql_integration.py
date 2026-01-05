@@ -2,17 +2,20 @@
 Integration tests for SQL API with running ProximaDB server
 """
 
-import pytest
-import numpy as np
-import time
 import json
-from proximadb_sdk import connect_rest, ProximaDBError
+import time
+
+import numpy as np
+import pytest
+
 from proximadb_sdk import (
     CollectionConfig,
-    StorageEngine,
-    VectorRecord,
     FilterableColumn,
     FilterableDataType,
+    ProximaDBError,
+    StorageEngine,
+    VectorRecord,
+    connect_rest,
 )
 
 

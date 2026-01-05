@@ -4,9 +4,9 @@ ProximaDB Filter Builder API
 Provides a fluent interface for building complex metadata filters with AND/OR/NOT operators.
 """
 
-from typing import Any, Dict, List, Optional, Union
-from enum import Enum
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
 
 class FilterOp(str, Enum):

@@ -18,12 +18,16 @@ Design Patterns:
 import asyncio
 import hashlib
 import logging
+import threading
 import time
+import weakref
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from queue import Empty, Queue
 from typing import (
     Any,
     AsyncGenerator,
@@ -40,26 +44,22 @@ from typing import (
     TypeVar,
     Union,
 )
-from contextlib import contextmanager, asynccontextmanager
-import threading
-from queue import Queue, Empty
-import weakref
 
-from .base import ChunkingStrategy, ChunkingStrategyInterface, ChunkingConfig, TextChunk
-from .factory import ChunkingStrategyFactory, get_chunking_strategy
+from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
 from .code import CodeChunkingConfig
+from .factory import ChunkingStrategyFactory, get_chunking_strategy
 from .parser_utils import (
-    ParserError,
-    ParseError,
-    ParserMetrics,
-    MetricsCollector,
-    get_metrics_collector,
-    ParserCache,
-    get_parser_cache,
-    ValidationResult,
     ConfigValidator,
-    FallbackStrategy,
     FallbackConfig,
+    FallbackStrategy,
+    MetricsCollector,
+    ParseError,
+    ParserCache,
+    ParserError,
+    ParserMetrics,
+    ValidationResult,
+    get_metrics_collector,
+    get_parser_cache,
 )
 
 logger = logging.getLogger(__name__)

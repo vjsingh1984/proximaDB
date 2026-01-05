@@ -4,9 +4,9 @@ Module loader for code chunking tests.
 This module handles loading the chunking modules without triggering protobuf imports.
 """
 
+import importlib.util
 import sys
 import types
-import importlib.util
 from pathlib import Path
 
 # Setup src path

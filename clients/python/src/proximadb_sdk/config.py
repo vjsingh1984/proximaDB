@@ -17,11 +17,11 @@ limitations under the License.
 """
 
 import os
+from enum import Enum
 from typing import Dict, Optional, Union
 from urllib.parse import urlparse
-from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Protocol(str, Enum):

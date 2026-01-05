@@ -9,10 +9,11 @@ pytest.skip(
     "Manual performance test - run directly with python", allow_module_level=True
 )
 
-import proximadb
-import tempfile
 import shutil
+import tempfile
 import time
+
+import proximadb
 
 
 def test_edge_creation_performance():

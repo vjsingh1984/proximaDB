@@ -4,16 +4,27 @@ ProximaDB Vector Operations Test Suite
 Consolidated tests for vector CRUD operations, batch insertions, and large-scale operations
 """
 
-import pytest
 import time
+from typing import Any, Dict, List
+
 import numpy as np
-from typing import List, Dict, Any
+import pytest
 from sentence_transformers import SentenceTransformer
 
-from proximadb_sdk import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb_sdk import CollectionConfig, FlushConfig, DistanceMetric, StorageEngine
-from proximadb_sdk import ProximaDBError, VectorDimensionError
-from .test_helpers import ensure_collection, cleanup_collection, COLLECTION_NAMES
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    FlushConfig,
+    Protocol,
+    ProximaDBClient,
+    ProximaDBError,
+    StorageEngine,
+    VectorDimensionError,
+    connect_grpc,
+    connect_rest,
+)
+
+from .test_helpers import COLLECTION_NAMES, cleanup_collection, ensure_collection
 
 
 def extract_metadata_value(value: Any) -> Any:

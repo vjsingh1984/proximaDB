@@ -10,13 +10,14 @@ This module tests:
 - Integration scenarios
 """
 
-import pytest
-import sys
 import asyncio
+import sys
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, AsyncMock
 from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, Mock
+
+import pytest
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))

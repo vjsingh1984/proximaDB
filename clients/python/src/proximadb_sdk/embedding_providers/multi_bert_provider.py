@@ -9,19 +9,19 @@ This module provides various BERT model sizes for different use cases:
 - DeBERTa: State-of-the-art (768/1536 dimensions)
 """
 
-import os
 import logging
-from typing import List, Dict, Any, Optional, Union
-import numpy as np
-from pathlib import Path
+import os
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
+import numpy as np
 import torch
-from transformers import AutoTokenizer, AutoModel
-from sentence_transformers import SentenceTransformer
 import torch.nn.functional as F
+from sentence_transformers import SentenceTransformer
+from transformers import AutoModel, AutoTokenizer
 
-from .base import EmbeddingProvider, EmbeddingConfig
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -448,8 +448,9 @@ class MultiBERTProvider(EmbeddingProvider):
     @classmethod
     def compare_models(cls, texts: List[str], models: List[str] = None) -> pd.DataFrame:
         """Compare different models on the same texts"""
-        import pandas as pd
         import time
+
+        import pandas as pd
 
         if models is None:
             models = ["minilm-l6", "distilbert", "mpnet-base", "e5-large"]

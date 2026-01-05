@@ -5,14 +5,14 @@ Fast deterministic embeddings for testing without requiring model downloads.
 Uses hash-based generation for consistency.
 """
 
-from typing import List, Optional
-import numpy as np
 import hashlib
+from typing import List, Optional
+
+import numpy as np
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-
 
 # Model metadata
 SIMULATED_MODELS = {

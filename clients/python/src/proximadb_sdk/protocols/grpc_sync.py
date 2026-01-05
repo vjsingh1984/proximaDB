@@ -9,12 +9,12 @@ Features:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from .connection_pools import GrpcConnectionPool, GrpcChannelContext
-from ..models import SearchResult, VectorOperationResponse
 from ..exceptions import ProximaDBError
+from ..models import SearchResult, VectorOperationResponse
+from .connection_pools import GrpcChannelContext, GrpcConnectionPool
 
 
 @dataclass
@@ -179,17 +179,22 @@ class DictWrapper:
 
 try:
     import grpc
+
+    from proximadb_sdk.v1 import (
+        collection_pb2_grpc as v1_collection_pb2_grpc,  # type: ignore
+    )
+    from proximadb_sdk.v1 import (
+        collection_types_pb2 as v1_collection_types_pb2,  # type: ignore
+    )
+    from proximadb_sdk.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
+    from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
     from proximadb_sdk.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
     from proximadb_sdk.v1 import vector_types_pb2 as v1_vector_types_pb2  # type: ignore
-    from proximadb_sdk.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
-    from proximadb_sdk.v1 import collection_pb2_grpc as v1_collection_pb2_grpc  # type: ignore
-    from proximadb_sdk.v1 import collection_types_pb2 as v1_collection_types_pb2  # type: ignore
-    from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
 
     # Optional graph service (generated via Makefile: gen-proto)
     try:
-        from proximadb_sdk.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
         from proximadb_sdk.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+        from proximadb_sdk.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
     except Exception:  # pragma: no cover - optional
         v1_graph_pb2_grpc = None
         v1_graph_pb2 = None

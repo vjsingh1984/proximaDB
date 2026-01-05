@@ -5,32 +5,33 @@ Tests protocol selection, health monitoring, and performance metrics using
 the new unified IntelligentRouter system.
 """
 
-import pytest
+import sys
 import threading
 import time
-from pathlib import Path
-import sys
-from unittest.mock import Mock, patch, MagicMock
 from collections import deque
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
+from proximadb_sdk.config import ClientConfig, Protocol
+from proximadb_sdk.exceptions import ProximaDBError
 from proximadb_sdk.intelligent_router import (
     IntelligentRouter,
-    ProtocolMetrics,
-    ProtocolHealth,
-    RoutingStrategy,
-    RoutingConfig,
     OperationType,
+    ProtocolHealth,
+    ProtocolMetrics,
+    RoutingConfig,
+    RoutingStrategy,
 )
 
 # Backward compatibility imports
 from proximadb_sdk.protocol_selector import ProtocolSelector, create_protocol_selector
-from proximadb_sdk.config import Protocol, ClientConfig
-from proximadb_sdk.exceptions import ProximaDBError
 
 
 class TestProtocolMetrics:

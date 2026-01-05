@@ -4,15 +4,16 @@ Factory for creating chunking strategies
 Provides a clean interface for instantiating chunking strategies.
 """
 
-from typing import Optional, Type, Dict, List, Union
-from .base import ChunkingStrategy, ChunkingStrategyInterface, ChunkingConfig
-from .sliding_window import SlidingWindowStrategy
-from .sentence import SentenceStrategy
-from .paragraph import ParagraphStrategy
-from .semantic import SemanticStrategy
-from .recursive import RecursiveStrategy
+from typing import Dict, List, Optional, Type, Union
+
+from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface
+from .code import CodeChunkingConfig, CodeChunkingStrategy
 from .fixed_size import FixedSizeStrategy
-from .code import CodeChunkingStrategy, CodeChunkingConfig
+from .paragraph import ParagraphStrategy
+from .recursive import RecursiveStrategy
+from .semantic import SemanticStrategy
+from .sentence import SentenceStrategy
+from .sliding_window import SlidingWindowStrategy
 
 
 class ChunkingStrategyFactory:

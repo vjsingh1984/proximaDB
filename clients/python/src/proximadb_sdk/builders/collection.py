@@ -5,11 +5,12 @@ Fluent interface for building collection configurations.
 """
 
 from typing import Any, Dict, Optional
+
 from ..models import (
     CollectionConfig,
     DistanceMetric,
-    StorageEngine,
     IndexingAlgorithm,
+    StorageEngine,
 )
 
 

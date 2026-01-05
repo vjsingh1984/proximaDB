@@ -54,6 +54,8 @@ Usage:
 import asyncio
 import hashlib
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -67,13 +69,10 @@ from typing import (
     Dict,
     List,
     Optional,
-    Union,
     Protocol,
+    Union,
     runtime_checkable,
 )
-import os
-import signal
-
 
 # =============================================================================
 # Embedding Model Abstraction
@@ -1203,11 +1202,11 @@ prefetch_budget = 4
 
         # Import here to avoid circular imports
         from .multimodal_query import (
-            MultiModalQueryResult,
             CrossModalReranker,
-            RerankConfig as RC,
-            QueryContext as QC,
+            MultiModalQueryResult,
         )
+        from .multimodal_query import QueryContext as QC
+        from .multimodal_query import RerankConfig as RC
 
         # Create embedded executor
         executor = EmbeddedMultiModalQueryExecutor(self)
@@ -1308,8 +1307,9 @@ class EmbeddedMultiModalQueryExecutor:
         Returns:
             MultiModalQueryResult with fused results
         """
-        from .multimodal_query import MultiModalQueryResult, TimeDecayFunction
         import math
+
+        from .multimodal_query import MultiModalQueryResult, TimeDecayFunction
 
         start_time = time.time()
         component_times: Dict[str, float] = {}

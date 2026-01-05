@@ -3,14 +3,16 @@
 Test that fallback warnings are properly shown during collection creation.
 """
 
-import pytest
 import warnings
 from unittest.mock import Mock, patch
+
+import pytest
+
 from proximadb_sdk.models import (
     CollectionConfig,
     DistanceMetric,
-    StorageEngine,
     IndexingAlgorithm,
+    StorageEngine,
 )
 from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 

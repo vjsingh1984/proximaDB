@@ -2,16 +2,19 @@
 Integration tests for enhanced semantic chunking with performance validation
 """
 
-import pytest
 import time
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
+import pytest
 
 from proximadb_sdk.chunking import (
-    TextChunker,
+    create_enhanced_semantic_chunker,  # Alias for semantic chunker
+)
+from proximadb_sdk.chunking import (
     ChunkingConfig,
     ChunkingStrategy,
     TextChunk,
-    create_enhanced_semantic_chunker,  # Alias for semantic chunker
+    TextChunker,
 )
 
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
@@ -586,8 +589,8 @@ class TestSemanticChunkingPerformance:
 
     def test_concurrent_chunking_performance(self):
         """Test concurrent chunking performance"""
-        import threading
         import queue
+        import threading
 
         # Create test documents
         documents = [

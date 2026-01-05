@@ -5,10 +5,10 @@ Note: Tests rely on the editable install (pip install -e .)
 rather than sys.path manipulation for consistent imports.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
 
+import pytest
 
 # Path to test resources
 RESOURCES_DIR = Path(__file__).parent / "resources"

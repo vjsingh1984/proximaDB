@@ -22,26 +22,25 @@ Embedding: Sentence-Transformers (BAAI/bge-small-en-v1.5)
 import asyncio
 import gc
 import os
-import sys
-import time
-import tempfile
 import shutil
-from pathlib import Path
-from typing import List, Dict, Any, Tuple
 import statistics
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Vector databases
+import chromadb
+import httpx
+import lancedb
 import numpy as np
 
 # Embedding models
 from proximadb_sdk.embedded import SentenceTransformerModel
-
-# Vector databases
-import chromadb
-import lancedb
-import httpx
 
 # FAISS
 try:
@@ -54,7 +53,7 @@ except ImportError:
 # Qdrant
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct
+    from qdrant_client.models import Distance, PointStruct, VectorParams
 
     QDRANT_AVAILABLE = True
 except ImportError:

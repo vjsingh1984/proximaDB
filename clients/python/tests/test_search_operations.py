@@ -4,21 +4,26 @@ ProximaDB Search Operations Test Suite
 Consolidated tests for ID-based search, metadata filtering, and proximity/similarity search
 """
 
-import pytest
 import time
+from typing import Any, Dict, List
+
 import numpy as np
-from typing import List, Dict, Any
+import pytest
 from sentence_transformers import SentenceTransformer
 
-from proximadb_sdk import ProximaDBClient, Protocol, connect_rest, connect_grpc
 from proximadb_sdk import (
     CollectionConfig,
     DistanceMetric,
+    Protocol,
+    ProximaDBClient,
+    ProximaDBError,
     QuantizationConfig,
     QuantizationType,
+    connect_grpc,
+    connect_rest,
 )
-from proximadb_sdk import ProximaDBError
-from .test_helpers import ensure_collection, cleanup_collection, COLLECTION_NAMES
+
+from .test_helpers import COLLECTION_NAMES, cleanup_collection, ensure_collection
 
 
 class TestSearchOperations:

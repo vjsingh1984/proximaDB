@@ -5,11 +5,12 @@ Tests all chunking strategies independently from embeddings and validates
 the clean architecture with pluggable strategies.
 """
 
-import pytest
-import numpy as np
-from pathlib import Path
 import sys
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -17,19 +18,19 @@ from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.chunking import (
-    TextChunker,
-    ChunkingStrategy,
     ChunkingConfig,
+    ChunkingStrategy,
     TextChunk,
-    create_vector_records,
+    TextChunker,
     chunk_and_embed_text,
+    create_vector_records,
 )
 from proximadb_sdk.chunking_strategies import (
-    SlidingWindowStrategy,
-    SentenceStrategy,
     ParagraphStrategy,
-    SemanticStrategy,
     RecursiveStrategy,
+    SemanticStrategy,
+    SentenceStrategy,
+    SlidingWindowStrategy,
     get_chunking_strategy,
 )
 from proximadb_sdk.embedding_interface import get_default_embedding_provider

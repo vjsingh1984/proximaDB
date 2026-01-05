@@ -5,27 +5,28 @@ Tests operation routing, protocol selection, and performance metrics using
 the new unified IntelligentRouter system with real client scenarios.
 """
 
-import pytest
-import time
-import threading
-from pathlib import Path
 import sys
-from unittest.mock import Mock, patch, MagicMock
+import threading
+import time
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
+from proximadb_sdk.config import ClientConfig, Protocol
 from proximadb_sdk.intelligent_router import (
     IntelligentRouter,
+    OperationType,
+    ProtocolHealth,
+    ProtocolMetrics,
     RoutingConfig,
     RoutingStrategy,
-    OperationType,
-    ProtocolMetrics,
-    ProtocolHealth,
 )
-from proximadb_sdk.config import Protocol, ClientConfig
 
 # Backward compatibility imports
 from proximadb_sdk.operation_router import OperationRouter, create_operation_router

@@ -5,14 +5,15 @@ Supports any OpenAI-compatible API including local models
 served by vLLM, Ollama, LocalAI, etc.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
 import os
-import requests
+from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+import requests
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

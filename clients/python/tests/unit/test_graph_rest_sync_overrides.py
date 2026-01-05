@@ -1,4 +1,5 @@
 import json
+
 from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
 

@@ -4,8 +4,8 @@ Configuration classes for embedding providers
 Provides immutable model metadata and flexible provider configuration.
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, Optional
 
 
 @dataclass(frozen=True)

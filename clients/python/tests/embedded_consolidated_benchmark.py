@@ -55,28 +55,28 @@ Unified vector + graph with:
 """
 
 import gc
+import gzip
 import os
-import sys
-import time
-import tempfile
-import shutil
 import random
+import shutil
+import struct
+import sys
+import tempfile
 import threading
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+import time
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import struct
-import gzip
-import urllib.request
-from io import BytesIO
 
 try:
     from rich.console import Console
-    from rich.table import Table
     from rich.panel import Panel
+    from rich.table import Table
 
     RICH_AVAILABLE = True
 except ImportError:
@@ -719,7 +719,7 @@ except ImportError:
 
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct
+    from qdrant_client.models import Distance, PointStruct, VectorParams
 
     QDRANT_AVAILABLE = True
 except ImportError:
@@ -1459,8 +1459,8 @@ def benchmark_usearch_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any
 
     try:
         from usearch.index import (
-            Index as USearchIndex,
-        )  # Local import to avoid NameError when unavailable
+            Index as USearchIndex,  # Local import to avoid NameError when unavailable
+        )
 
         dim = vectors.shape[1]
         index = USearchIndex(ndim=dim, metric="l2sq")
@@ -1534,9 +1534,9 @@ def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]
         return {"error": "Milvus not available"}
 
     try:
-        from pymilvus import (
+        from pymilvus import (  # Local import to avoid NameError when unavailable
             MilvusClient,
-        )  # Local import to avoid NameError when unavailable
+        )
 
         milvus_file = os.path.join(temp_dir, "milvus_quick.db")
         client = MilvusClient(milvus_file)
@@ -2881,7 +2881,7 @@ def benchmark_sift_1m(
     if "qdrant" in selected_engines:
         try:
             from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, VectorParams, PointStruct
+            from qdrant_client.models import Distance, PointStruct, VectorParams
 
             BenchmarkLogger.log_engine_start("Qdrant")
             phase_start = BenchmarkLogger.log_start("Qdrant", "Insert + Flush + Search")

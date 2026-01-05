@@ -5,11 +5,12 @@ Tests comprehensive graph operations (nodes, edges, traversal, queries) via both
 REST and gRPC protocols using the Python SDK.
 """
 
-import pytest
+import logging
 import time
 import uuid
-import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
+import pytest
 
 from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.exceptions import ProximaDBError

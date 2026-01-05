@@ -1,11 +1,12 @@
 import os
 import time
 import uuid
+
 import numpy as np
 import pytest
 
-from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 from proximadb_sdk.models import CollectionConfig
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
 
 def server_available(url: str) -> bool:

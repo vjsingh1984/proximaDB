@@ -8,14 +8,14 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
-import time
 import logging
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
 # Type variable for decorator
 F = TypeVar("F", bound=Callable[..., Any])

@@ -8,13 +8,14 @@ NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
 requiring a running ProximaDB server.
 """
 
-import pytest
-import time
-import numpy as np
-from pathlib import Path
 import sys
-from typing import List, Dict, Any
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -22,14 +23,14 @@ from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.batching_unified import (
-    BatchStrategy,
-    BatchOperationType,
     BatchConfig,
-    BatchRequest,
-    UnifiedBatchManager,
     BatchMetrics,
-    create_vector_batcher,
+    BatchOperationType,
+    BatchRequest,
+    BatchStrategy,
+    UnifiedBatchManager,
     batch_insert_vectors,
+    create_vector_batcher,
 )
 from proximadb_sdk.models import VectorRecord
 

@@ -39,27 +39,27 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Set, Tuple, Callable, Union
-from pathlib import Path
-import hashlib
 import asyncio
-import os
 import fnmatch
+import hashlib
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+from .chunking_strategies.base import TextChunk
 from .chunking_strategies.code import (
-    CodeChunkingStrategy,
+    EXTENSION_TO_LANGUAGE,
     CodeChunkingConfig,
-    CodeSymbol,
-    CodeSymbolType,
+    CodeChunkingStrategy,
     CodeRelation,
     CodeRelationType,
+    CodeSymbol,
+    CodeSymbolType,
     ParsedCode,
     SourceLocation,
-    EXTENSION_TO_LANGUAGE,
     get_supported_extensions,
 )
-from .chunking_strategies.base import TextChunk
 
 
 @dataclass

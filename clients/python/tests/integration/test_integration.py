@@ -5,11 +5,12 @@ NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
 requiring a running ProximaDB server.
 """
 
-import pytest
-import numpy as np
-import time
 import logging
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
+
+import numpy as np
+import pytest
 
 logger = logging.getLogger(__name__)
 

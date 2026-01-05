@@ -8,12 +8,13 @@ NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
 requiring a running ProximaDB server and real connections.
 """
 
-import pytest
-import time
+import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-import sys
+
+import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -29,15 +30,15 @@ except ImportError:
 
 import httpx
 
+from proximadb_sdk.config import ClientConfig, load_config
 from proximadb_sdk.protocols.connection_pools import (
-    GrpcConnectionPool,
-    RestConnectionPool,
     GrpcChannelContext,
-    RestClientContext,
+    GrpcConnectionPool,
     PoolHealth,
     PoolMetrics,
+    RestClientContext,
+    RestConnectionPool,
 )
-from proximadb_sdk.config import ClientConfig, load_config
 
 
 class TestGrpcConnectionPool(BaseProximaDBTest):

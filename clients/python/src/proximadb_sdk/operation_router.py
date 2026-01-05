@@ -5,17 +5,18 @@ This module provides backward compatibility for the legacy OperationRouter inter
 All functionality has been moved to intelligent_router.py
 """
 
+from .config import ClientConfig
+
 # Import everything from unified module for backward compatibility
 from .intelligent_router import (
+    IntelligentRouter,
     OperationType,
-    RoutingStrategy,
     ProtocolHealth,
-    RoutingRule,
     ProtocolMetrics,
     RoutingConfig,
-    IntelligentRouter,
+    RoutingRule,
+    RoutingStrategy,
 )
-from .config import ClientConfig
 
 # Legacy aliases
 OperationRouter = IntelligentRouter

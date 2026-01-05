@@ -8,10 +8,17 @@ IMPORTANT: The current ProximaDB SQL implementation has limitations:
 - These tests verify protocol support, not full SQL query execution
 """
 
-import pytest
-from proximadb_sdk import connect_rest, connect_grpc, ProximaDBError, Protocol
-from proximadb_sdk import StorageEngine, VectorRecord
 import numpy as np
+import pytest
+
+from proximadb_sdk import (
+    Protocol,
+    ProximaDBError,
+    StorageEngine,
+    VectorRecord,
+    connect_grpc,
+    connect_rest,
+)
 
 
 # Test both REST and gRPC

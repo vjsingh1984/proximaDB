@@ -16,16 +16,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import click
+from rich import print as rprint
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.syntax import Syntax
-from rich import print as rprint
+from rich.table import Table
 
 # Local imports
 from proximadb_sdk.config import ProximaDBConfig
-from proximadb_sdk.unified_client import UnifiedProximaDBClient
 from proximadb_sdk.models import SearchFilter
+from proximadb_sdk.unified_client import UnifiedProximaDBClient
 
 console = Console()
 
@@ -561,6 +561,7 @@ def benchmark(
 ) -> None:
     """Run a simple benchmark against the server."""
     import time
+
     import numpy as np
 
     try:

@@ -6,24 +6,26 @@ Consolidated tests for collection CRUD operations, configuration, and lifecycle 
 Tests run against embedded ProximaDB database for fast, reliable testing.
 """
 
-import pytest
 import time
-from typing import Dict, Any
+from typing import Any, Dict
+
+import pytest
 
 from proximadb_sdk import (
-    CollectionConfig,
-    IndexConfiguration,
-    DistanceMetric,
-    StorageEngine,
-    IndexType,
     Collection,
+    CollectionConfig,
+    CollectionNotFoundError,
     CollectionStats,
-    StorageConfig,
-    CompressionType,
     CompressionConfig,
+    CompressionType,
+    DistanceMetric,
     FlushConfig,
+    IndexConfiguration,
+    IndexType,
+    ProximaDBError,
+    StorageConfig,
+    StorageEngine,
 )
-from proximadb_sdk import ProximaDBError, CollectionNotFoundError
 
 
 class TestCollectionCRUD:

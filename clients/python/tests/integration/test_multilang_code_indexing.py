@@ -17,13 +17,13 @@ Requirements:
 - Running ProximaDB server at localhost:5678
 """
 
+import hashlib
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import pytest
 import requests
-import time
-import hashlib
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
-
 
 # =============================================================================
 # Test Configuration

@@ -4,9 +4,10 @@ SentenceTransformer mixin
 Provides sentence-transformers integration with model caching.
 """
 
-from typing import List, Optional
-import numpy as np
 import logging
+from typing import List, Optional
+
+import numpy as np
 
 from ..core.cache import ModelCache
 

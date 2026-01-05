@@ -20,20 +20,21 @@ pytest.skip(
     allow_module_level=True,
 )
 
-import pytest
 import threading
 import time
 from unittest.mock import patch
 
+import pytest
+
 from proximadb_sdk.chunking import (
     ChunkerPool,
-    PooledChunkerContext,
-    TextChunker,
     ChunkingConfig,
     ChunkingStrategy,
-    get_chunker_pool_stats,
-    cleanup_chunker_pool,
+    PooledChunkerContext,
+    TextChunker,
     _global_chunker_pool,
+    cleanup_chunker_pool,
+    get_chunker_pool_stats,
 )
 
 

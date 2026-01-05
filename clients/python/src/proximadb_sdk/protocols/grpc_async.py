@@ -11,6 +11,7 @@ Copyright 2025 ProximaDB
 """
 
 import warnings
+
 from .grpc_sync import ProximaDBSyncGrpcClient
 
 # Issue deprecation warning when module is imported

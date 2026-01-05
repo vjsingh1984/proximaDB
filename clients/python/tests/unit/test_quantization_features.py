@@ -5,19 +5,23 @@ This test file validates the new quantization and search optimization
 features added to ProximaDB.
 """
 
-import pytest
-import numpy as np
-from ..embedding_utils import embed_seed, embed_many
 import logging
+
+import numpy as np
+import pytest
+
 from proximadb_sdk import (
-    QuantizationType,
-    QuantizationConfig,
-    SearchOptimization,
-    QuantizationHint,
     CollectionConfig,
     DistanceMetric,
+    Protocol,
+    ProximaDBClient,
+    QuantizationConfig,
+    QuantizationHint,
+    QuantizationType,
+    SearchOptimization,
 )
-from proximadb_sdk import ProximaDBClient, Protocol
+
+from ..embedding_utils import embed_many, embed_seed
 
 logger = logging.getLogger(__name__)
 

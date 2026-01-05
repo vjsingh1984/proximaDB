@@ -8,36 +8,37 @@ NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
 requiring REST/gRPC client connections to a running server.
 """
 
-import pytest
 import itertools
-from typing import List, Dict, Any
 import logging
+from typing import Any, Dict, List
+
+import pytest
 
 from proximadb_sdk import (
-    ProximaDBClient,
-    Protocol,
-    connect_rest,
-    connect_grpc,
     CollectionConfig,
     DistanceMetric,
-    StorageEngine,
-    IndexingAlgorithm,
     FilterableColumn,
     FilterableDataType,
     IndexConfiguration,
+    IndexingAlgorithm,
+    Protocol,
+    ProximaDBClient,
+    ProximaDBError,
     QuantizationConfig,
     QuantizationType,
-    ProximaDBError,
+    StorageEngine,
+    connect_grpc,
+    connect_rest,
 )
 
 # Import index configs directly from models
 from proximadb_sdk.models import (
+    AnnoyConfig,
+    FlatConfig,
     HnswConfig,
     IvfConfig,
-    FlatConfig,
-    PqConfig,
-    AnnoyConfig,
     LshConfig,
+    PqConfig,
 )
 
 logger = logging.getLogger(__name__)

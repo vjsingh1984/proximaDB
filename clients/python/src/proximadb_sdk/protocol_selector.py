@@ -5,17 +5,20 @@ This module provides backward compatibility for the legacy ProtocolSelector inte
 All functionality has been moved to intelligent_router.py
 """
 
+from .config import ClientConfig
+
 # Import everything from unified module for backward compatibility
 from .intelligent_router import (
+    IntelligentRouter,
     OperationType,
-    RoutingStrategy as SelectionStrategy,  # Map to legacy name
     ProtocolHealth,
-    RoutingRule,
     ProtocolMetrics,
     RoutingConfig,
-    IntelligentRouter,
+    RoutingRule,
 )
-from .config import ClientConfig
+from .intelligent_router import (
+    RoutingStrategy as SelectionStrategy,  # Map to legacy name
+)
 
 # Legacy aliases
 ProtocolSelector = IntelligentRouter
