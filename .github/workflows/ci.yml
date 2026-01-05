@@ -125,6 +125,10 @@ jobs:
       - uses: dtolnay/rust-action@stable
         with:
           components: rustfmt
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
       - run: cargo fmt --all -- --check
 
   rust-clippy:
@@ -137,13 +141,13 @@ jobs:
       - uses: dtolnay/rust-action@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v1-clippy"
-      - name: Install Dependencies
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-clippy"
       - run: cargo clippy --all-targets -- -D warnings
 
   rust-security:
