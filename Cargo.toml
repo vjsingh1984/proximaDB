@@ -240,6 +240,8 @@ tenant_access = []
 executive_intel = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
+# AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
+avx512 = []
 distributed = []
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services

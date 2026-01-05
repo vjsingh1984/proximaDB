@@ -738,6 +738,8 @@ pub fn simd_frame_of_reference_encode_f32(
 fn compute_offsets_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     #[cfg(target_arch = "x86_64")]
     {
+        // AVX512 requires nightly Rust and is feature-gated
+        #[cfg(feature = "avx512")]
         if is_x86_feature_detected!("avx512f") {
             return unsafe { compute_offsets_avx512(values, base_i32) };
         }
@@ -767,7 +769,7 @@ fn compute_offsets_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn compute_offsets_avx512(values: &[f32], base_i32: i32) -> Vec<i32> {
     use std::arch::x86_64::*;
@@ -1169,6 +1171,8 @@ pub fn simd_pfor_delta_encode_f32(
 fn compute_deltas_pfor_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     #[cfg(target_arch = "x86_64")]
     {
+        // AVX512 requires nightly Rust and is feature-gated
+        #[cfg(feature = "avx512")]
         if is_x86_feature_detected!("avx512f") {
             return unsafe { compute_deltas_pfor_avx512(values, base_i32) };
         }
@@ -1198,7 +1202,7 @@ fn compute_deltas_pfor_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn compute_deltas_pfor_avx512(values: &[f32], base_i32: i32) -> Vec<i32> {
     use std::arch::x86_64::*;
