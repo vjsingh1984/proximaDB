@@ -410,7 +410,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Build All Binaries
         run: |
@@ -455,7 +455,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Run Tests
         run: cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
@@ -479,7 +479,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Storage Integration Tests
         run: |
           # Run tests matching storage patterns
@@ -511,7 +511,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
         run: |
           for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs; do
@@ -540,7 +540,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Graph Integration Tests
         run: |
           for test_file in tests/*graph*.rs; do
@@ -569,7 +569,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Cluster Integration Tests
         run: |
           for test_file in tests/*cluster*.rs tests/*distributed*.rs; do
@@ -593,7 +593,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
           cargo install cargo-tarpaulin
       - name: Generate Coverage
         run: |
@@ -863,7 +863,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Run Benchmarks
         run: |
