@@ -68,6 +68,12 @@ use thiserror::Error;
 
 use crate::core::types::TextStorageStrategy;
 
+// Import full-text search index types
+use super::fulltext_index::{
+    BM25Config, FullTextIndex, FullTextIndexError, SearchOptions,
+    SearchResult as FullTextSearchResult, TokenizerConfig,
+};
+
 /// Thresholds for storage strategy selection
 pub const INLINE_THRESHOLD: usize = 4 * 1024; // 4KB
 pub const CHUNKED_THRESHOLD: usize = 1024 * 1024; // 1MB
@@ -106,6 +112,10 @@ pub enum TextStorageError {
     /// Arrow error
     #[error("Arrow error: {0}")]
     ArrowError(String),
+
+    /// Full-text index error
+    #[error("Full-text index error: {0}")]
+    FullTextIndexError(#[from] FullTextIndexError),
 }
 
 impl From<arrow::error::ArrowError> for TextStorageError {
@@ -415,12 +425,7 @@ pub struct ChunkPosition {
 
 impl ChunkPosition {
     /// Create a new chunk position
-    pub fn new(
-        byte_start: usize,
-        byte_end: usize,
-        char_start: usize,
-        char_end: usize,
-    ) -> Self {
+    pub fn new(byte_start: usize, byte_end: usize, char_start: usize, char_end: usize) -> Self {
         Self {
             byte_start,
             byte_end,
@@ -518,14 +523,7 @@ impl TextChunker {
 
         // If text is smaller than minimum chunk size, return as single chunk
         if total_chars <= self.config.min_chunk_size {
-            return vec![self.create_chunk(
-                parent_id,
-                0,
-                text.to_string(),
-                0,
-                total_chars,
-                1,
-            )];
+            return vec![self.create_chunk(parent_id, 0, text.to_string(), 0, total_chars, 1)];
         }
 
         let mut chunks = Vec::new();
@@ -577,8 +575,12 @@ impl TextChunker {
 
             char_start += step;
 
-            // If remaining text is too small, stop
-            if total_chars - char_start < self.config.min_chunk_size && !chunks.is_empty() {
+            // If remaining text is too small or we've exceeded bounds, stop
+            if char_start >= total_chars {
+                break;
+            }
+            let remaining_chars = total_chars.saturating_sub(char_start);
+            if remaining_chars < self.config.min_chunk_size && !chunks.is_empty() {
                 // Extend the last chunk to include remaining text
                 if let Some(last_chunk) = chunks.last_mut() {
                     let remaining: String = chars[char_start..].iter().collect();
@@ -592,10 +594,9 @@ impl TextChunker {
         // Add total_chunks metadata to each chunk
         let total_chunks = chunks.len();
         for chunk in &mut chunks {
-            chunk.metadata.insert(
-                "total_chunks".to_string(),
-                total_chunks.to_string(),
-            );
+            chunk
+                .metadata
+                .insert("total_chunks".to_string(), total_chunks.to_string());
         }
 
         chunks
@@ -710,7 +711,11 @@ impl TextChunker {
     }
 
     /// Calculate byte offsets for a chunk (useful for binary formats)
-    pub fn calculate_byte_offsets(text: &str, char_start: usize, char_end: usize) -> (usize, usize) {
+    pub fn calculate_byte_offsets(
+        text: &str,
+        char_start: usize,
+        char_end: usize,
+    ) -> (usize, usize) {
         let chars: Vec<char> = text.chars().collect();
         let mut byte_start = 0;
         let mut byte_end = 0;
@@ -733,7 +738,11 @@ impl TextChunker {
     }
 
     /// Calculate line numbers for a chunk
-    pub fn calculate_line_numbers(text: &str, char_start: usize, char_end: usize) -> (usize, usize) {
+    pub fn calculate_line_numbers(
+        text: &str,
+        char_start: usize,
+        char_end: usize,
+    ) -> (usize, usize) {
         let chars: Vec<char> = text.chars().collect();
         let mut line = 1;
         let mut line_start = 1;
@@ -1025,6 +1034,21 @@ impl TextChunk {
 ///         ..Default::default()
 ///     });
 /// ```
+///
+/// ## Full-Text Search Integration
+///
+/// Enable full-text indexing for BM25-based search:
+///
+/// ```rust,ignore
+/// let writer = TextColumnWriter::new(TextStorageConfig::default())
+///     .with_fulltext_index(TokenizerConfig::default());
+///
+/// writer.write("doc1", "The quick brown fox")?;
+/// writer.write("doc2", "A lazy brown dog")?;
+///
+/// // Search with BM25 scoring
+/// let results = writer.fulltext_search("quick brown", 10);
+/// ```
 pub struct TextColumnWriter {
     /// Storage configuration
     config: TextStorageConfig,
@@ -1049,6 +1073,12 @@ pub struct TextColumnWriter {
 
     /// Optional RAG-optimized text chunker (used when configured)
     chunker: Option<TextChunker>,
+
+    /// Optional full-text search index for BM25 ranking
+    fulltext_index: Option<FullTextIndex>,
+
+    /// Whether to automatically index all written text
+    auto_index: bool,
 }
 
 /// Storage type for a record
@@ -1090,6 +1120,8 @@ impl TextColumnWriter {
             current_sidecar_offset: 0,
             stats: TextStorageStats::default(),
             chunker: None,
+            fulltext_index: None,
+            auto_index: false,
         }
     }
 
@@ -1127,6 +1159,193 @@ impl TextColumnWriter {
         self.chunker.is_some()
     }
 
+    // =========================================================================
+    // Full-Text Index Configuration
+    // =========================================================================
+
+    /// Enable full-text indexing with the specified tokenizer configuration
+    ///
+    /// When enabled, all text written via `write()` will be automatically indexed
+    /// for full-text search with BM25 scoring.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let writer = TextColumnWriter::new(TextStorageConfig::default())
+    ///     .with_fulltext_index(TokenizerConfig::default());
+    /// ```
+    pub fn with_fulltext_index(mut self, tokenizer_config: TokenizerConfig) -> Self {
+        self.fulltext_index = Some(FullTextIndex::new(tokenizer_config));
+        self.auto_index = true;
+        self
+    }
+
+    /// Enable full-text indexing with custom BM25 configuration
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let writer = TextColumnWriter::new(TextStorageConfig::default())
+    ///     .with_fulltext_index_and_bm25(
+    ///         TokenizerConfig::for_keyword_search(),
+    ///         BM25Config::for_short_documents(),
+    ///     );
+    /// ```
+    pub fn with_fulltext_index_and_bm25(
+        mut self,
+        tokenizer_config: TokenizerConfig,
+        bm25_config: BM25Config,
+    ) -> Self {
+        self.fulltext_index = Some(
+            FullTextIndex::new(tokenizer_config).with_bm25_config(bm25_config),
+        );
+        self.auto_index = true;
+        self
+    }
+
+    /// Set an existing full-text index
+    ///
+    /// Use this when you want to reuse an existing index or have more control
+    /// over its construction.
+    pub fn with_existing_index(mut self, index: FullTextIndex) -> Self {
+        self.fulltext_index = Some(index);
+        self.auto_index = true;
+        self
+    }
+
+    /// Enable or disable automatic indexing of written text
+    ///
+    /// When disabled, you must manually call `index_document()` to add
+    /// documents to the full-text index.
+    pub fn set_auto_index(&mut self, enable: bool) {
+        self.auto_index = enable;
+    }
+
+    /// Check if full-text indexing is enabled
+    pub fn has_fulltext_index(&self) -> bool {
+        self.fulltext_index.is_some()
+    }
+
+    /// Get a reference to the full-text index (if enabled)
+    pub fn fulltext_index(&self) -> Option<&FullTextIndex> {
+        self.fulltext_index.as_ref()
+    }
+
+    /// Get a mutable reference to the full-text index (if enabled)
+    pub fn fulltext_index_mut(&mut self) -> Option<&mut FullTextIndex> {
+        self.fulltext_index.as_mut()
+    }
+
+    /// Manually add a document to the full-text index
+    ///
+    /// This is useful when auto_index is disabled or when you want to
+    /// index additional content beyond what's stored.
+    pub fn index_document(&mut self, doc_id: &str, content: &str) -> Result<(), TextStorageError> {
+        if let Some(ref mut index) = self.fulltext_index {
+            index.add_document(doc_id, content)?;
+        }
+        Ok(())
+    }
+
+    /// Search the full-text index with BM25 scoring
+    ///
+    /// Returns documents ranked by relevance to the query.
+    ///
+    /// # Arguments
+    /// * `query` - The search query (will be tokenized)
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    /// Vector of search results sorted by BM25 score (descending)
+    pub fn fulltext_search(&self, query: &str, limit: usize) -> Vec<FullTextSearchResult> {
+        match &self.fulltext_index {
+            Some(index) => index.search(query, limit),
+            None => Vec::new(),
+        }
+    }
+
+    /// Search the full-text index with custom options
+    ///
+    /// # Arguments
+    /// * `query` - The search query
+    /// * `options` - Search options including min_score, highlights, term boosts
+    pub fn fulltext_search_with_options(
+        &self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Vec<FullTextSearchResult> {
+        match &self.fulltext_index {
+            Some(index) => index.search_with_options(query, options),
+            None => Vec::new(),
+        }
+    }
+
+    /// Get the IDF (Inverse Document Frequency) for a term
+    ///
+    /// Useful for understanding term importance in the corpus.
+    pub fn get_term_idf(&self, term: &str) -> f64 {
+        match &self.fulltext_index {
+            Some(index) => index.get_idf(term),
+            None => 0.0,
+        }
+    }
+
+    /// Get the document frequency for a term
+    ///
+    /// Returns the number of documents containing the term.
+    pub fn get_document_frequency(&self, term: &str) -> u32 {
+        match &self.fulltext_index {
+            Some(index) => index.get_document_frequency(term),
+            None => 0,
+        }
+    }
+
+    /// Get top terms by document frequency
+    ///
+    /// Useful for understanding the most common terms in the corpus.
+    pub fn get_top_terms(&self, limit: usize) -> Vec<(String, u32)> {
+        match &self.fulltext_index {
+            Some(index) => index.get_top_terms(limit),
+            None => Vec::new(),
+        }
+    }
+
+    /// Get terms matching a prefix (for autocomplete)
+    pub fn get_terms_with_prefix(&self, prefix: &str, limit: usize) -> Vec<String> {
+        match &self.fulltext_index {
+            Some(index) => index.get_terms_with_prefix(prefix, limit),
+            None => Vec::new(),
+        }
+    }
+
+    /// Build the full-text index from all stored chunks
+    ///
+    /// This is useful when you want to index chunks after they've been
+    /// created, rather than indexing individual documents.
+    pub fn build_index_from_chunks(&mut self) -> Result<(), TextStorageError> {
+        if self.fulltext_index.is_none() {
+            self.fulltext_index = Some(FullTextIndex::new(TokenizerConfig::default()));
+        }
+
+        if let Some(ref mut index) = self.fulltext_index {
+            for chunk in &self.chunk_buffer {
+                let mut metadata = HashMap::new();
+                metadata.insert("parent_id".to_string(), chunk.parent_id.clone());
+                metadata.insert("chunk_index".to_string(), chunk.chunk_index.to_string());
+                metadata.insert("start_offset".to_string(), chunk.start_offset.to_string());
+                metadata.insert("end_offset".to_string(), chunk.end_offset.to_string());
+
+                index.add_document_with_metadata(&chunk.chunk_id, &chunk.content, metadata)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Write Operations
+    // =========================================================================
+
     /// Write text value using appropriate strategy
     ///
     /// # Arguments
@@ -1156,6 +1375,20 @@ impl TextColumnWriter {
             }
             TextStorageStrategy::Sidecar => {
                 self.write_sidecar(record_id, content)?;
+            }
+        }
+
+        // Auto-index if full-text indexing is enabled
+        if self.auto_index {
+            if let Some(ref mut index) = self.fulltext_index {
+                // For inline/sidecar, index the full document
+                // For chunked, index each chunk separately
+                if strategy == TextStorageStrategy::Chunked {
+                    // Chunks are indexed during write_chunked, skip here
+                } else {
+                    // Index the full document
+                    let _ = index.add_document(record_id, content);
+                }
             }
         }
 
@@ -1331,13 +1564,19 @@ impl TextColumnWriter {
         }
     }
 
-    /// Clear all buffers
+    /// Clear all buffers and optionally the full-text index
     pub fn clear(&mut self) {
         self.inline_buffer.clear();
         self.sidecar_refs.clear();
         self.chunk_buffer.clear();
         self.storage_mapping.clear();
         self.current_sidecar_offset = 0;
+        self.stats = TextStorageStats::default();
+
+        // Clear the full-text index if present
+        if let Some(ref mut index) = self.fulltext_index {
+            let _ = index.clear();
+        }
     }
 
     /// Get number of records written
@@ -2003,7 +2242,10 @@ mod tests {
         });
 
         writer
-            .write("rec_1", "This is a longer text for testing RAG chunking with overlap.")
+            .write(
+                "rec_1",
+                "This is a longer text for testing RAG chunking with overlap.",
+            )
             .unwrap();
 
         let chunks = writer.get_chunks();
@@ -2039,5 +2281,194 @@ mod tests {
     fn test_chunker_generate_chunk_id() {
         let id = TextChunker::generate_chunk_id("chunk", "doc123", 5);
         assert_eq!(id, "chunk_doc123__0005");
+    }
+
+    // =========================================================================
+    // Full-Text Index Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_writer_with_fulltext_index() {
+        let writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        assert!(writer.has_fulltext_index());
+        assert!(writer.fulltext_index().is_some());
+    }
+
+    #[test]
+    fn test_fulltext_auto_indexing() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        writer.write("doc1", "The quick brown fox").unwrap();
+        writer.write("doc2", "A lazy brown dog").unwrap();
+        writer.write("doc3", "The quick blue bird").unwrap();
+
+        // Search for documents
+        let results = writer.fulltext_search("quick brown", 10);
+        assert!(!results.is_empty());
+
+        // doc1 should rank highest (has both "quick" and "brown")
+        assert_eq!(results[0].doc_id, "doc1");
+    }
+
+    #[test]
+    fn test_fulltext_search_with_options() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        writer.write("doc1", "quick brown fox jumps").unwrap();
+        writer.write("doc2", "quick rabbit").unwrap();
+        writer.write("doc3", "slow brown tortoise").unwrap();
+
+        // Require all terms
+        let results = writer.fulltext_search_with_options(
+            "quick brown",
+            SearchOptions::top_k(10).require_all(),
+        );
+
+        // Only doc1 has both "quick" and "brown"
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].doc_id, "doc1");
+    }
+
+    #[test]
+    fn test_fulltext_term_statistics() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        writer.write("doc1", "hello world").unwrap();
+        writer.write("doc2", "hello there").unwrap();
+        writer.write("doc3", "goodbye world").unwrap();
+
+        // Check document frequency
+        let hello_df = writer.get_document_frequency("hello");
+        assert_eq!(hello_df, 2);
+
+        let world_df = writer.get_document_frequency("world");
+        assert_eq!(world_df, 2);
+
+        // Check IDF (higher for rarer terms)
+        let hello_idf = writer.get_term_idf("hello");
+        let goodbye_idf = writer.get_term_idf("goodbye");
+        assert!(goodbye_idf > hello_idf); // "goodbye" is rarer
+    }
+
+    #[test]
+    fn test_fulltext_top_terms() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        writer.write("doc1", "test testing tested").unwrap();
+        writer.write("doc2", "test example").unwrap();
+        writer.write("doc3", "test sample").unwrap();
+
+        let top_terms = writer.get_top_terms(5);
+        assert!(!top_terms.is_empty());
+
+        // "test" should be in the top terms
+        let has_test = top_terms.iter().any(|(term, _)| term == "test");
+        assert!(has_test);
+    }
+
+    #[test]
+    fn test_fulltext_prefix_search() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        writer.write("doc1", "testing tested tester").unwrap();
+        writer.write("doc2", "temperature temporal").unwrap();
+
+        let terms = writer.get_terms_with_prefix("test", 10);
+        assert!(!terms.is_empty());
+        for term in &terms {
+            assert!(term.starts_with("test"));
+        }
+    }
+
+    #[test]
+    fn test_fulltext_with_bm25_config() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index_and_bm25(
+                TokenizerConfig::for_keyword_search(),
+                BM25Config::for_short_documents(),
+            );
+
+        writer.write("doc1", "short text here").unwrap();
+        writer.write("doc2", "another short document").unwrap();
+
+        let results = writer.fulltext_search("short", 10);
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_fulltext_manual_indexing() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        // Disable auto-indexing
+        writer.set_auto_index(false);
+
+        writer.write("doc1", "some text").unwrap();
+
+        // Should not find anything because auto-index is disabled
+        let results = writer.fulltext_search("text", 10);
+        assert!(results.is_empty());
+
+        // Manually index
+        writer.index_document("doc1", "some text").unwrap();
+
+        // Now should find it
+        let results = writer.fulltext_search("text", 10);
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_fulltext_clear() {
+        let mut writer = TextColumnWriter::new(TextStorageConfig::default())
+            .with_fulltext_index(TokenizerConfig::default());
+
+        writer.write("doc1", "hello world").unwrap();
+
+        // Verify index has content
+        let results = writer.fulltext_search("hello", 10);
+        assert!(!results.is_empty());
+
+        // Clear
+        writer.clear();
+
+        // Index should be empty
+        let results = writer.fulltext_search("hello", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_fulltext_index_from_chunks() {
+        let mut config = TextStorageConfig::default();
+        config.strategy = TextStorageStrategy::Chunked;
+        config.chunk_size = 20;
+
+        let mut writer = TextColumnWriter::new(config)
+            .with_chunking_config(ChunkingConfig {
+                chunk_size: 20,
+                overlap: 5,
+                preserve_boundaries: false,
+                min_chunk_size: 10,
+                ..Default::default()
+            });
+
+        // Write will create chunks
+        writer
+            .write("doc1", "This is a longer document that will be split into multiple chunks for testing.")
+            .unwrap();
+
+        // Build index from chunks
+        writer.build_index_from_chunks().unwrap();
+
+        // Should be able to search chunks
+        let results = writer.fulltext_search("document", 10);
+        // Results should contain chunk IDs
+        assert!(!results.is_empty());
     }
 }

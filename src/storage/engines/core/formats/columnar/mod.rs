@@ -114,7 +114,8 @@ pub mod schema;
 pub mod serialization;
 // NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
 
-// TEXT column storage and filtering (Phase 3)
+// TEXT column storage, filtering, and full-text search (Phase 3)
+pub mod fulltext_index;
 pub mod text_filter;
 pub mod text_storage;
 
@@ -243,15 +244,54 @@ pub use text_filter::{
 };
 pub use text_storage::{
     // Constants
-    CHUNKED_THRESHOLD, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP_SIZE, INLINE_THRESHOLD,
-    MAX_BOUNDARY_SEARCH, MIN_CHUNK_SIZE,
+    CHUNKED_THRESHOLD,
+    ChunkPosition,
     // RAG Chunking
-    ChunkingConfig, ChunkPosition, TextChunker,
+    ChunkingConfig,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_OVERLAP_SIZE,
+    INLINE_THRESHOLD,
+    MAX_BOUNDARY_SEARCH,
+    MIN_CHUNK_SIZE,
     // Storage types
-    SidecarCompression, SidecarRef, StorageType, TextChunk, TextColumnReader, TextColumnWriter,
-    TextStorageConfig, TextStorageError, TextStorageStats,
+    SidecarCompression,
+    SidecarRef,
+    StorageType,
+    TextChunk,
+    TextChunker,
+    TextColumnReader,
+    TextColumnWriter,
+    TextStorageConfig,
+    TextStorageError,
+    TextStorageStats,
     // Functions
     determine_storage_strategy,
+};
+
+// Full-text search index re-exports
+pub use fulltext_index::{
+    // Core index types
+    BM25Config,
+    BM25Scorer,
+    ChunkIndexing,
+    ChunkSearchResult,
+    DocumentMetadata,
+    FullTextIndex,
+    FullTextIndexBuilder,
+    FullTextIndexError,
+    // Posting types
+    Posting,
+    PostingList,
+    // Search types
+    SearchOptions,
+    SearchResult as FullTextSearchResult,
+    // Statistics
+    TextStatistics,
+    // Tokenization
+    Token,
+    Tokenizer,
+    TokenizerConfig,
+    TokenizerType,
 };
 
 use anyhow::Result;
