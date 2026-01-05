@@ -17,16 +17,16 @@ use serde_json::Value as JsonValue;
 use tracing::debug;
 
 use crate::proto::proximadb_v1::{
-    aggregation_stage::Stage, sql_value::Value as SqlValueVariant, Aggregation, AggregationStage,
-    AggregationType, DocumentFilter, GroupStage, LimitStage, MatchStage, ProjectStage, SkipStage,
-    SortOrder, SortStage, SqlArray, SqlObject, SqlValue, UnwindStage,
+    Aggregation, AggregationStage, AggregationType, DocumentFilter, GroupStage, LimitStage,
+    MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlArray, SqlObject, SqlValue,
+    UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
 };
 
 #[cfg(test)]
 use crate::proto::proximadb_v1::SortField;
 
-use super::query::filter::FilterEvaluator;
 use super::DocumentRecord;
+use super::query::filter::FilterEvaluator;
 
 /// Aggregation pipeline executor
 pub struct AggregationExecutor {
@@ -174,7 +174,9 @@ impl AggregationExecutor {
             // Compute each aggregation
             for agg in &group_stage.aggregations {
                 let agg_value = self.compute_aggregation(&group_docs, agg)?;
-                result_doc.fields.insert(agg.output_field.clone(), agg_value);
+                result_doc
+                    .fields
+                    .insert(agg.output_field.clone(), agg_value);
             }
 
             results.push(result_doc);
@@ -190,9 +192,7 @@ impl AggregationExecutor {
 
         match json_doc.path(&normalized_path) {
             Ok(result) => match &result {
-                JsonValue::Array(arr) if arr.len() == 1 => {
-                    self.json_value_to_string(&arr[0])
-                }
+                JsonValue::Array(arr) if arr.len() == 1 => self.json_value_to_string(&arr[0]),
                 JsonValue::Array(arr) if arr.is_empty() => "_null".to_string(),
                 JsonValue::Null => "_null".to_string(),
                 _ => self.json_value_to_string(&result),
@@ -202,13 +202,9 @@ impl AggregationExecutor {
     }
 
     /// Compute a single aggregation over a group of documents
-    fn compute_aggregation(
-        &self,
-        docs: &[&SqlObject],
-        agg: &Aggregation,
-    ) -> Result<SqlValue> {
-        let agg_type = AggregationType::try_from(agg.r#type)
-            .unwrap_or(AggregationType::Unspecified);
+    fn compute_aggregation(&self, docs: &[&SqlObject], agg: &Aggregation) -> Result<SqlValue> {
+        let agg_type =
+            AggregationType::try_from(agg.r#type).unwrap_or(AggregationType::Unspecified);
         let path = &agg.input_path;
 
         match agg_type {
@@ -458,12 +454,7 @@ impl AggregationExecutor {
     }
 
     /// Compare two documents by a JSON path
-    fn compare_by_path(
-        &self,
-        a: &SqlObject,
-        b: &SqlObject,
-        path: &str,
-    ) -> std::cmp::Ordering {
+    fn compare_by_path(&self, a: &SqlObject, b: &SqlObject, path: &str) -> std::cmp::Ordering {
         let val_a = self.extract_value(a, path);
         let val_b = self.extract_value(b, path);
 
@@ -497,12 +488,13 @@ impl AggregationExecutor {
             }
 
             // Cross-type numeric comparison
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                (*va as f64).partial_cmp(vb).unwrap_or(std::cmp::Ordering::Equal)
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va.partial_cmp(&(*vb as f64)).unwrap_or(std::cmp::Ordering::Equal)
-            }
+            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => (*va
+                as f64)
+                .partial_cmp(vb)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::Int64Value(vb))) => va
+                .partial_cmp(&(*vb as f64))
+                .unwrap_or(std::cmp::Ordering::Equal),
 
             (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => {
                 va.cmp(vb)
@@ -522,7 +514,11 @@ impl AggregationExecutor {
         documents: &[SqlObject],
         limit_stage: &LimitStage,
     ) -> Result<Vec<SqlObject>> {
-        Ok(documents.iter().take(limit_stage.limit as usize).cloned().collect())
+        Ok(documents
+            .iter()
+            .take(limit_stage.limit as usize)
+            .cloned()
+            .collect())
     }
 
     /// Process a skip stage
@@ -531,7 +527,11 @@ impl AggregationExecutor {
         documents: &[SqlObject],
         skip_stage: &SkipStage,
     ) -> Result<Vec<SqlObject>> {
-        Ok(documents.iter().skip(skip_stage.skip as usize).cloned().collect())
+        Ok(documents
+            .iter()
+            .skip(skip_stage.skip as usize)
+            .cloned()
+            .collect())
     }
 
     // =========================================================================
@@ -559,9 +559,13 @@ impl AggregationExecutor {
                     if arr.values.is_empty() && preserve_null {
                         // Preserve document with null array field
                         let mut unwound = doc.clone();
-                        self.set_path_value(&mut unwound, path, SqlValue {
-                            value: Some(SqlValueVariant::NullValue(0)),
-                        });
+                        self.set_path_value(
+                            &mut unwound,
+                            path,
+                            SqlValue {
+                                value: Some(SqlValueVariant::NullValue(0)),
+                            },
+                        );
                         results.push(unwound);
                     } else {
                         // Create one document per array element
@@ -655,12 +659,7 @@ impl AggregationExecutor {
     }
 
     /// Check if a document contains a term in any of the specified paths
-    fn document_contains_term(
-        &self,
-        doc: &SqlObject,
-        term: &str,
-        paths: &[String],
-    ) -> bool {
+    fn document_contains_term(&self, doc: &SqlObject, term: &str, paths: &[String]) -> bool {
         for path in paths {
             if let Some(text) = self.extract_text_value(doc, path) {
                 if text.to_lowercase().contains(term) {
@@ -672,12 +671,7 @@ impl AggregationExecutor {
     }
 
     /// Calculate term frequency in a document
-    fn calculate_term_frequency(
-        &self,
-        doc: &SqlObject,
-        term: &str,
-        paths: &[String],
-    ) -> f32 {
+    fn calculate_term_frequency(&self, doc: &SqlObject, term: &str, paths: &[String]) -> f32 {
         let mut total_count = 0;
         let mut total_words = 0;
 
@@ -735,11 +729,12 @@ impl AggregationExecutor {
 
     /// Extract a numeric value from a document using JSON path
     fn extract_numeric_value(&self, doc: &SqlObject, path: &str) -> Option<f64> {
-        self.extract_value(doc, path).and_then(|val| match val.value {
-            Some(SqlValueVariant::Int64Value(i)) => Some(i as f64),
-            Some(SqlValueVariant::NumberValue(f)) => Some(f),
-            _ => None,
-        })
+        self.extract_value(doc, path)
+            .and_then(|val| match val.value {
+                Some(SqlValueVariant::Int64Value(i)) => Some(i as f64),
+                Some(SqlValueVariant::NumberValue(f)) => Some(f),
+                _ => None,
+            })
     }
 
     /// Normalize a JSON path expression
@@ -918,9 +913,15 @@ mod tests {
         let executor = AggregationExecutor::new();
 
         let docs = vec![
-            create_test_doc(vec![("name", string_value("Alice")), ("age", int_value(30))]),
+            create_test_doc(vec![
+                ("name", string_value("Alice")),
+                ("age", int_value(30)),
+            ]),
             create_test_doc(vec![("name", string_value("Bob")), ("age", int_value(25))]),
-            create_test_doc(vec![("name", string_value("Charlie")), ("age", int_value(35))]),
+            create_test_doc(vec![
+                ("name", string_value("Charlie")),
+                ("age", int_value(35)),
+            ]),
         ];
 
         let agg = Aggregation {
@@ -1073,13 +1074,10 @@ mod tests {
         let cat_a = results
             .iter()
             .find(|r| {
-                r.fields
-                    .get("_id")
-                    .and_then(|v| match &v.value {
-                        Some(SqlValueVariant::StringValue(s)) => Some(s.as_str()),
-                        _ => None,
-                    })
-                    == Some("A")
+                r.fields.get("_id").and_then(|v| match &v.value {
+                    Some(SqlValueVariant::StringValue(s)) => Some(s.as_str()),
+                    _ => None,
+                }) == Some("A")
             })
             .expect("Should find category A");
 

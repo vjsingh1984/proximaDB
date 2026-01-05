@@ -428,20 +428,59 @@ impl DocumentService {
     /// This is used for documents that have been flushed to storage
     /// but evicted from the in-memory hot cache.
     ///
-    /// Note: Currently returns empty results as cold tier reading requires
-    /// storage engine search with metadata filtering. This is a Phase 9 optimization.
+    /// The implementation follows SOLID principles:
+    /// - Uses DocumentMetadataFilterBuilder to construct the search filter (SRP)
+    /// - Uses ColdTierRetriever trait for storage access (DIP)
+    /// - Can be extended for different storage backends (OCP)
+    ///
+    /// Documents are stored as VectorRecords with metadata:
+    /// - `_type`: "document"
+    /// - `_collection`: collection name
+    /// - `_document`: serialized JSON content
+    /// - `_version`: document version
     #[allow(dead_code)]
     pub async fn read_from_storage(
         &self,
-        _collection: &str,
-        _ids: &[&str],
+        collection: &str,
+        ids: &[&str],
     ) -> Result<Vec<DocumentRecord>> {
-        // TODO: Implement cold tier reading by searching storage engine with metadata filter
-        // The storage engine doesn't have a simple get-by-id method, so we would need to
-        // use search with filter: {"_type": "document", "_collection": collection, "id": ...}
-        // For now, all documents are in the hot cache after WAL recovery.
-        debug!("Cold tier document reading not yet implemented - returning empty results");
-        Ok(Vec::new())
+        use crate::storage::document::storage::cold_tier::{
+            ColdTierRetriever, StorageEngineColdTierRetriever,
+        };
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "Cold tier: Reading {} documents from collection '{}'",
+            ids.len(),
+            collection
+        );
+
+        // Create the cold tier retriever using the storage engine
+        let retriever = StorageEngineColdTierRetriever::new(self.storage_engine.clone());
+
+        // Retrieve documents from cold storage
+        match retriever.retrieve_documents(collection, ids).await {
+            Ok(documents) => {
+                debug!(
+                    "Cold tier: Successfully retrieved {} of {} requested documents",
+                    documents.len(),
+                    ids.len()
+                );
+                Ok(documents)
+            }
+            Err(e) => {
+                warn!(
+                    "Cold tier: Failed to retrieve documents from collection '{}': {}",
+                    collection, e
+                );
+                // Return empty result on error to allow graceful degradation
+                // The caller can fall back to other retrieval mechanisms
+                Ok(Vec::new())
+            }
+        }
     }
 
     /// Convert a VectorRecord back to DocumentRecord
