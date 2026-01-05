@@ -42,10 +42,6 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     "tabulate>=0.9.0",
-    # Tree-sitter for code chunking (AST-aware chunking)
-    # Note: tree-sitter-languages is unmaintained, using tree-sitter-language-pack instead
-    "tree-sitter>=0.24.0",
-    "tree-sitter-language-pack>=0.13.0",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +49,12 @@ dependencies = [
 llm = [
     "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
     "sentence-transformers>=2.2.0",  # Local embedding models
+]
+
+# Code chunking with tree-sitter (requires Python 3.10+)
+code-chunking = [
+    "tree-sitter>=0.24.0",
+    "tree-sitter-language-pack>=0.13.0",
 ]
 
 dev = [

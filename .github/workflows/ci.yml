@@ -249,8 +249,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: clients/nodejs-embedded/package-lock.json
       - name: Install Dependencies
         working-directory: clients/nodejs-embedded
         run: npm ci
