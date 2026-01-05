@@ -46,6 +46,11 @@ impl ObservabilityQueryEngine {
         }
     }
 
+    /// Get access to the storage layer
+    pub fn storage(&self) -> &Arc<ObservabilityStorage> {
+        &self.storage
+    }
+
     /// Create or get a Tantivy log index for a namespace
     pub async fn get_or_create_log_index(&self, namespace: &str) -> Result<Arc<TantivyLogIndex>> {
         // Check if index exists

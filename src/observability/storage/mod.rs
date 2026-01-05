@@ -355,6 +355,39 @@ impl ObservabilityStorage {
         ns.traces.query_by_trace_id(trace_id).await
     }
 
+    /// Query traces by time range
+    pub async fn query_traces_by_time(
+        &self,
+        namespace: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<traces::TraceSummary>> {
+        let namespaces = self.namespaces.read().await;
+        let ns = namespaces
+            .get(namespace)
+            .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", namespace))?;
+
+        ns.traces.query_by_time(start_ns, end_ns, limit).await
+    }
+
+    /// Query traces by service
+    pub async fn query_traces_by_service(
+        &self,
+        namespace: &str,
+        service: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<traces::TraceSummary>> {
+        let namespaces = self.namespaces.read().await;
+        let ns = namespaces
+            .get(namespace)
+            .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", namespace))?;
+
+        ns.traces.query_by_service(service, start_ns, end_ns, limit).await
+    }
+
     /// Get storage statistics for a namespace
     pub async fn stats(&self, namespace: &str) -> Result<StorageStats> {
         let namespaces = self.namespaces.read().await;
