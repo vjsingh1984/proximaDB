@@ -199,10 +199,10 @@ moka = { version = "0.12", features = ["future"] }
 
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3
-pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.25", features = ["extension-module"], optional = true }
 # Zero-copy NumPy array access (matches PyO3 version)
 # Provides direct buffer access to numpy arrays without Python .tolist() conversion
-numpy = { version = "0.23", optional = true }
+numpy = { version = "0.25", optional = true }
 # Java bindings via JNI
 jni = { version = "0.21", optional = true }
 # Node.js bindings via NAPI-RS
