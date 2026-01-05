@@ -112,6 +112,7 @@ extend-exclude = '''
   | \.venv
   | build
   | dist
+  | v1
 )/
 '''
 
