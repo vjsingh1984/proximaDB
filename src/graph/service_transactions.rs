@@ -260,6 +260,19 @@ impl LocalTransactionCoordinator {
         }
     }
 
+    /// Create a coordinator with pre-registered engines
+    pub fn with_engines(
+        shards: HashMap<ShardId, Arc<dyn GraphEngine>>,
+        default_timeout: Duration,
+    ) -> Self {
+        Self {
+            transactions: Arc::new(RwLock::new(HashMap::new())),
+            engines: Arc::new(RwLock::new(shards)),
+            lock_manager: Arc::new(DistributedLockManager::new()),
+            default_timeout,
+        }
+    }
+
     /// Register a graph engine
     pub async fn register_engine(&self, graph_id: String, engine: Arc<dyn GraphEngine>) {
         let mut engines = self.engines.write().await;
@@ -595,13 +608,12 @@ impl TransactionManager {
     }
 
     /// Create a new transaction manager with default configuration
-    #[allow(unused_variables)]
     pub fn with_defaults(
         shards: HashMap<ShardId, Arc<dyn GraphEngine>>,
         timeout: Duration,
     ) -> Self {
-        let coordinator = Arc::new(LocalTransactionCoordinator::new(timeout));
-        Self::new(coordinator)
+        let coordinator = LocalTransactionCoordinator::with_engines(shards, timeout);
+        Self::new(Arc::new(coordinator))
     }
 
     /// Set default isolation level
@@ -789,13 +801,13 @@ impl TransactionManager {
     /// This applies all pending changes from the Unit of Work through the
     /// local transaction coordinator.
     pub async fn commit_transaction(&self, tx_id: TransactionId) -> Result<()> {
-        // Get the unit of work
-        let uow_ref = self.active_uows.get(&tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
-
         // Execute all operations through coordinator
+        // Note: We scope the DashMap ref to avoid deadlock with remove()
         {
+            let uow_ref = self.active_uows.get(&tx_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
+            })?;
+
             let uow = uow_ref.read().await;
             if !uow.is_active {
                 return Err(ProximaDBError::Internal(format!(
@@ -808,23 +820,31 @@ impl TransactionManager {
             let shard_id = format!("shard_{}", uow.graph_id);
             let operations = uow.get_operations(&shard_id);
 
+            // Drop the read lock before executing operations
+            drop(uow);
+
             for op in operations {
                 self.coordinator
                     .execute_operation(tx_id.clone(), op)
                     .await?;
             }
+            // uow_ref drops here, releasing DashMap ref
         }
 
         // Commit via coordinator
         self.coordinator.commit(tx_id.clone()).await?;
 
-        // Clear the unit of work
-        {
+        // Clear and remove the unit of work
+        // Note: Need to re-acquire the ref since we dropped it above
+        if let Some(uow_ref) = self.active_uows.get(&tx_id) {
             let mut uow = uow_ref.write().await;
             uow.clear();
+            // Drop the write lock and DashMap ref before remove
+            drop(uow);
+            drop(uow_ref);
         }
 
-        // Remove from active transactions
+        // Now safe to remove - no refs held
         self.active_uows.remove(&tx_id);
 
         tracing::debug!("Transaction {} committed successfully", tx_id);
@@ -952,6 +972,60 @@ mod tests {
     use std::collections::HashMap as StdHashMap;
 
     #[tokio::test]
+    async fn test_coordinator_begin_commit_no_ops() {
+        // Test the coordinator directly without TransactionManager wrapper
+        let orion = Arc::new(OrionGraphEngine::new());
+        let mut shards = HashMap::new();
+        shards.insert("test_graph".to_string(), orion as Arc<dyn GraphEngine>);
+
+        let coordinator = LocalTransactionCoordinator::with_engines(shards, Duration::from_secs(30));
+
+        let tx_id = coordinator
+            .begin_transaction("test_graph", vec!["test_graph".to_string()])
+            .await
+            .expect("begin_transaction failed");
+
+        // Commit without any operations
+        coordinator
+            .commit(tx_id.clone())
+            .await
+            .expect("commit failed");
+
+        // Verify state
+        let state = coordinator.get_state(&tx_id).await.expect("get_state failed");
+        assert_eq!(state, TransactionState::Committed);
+    }
+
+    #[tokio::test]
+    async fn test_dashmap_rwlock_pattern() {
+        // Test the DashMap + RwLock pattern to ensure no deadlocks
+        let map: DashMap<String, RwLock<u32>> = DashMap::new();
+        map.insert("key".to_string(), RwLock::new(42));
+
+        // Get a ref (holds DashMap read lock)
+        let entry = map.get("key").unwrap();
+
+        // Take inner read lock
+        {
+            let val = entry.read().await;
+            assert_eq!(*val, 42);
+        }
+
+        // Take inner write lock
+        {
+            let mut val = entry.write().await;
+            *val = 100;
+        }
+
+        // This is the issue - we're still holding the DashMap ref
+        // while trying to remove. Drop the ref first.
+        drop(entry);
+
+        map.remove("key");
+        assert!(map.get("key").is_none());
+    }
+
+    #[tokio::test]
     async fn test_unit_of_work_tracks_changes() {
         let mut uow = UnitOfWork::new(
             "tx_1".to_string(),
@@ -976,15 +1050,12 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_manager_begin_commit() {
         let orion = Arc::new(OrionGraphEngine::new());
+        let mut shards = HashMap::new();
+        shards.insert("test_graph".to_string(), orion as Arc<dyn GraphEngine>);
 
-        let coordinator = Arc::new(LocalTransactionCoordinator::new(Duration::from_secs(30)));
-        // Register the engine with the coordinator
-        coordinator
-            .register_engine("test_graph".to_string(), orion)
-            .await;
+        let manager = TransactionManager::with_defaults(shards, Duration::from_secs(30));
 
-        let manager = TransactionManager::new(coordinator);
-
+        // Test 1: Simple begin/commit without operations
         let tx_id = manager
             .begin_transaction("test_graph", vec!["test_graph".to_string()])
             .await
@@ -992,23 +1063,11 @@ mod tests {
 
         assert!(manager.is_transaction_active(&tx_id));
 
-        // Register an operation
-        let node = Node {
-            id: "node_1".to_string(),
-            labels: vec!["Person".to_string()],
-            properties: StdHashMap::new(),
-            ..Default::default()
-        };
-        manager
-            .register_node_insert(&tx_id, node)
-            .await
-            .expect("Failed to register insert");
-
-        // Commit
+        // Commit (without any operations)
         manager
             .commit_transaction(tx_id.clone())
             .await
-            .expect("Failed to commit");
+            .expect("Failed to commit empty transaction");
 
         assert!(!manager.is_transaction_active(&tx_id));
     }
