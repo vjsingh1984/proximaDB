@@ -1,5 +1,5 @@
-# ProximaDB Unified Container - Server + Demo UI
-# Single container with ProximaDB server and web-based demo interface
+# ProximaDB Container - Server
+# Single container with ProximaDB server
 
 # Stage 1: Build ProximaDB server
 FROM rust:1.82-slim as builder
@@ -70,7 +70,7 @@ COPY --from=builder /build/target/release/proximadb-server /opt/proximadb/bin/
 RUN chmod +x /opt/proximadb/bin/proximadb-server
 
 # Copy ProximaDB configuration file
-COPY demo/docker-config.toml /opt/proximadb/config/docker-config.toml
+COPY demo/config/docker-config.toml /opt/proximadb/config/docker-config.toml
 
 # Set working directory for Python components
 WORKDIR /app
@@ -203,37 +203,21 @@ RUN chown -R proximadb:proximadb /app/embedding_cache && \
 COPY clients/python /app/proximadb-sdk
 RUN cd /app/proximadb-sdk && pip install -e .
 
-# Copy demo scripts and UI in order of change frequency (static files last)
+# Copy demo scripts and UI in order of change frequency
 # Copy configuration and requirements first (changes less frequently)
 COPY demo/requirements.txt ./demo-requirements.txt
-COPY demo/docker-config.toml /opt/proximadb/config/docker-config.toml
 
 # Copy Python modules (changes moderately)
 COPY demo/utils ./utils/
-COPY demo/specialized ./specialized/
 COPY demo/benchmarks ./benchmarks/
 
 # Copy main scripts (changes more frequently)
 COPY demo/*.py ./
 
-# Copy static UI files last (changes most frequently during development)
-COPY demo/static ./static/
-
 # Make scripts executable
-RUN chmod +x *.py
+RUN chmod +x *.py || true
 
-# Copy pre-generated demo datasets for instant startup
-# Generate these datasets locally first using: cd demo && python generate_datasets_only.py
-# This dramatically speeds up container startup time
-COPY demo/pre /app/pre
-RUN chown -R proximadb:proximadb /app/pre && \
-    echo "✅ Pre-generated datasets copied:" && \
-    ls -lh /app/pre/ && \
-    echo "   - E-commerce: $(wc -l < /app/pre/ecommerce_data.json 2>/dev/null || echo 0) lines" && \
-    echo "   - SEC EDGAR: $(wc -l < /app/pre/sec_edgar_data.json 2>/dev/null || echo 0) lines" && \
-    echo "   - Knowledge Base: $(wc -l < /app/pre/knowledge_base_data.json 2>/dev/null || echo 0) lines"
-
-# Create supervisor configuration for running both services
+# Create supervisor configuration for running ProximaDB server
 RUN cat <<'EOF' > /etc/supervisor/conf.d/proximadb.conf
 [supervisord]
 nodaemon=true
@@ -252,41 +236,9 @@ stderr_logfile_maxbytes=0
 autorestart=true
 startretries=3
 priority=100
-
-[program:demo-ui]
-command=python proximadb_demo_server.py --port 8080 --proximadb-url http://localhost:5678 --grpc-url localhost:5679
-user=proximadb
-directory=/app
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr  
-stderr_logfile_maxbytes=0
-autorestart=true
-startretries=3
-priority=200
-depends_on=proximadb-server
-
-[program:startup-delay]
-command=/bin/sleep 5
-startsecs=0
-autorestart=false
-priority=150
-
-[program:initialize-data]
-command=bash -c "sleep 20 && python /app/load_pregenerated_data.py"
-user=proximadb
-directory=/app
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-autorestart=false
-startsecs=0
-priority=300
-depends_on=demo-ui
 EOF
 
-# Create health check script that checks both services
+# Create health check script for ProximaDB server
 RUN cat <<'EOF' > /opt/proximadb/bin/health-check.sh
 #!/bin/bash
 # Check ProximaDB server
@@ -295,18 +247,12 @@ if ! curl -f -s --max-time 3 http://localhost:5678/health > /dev/null; then
     exit 1
 fi
 
-# Check Demo UI server
-if ! curl -f -s --max-time 3 -I http://localhost:8080 > /dev/null; then
-    echo "Demo UI server health check failed"
-    exit 1
-fi
-
-echo "Both services healthy"
+echo "ProximaDB server healthy"
 exit 0
 EOF
 RUN chmod +x /opt/proximadb/bin/health-check.sh
 
-# Set environment variables for both services
+# Set environment variables
 ENV RUST_LOG=info
 ENV PROXIMADB_CONFIG_PATH=/opt/proximadb/config/docker-config.toml
 ENV PROXIMADB_SERVER_URL=http://localhost:5678
@@ -319,12 +265,12 @@ ENV HF_HOME=/app/embedding_cache
 # Create volume for persistent data
 VOLUME ["/data"]
 
-# Expose ports for both services
-EXPOSE 5678 5679 8080 9090
+# Expose ports for ProximaDB server
+EXPOSE 5678 5679
 
-# Health check for both services with longer startup time
+# Health check for ProximaDB server
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD /opt/proximadb/bin/health-check.sh
 
-# Start both services with supervisor
+# Start ProximaDB server with supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/proximadb.conf"]
