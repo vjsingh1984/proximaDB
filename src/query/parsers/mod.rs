@@ -21,14 +21,14 @@ pub mod mongodb;
 
 // Re-export MongoDB types
 pub use mongodb::{
-    // Parser types
-    MongoDBParser,
-    MongoDBParseResult,
-    MongoDBQuery,
     // AST types
     MongoDBExpression,
-    MongoDBProjection,
+    MongoDBParseResult,
+    // Parser types
+    MongoDBParser,
     MongoDBPipelineStage,
+    MongoDBProjection,
+    MongoDBQuery,
     // Visitor pattern
     MongoDBVisitor,
     // Conversion
@@ -37,21 +37,21 @@ pub use mongodb::{
 
 // Re-export Cypher types
 pub use cypher::{
-    // Parser types
-    CypherParser,
-    CypherLexer,
-    // Token types
-    Token as CypherToken,
-    LocatedToken,
     // Function types
     CypherFunction,
+    CypherLexer,
+    // Parser types
+    CypherParser,
+    // Visitor pattern
+    CypherVisitor,
     // GraphQuery conversion
     GraphQuery,
     GraphQueryType,
-    cypher_to_graph_query,
-    // Visitor pattern
-    CypherVisitor,
+    LocatedToken,
     QueryValidator as CypherQueryValidator,
+    // Token types
+    Token as CypherToken,
+    cypher_to_graph_query,
 };
 
 use anyhow::Result;

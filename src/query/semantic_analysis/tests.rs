@@ -183,7 +183,9 @@ impl MockCollectionService {
     ) -> anyhow::Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
-    async fn list_collections(&self) -> anyhow::Result<Vec<crate::proto::proximadb_v1::Collection>> {
+    async fn list_collections(
+        &self,
+    ) -> anyhow::Result<Vec<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.values().cloned().collect())
     }
     async fn update_collection(

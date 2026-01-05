@@ -83,7 +83,11 @@ impl GraphNode {
     }
 
     /// Add a property
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
@@ -114,7 +118,11 @@ pub struct GraphEdge {
 
 impl GraphEdge {
     /// Create a new graph edge
-    pub fn new(source: impl Into<String>, target: impl Into<String>, relationship: impl Into<String>) -> Self {
+    pub fn new(
+        source: impl Into<String>,
+        target: impl Into<String>,
+        relationship: impl Into<String>,
+    ) -> Self {
         Self {
             source: source.into(),
             target: target.into(),
@@ -125,7 +133,11 @@ impl GraphEdge {
     }
 
     /// Add a property
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
+    pub fn with_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
         self.properties.insert(key.into(), value.into());
         self
     }
@@ -234,10 +246,18 @@ impl<'a> GraphHandle<'a> {
     /// Get a node by ID
     #[cfg(feature = "client")]
     pub async fn get_node(&self, id: &str) -> Result<Option<GraphNode>> {
-        let url = format!("{}/api/v1/graphs/{}/nodes/{}", self.client.url(), self.name, id);
+        let url = format!(
+            "{}/api/v1/graphs/{}/nodes/{}",
+            self.client.url(),
+            self.name,
+            id
+        );
         match self.client.get::<GraphNode>(&url).await {
             Ok(node) => Ok(Some(node)),
-            Err(ProximaError::Network(crate::error::NetworkError::HttpError { status: 404, .. })) => Ok(None),
+            Err(ProximaError::Network(crate::error::NetworkError::HttpError {
+                status: 404,
+                ..
+            })) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -245,7 +265,12 @@ impl<'a> GraphHandle<'a> {
     /// Delete a node by ID
     #[cfg(feature = "client")]
     pub async fn delete_node(&self, id: &str) -> Result<()> {
-        let url = format!("{}/api/v1/graphs/{}/nodes/{}", self.client.url(), self.name, id);
+        let url = format!(
+            "{}/api/v1/graphs/{}/nodes/{}",
+            self.client.url(),
+            self.name,
+            id
+        );
         self.client.delete::<serde_json::Value>(&url).await?;
         Ok(())
     }
@@ -313,9 +338,9 @@ impl<'a> NodeBuilder<'a> {
     /// Execute the node addition
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
-        let id = self.id.ok_or_else(|| {
-            ProximaError::Internal("Node ID is required".to_string())
-        })?;
+        let id = self
+            .id
+            .ok_or_else(|| ProximaError::Internal("Node ID is required".to_string()))?;
 
         let node = GraphNode {
             id,
@@ -329,7 +354,11 @@ impl<'a> NodeBuilder<'a> {
             nodes: vec![node],
         };
 
-        let url = format!("{}/api/v1/graphs/{}/nodes", self.handle.client.url(), self.handle.name);
+        let url = format!(
+            "{}/api/v1/graphs/{}/nodes",
+            self.handle.client.url(),
+            self.handle.name
+        );
         let _response: AddNodesResponse = self.handle.client.post(&url, &request).await?;
         Ok(())
     }
@@ -390,15 +419,15 @@ impl<'a> EdgeBuilder<'a> {
     /// Execute the edge addition
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
-        let source = self.source.ok_or_else(|| {
-            ProximaError::Internal("Source node ID is required".to_string())
-        })?;
-        let target = self.target.ok_or_else(|| {
-            ProximaError::Internal("Target node ID is required".to_string())
-        })?;
-        let relationship = self.relationship.ok_or_else(|| {
-            ProximaError::Internal("Relationship type is required".to_string())
-        })?;
+        let source = self
+            .source
+            .ok_or_else(|| ProximaError::Internal("Source node ID is required".to_string()))?;
+        let target = self
+            .target
+            .ok_or_else(|| ProximaError::Internal("Target node ID is required".to_string()))?;
+        let relationship = self
+            .relationship
+            .ok_or_else(|| ProximaError::Internal("Relationship type is required".to_string()))?;
 
         let edge = GraphEdge {
             source,
@@ -413,7 +442,11 @@ impl<'a> EdgeBuilder<'a> {
             edges: vec![edge],
         };
 
-        let url = format!("{}/api/v1/graphs/{}/edges", self.handle.client.url(), self.handle.name);
+        let url = format!(
+            "{}/api/v1/graphs/{}/edges",
+            self.handle.client.url(),
+            self.handle.name
+        );
         let _response: AddEdgesResponse = self.handle.client.post(&url, &request).await?;
         Ok(())
     }
@@ -524,7 +557,11 @@ impl<'a> TraversalBuilder<'a> {
             filter: self.filter,
         };
 
-        let url = format!("{}/api/v1/graphs/{}/traverse", self.handle.client.url(), self.handle.name);
+        let url = format!(
+            "{}/api/v1/graphs/{}/traverse",
+            self.handle.client.url(),
+            self.handle.name
+        );
         self.handle.client.post(&url, &request).await
     }
 }
@@ -634,7 +671,10 @@ mod tests {
 
         assert_eq!(node.id, "node_1");
         assert_eq!(node.label, Some("Person".to_string()));
-        assert_eq!(node.properties.get("name"), Some(&serde_json::json!("Alice")));
+        assert_eq!(
+            node.properties.get("name"),
+            Some(&serde_json::json!("Alice"))
+        );
         assert_eq!(node.properties.get("age"), Some(&serde_json::json!(30)));
     }
 

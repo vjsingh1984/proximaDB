@@ -443,10 +443,7 @@ impl ObservabilityService {
             let query_time_ms = start.elapsed().as_millis() as u64;
 
             // Convert spans to TraceData
-            let traces = spans
-                .into_iter()
-                .map(Self::span_to_trace_data)
-                .collect();
+            let traces = spans.into_iter().map(Self::span_to_trace_data).collect();
 
             return Ok(TraceQueryResult {
                 traces,
@@ -529,26 +526,23 @@ impl ObservabilityService {
     }
 
     /// Get a single trace by ID (all spans)
-    pub async fn get_trace(
-        &self,
-        namespace: &str,
-        trace_id: &str,
-    ) -> Result<GetTraceResult> {
+    pub async fn get_trace(&self, namespace: &str, trace_id: &str) -> Result<GetTraceResult> {
         let spans = self.storage.query_trace(namespace, trace_id).await?;
 
-        let complete = !spans.is_empty()
-            && spans.iter().any(|s| s.parent_span_id.is_empty()); // Has root span
+        let complete = !spans.is_empty() && spans.iter().any(|s| s.parent_span_id.is_empty()); // Has root span
 
-        let traces = spans
-            .into_iter()
-            .map(Self::span_to_trace_data)
-            .collect();
+        let traces = spans.into_iter().map(Self::span_to_trace_data).collect();
 
-        Ok(GetTraceResult { spans: traces, complete })
+        Ok(GetTraceResult {
+            spans: traces,
+            complete,
+        })
     }
 
     /// Convert internal TraceSpan to proto TraceData
-    fn span_to_trace_data(span: crate::observability::storage::traces::TraceSpan) -> crate::proto::proximadb_v1::TraceData {
+    fn span_to_trace_data(
+        span: crate::observability::storage::traces::TraceSpan,
+    ) -> crate::proto::proximadb_v1::TraceData {
         // Convert String attributes back to SqlValue attributes
         let mut attributes = std::collections::HashMap::new();
         for (k, v) in span.attributes {

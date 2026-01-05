@@ -282,7 +282,8 @@ impl ColdTierRetriever for StorageEngineColdTierRetriever {
         );
 
         // Build the filter expression
-        let filter = DocumentMetadataFilterBuilder::build_document_retrieval_filter(collection, ids);
+        let filter =
+            DocumentMetadataFilterBuilder::build_document_retrieval_filter(collection, ids);
 
         // Create search parameters with the filter
         // We use a placeholder vector since documents don't have real vectors
@@ -335,8 +336,10 @@ mod tests {
 
     #[test]
     fn test_document_filter_builder_single_id() {
-        let filter =
-            DocumentMetadataFilterBuilder::build_document_retrieval_filter("test_collection", &["doc1"]);
+        let filter = DocumentMetadataFilterBuilder::build_document_retrieval_filter(
+            "test_collection",
+            &["doc1"],
+        );
 
         // Should be an AND of 3 conditions
         match filter {
@@ -360,13 +363,16 @@ mod tests {
                 assert_eq!(conditions.len(), 3, "Expected 3 filter conditions");
 
                 // Find the ID filter
-                let id_filter = conditions
-                    .iter()
-                    .find(|c| matches!(c, FilterExpression::Comparison { field, .. } if field == "id"));
+                let id_filter = conditions.iter().find(
+                    |c| matches!(c, FilterExpression::Comparison { field, .. } if field == "id"),
+                );
 
                 assert!(id_filter.is_some(), "Expected ID filter");
 
-                if let Some(FilterExpression::Comparison { operator, value, .. }) = id_filter {
+                if let Some(FilterExpression::Comparison {
+                    operator, value, ..
+                }) = id_filter
+                {
                     assert!(
                         matches!(operator, ComparisonOperator::In),
                         "Expected In operator"

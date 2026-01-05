@@ -594,8 +594,10 @@ impl FlightService for ProximaFlightService {
             // Collection operations
             "create_collection" => {
                 // Body: {"name": "...", "dimension": 768, "engine": "sst", "distance_metric": "cosine"}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let name = params
                     .get("name")
@@ -668,7 +670,9 @@ impl FlightService for ProximaFlightService {
                     .collection_service
                     .create_collection(&config)
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to create collection: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to create collection: {}", e))
+                    })?;
 
                 // Extract collection ID from response
                 let collection_id = result
@@ -696,8 +700,10 @@ impl FlightService for ProximaFlightService {
 
             "delete_collection" => {
                 // Body: {"collection_id": "..."} or {"name": "..."}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
@@ -714,7 +720,9 @@ impl FlightService for ProximaFlightService {
                     .collection_service
                     .delete_collection(collection_id)
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to delete collection: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to delete collection: {}", e))
+                    })?;
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
                     "success": true,
@@ -733,8 +741,10 @@ impl FlightService for ProximaFlightService {
 
             "get_collection" => {
                 // Body: {"collection_id": "..."} or {"name": "..."}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
@@ -792,12 +802,18 @@ impl FlightService for ProximaFlightService {
                     .collection_service
                     .list_collections()
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to list collections: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to list collections: {}", e))
+                    })?;
 
                 let collection_summaries: Vec<serde_json::Value> = collections
                     .iter()
                     .map(|c| {
-                        let name = c.config.as_ref().map(|cfg| cfg.name.clone()).unwrap_or_default();
+                        let name = c
+                            .config
+                            .as_ref()
+                            .map(|cfg| cfg.name.clone())
+                            .unwrap_or_default();
                         serde_json::json!({
                             "id": c.id,
                             "name": name,
@@ -826,13 +842,17 @@ impl FlightService for ProximaFlightService {
             "insert_vectors" => {
                 // Body: {"collection_id": "...", "vectors": [...]}
                 // Vectors format: [{"id": "...", "vector": [...], "metadata": {...}}, ...]
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| TonicStatus::invalid_argument("Missing 'collection_id' field"))?;
+                    .ok_or_else(|| {
+                        TonicStatus::invalid_argument("Missing 'collection_id' field")
+                    })?;
 
                 let vectors_json = params
                     .get("vectors")
@@ -864,17 +884,19 @@ impl FlightService for ProximaFlightService {
                         })
                         .unwrap_or_default();
 
-                    let metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-                        if let Some(meta) = v.get("metadata").and_then(|x| x.as_object()) {
-                            meta.iter()
-                                .map(|(k, v)| {
-                                    let sql_value = Self::json_to_sql_value(v);
-                                    (k.clone(), sql_value)
-                                })
-                                .collect()
-                        } else {
-                            std::collections::HashMap::new()
-                        };
+                    let metadata: std::collections::HashMap<
+                        String,
+                        crate::proto::proximadb_v1::SqlValue,
+                    > = if let Some(meta) = v.get("metadata").and_then(|x| x.as_object()) {
+                        meta.iter()
+                            .map(|(k, v)| {
+                                let sql_value = Self::json_to_sql_value(v);
+                                (k.clone(), sql_value)
+                            })
+                            .collect()
+                    } else {
+                        std::collections::HashMap::new()
+                    };
 
                     vectors.push(crate::proto::proximadb_v1::VectorRecord {
                         id,
@@ -896,7 +918,9 @@ impl FlightService for ProximaFlightService {
                         vectors,
                     })
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to insert vectors: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to insert vectors: {}", e))
+                    })?;
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
                     "success": response.success,
@@ -919,13 +943,17 @@ impl FlightService for ProximaFlightService {
             "delete_vectors" => {
                 // Body: {"collection_id": "...", "vector_ids": ["id1", "id2", ...]}
                 // Note: Vector deletion is implemented via WAL tombstone markers
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| TonicStatus::invalid_argument("Missing 'collection_id' field"))?;
+                    .ok_or_else(|| {
+                        TonicStatus::invalid_argument("Missing 'collection_id' field")
+                    })?;
 
                 let vector_ids: Vec<String> = params
                     .get("vector_ids")
@@ -965,13 +993,17 @@ impl FlightService for ProximaFlightService {
 
             "get_vectors" => {
                 // Body: {"collection_id": "...", "vector_ids": ["id1", "id2", ...], "include_vectors": true, "include_metadata": true}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| TonicStatus::invalid_argument("Missing 'collection_id' field"))?;
+                    .ok_or_else(|| {
+                        TonicStatus::invalid_argument("Missing 'collection_id' field")
+                    })?;
 
                 let vector_ids: Vec<String> = params
                     .get("vector_ids")
@@ -1037,13 +1069,17 @@ impl FlightService for ProximaFlightService {
             // Storage operations
             "flush_collection" => {
                 // Body: {"collection_id": "..."}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| TonicStatus::invalid_argument("Missing 'collection_id' field"))?;
+                    .ok_or_else(|| {
+                        TonicStatus::invalid_argument("Missing 'collection_id' field")
+                    })?;
 
                 info!(collection_id = %collection_id, "Arrow Flight: flush_collection");
 
@@ -1052,7 +1088,9 @@ impl FlightService for ProximaFlightService {
                     .vector_operations_service
                     .force_flush_collection(collection_id)
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to flush collection: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to flush collection: {}", e))
+                    })?;
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
                     "success": true,
@@ -1072,22 +1110,31 @@ impl FlightService for ProximaFlightService {
 
             "compact_collection" => {
                 // Body: {"collection_id": "..."}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| TonicStatus::invalid_argument("Missing 'collection_id' field"))?;
+                    .ok_or_else(|| {
+                        TonicStatus::invalid_argument("Missing 'collection_id' field")
+                    })?;
 
                 info!(collection_id = %collection_id, "Arrow Flight: compact_collection");
 
                 // Compact collection via storage engine
-                let storage_engine = self.unified_handlers.vector_operations_service.unified_engine();
+                let storage_engine = self
+                    .unified_handlers
+                    .vector_operations_service
+                    .unified_engine();
                 storage_engine
                     .compact_collection(collection_id, None)
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to compact collection: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to compact collection: {}", e))
+                    })?;
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
                     "success": true,
@@ -1107,13 +1154,17 @@ impl FlightService for ProximaFlightService {
 
             "flush_and_compact" => {
                 // Body: {"collection_id": "..."}
-                let params: serde_json::Value = serde_json::from_slice(&action.body)
-                    .map_err(|e| TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e)))?;
+                let params: serde_json::Value =
+                    serde_json::from_slice(&action.body).map_err(|e| {
+                        TonicStatus::invalid_argument(format!("Invalid JSON body: {}", e))
+                    })?;
 
                 let collection_id = params
                     .get("collection_id")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| TonicStatus::invalid_argument("Missing 'collection_id' field"))?;
+                    .ok_or_else(|| {
+                        TonicStatus::invalid_argument("Missing 'collection_id' field")
+                    })?;
 
                 info!(collection_id = %collection_id, "Arrow Flight: flush_and_compact");
 
@@ -1122,13 +1173,20 @@ impl FlightService for ProximaFlightService {
                     .vector_operations_service
                     .force_flush_collection(collection_id)
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to flush collection: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to flush collection: {}", e))
+                    })?;
 
-                let storage_engine = self.unified_handlers.vector_operations_service.unified_engine();
+                let storage_engine = self
+                    .unified_handlers
+                    .vector_operations_service
+                    .unified_engine();
                 storage_engine
                     .compact_collection(collection_id, None)
                     .await
-                    .map_err(|e| TonicStatus::internal(format!("Failed to compact collection: {}", e)))?;
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to compact collection: {}", e))
+                    })?;
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
                     "success": true,
@@ -1322,21 +1380,19 @@ impl FlightService for ProximaFlightService {
             .ok_or_else(|| TonicStatus::invalid_argument("Empty stream - expected descriptor"))?;
 
         // Parse descriptor to determine exchange type
-        let descriptor = first_msg
-            .flight_descriptor
-            .ok_or_else(|| TonicStatus::invalid_argument("First message must contain FlightDescriptor"))?;
+        let descriptor = first_msg.flight_descriptor.ok_or_else(|| {
+            TonicStatus::invalid_argument("First message must contain FlightDescriptor")
+        })?;
 
         let exchange_type = descriptor
             .path
             .first()
-            .ok_or_else(|| TonicStatus::invalid_argument("Descriptor path must specify exchange type"))?
+            .ok_or_else(|| {
+                TonicStatus::invalid_argument("Descriptor path must specify exchange type")
+            })?
             .as_str();
 
-        let collection_id = descriptor
-            .path
-            .get(1)
-            .cloned()
-            .unwrap_or_default();
+        let collection_id = descriptor.path.get(1).cloned().unwrap_or_default();
 
         info!(
             exchange_type = %exchange_type,
@@ -1346,13 +1402,16 @@ impl FlightService for ProximaFlightService {
 
         match exchange_type {
             "bulk_insert" => {
-                self.handle_bulk_insert_exchange(collection_id, stream).await
+                self.handle_bulk_insert_exchange(collection_id, stream)
+                    .await
             }
             "bulk_search" => {
-                self.handle_bulk_search_exchange(collection_id, stream).await
+                self.handle_bulk_search_exchange(collection_id, stream)
+                    .await
             }
             "data_transfer" => {
-                self.handle_data_transfer_exchange(collection_id, stream).await
+                self.handle_data_transfer_exchange(collection_id, stream)
+                    .await
             }
             _ => Err(TonicStatus::unimplemented(format!(
                 "Unknown exchange type: {}. Supported: bulk_insert, bulk_search, data_transfer",
@@ -1410,7 +1469,11 @@ impl ProximaFlightService {
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Insert failed: {}", e)))?;
 
-            total_vectors += response.metrics.as_ref().map(|m| m.successful_count as u64).unwrap_or(0);
+            total_vectors += response
+                .metrics
+                .as_ref()
+                .map(|m| m.successful_count as u64)
+                .unwrap_or(0);
 
             // Send progress update as FlightData
             let progress = serde_json::json!({
@@ -1477,7 +1540,8 @@ impl ProximaFlightService {
             // Check if this is a configuration message or query batch
             if !data.app_metadata.is_empty() {
                 // Configuration message with search parameters
-                if let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata) {
+                if let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata)
+                {
                     debug!("Received search config: {:?}", config);
                     continue;
                 }
@@ -1537,8 +1601,11 @@ impl ProximaFlightService {
 
                 // Convert result batches to FlightData
                 for result_batch in search_response {
-                    let flight_data_vec = ArrowProtoCodec::batch_to_flight_data(&result_batch, &Default::default())
-                        .map_err(|e| TonicStatus::internal(format!("Failed to encode result: {}", e)))?;
+                    let flight_data_vec =
+                        ArrowProtoCodec::batch_to_flight_data(&result_batch, &Default::default())
+                            .map_err(|e| {
+                            TonicStatus::internal(format!("Failed to encode result: {}", e))
+                        })?;
 
                     for fd in flight_data_vec {
                         results.push(Ok(fd));

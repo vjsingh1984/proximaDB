@@ -413,6 +413,10 @@ impl HistogramStats {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // LatencyHistogram Basic Tests
+    // ========================================================================
+
     #[test]
     fn test_histogram_basic() {
         let hist = LatencyHistogram::with_name("test");
@@ -429,6 +433,107 @@ mod tests {
         assert_eq!(stats.min_us, 100);
         assert_eq!(stats.max_us, 5000);
     }
+
+    #[test]
+    fn test_histogram_new_with_buckets() {
+        let hist = LatencyHistogram::new("custom", 200);
+        assert_eq!(hist.name(), "custom");
+
+        hist.record_us(500);
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 1);
+    }
+
+    #[test]
+    fn test_histogram_with_name() {
+        let hist = LatencyHistogram::with_name("search_latency");
+        assert_eq!(hist.name(), "search_latency");
+    }
+
+    #[test]
+    fn test_histogram_default() {
+        let hist = LatencyHistogram::default();
+        assert_eq!(hist.name(), "unnamed");
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 0);
+    }
+
+    // ========================================================================
+    // Recording Methods Tests
+    // ========================================================================
+
+    #[test]
+    fn test_record_us() {
+        let hist = LatencyHistogram::with_name("test");
+
+        hist.record_us(100);
+        hist.record_us(500);
+        hist.record_us(1000);
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 3);
+        assert_eq!(stats.min_us, 100);
+        assert_eq!(stats.max_us, 1000);
+    }
+
+    #[test]
+    fn test_record_ms() {
+        let hist = LatencyHistogram::with_name("test");
+
+        hist.record_ms(1.5); // 1500 us
+        hist.record_ms(2.5); // 2500 us
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.min_us, 1500);
+        assert_eq!(stats.max_us, 2500);
+    }
+
+    #[test]
+    fn test_record_duration() {
+        let hist = LatencyHistogram::with_name("test");
+
+        hist.record(Duration::from_millis(5));
+        hist.record(Duration::from_micros(2500));
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.min_us, 2500);
+        assert_eq!(stats.max_us, 5000);
+    }
+
+    #[test]
+    fn test_record_zero_latency() {
+        let hist = LatencyHistogram::with_name("test");
+
+        hist.record_us(0);
+        hist.record_us(100);
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 2);
+        // Zero latency should be in lowest bucket
+        assert!(stats.min_us <= 1);
+    }
+
+    #[test]
+    fn test_record_very_large_latency() {
+        let hist = LatencyHistogram::with_name("test");
+
+        // 100 seconds in microseconds
+        hist.record_us(100_000_000);
+        hist.record_us(100);
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.min_us, 100);
+        // Max should be in highest bucket range
+        assert!(stats.max_us >= 10_000_000);
+    }
+
+    // ========================================================================
+    // Percentile Tests
+    // ========================================================================
 
     #[test]
     fn test_histogram_percentiles() {
@@ -467,6 +572,57 @@ mod tests {
     }
 
     #[test]
+    fn test_histogram_single_sample_percentiles() {
+        let hist = LatencyHistogram::with_name("test");
+
+        hist.record_us(1000);
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 1);
+        // All percentiles should be the same single value
+        assert_eq!(stats.p50_us, stats.p95_us);
+        assert_eq!(stats.p95_us, stats.p99_us);
+    }
+
+    #[test]
+    fn test_histogram_uniform_distribution() {
+        let hist = LatencyHistogram::with_name("test");
+
+        // All same value
+        for _ in 0..100 {
+            hist.record_us(5000);
+        }
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 100);
+        // All percentiles should be approximately equal
+        assert!((stats.p50_us as i64 - stats.p99_us as i64).abs() <= 1);
+    }
+
+    #[test]
+    fn test_histogram_bimodal_distribution() {
+        let hist = LatencyHistogram::with_name("test");
+
+        // Half fast, half slow
+        for _ in 0..50 {
+            hist.record_us(100);
+        }
+        for _ in 0..50 {
+            hist.record_us(10000);
+        }
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 100);
+        // P50 should be somewhere in between
+        assert!(stats.p95_us >= stats.p50_us);
+        assert!(stats.p99_us >= stats.p95_us);
+    }
+
+    // ========================================================================
+    // Rolling Window Tests
+    // ========================================================================
+
+    #[test]
     fn test_histogram_rolling_window() {
         let hist = LatencyHistogram::new("test", 100);
 
@@ -481,6 +637,50 @@ mod tests {
 
         assert_eq!(all_time.count, one_min.count);
     }
+
+    #[test]
+    fn test_rolling_window_enum_values() {
+        // Test that all rolling window variants exist and can be used
+        let hist = LatencyHistogram::with_name("test");
+        hist.record_us(1000);
+
+        let _ = hist.stats(RollingWindow::OneMinute);
+        let _ = hist.stats(RollingWindow::FiveMinutes);
+        let _ = hist.stats(RollingWindow::OneHour);
+        let _ = hist.stats(RollingWindow::AllTime);
+    }
+
+    #[test]
+    fn test_rolling_window_duration() {
+        assert_eq!(RollingWindow::OneMinute.duration(), Some(Duration::from_secs(60)));
+        assert_eq!(RollingWindow::FiveMinutes.duration(), Some(Duration::from_secs(300)));
+        assert_eq!(RollingWindow::OneHour.duration(), Some(Duration::from_secs(3600)));
+        assert_eq!(RollingWindow::AllTime.duration(), None);
+    }
+
+    #[test]
+    fn test_rolling_window_all_time_has_no_duration() {
+        // AllTime window has no fixed duration - it captures all historical data
+        assert!(RollingWindow::AllTime.duration().is_none());
+    }
+
+    #[test]
+    fn test_rolling_window_clone() {
+        let window = RollingWindow::FiveMinutes;
+        let cloned = window.clone();
+        assert_eq!(window, cloned);
+    }
+
+    #[test]
+    fn test_rolling_window_copy() {
+        let window = RollingWindow::OneHour;
+        let copied = window;
+        assert_eq!(window, copied);
+    }
+
+    // ========================================================================
+    // Reset Tests
+    // ========================================================================
 
     #[test]
     fn test_histogram_reset() {
@@ -499,6 +699,40 @@ mod tests {
     }
 
     #[test]
+    fn test_histogram_reset_clears_all() {
+        let hist = LatencyHistogram::with_name("test");
+
+        for i in 0..1000 {
+            hist.record_us(i);
+        }
+
+        hist.reset();
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 0);
+        assert_eq!(stats.min_us, 0);
+        assert_eq!(stats.max_us, 0);
+    }
+
+    #[test]
+    fn test_histogram_record_after_reset() {
+        let hist = LatencyHistogram::with_name("test");
+
+        hist.record_us(1000);
+        hist.reset();
+        hist.record_us(500);
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 1);
+        assert_eq!(stats.min_us, 500);
+        assert_eq!(stats.max_us, 500);
+    }
+
+    // ========================================================================
+    // Bucket Mapping Tests
+    // ========================================================================
+
+    #[test]
     fn test_bucket_mapping() {
         // Test that bucket mapping is consistent
         let latencies = [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000];
@@ -511,5 +745,194 @@ mod tests {
             assert!(approx as f64 >= lat as f64 / 2.0);
             assert!(approx as f64 <= lat as f64 * 2.0);
         }
+    }
+
+    #[test]
+    fn test_bucket_mapping_monotonic() {
+        // Larger latencies should map to larger buckets
+        let mut prev_bucket = 0usize;
+        for lat in [1, 10, 100, 1000, 10000] {
+            let bucket = LatencyHistogram::latency_to_bucket(lat);
+            assert!(bucket >= prev_bucket);
+            prev_bucket = bucket;
+        }
+    }
+
+    #[test]
+    fn test_bucket_to_latency_monotonic() {
+        // Larger buckets should map to larger latencies
+        let mut prev_latency = 0u64;
+        for bucket in 0..50 {
+            let latency = LatencyHistogram::bucket_to_latency(bucket);
+            assert!(latency >= prev_latency);
+            prev_latency = latency;
+        }
+    }
+
+    // ========================================================================
+    // HistogramStats Tests
+    // ========================================================================
+
+    #[test]
+    fn test_histogram_stats_default() {
+        let stats = HistogramStats::default();
+        assert_eq!(stats.count, 0);
+        assert_eq!(stats.min_us, 0);
+        assert_eq!(stats.max_us, 0);
+        assert!((stats.mean_us - 0.0).abs() < f64::EPSILON);
+        assert_eq!(stats.p50_us, 0);
+        assert_eq!(stats.p95_us, 0);
+        assert_eq!(stats.p99_us, 0);
+    }
+
+    #[test]
+    fn test_histogram_stats_ms_conversion() {
+        let stats = HistogramStats {
+            count: 100,
+            min_us: 1000,
+            max_us: 10000,
+            mean_us: 5000.0,
+            p50_us: 4500,
+            p95_us: 9000,
+            p99_us: 9800,
+        };
+
+        assert!((stats.min_ms() - 1.0).abs() < f64::EPSILON);
+        assert!((stats.max_ms() - 10.0).abs() < f64::EPSILON);
+        assert!((stats.mean_ms() - 5.0).abs() < f64::EPSILON);
+        assert!((stats.p50_ms() - 4.5).abs() < f64::EPSILON);
+        assert!((stats.p95_ms() - 9.0).abs() < f64::EPSILON);
+        assert!((stats.p99_ms() - 9.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_histogram_stats_clone() {
+        let stats = HistogramStats {
+            count: 50,
+            min_us: 100,
+            max_us: 5000,
+            mean_us: 2000.0,
+            p50_us: 1800,
+            p95_us: 4500,
+            p99_us: 4900,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.count, stats.count);
+        assert_eq!(cloned.min_us, stats.min_us);
+        assert_eq!(cloned.max_us, stats.max_us);
+        assert_eq!(cloned.p99_us, stats.p99_us);
+    }
+
+    // ========================================================================
+    // Empty Histogram Tests
+    // ========================================================================
+
+    #[test]
+    fn test_empty_histogram_stats() {
+        let hist = LatencyHistogram::with_name("empty");
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 0);
+        assert_eq!(stats.min_us, 0);
+        assert_eq!(stats.max_us, 0);
+        assert_eq!(stats.p50_us, 0);
+        assert_eq!(stats.p95_us, 0);
+        assert_eq!(stats.p99_us, 0);
+    }
+
+    #[test]
+    fn test_empty_histogram_stats_ms_conversions() {
+        let stats = HistogramStats::default();
+
+        assert!((stats.min_ms() - 0.0).abs() < f64::EPSILON);
+        assert!((stats.max_ms() - 0.0).abs() < f64::EPSILON);
+        assert!((stats.mean_ms() - 0.0).abs() < f64::EPSILON);
+        assert!((stats.p50_ms() - 0.0).abs() < f64::EPSILON);
+    }
+
+    // ========================================================================
+    // Concurrency Tests (Thread Safety)
+    // ========================================================================
+
+    #[test]
+    fn test_histogram_concurrent_writes() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let hist = Arc::new(LatencyHistogram::with_name("concurrent"));
+        let mut handles = vec![];
+
+        // Spawn multiple threads writing to the same histogram
+        for t in 0..4 {
+            let hist_clone = Arc::clone(&hist);
+            let handle = thread::spawn(move || {
+                for i in 0..100 {
+                    hist_clone.record_us((t * 100 + i) as u64);
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().expect("Thread should complete");
+        }
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 400); // 4 threads * 100 samples
+    }
+
+    // ========================================================================
+    // Large Scale Tests
+    // ========================================================================
+
+    #[test]
+    fn test_histogram_many_samples() {
+        let hist = LatencyHistogram::with_name("large_scale");
+
+        // Record 10000 samples
+        for i in 0..10000 {
+            hist.record_us(i % 1000 + 100);
+        }
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 10000);
+        assert_eq!(stats.min_us, 100);
+        assert!(stats.max_us >= 1000);
+    }
+
+    #[test]
+    fn test_histogram_extreme_values() {
+        let hist = LatencyHistogram::with_name("extreme");
+
+        // Record min and max u64 values (clamped by bucket range)
+        hist.record_us(1);
+        hist.record_us(u64::MAX / 2); // Very large but not overflow
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        assert_eq!(stats.count, 2);
+        assert!(stats.min_us >= 1);
+    }
+
+    // ========================================================================
+    // Mean Calculation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_histogram_mean_calculation() {
+        let hist = LatencyHistogram::with_name("mean_test");
+
+        // Record known values
+        hist.record_us(1000);
+        hist.record_us(2000);
+        hist.record_us(3000);
+
+        let stats = hist.stats(RollingWindow::AllTime);
+        // Mean should be approximately 2000 (due to bucket approximation)
+        assert!(
+            stats.mean_us >= 1500.0 && stats.mean_us <= 2500.0,
+            "mean was {} (expected around 2000)",
+            stats.mean_us
+        );
     }
 }

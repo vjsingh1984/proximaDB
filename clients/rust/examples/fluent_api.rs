@@ -331,7 +331,10 @@ async fn main() -> proximadb_sdk::Result<()> {
     println!("   collection.exists(\"doc_001\") -> {}", exists);
 
     // Delete single vector
-    client.collection(collection_name).delete_vector("doc_001").await?;
+    client
+        .collection(collection_name)
+        .delete_vector("doc_001")
+        .await?;
     println!("   collection.delete_vector(\"doc_001\").await?;");
 
     let exists_after = client.collection(collection_name).exists("doc_001").await?;
@@ -353,7 +356,10 @@ async fn main() -> proximadb_sdk::Result<()> {
         .execute()
         .await?;
 
-    println!("   client.create_graph(\"{}\").execute().await?;", graph_name);
+    println!(
+        "   client.create_graph(\"{}\").execute().await?;",
+        graph_name
+    );
 
     // Add nodes with fluent API
     client
@@ -433,7 +439,11 @@ async fn main() -> proximadb_sdk::Result<()> {
         .await?;
 
     println!("\n   Traversal from person_1:");
-    println!("       Found {} nodes, {} edges", results.nodes.len(), results.edges.len());
+    println!(
+        "       Found {} nodes, {} edges",
+        results.nodes.len(),
+        results.edges.len()
+    );
 
     // Get a specific node
     let node = client.graph(graph_name).get_node("person_1").await?;

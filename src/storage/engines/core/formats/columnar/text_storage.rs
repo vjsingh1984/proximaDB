@@ -1196,9 +1196,8 @@ impl TextColumnWriter {
         tokenizer_config: TokenizerConfig,
         bm25_config: BM25Config,
     ) -> Self {
-        self.fulltext_index = Some(
-            FullTextIndex::new(tokenizer_config).with_bm25_config(bm25_config),
-        );
+        self.fulltext_index =
+            Some(FullTextIndex::new(tokenizer_config).with_bm25_config(bm25_config));
         self.auto_index = true;
         self
     }
@@ -2323,10 +2322,8 @@ mod tests {
         writer.write("doc3", "slow brown tortoise").unwrap();
 
         // Require all terms
-        let results = writer.fulltext_search_with_options(
-            "quick brown",
-            SearchOptions::top_k(10).require_all(),
-        );
+        let results = writer
+            .fulltext_search_with_options("quick brown", SearchOptions::top_k(10).require_all());
 
         // Only doc1 has both "quick" and "brown"
         assert_eq!(results.len(), 1);
@@ -2449,18 +2446,20 @@ mod tests {
         config.strategy = TextStorageStrategy::Chunked;
         config.chunk_size = 20;
 
-        let mut writer = TextColumnWriter::new(config)
-            .with_chunking_config(ChunkingConfig {
-                chunk_size: 20,
-                overlap: 5,
-                preserve_boundaries: false,
-                min_chunk_size: 10,
-                ..Default::default()
-            });
+        let mut writer = TextColumnWriter::new(config).with_chunking_config(ChunkingConfig {
+            chunk_size: 20,
+            overlap: 5,
+            preserve_boundaries: false,
+            min_chunk_size: 10,
+            ..Default::default()
+        });
 
         // Write will create chunks
         writer
-            .write("doc1", "This is a longer document that will be split into multiple chunks for testing.")
+            .write(
+                "doc1",
+                "This is a longer document that will be split into multiple chunks for testing.",
+            )
             .unwrap();
 
         // Build index from chunks

@@ -70,8 +70,8 @@ impl ObservabilityService for ObservabilityServiceImpl {
                 name: ns.name,
                 retention: None, // Retention config not tracked in simple NamespaceInfo
                 log_count: ns.total_events, // Approximate - using total_events
-                metric_count: 0,            // Not tracked separately
-                trace_count: 0,             // Not tracked separately
+                metric_count: 0, // Not tracked separately
+                trace_count: 0,  // Not tracked separately
             })
             .collect();
 
@@ -355,7 +355,9 @@ impl ObservabilityService for ObservabilityServiceImpl {
         }
 
         if req.traces.is_empty() {
-            return Err(Status::invalid_argument("At least one trace span is required"));
+            return Err(Status::invalid_argument(
+                "At least one trace span is required",
+            ));
         }
 
         debug!(
@@ -400,11 +402,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
 
         debug!(
             "Querying traces: namespace={}, time_range=[{}, {}], trace_id={:?}, service={:?}",
-            req.namespace,
-            req.start_time_ns,
-            req.end_time_ns,
-            req.trace_id,
-            req.service
+            req.namespace, req.start_time_ns, req.end_time_ns, req.trace_id, req.service
         );
 
         let params = crate::observability::TraceQueryParams {
@@ -419,7 +417,11 @@ impl ObservabilityService for ObservabilityServiceImpl {
             cursor: req.cursor,
         };
 
-        match self.observability_service.query_traces(&req.namespace, params).await {
+        match self
+            .observability_service
+            .query_traces(&req.namespace, params)
+            .await
+        {
             Ok(result) => Ok(Response::new(proximadb_v1::QueryTracesResponse {
                 traces: result.traces,
                 next_cursor: result.next_cursor,

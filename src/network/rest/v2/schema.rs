@@ -113,13 +113,13 @@ pub async fn get_schema(
             }
         })?;
 
-    let collection = collection_response.collection.ok_or_else(|| {
-        ApiError::CollectionNotFound(collection_id.clone())
-    })?;
+    let collection = collection_response
+        .collection
+        .ok_or_else(|| ApiError::CollectionNotFound(collection_id.clone()))?;
 
-    let config = collection.config.ok_or_else(|| {
-        ApiError::Internal("Collection has no configuration".to_string())
-    })?;
+    let config = collection
+        .config
+        .ok_or_else(|| ApiError::Internal("Collection has no configuration".to_string()))?;
 
     // Step 2: Check if ProximaRecord is enabled
     let proxima_record_enabled = config.enable_proxima_record.unwrap_or(false);
@@ -145,7 +145,9 @@ pub async fn get_schema(
             };
 
             // Build schema definition from text_columns if available
-            let columns: Vec<ColumnDefinition> = config.text_columns.iter()
+            let columns: Vec<ColumnDefinition> = config
+                .text_columns
+                .iter()
                 .map(|col_name| ColumnDefinition {
                     name: col_name.clone(),
                     data_type: "text".to_string(),
@@ -162,7 +164,10 @@ pub async fn get_schema(
             // Also add columns from text_storage_configs
             let mut all_columns = columns;
             for text_config in &config.text_storage_configs {
-                if !all_columns.iter().any(|c| c.name == text_config.column_name) {
+                if !all_columns
+                    .iter()
+                    .any(|c| c.name == text_config.column_name)
+                {
                     all_columns.push(ColumnDefinition {
                         name: text_config.column_name.clone(),
                         data_type: "text_large".to_string(),
@@ -195,7 +200,9 @@ pub async fn get_schema(
         } else if proxima_record_enabled {
             // ProximaRecord enabled but no explicit schema - create default
             let schema_id = format!("schema_{}", collection_id);
-            let columns: Vec<ColumnDefinition> = config.text_columns.iter()
+            let columns: Vec<ColumnDefinition> = config
+                .text_columns
+                .iter()
                 .map(|col_name| ColumnDefinition {
                     name: col_name.clone(),
                     data_type: "text".to_string(),
@@ -453,13 +460,14 @@ pub async fn update_schema(
             }
         })?;
 
-    let collection = collection_response.collection.ok_or_else(|| {
-        ApiError::CollectionNotFound(collection_id.clone())
-    })?;
+    let collection = collection_response
+        .collection
+        .ok_or_else(|| ApiError::CollectionNotFound(collection_id.clone()))?;
 
-    let mut config = collection.config.clone().ok_or_else(|| {
-        ApiError::Internal("Collection has no configuration".to_string())
-    })?;
+    let mut config = collection
+        .config
+        .clone()
+        .ok_or_else(|| ApiError::Internal("Collection has no configuration".to_string()))?;
 
     // Get existing schema for evolution validation
     let existing_schema = build_existing_schema(&config);
@@ -507,10 +515,7 @@ pub async fn update_schema(
                 changes.push(SchemaChange {
                     change_type: "ADD_COLUMN".to_string(),
                     column: Some(name.to_string()),
-                    description: format!(
-                        "Added column '{}' with type '{}'",
-                        name, col.data_type
-                    ),
+                    description: format!("Added column '{}' with type '{}'", name, col.data_type),
                 });
             }
         }
@@ -639,7 +644,7 @@ pub async fn update_schema(
             ngram_size: 3,
             sidecar_base_path: String::new(),
             sidecar_compression: 0, // TextCompression::None
-            max_text_size: 0, // Unlimited
+            max_text_size: 0,       // Unlimited
             enable_fulltext_index: false,
             fulltext_analyzer: String::new(),
         })
@@ -696,7 +701,9 @@ pub async fn update_schema(
 }
 
 /// Build existing schema from collection config
-fn build_existing_schema(config: &crate::proto::proximadb_v1::CollectionConfig) -> Option<SchemaDefinition> {
+fn build_existing_schema(
+    config: &crate::proto::proximadb_v1::CollectionConfig,
+) -> Option<SchemaDefinition> {
     // If ProximaRecord is not enabled or no schema config, return None
     if !config.enable_proxima_record.unwrap_or(false) && config.record_schema.is_none() {
         return None;
@@ -737,14 +744,16 @@ fn build_existing_schema(config: &crate::proto::proximadb_v1::CollectionConfig) 
     }
 
     // Get enforcement mode from record_schema if available
-    let enforcement = config.record_schema.as_ref().map(|schema_config| {
-        match schema_config.enforcement {
-            1 => "strict".to_string(),
-            2 => "flexible".to_string(),
-            3 => "hybrid".to_string(),
-            _ => "hybrid".to_string(),
-        }
-    });
+    let enforcement =
+        config
+            .record_schema
+            .as_ref()
+            .map(|schema_config| match schema_config.enforcement {
+                1 => "strict".to_string(),
+                2 => "flexible".to_string(),
+                3 => "hybrid".to_string(),
+                _ => "hybrid".to_string(),
+            });
 
     let allow_additional = config
         .record_schema

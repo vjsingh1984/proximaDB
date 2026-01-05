@@ -465,11 +465,7 @@ impl<'a> UpdateBuilder<'a> {
 
     /// Create a new update builder (embedded mode)
     #[cfg(feature = "embedded")]
-    pub fn new_embedded(
-        db: &'a crate::embedded::ProximaDB,
-        collection: &str,
-        id: &str,
-    ) -> Self {
+    pub fn new_embedded(db: &'a crate::embedded::ProximaDB, collection: &str, id: &str) -> Self {
         Self {
             #[cfg(feature = "client")]
             client: None,

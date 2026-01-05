@@ -448,6 +448,43 @@ mod tests {
 
     // Use the SSOProvider from super::types module
 
+    fn create_test_aws_config() -> AWSIAMConfig {
+        AWSIAMConfig {
+            region: "us-east-1".to_string(),
+            role_mapping: vec![
+                AWSRoleMapping {
+                    aws_role_arn: "arn:aws:iam::123456789012:role/AdminRole".to_string(),
+                    proximadb_role: "tenant_admin".to_string(),
+                    tenant_id: "test_tenant".to_string(),
+                },
+                AWSRoleMapping {
+                    aws_role_arn: "arn:aws:iam::123456789012:role/UserRole".to_string(),
+                    proximadb_role: "tenant_user".to_string(),
+                    tenant_id: "test_tenant".to_string(),
+                },
+            ],
+            enable_cross_account: true,
+            trusted_account_ids: vec!["123456789012".to_string(), "987654321098".to_string()],
+        }
+    }
+
+    fn create_test_token_data() -> AWSTokenData {
+        AWSTokenData {
+            sub: "user123".to_string(),
+            aud: "proximadb".to_string(),
+            iss: "https://sts.amazonaws.com".to_string(),
+            exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp(),
+            iat: chrono::Utc::now().timestamp(),
+            role_arn: "arn:aws:iam::123456789012:role/ProximaDBRole".to_string(),
+            account_id: "123456789012".to_string(),
+            preferred_username: Some("test_user".to_string()),
+            email: Some("test@example.com".to_string()),
+            cognito_groups: vec!["users".to_string()],
+            custom_tenant_id: None,
+            raw_token: "jwt_token_here".to_string(),
+        }
+    }
+
     #[test]
     fn test_sso_token_creation() {
         let token = SSOToken::new(
@@ -496,5 +533,795 @@ mod tests {
         assert_eq!(token_data.sub, deserialized.sub);
         assert_eq!(token_data.account_id, deserialized.account_id);
         assert_eq!(token_data.role_arn, deserialized.role_arn);
+    }
+
+    // ========================== Additional Tests for Coverage ==========================
+
+    // --- Integration Creation Tests ---
+
+    #[test]
+    fn test_aws_iam_integration_creation() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config);
+        assert!(integration.is_ok());
+    }
+
+    #[test]
+    fn test_aws_iam_integration_with_empty_config() {
+        let config = AWSIAMConfig {
+            region: String::new(),
+            role_mapping: vec![],
+            enable_cross_account: false,
+            trusted_account_ids: vec![],
+        };
+        let integration = AWSIAMIntegration::new(config);
+        assert!(integration.is_ok());
+    }
+
+    // --- Token Data Tests ---
+
+    #[test]
+    fn test_aws_token_data_with_all_fields() {
+        let token_data = AWSTokenData {
+            sub: "user_subject".to_string(),
+            aud: "audience".to_string(),
+            iss: "issuer".to_string(),
+            exp: 1234567890,
+            iat: 1234567800,
+            role_arn: "arn:aws:iam::111111111111:role/TestRole".to_string(),
+            account_id: "111111111111".to_string(),
+            preferred_username: Some("preferred_name".to_string()),
+            email: Some("user@company.com".to_string()),
+            cognito_groups: vec!["admins".to_string(), "developers".to_string()],
+            custom_tenant_id: Some("custom_tenant".to_string()),
+            raw_token: "raw_jwt_token".to_string(),
+        };
+
+        assert_eq!(token_data.sub, "user_subject");
+        assert_eq!(token_data.cognito_groups.len(), 2);
+        assert_eq!(
+            token_data.custom_tenant_id,
+            Some("custom_tenant".to_string())
+        );
+    }
+
+    #[test]
+    fn test_aws_token_data_without_optional_fields() {
+        let token_data = AWSTokenData {
+            sub: "user".to_string(),
+            aud: "aud".to_string(),
+            iss: "iss".to_string(),
+            exp: 0,
+            iat: 0,
+            role_arn: "arn:aws:iam::000:role/Role".to_string(),
+            account_id: "000".to_string(),
+            preferred_username: None,
+            email: None,
+            cognito_groups: vec![],
+            custom_tenant_id: None,
+            raw_token: "".to_string(),
+        };
+
+        assert!(token_data.preferred_username.is_none());
+        assert!(token_data.email.is_none());
+        assert!(token_data.custom_tenant_id.is_none());
+        assert!(token_data.cognito_groups.is_empty());
+    }
+
+    // --- AWS Credentials Tests ---
+
+    #[test]
+    fn test_aws_credentials_structure() {
+        let credentials = AWSCredentials {
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+            session_token: Some("FwoGZXIvYXdzEC...".to_string()),
+            expiration: Some(chrono::Utc::now() + Duration::hours(1)),
+            role_arn: "arn:aws:iam::123456789012:role/TestRole".to_string(),
+            assumed_role_user: "AROA3XFRBF535PLBIFPI4:test-session".to_string(),
+        };
+
+        assert_eq!(credentials.access_key_id, "AKIAIOSFODNN7EXAMPLE");
+        assert!(credentials.session_token.is_some());
+        assert!(credentials.expiration.is_some());
+    }
+
+    #[test]
+    fn test_aws_credentials_without_session_token() {
+        let credentials = AWSCredentials {
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: None,
+            expiration: None,
+            role_arn: "arn:aws:iam::123456789012:role/Role".to_string(),
+            assumed_role_user: "user".to_string(),
+        };
+
+        assert!(credentials.session_token.is_none());
+        assert!(credentials.expiration.is_none());
+    }
+
+    // --- AWS User Context Tests ---
+
+    #[test]
+    fn test_aws_user_context_serialization() {
+        let user_context = AWSUserContext {
+            role_arn: "arn:aws:iam::123456789012:role/TestRole".to_string(),
+            assumed_role_user: "AROA3XFRBF535:session".to_string(),
+            account_id: "123456789012".to_string(),
+            region: "us-west-2".to_string(),
+        };
+
+        let json = serde_json::to_string(&user_context).unwrap();
+        let deserialized: AWSUserContext = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.role_arn, user_context.role_arn);
+        assert_eq!(deserialized.account_id, user_context.account_id);
+        assert_eq!(deserialized.region, user_context.region);
+    }
+
+    // --- AWS User Info Tests ---
+
+    #[test]
+    fn test_aws_user_info_structure() {
+        let user_info = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:user/TestUser".to_string(),
+            user_name: "TestUser".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: Some("arn:aws:iam::123456789012:role/AssumedRole".to_string()),
+            mfa_authenticated: true,
+        };
+
+        assert_eq!(user_info.user_name, "TestUser");
+        assert!(user_info.mfa_authenticated);
+        assert!(user_info.assumed_role_arn.is_some());
+    }
+
+    #[test]
+    fn test_aws_user_info_without_assumed_role() {
+        let user_info = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:user/User".to_string(),
+            user_name: "User".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: None,
+            mfa_authenticated: false,
+        };
+
+        assert!(user_info.assumed_role_arn.is_none());
+        assert!(!user_info.mfa_authenticated);
+    }
+
+    // --- Role Permissions Tests ---
+
+    #[test]
+    fn test_get_role_permissions_tenant_admin() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let permissions = integration.get_role_permissions("tenant_admin");
+        assert!(permissions.contains("tenant_admin"));
+        assert!(permissions.contains("collection_admin"));
+        assert!(permissions.contains("domain_admin"));
+        assert_eq!(permissions.len(), 3);
+    }
+
+    #[test]
+    fn test_get_role_permissions_tenant_user() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let permissions = integration.get_role_permissions("tenant_user");
+        assert!(permissions.contains("collection_read"));
+        assert!(permissions.contains("entity_read"));
+        assert_eq!(permissions.len(), 2);
+    }
+
+    #[test]
+    fn test_get_role_permissions_analyst() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let permissions = integration.get_role_permissions("analyst");
+        assert!(permissions.contains("collection_read"));
+        assert!(permissions.contains("entity_read"));
+        assert!(permissions.contains("domain_read"));
+        assert_eq!(permissions.len(), 3);
+    }
+
+    #[test]
+    fn test_get_role_permissions_unknown_role() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let permissions = integration.get_role_permissions("unknown_role");
+        assert!(permissions.is_empty());
+    }
+
+    // --- Security Clearance Tests ---
+
+    #[tokio::test]
+    async fn test_determine_security_clearance_admin() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.cognito_groups = vec!["admin".to_string()];
+
+        let clearance = integration
+            .determine_security_clearance(&token_data)
+            .await
+            .unwrap();
+        assert_eq!(clearance, SecurityClearance::Secret);
+    }
+
+    #[tokio::test]
+    async fn test_determine_security_clearance_executive() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.cognito_groups = vec!["executive".to_string()];
+
+        let clearance = integration
+            .determine_security_clearance(&token_data)
+            .await
+            .unwrap();
+        assert_eq!(clearance, SecurityClearance::Secret);
+    }
+
+    #[tokio::test]
+    async fn test_determine_security_clearance_manager() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.cognito_groups = vec!["manager".to_string()];
+
+        let clearance = integration
+            .determine_security_clearance(&token_data)
+            .await
+            .unwrap();
+        assert_eq!(clearance, SecurityClearance::Confidential);
+    }
+
+    #[tokio::test]
+    async fn test_determine_security_clearance_analyst() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.cognito_groups = vec!["analyst".to_string()];
+
+        let clearance = integration
+            .determine_security_clearance(&token_data)
+            .await
+            .unwrap();
+        assert_eq!(clearance, SecurityClearance::Confidential);
+    }
+
+    #[tokio::test]
+    async fn test_determine_security_clearance_default() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.cognito_groups = vec!["regular_user".to_string()];
+
+        let clearance = integration
+            .determine_security_clearance(&token_data)
+            .await
+            .unwrap();
+        assert_eq!(clearance, SecurityClearance::Internal);
+    }
+
+    // --- Role Mapping Tests ---
+
+    #[tokio::test]
+    async fn test_map_aws_roles_to_proximadb_with_mapping() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let cognito_groups = vec!["AdminRole".to_string()];
+        let roles = integration
+            .map_aws_roles_to_proximadb(&cognito_groups)
+            .await
+            .unwrap();
+
+        assert!(roles.contains(&"tenant_admin".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_map_aws_roles_to_proximadb_default() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let cognito_groups = vec!["unmapped_group".to_string()];
+        let roles = integration
+            .map_aws_roles_to_proximadb(&cognito_groups)
+            .await
+            .unwrap();
+
+        // Should get default "user" role
+        assert!(roles.contains(&"user".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_map_aws_roles_to_proximadb_empty_groups() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let cognito_groups: Vec<String> = vec![];
+        let roles = integration
+            .map_aws_roles_to_proximadb(&cognito_groups)
+            .await
+            .unwrap();
+
+        // Should get default "user" role
+        assert!(roles.contains(&"user".to_string()));
+        assert_eq!(roles.len(), 1);
+    }
+
+    // --- AWS Claims Extraction Tests ---
+
+    #[test]
+    fn test_extract_aws_claims() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let aws_user = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:user/TestUser".to_string(),
+            user_name: "TestUser".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: Some("arn:aws:iam::123456789012:role/AssumedRole".to_string()),
+            mfa_authenticated: true,
+        };
+
+        let claims = integration.extract_aws_claims(&aws_user);
+
+        assert!(claims.contains_key("account_id"));
+        assert!(claims.contains_key("user_arn"));
+        assert!(claims.contains_key("mfa_authenticated"));
+        assert!(claims.contains_key("assumed_role_arn"));
+
+        assert_eq!(
+            claims.get("account_id"),
+            Some(&serde_json::Value::String("123456789012".to_string()))
+        );
+        assert_eq!(
+            claims.get("mfa_authenticated"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_extract_aws_claims_without_assumed_role() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let aws_user = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:user/User".to_string(),
+            user_name: "User".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: None,
+            mfa_authenticated: false,
+        };
+
+        let claims = integration.extract_aws_claims(&aws_user);
+
+        assert!(!claims.contains_key("assumed_role_arn"));
+        assert_eq!(
+            claims.get("mfa_authenticated"),
+            Some(&serde_json::Value::Bool(false))
+        );
+    }
+
+    // --- Access Key Extraction Tests ---
+
+    #[test]
+    fn test_extract_account_id_from_access_key_valid() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let access_key = "AKIAIOSFODNN7EXAMPLE";
+        let result = integration.extract_account_id_from_access_key(access_key);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "123456789012");
+    }
+
+    #[test]
+    fn test_extract_account_id_from_access_key_invalid() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let short_access_key = "AKIA";
+        let result = integration.extract_account_id_from_access_key(short_access_key);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid access key")
+        );
+    }
+
+    // --- Token Parsing Tests ---
+
+    #[test]
+    fn test_parse_aws_token_data_valid() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let token_json = serde_json::json!({
+            "sub": "user123",
+            "aud": "proximadb",
+            "iss": "https://sts.amazonaws.com",
+            "exp": 1234567890,
+            "iat": 1234567800,
+            "role_arn": "arn:aws:iam::123456789012:role/Role",
+            "account_id": "123456789012",
+            "preferred_username": "testuser",
+            "email": "test@example.com",
+            "cognito_groups": ["users"],
+            "custom_tenant_id": null,
+            "raw_token": "token"
+        });
+
+        let result = integration.parse_aws_token_data(&token_json.to_string());
+        assert!(result.is_ok());
+
+        let parsed = result.unwrap();
+        assert_eq!(parsed.sub, "user123");
+        assert_eq!(parsed.account_id, "123456789012");
+    }
+
+    #[test]
+    fn test_parse_aws_token_data_invalid_json() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let result = integration.parse_aws_token_data("invalid json");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Failed to parse"));
+    }
+
+    // --- Assume Role Tests ---
+
+    #[tokio::test]
+    async fn test_assume_role_with_web_identity_valid() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let token_data = create_test_token_data();
+        let result = integration.assume_role_with_web_identity(&token_data).await;
+
+        assert!(result.is_ok());
+        let credentials = result.unwrap();
+        assert!(!credentials.access_key_id.is_empty());
+        assert!(!credentials.secret_access_key.is_empty());
+        assert!(credentials.session_token.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_web_identity_empty_role_arn() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.role_arn = String::new();
+
+        let result = integration.assume_role_with_web_identity(&token_data).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Role ARN required")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_web_identity_empty_sub() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.sub = String::new();
+
+        let result = integration.assume_role_with_web_identity(&token_data).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Subject (sub) required")
+        );
+    }
+
+    // --- STS Validation Tests ---
+
+    #[tokio::test]
+    async fn test_validate_aws_sts_token_valid() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let token_data = create_test_token_data();
+        let result = integration.validate_aws_sts_token(&token_data).await;
+
+        assert!(result.is_ok());
+        let user_info = result.unwrap();
+        assert!(!user_info.user_name.is_empty());
+        assert_eq!(user_info.account_id, "123456789012");
+    }
+
+    #[tokio::test]
+    async fn test_validate_aws_sts_token_empty_sub() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.sub = String::new();
+
+        let result = integration.validate_aws_sts_token(&token_data).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing subject"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_aws_sts_token_untrusted_account() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.account_id = "untrusted_account".to_string();
+
+        let result = integration.validate_aws_sts_token(&token_data).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not trusted"));
+    }
+
+    // --- Enterprise User Context Mapping Tests ---
+
+    #[test]
+    fn test_map_aws_user_to_enterprise_context_with_mapping() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let aws_user = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:role/AdminRole/test".to_string(),
+            user_name: "test_user".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: Some("arn:aws:iam::123456789012:role/AdminRole".to_string()),
+            mfa_authenticated: true,
+        };
+
+        let sso_token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            "token_data".to_string(),
+            "test_user".to_string(),
+            3600,
+        );
+
+        let result = integration.map_aws_user_to_enterprise_context(&aws_user, &sso_token);
+        assert!(result.is_ok());
+
+        let context = result.unwrap();
+        assert_eq!(context.user_id, "test_user");
+        assert!(context.roles.contains(&"tenant_admin".to_string()));
+        assert_eq!(context.tenant_id, "test_tenant");
+        assert_eq!(context.security_clearance, SecurityClearance::Confidential);
+    }
+
+    #[test]
+    fn test_map_aws_user_to_enterprise_context_default_mapping() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let aws_user = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:user/unmapped_user".to_string(),
+            user_name: "unmapped_user".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: None,
+            mfa_authenticated: false,
+        };
+
+        let sso_token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            "token_data".to_string(),
+            "unmapped_user".to_string(),
+            3600,
+        );
+
+        let result = integration.map_aws_user_to_enterprise_context(&aws_user, &sso_token);
+        assert!(result.is_ok());
+
+        let context = result.unwrap();
+        assert!(context.roles.contains(&"tenant_user".to_string()));
+        assert_eq!(context.tenant_id, "default");
+        assert_eq!(context.security_clearance, SecurityClearance::Internal);
+    }
+
+    // --- Provider Context Tests ---
+
+    #[test]
+    fn test_enterprise_context_provider_context() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let aws_user = AWSUserInfo {
+            user_arn: "arn:aws:iam::123456789012:user/test".to_string(),
+            user_name: "test".to_string(),
+            account_id: "123456789012".to_string(),
+            assumed_role_arn: Some("arn:aws:iam::123456789012:role/Role".to_string()),
+            mfa_authenticated: true,
+        };
+
+        let sso_token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            "token".to_string(),
+            "test".to_string(),
+            3600,
+        );
+
+        let context = integration
+            .map_aws_user_to_enterprise_context(&aws_user, &sso_token)
+            .unwrap();
+
+        match context.provider_context {
+            ProviderUserContext::AWS {
+                account_id,
+                user_arn,
+                assumed_role_arn,
+                mfa_authenticated,
+            } => {
+                assert_eq!(account_id, "123456789012");
+                assert!(!user_arn.is_empty());
+                assert!(assumed_role_arn.is_some());
+                assert!(mfa_authenticated);
+            }
+            _ => panic!("Expected AWS provider context"),
+        }
+    }
+
+    // --- Token Validation Tests ---
+
+    #[tokio::test]
+    async fn test_validate_token_expired() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let token_data = create_test_token_data();
+        let token_json = serde_json::to_string(&token_data).unwrap();
+
+        // Create an expired token (expires_in_seconds = 0 means immediate expiry)
+        let mut sso_token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            token_json,
+            "test_user".to_string(),
+            0, // Immediately expired
+        );
+        // Force expiration
+        sso_token.expires_at = chrono::Utc::now() - Duration::hours(1);
+
+        let result = integration.validate_token(&sso_token).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expired"));
+    }
+
+    // --- Build Enterprise User Context Tests ---
+
+    #[tokio::test]
+    async fn test_build_enterprise_user_context() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let token_data = create_test_token_data();
+        let credentials = AWSCredentials {
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: Some("session".to_string()),
+            expiration: Some(chrono::Utc::now() + Duration::hours(1)),
+            role_arn: "arn:aws:iam::123456789012:role/Role".to_string(),
+            assumed_role_user: "user".to_string(),
+        };
+
+        let result = integration
+            .build_enterprise_user_context(&token_data, &credentials)
+            .await;
+        assert!(result.is_ok());
+
+        let context = result.unwrap();
+        assert_eq!(context.user_id, "user123");
+        assert_eq!(context.email, "test@example.com");
+        assert_eq!(context.display_name, "test_user");
+        assert_eq!(context.organization_id, "123456789012");
+    }
+
+    #[tokio::test]
+    async fn test_build_enterprise_user_context_without_email() {
+        let config = create_test_aws_config();
+        let integration = AWSIAMIntegration::new(config).unwrap();
+
+        let mut token_data = create_test_token_data();
+        token_data.email = None;
+
+        let credentials = AWSCredentials {
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_access_key: "secret".to_string(),
+            session_token: None,
+            expiration: None,
+            role_arn: "arn:aws:iam::123456789012:role/Role".to_string(),
+            assumed_role_user: "user".to_string(),
+        };
+
+        let result = integration
+            .build_enterprise_user_context(&token_data, &credentials)
+            .await;
+        assert!(result.is_ok());
+
+        let context = result.unwrap();
+        // Email should be generated from user_id
+        assert!(context.email.contains("@unknown.aws"));
+    }
+
+    // --- SSO Token Tests ---
+
+    #[test]
+    fn test_sso_token_expiration() {
+        // Token that expires in 1 hour
+        let token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            "data".to_string(),
+            "user".to_string(),
+            3600,
+        );
+
+        assert!(!token.is_expired());
+        assert!(!token.expires_soon());
+    }
+
+    #[test]
+    fn test_sso_token_expires_soon() {
+        // Token that expires in 3 minutes (less than 5 minute threshold)
+        let mut token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            "data".to_string(),
+            "user".to_string(),
+            180,
+        );
+        // Manually set to expire in 3 minutes
+        token.expires_at = chrono::Utc::now() + Duration::minutes(3);
+
+        assert!(!token.is_expired());
+        assert!(token.expires_soon());
+    }
+
+    // --- Configuration Tests ---
+
+    #[test]
+    fn test_aws_role_mapping_structure() {
+        let mapping = AWSRoleMapping {
+            aws_role_arn: "arn:aws:iam::123456789012:role/TestRole".to_string(),
+            proximadb_role: "admin".to_string(),
+            tenant_id: "tenant_123".to_string(),
+        };
+
+        assert!(mapping.aws_role_arn.contains("arn:aws:iam"));
+        assert_eq!(mapping.proximadb_role, "admin");
+        assert_eq!(mapping.tenant_id, "tenant_123");
+    }
+
+    #[test]
+    fn test_aws_iam_config_cross_account_disabled() {
+        let config = AWSIAMConfig {
+            region: "eu-west-1".to_string(),
+            role_mapping: vec![],
+            enable_cross_account: false,
+            trusted_account_ids: vec![],
+        };
+
+        assert!(!config.enable_cross_account);
+        assert!(config.trusted_account_ids.is_empty());
     }
 }

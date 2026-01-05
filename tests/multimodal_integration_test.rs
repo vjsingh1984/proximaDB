@@ -43,14 +43,11 @@ use common::{ensure_test_directories, setup_hardware_capabilities};
 use proximadb::graph::service::GraphOperationsService;
 use proximadb::proto::proximadb_v1::{
     CompressionAlgorithm, Edge, EmbeddingVersion, GraphStorageConfig, Modality, Node,
-    PropertyValue, TraversalAlgorithm, TraversalRequest,
-    property_value::Value,
+    PropertyValue, TraversalAlgorithm, TraversalRequest, property_value::Value,
 };
-use proximadb::query::unified::{
-    DataModel, FusionStrategy, ResultFuser,
-};
-use proximadb::query::unified::fusion::SubQueryResult;
 use proximadb::query::unified::UnifiedRecord;
+use proximadb::query::unified::fusion::SubQueryResult;
+use proximadb::query::unified::{DataModel, FusionStrategy, ResultFuser};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -247,7 +244,10 @@ async fn test_fusion_strategy_intersection() {
     };
 
     let fused = fuser
-        .fuse(vec![vector_results, graph_results], &FusionStrategy::Intersection)
+        .fuse(
+            vec![vector_results, graph_results],
+            &FusionStrategy::Intersection,
+        )
         .expect("Fusion should succeed");
 
     // Intersection should only contain product_2 and product_3
@@ -366,7 +366,10 @@ async fn test_fusion_strategy_rrf() {
         .expect("RRF fusion should succeed");
 
     // Should contain all unique records
-    assert!(fused.records.len() >= 3, "RRF should contain at least 3 records");
+    assert!(
+        fused.records.len() >= 3,
+        "RRF should contain at least 3 records"
+    );
 
     // product_a and product_b appear in both lists
     let product_a = fused.records.iter().find(|r| r.id == "product_a");
@@ -526,7 +529,10 @@ async fn test_vector_graph_combined_query() {
     // Fuse results using intersection
     let fuser = ResultFuser::new(FusionStrategy::Intersection);
     let fused = fuser
-        .fuse(vec![vector_results, graph_results], &FusionStrategy::Intersection)
+        .fuse(
+            vec![vector_results, graph_results],
+            &FusionStrategy::Intersection,
+        )
         .expect("Combined query fusion should succeed");
 
     // Verify the combined results
@@ -641,7 +647,10 @@ async fn test_empty_results_fusion() {
     };
 
     let fused = fuser
-        .fuse(vec![vector_results, graph_results], &FusionStrategy::Intersection)
+        .fuse(
+            vec![vector_results, graph_results],
+            &FusionStrategy::Intersection,
+        )
         .expect("Empty results fusion should succeed");
 
     // Intersection with empty set should be empty

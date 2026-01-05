@@ -37,20 +37,20 @@
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{escaped, tag, take_while1},
     character::complete::{char, digit1, one_of},
     combinator::{opt, recognize, value},
     sequence::{delimited, pair, tuple},
-    IResult,
 };
 use serde_json::Value as JsonValue;
 
 use crate::proto::proximadb_v1::{
-    sql_value::Value as SqlValueVariant, DocFilterCondition, DocFilterOperator, DocumentFilter,
-    SqlArray, SqlObject, SqlValue,
+    DocFilterCondition, DocFilterOperator, DocumentFilter, SqlArray, SqlObject, SqlValue,
+    sql_value::Value as SqlValueVariant,
 };
 
 use super::{QueryParser, ToFilter};
@@ -202,10 +202,7 @@ impl MongoOperator {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MongoDBExpression {
     /// Field equality: {"field": value}
-    FieldEquals {
-        field: String,
-        value: MongoDBValue,
-    },
+    FieldEquals { field: String, value: MongoDBValue },
 
     /// Field with operator: {"field": {"$op": value}}
     FieldOperator {
@@ -475,8 +472,13 @@ impl MongoDBLexer {
                 break;
             }
 
-            let (rest, token) = Self::next_token(remaining)
-                .map_err(|e| anyhow!("Lexer error at '{}...': {:?}", &remaining[..20.min(remaining.len())], e))?;
+            let (rest, token) = Self::next_token(remaining).map_err(|e| {
+                anyhow!(
+                    "Lexer error at '{}...': {:?}",
+                    &remaining[..20.min(remaining.len())],
+                    e
+                )
+            })?;
 
             tokens.push(token);
             remaining = rest;
@@ -573,24 +575,24 @@ impl MongoDBParser {
 
     /// Parse a MongoDB query expression
     pub fn parse_query(&self, input: &str) -> Result<MongoDBExpression> {
-        let json: JsonValue = serde_json::from_str(input)
-            .context("Failed to parse MongoDB query as JSON")?;
+        let json: JsonValue =
+            serde_json::from_str(input).context("Failed to parse MongoDB query as JSON")?;
 
         self.parse_expression(&json)
     }
 
     /// Parse a MongoDB projection
     pub fn parse_projection(&self, input: &str) -> Result<MongoDBProjection> {
-        let json: JsonValue = serde_json::from_str(input)
-            .context("Failed to parse MongoDB projection as JSON")?;
+        let json: JsonValue =
+            serde_json::from_str(input).context("Failed to parse MongoDB projection as JSON")?;
 
         self.parse_projection_value(&json)
     }
 
     /// Parse a MongoDB aggregation pipeline
     pub fn parse_pipeline(&self, input: &str) -> Result<Vec<MongoDBPipelineStage>> {
-        let json: JsonValue = serde_json::from_str(input)
-            .context("Failed to parse MongoDB pipeline as JSON")?;
+        let json: JsonValue =
+            serde_json::from_str(input).context("Failed to parse MongoDB pipeline as JSON")?;
 
         match &json {
             JsonValue::Array(stages) => {
@@ -605,7 +607,11 @@ impl MongoDBParser {
     }
 
     /// Parse a complete MongoDB query with options
-    pub fn parse_full_query(&self, query_json: &str, options: Option<&str>) -> Result<MongoDBQuery> {
+    pub fn parse_full_query(
+        &self,
+        query_json: &str,
+        options: Option<&str>,
+    ) -> Result<MongoDBQuery> {
         let mut result = MongoDBQuery::new();
 
         // Parse filter
@@ -615,8 +621,8 @@ impl MongoDBParser {
 
         // Parse options if provided
         if let Some(opts) = options {
-            let opts_json: JsonValue = serde_json::from_str(opts)
-                .context("Failed to parse query options")?;
+            let opts_json: JsonValue =
+                serde_json::from_str(opts).context("Failed to parse query options")?;
 
             if let JsonValue::Object(map) = opts_json {
                 if let Some(proj) = map.get("projection") {
@@ -776,8 +782,8 @@ impl MongoDBParser {
                 continue; // Already handled above
             }
 
-            let operator = MongoOperator::from_str(key)
-                .ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
+            let operator =
+                MongoOperator::from_str(key).ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
 
             match operator {
                 MongoOperator::ElemMatch => {
@@ -815,7 +821,10 @@ impl MongoDBParser {
                     .ok_or_else(|| anyhow!("$text requires $search field"))?
                     .to_string();
 
-                let language = obj.get("$language").and_then(|v| v.as_str()).map(String::from);
+                let language = obj
+                    .get("$language")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 let case_sensitive = obj.get("$caseSensitive").and_then(|v| v.as_bool());
 
                 Ok(MongoDBExpression::TextSearch {
@@ -894,7 +903,9 @@ impl MongoDBParser {
         match stage {
             JsonValue::Object(obj) => {
                 if obj.len() != 1 {
-                    return Err(anyhow!("Each pipeline stage must have exactly one operator"));
+                    return Err(anyhow!(
+                        "Each pipeline stage must have exactly one operator"
+                    ));
                 }
 
                 let (op, value) = obj.iter().next().unwrap();
@@ -914,17 +925,23 @@ impl MongoDBParser {
                         Ok(MongoDBPipelineStage::Sort(sort))
                     }
                     "$limit" => {
-                        let n = value.as_i64().ok_or_else(|| anyhow!("$limit must be a number"))?;
+                        let n = value
+                            .as_i64()
+                            .ok_or_else(|| anyhow!("$limit must be a number"))?;
                         Ok(MongoDBPipelineStage::Limit(n))
                     }
                     "$skip" => {
-                        let n = value.as_i64().ok_or_else(|| anyhow!("$skip must be a number"))?;
+                        let n = value
+                            .as_i64()
+                            .ok_or_else(|| anyhow!("$skip must be a number"))?;
                         Ok(MongoDBPipelineStage::Skip(n))
                     }
                     "$unwind" => self.parse_unwind_stage(value),
                     "$lookup" => self.parse_lookup_stage(value),
                     "$count" => {
-                        let field = value.as_str().ok_or_else(|| anyhow!("$count must be a string"))?;
+                        let field = value
+                            .as_str()
+                            .ok_or_else(|| anyhow!("$count must be a string"))?;
                         Ok(MongoDBPipelineStage::Count(field.to_string()))
                     }
                     _ => Err(anyhow!("Unknown pipeline stage: {}", op)),
@@ -958,9 +975,15 @@ impl MongoDBParser {
                                 "$avg" => GroupAccumulator::Avg(MongoDBValue::from_json(acc_expr)),
                                 "$min" => GroupAccumulator::Min(MongoDBValue::from_json(acc_expr)),
                                 "$max" => GroupAccumulator::Max(MongoDBValue::from_json(acc_expr)),
-                                "$first" => GroupAccumulator::First(MongoDBValue::from_json(acc_expr)),
-                                "$last" => GroupAccumulator::Last(MongoDBValue::from_json(acc_expr)),
-                                "$push" => GroupAccumulator::Push(MongoDBValue::from_json(acc_expr)),
+                                "$first" => {
+                                    GroupAccumulator::First(MongoDBValue::from_json(acc_expr))
+                                }
+                                "$last" => {
+                                    GroupAccumulator::Last(MongoDBValue::from_json(acc_expr))
+                                }
+                                "$push" => {
+                                    GroupAccumulator::Push(MongoDBValue::from_json(acc_expr))
+                                }
                                 "$addToSet" => {
                                     GroupAccumulator::AddToSet(MongoDBValue::from_json(acc_expr))
                                 }
@@ -1313,7 +1336,7 @@ impl DocumentFilterConverter {
             MongoOperator::Regex => (DocFilterOperator::Regex, false),
             MongoOperator::All => (DocFilterOperator::Contains, true),
             MongoOperator::Size => (DocFilterOperator::Eq, false), // Size check needs special handling
-            _ => (DocFilterOperator::Eq, false), // Default fallback
+            _ => (DocFilterOperator::Eq, false),                   // Default fallback
         }
     }
 }
@@ -1326,9 +1349,9 @@ impl MongoDBPipelineStage {
     /// Convert to ProximaDB aggregation stage
     pub fn to_proto_stage(&self) -> Result<crate::proto::proximadb_v1::AggregationStage> {
         use crate::proto::proximadb_v1::{
-            aggregation_stage::Stage, Aggregation, AggregationStage, AggregationType, GroupStage,
-            LimitStage, MatchStage, ProjectStage, SkipStage, SortField,
-            SortOrder as ProtoSortOrder, SortStage, UnwindStage,
+            Aggregation, AggregationStage, AggregationType, GroupStage, LimitStage, MatchStage,
+            ProjectStage, SkipStage, SortField, SortOrder as ProtoSortOrder, SortStage,
+            UnwindStage, aggregation_stage::Stage,
         };
 
         let stage = match self {
@@ -1406,7 +1429,9 @@ impl MongoDBPipelineStage {
                     })
                     .collect();
 
-                Stage::Sort(SortStage { fields: sort_fields })
+                Stage::Sort(SortStage {
+                    fields: sort_fields,
+                })
             }
 
             MongoDBPipelineStage::Limit(n) => Stage::Limit(LimitStage { limit: *n as u32 }),
@@ -1659,7 +1684,10 @@ mod tests {
 
         // Check $group stage
         match &result[1] {
-            MongoDBPipelineStage::Group { id_expression, accumulators } => {
+            MongoDBPipelineStage::Group {
+                id_expression,
+                accumulators,
+            } => {
                 match id_expression {
                     MongoDBValue::String(s) => assert_eq!(s, "$category"),
                     _ => panic!("Expected string id expression"),
@@ -1782,7 +1810,9 @@ mod tests {
             MongoDBExpression::ElemMatch { field, query } => {
                 assert_eq!(field, "items");
                 match *query {
-                    MongoDBExpression::FieldOperator { field, operator, .. } => {
+                    MongoDBExpression::FieldOperator {
+                        field, operator, ..
+                    } => {
                         assert_eq!(field, "price");
                         assert_eq!(operator, MongoOperator::Gt);
                     }
@@ -1802,7 +1832,11 @@ mod tests {
         let result = parser.parse_query(query).unwrap();
 
         match result {
-            MongoDBExpression::FieldOperator { field, operator, value } => {
+            MongoDBExpression::FieldOperator {
+                field,
+                operator,
+                value,
+            } => {
                 assert_eq!(field, "tags");
                 assert_eq!(operator, MongoOperator::All);
                 match value {
@@ -1818,7 +1852,11 @@ mod tests {
         let result = parser.parse_query(query).unwrap();
 
         match result {
-            MongoDBExpression::FieldOperator { field, operator, value } => {
+            MongoDBExpression::FieldOperator {
+                field,
+                operator,
+                value,
+            } => {
                 assert_eq!(field, "items");
                 assert_eq!(operator, MongoOperator::Size);
                 assert_eq!(value, MongoDBValue::Integer(5));

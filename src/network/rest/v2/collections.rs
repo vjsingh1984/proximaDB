@@ -349,18 +349,18 @@ pub async fn create_collection_v2(
     // Create collection config for unified handlers
     // Map engine name to StorageEngine enum value
     let storage_engine_value = match engine {
-        "sst" => 1,     // StorageEngine::Sst
-        "helix" => 2,   // StorageEngine::Helix
-        "viper" => 3,   // StorageEngine::Viper
-        "swift" => 4,   // StorageEngine::Swift
-        "nova" => 5,    // StorageEngine::Nova
-        "raptor" => 6,  // StorageEngine::Raptor
-        _ => 0,         // StorageEngine::Auto
+        "sst" => 1,    // StorageEngine::Sst
+        "helix" => 2,  // StorageEngine::Helix
+        "viper" => 3,  // StorageEngine::Viper
+        "swift" => 4,  // StorageEngine::Swift
+        "nova" => 5,   // StorageEngine::Nova
+        "raptor" => 6, // StorageEngine::Raptor
+        _ => 0,        // StorageEngine::Auto
     };
 
     // Map distance metric name to DistanceMetric enum value
     let distance_metric_value = match request.distance_metric.as_deref() {
-        Some("euclidean") => Some(1),  // DistanceMetric::Euclidean
+        Some("euclidean") => Some(1),   // DistanceMetric::Euclidean
         Some("dot_product") => Some(2), // DistanceMetric::DotProduct
         _ => Some(0),                   // DistanceMetric::Cosine (default)
     };

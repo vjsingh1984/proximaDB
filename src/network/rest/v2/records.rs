@@ -150,7 +150,7 @@ fn json_to_filter_clause_value(
 fn convert_typed_filters_to_clauses(
     typed_filters: &[TypedFilter],
 ) -> Result<Vec<crate::proto::proximadb_v1::FilterClause>, ApiError> {
-    use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp, FilterClause};
+    use crate::proto::proximadb_v1::{ComparisonOp, FilterClause, filter_clause::Value};
 
     let mut clauses = Vec::new();
 
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn test_convert_starts_with_filter() {
-        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+        use crate::proto::proximadb_v1::{ComparisonOp, filter_clause::Value};
 
         let filters = vec![TypedFilter {
             field: "name".to_string(),
@@ -1240,7 +1240,7 @@ mod tests {
 
     #[test]
     fn test_convert_ends_with_filter() {
-        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+        use crate::proto::proximadb_v1::{ComparisonOp, filter_clause::Value};
 
         let filters = vec![TypedFilter {
             field: "name".to_string(),
@@ -1262,7 +1262,7 @@ mod tests {
 
     #[test]
     fn test_convert_in_filter() {
-        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+        use crate::proto::proximadb_v1::{ComparisonOp, filter_clause::Value};
 
         let filters = vec![TypedFilter {
             field: "status".to_string(),
@@ -1288,7 +1288,7 @@ mod tests {
 
     #[test]
     fn test_convert_in_filter_with_numbers() {
-        use crate::proto::proximadb_v1::{filter_clause::Value, ComparisonOp};
+        use crate::proto::proximadb_v1::{ComparisonOp, filter_clause::Value};
 
         let filters = vec![TypedFilter {
             field: "priority".to_string(),

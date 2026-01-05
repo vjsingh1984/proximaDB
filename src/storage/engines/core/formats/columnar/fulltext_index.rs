@@ -458,13 +458,7 @@ impl Tokenizer {
     }
 
     /// Process a token: apply stemming, check validity
-    fn process_token(
-        &self,
-        text: &str,
-        position: u32,
-        start: usize,
-        end: usize,
-    ) -> Option<Token> {
+    fn process_token(&self, text: &str, position: u32, start: usize, end: usize) -> Option<Token> {
         if !self.is_valid_token(text) {
             return None;
         }
@@ -530,11 +524,7 @@ impl Tokenizer {
 
         for (suffix, replacement) in suffixes {
             if result.ends_with(suffix) && result.len() > suffix.len() + 2 {
-                result = format!(
-                    "{}{}",
-                    &result[..result.len() - suffix.len()],
-                    replacement
-                );
+                result = format!("{}{}", &result[..result.len() - suffix.len()], replacement);
                 break;
             }
         }
@@ -640,8 +630,7 @@ impl TextStatistics {
     pub fn update_after_add(&mut self, token_count: u32) {
         self.total_documents += 1;
         self.total_tokens += token_count as u64;
-        self.avg_document_length =
-            self.total_tokens as f64 / self.total_documents.max(1) as f64;
+        self.avg_document_length = self.total_tokens as f64 / self.total_documents.max(1) as f64;
 
         if token_count > self.max_document_length {
             self.max_document_length = token_count;
@@ -760,12 +749,7 @@ impl BM25Scorer {
     /// Calculate BM25 score for a single term in a document
     ///
     /// score = IDF * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl/avgdl))
-    pub fn term_score(
-        &self,
-        term_frequency: u32,
-        doc_frequency: u32,
-        doc_length: u32,
-    ) -> f64 {
+    pub fn term_score(&self, term_frequency: u32, doc_frequency: u32, doc_length: u32) -> f64 {
         let tf = term_frequency as f64;
         let dl = doc_length as f64;
         let k1 = self.config.k1;
@@ -1065,7 +1049,11 @@ impl FullTextIndex {
         // Remove from inverted index
         let mut empty_terms = Vec::new();
         for (term, posting_list) in self.inverted_index.iter_mut() {
-            if let Some(idx) = posting_list.postings.iter().position(|p| p.doc_id == doc_id) {
+            if let Some(idx) = posting_list
+                .postings
+                .iter()
+                .position(|p| p.doc_id == doc_id)
+            {
                 let removed = posting_list.postings.remove(idx);
                 posting_list.doc_frequency -= 1;
                 posting_list.total_frequency -= removed.term_frequency as u64;
@@ -1113,8 +1101,15 @@ impl FullTextIndex {
         }
 
         // Build candidate documents
-        let mut doc_scores: HashMap<String, (f64, Vec<String>, HashMap<String, u32>, HashMap<String, Vec<u32>>)> =
-            HashMap::new();
+        let mut doc_scores: HashMap<
+            String,
+            (
+                f64,
+                Vec<String>,
+                HashMap<String, u32>,
+                HashMap<String, Vec<u32>>,
+            ),
+        > = HashMap::new();
 
         let query_terms: HashSet<_> = query_tokens.iter().cloned().collect();
         let n_query_terms = query_terms.len();
@@ -1165,19 +1160,25 @@ impl FullTextIndex {
 
                 true
             })
-            .map(|(doc_id, (score, matched_terms, term_frequencies, highlight_positions))| {
-                SearchResult {
-                    doc_id,
-                    score,
-                    matched_terms,
-                    term_frequencies,
-                    highlight_positions,
-                }
-            })
+            .map(
+                |(doc_id, (score, matched_terms, term_frequencies, highlight_positions))| {
+                    SearchResult {
+                        doc_id,
+                        score,
+                        matched_terms,
+                        term_frequencies,
+                        highlight_positions,
+                    }
+                },
+            )
             .collect();
 
         // Sort by score descending
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Limit results
         results.truncate(options.limit);
@@ -1360,8 +1361,8 @@ impl FullTextIndexBuilder {
 
     /// Build the index from all pending documents
     pub fn build(self) -> Result<FullTextIndex, FullTextIndexError> {
-        let mut index = FullTextIndex::new(self.tokenizer_config)
-            .with_bm25_config(self.bm25_config);
+        let mut index =
+            FullTextIndex::new(self.tokenizer_config).with_bm25_config(self.bm25_config);
 
         for (doc_id, text, metadata) in self.pending_docs {
             if metadata.is_empty() {
@@ -1516,9 +1517,15 @@ mod tests {
     fn test_fulltext_search() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "The quick brown fox jumps over").unwrap();
-        index.add_document("doc2", "A lazy brown dog sleeps").unwrap();
-        index.add_document("doc3", "The quick blue bird flies").unwrap();
+        index
+            .add_document("doc1", "The quick brown fox jumps over")
+            .unwrap();
+        index
+            .add_document("doc2", "A lazy brown dog sleeps")
+            .unwrap();
+        index
+            .add_document("doc3", "The quick blue bird flies")
+            .unwrap();
 
         let results = index.search("quick brown", 10);
 
@@ -1555,8 +1562,8 @@ mod tests {
 
     #[test]
     fn test_index_builder() {
-        let mut builder = FullTextIndexBuilder::new()
-            .with_tokenizer(TokenizerConfig::for_keyword_search());
+        let mut builder =
+            FullTextIndexBuilder::new().with_tokenizer(TokenizerConfig::for_keyword_search());
 
         builder.add_document("doc1".to_string(), "First document text".to_string());
         builder.add_document("doc2".to_string(), "Second document text".to_string());
@@ -1592,10 +1599,8 @@ mod tests {
         index.add_document("doc3", "slow brown tortoise").unwrap();
 
         // Require all terms
-        let results = index.search_with_options(
-            "quick brown",
-            SearchOptions::top_k(10).require_all(),
-        );
+        let results =
+            index.search_with_options("quick brown", SearchOptions::top_k(10).require_all());
 
         // Only doc1 has both terms
         assert_eq!(results.len(), 1);
@@ -1620,7 +1625,9 @@ mod tests {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
         index.add_document("doc1", "one two three").unwrap();
-        index.add_document("doc2", "four five six seven eight").unwrap();
+        index
+            .add_document("doc2", "four five six seven eight")
+            .unwrap();
 
         let stats = index.statistics();
         assert_eq!(stats.total_documents, 2);

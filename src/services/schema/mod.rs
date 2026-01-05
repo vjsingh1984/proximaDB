@@ -62,9 +62,9 @@ pub mod evolution;
 pub mod inference;
 
 pub use evolution::{
-    CompatibilityIssue, CompatibilityLevel, CompatibilityResult, EvolutionConfig,
-    EvolutionResult, IssueSeverity, MigrationEstimate, SchemaChange, SchemaEvolutionService,
-    SchemaVersion, column_type_to_filterable,
+    CompatibilityIssue, CompatibilityLevel, CompatibilityResult, EvolutionConfig, EvolutionResult,
+    IssueSeverity, MigrationEstimate, SchemaChange, SchemaEvolutionService, SchemaVersion,
+    column_type_to_filterable,
 };
 pub use inference::{
     InferenceConfig, InferredColumn, InferredSchema, SchemaInferenceService, detect_boolean,

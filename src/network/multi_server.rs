@@ -1748,9 +1748,10 @@ impl MultiServer {
             debug!("✅ Added StreamingService to gRPC server");
 
             // Add V2 ProximaRecordService for typed fields and schema support
-            let proxima_record_service_impl = crate::network::grpc::v2::ProximaRecordServiceImpl::new(
-                services.unified_handlers.clone(),
-            );
+            let proxima_record_service_impl =
+                crate::network::grpc::v2::ProximaRecordServiceImpl::new(
+                    services.unified_handlers.clone(),
+                );
             let proxima_record_service = proxima_record_service_impl.into_server();
             debug!("✅ Added V2 ProximaRecordService to gRPC server");
 

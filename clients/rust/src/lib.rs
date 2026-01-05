@@ -230,7 +230,9 @@ pub use error::{
 };
 
 #[cfg(feature = "client")]
-pub use client::{ClientBuilder, ClientConfig, CollectionInfo, GraphInfo, HealthStatus, ProximaClient};
+pub use client::{
+    ClientBuilder, ClientConfig, CollectionInfo, GraphInfo, HealthStatus, ProximaClient,
+};
 
 pub use collection::{
     CollectionBuilder, CollectionHandle, DistanceMetric, IndexType, InsertBuilder,
@@ -241,8 +243,8 @@ pub use search::{SearchBuilder, SearchMode, SearchResult};
 
 // Filter builder exports
 pub use filter::{
-    and_filters, eq, in_list, ne, or_filters, range, Filter, FilterBuilder, FilterCondition,
-    FilterGroup, FilterNode, FilterOp, LogicalOp,
+    Filter, FilterBuilder, FilterCondition, FilterGroup, FilterNode, FilterOp, LogicalOp,
+    and_filters, eq, in_list, ne, or_filters, range,
 };
 
 // Graph exports (client mode only)

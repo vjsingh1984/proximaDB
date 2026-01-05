@@ -160,7 +160,9 @@ impl V2ApiTestHarness {
         let body: JsonValue = response.json().await?;
 
         if !status.is_success() {
-            return Err(format!("Failed to list collections (status {}): {:?}", status, body).into());
+            return Err(
+                format!("Failed to list collections (status {}): {:?}", status, body).into(),
+            );
         }
 
         Ok(body)
@@ -181,9 +183,7 @@ impl V2ApiTestHarness {
         let body: JsonValue = response.json().await?;
 
         if !status.is_success() {
-            return Err(
-                format!("Failed to get collection (status {}): {:?}", status, body).into(),
-            );
+            return Err(format!("Failed to get collection (status {}): {:?}", status, body).into());
         }
 
         Ok(body)
@@ -353,10 +353,7 @@ async fn test_create_collection_basic() {
     };
 
     if !harness.check_server().await {
-        eprintln!(
-            "Skipping test: Server not available at {}",
-            REST_BASE_URL
-        );
+        eprintln!("Skipping test: Server not available at {}", REST_BASE_URL);
         eprintln!("Start the server with: cargo run --release --bin proximadb-server");
         return;
     }
@@ -447,7 +444,9 @@ async fn test_create_collection_with_schema() {
                 "Response should contain collection_id"
             );
             assert_eq!(
-                response.get("proxima_record_enabled").and_then(|v| v.as_bool()),
+                response
+                    .get("proxima_record_enabled")
+                    .and_then(|v| v.as_bool()),
                 Some(true),
                 "proxima_record_enabled should be true"
             );
@@ -591,7 +590,9 @@ async fn test_list_collections() {
     sleep(Duration::from_millis(500)).await;
 
     // List collections
-    let result = harness.list_collections(Some(10), Some(0), Some(true)).await;
+    let result = harness
+        .list_collections(Some(10), Some(0), Some(true))
+        .await;
 
     match result {
         Ok(response) => {
@@ -625,9 +626,9 @@ async fn test_list_collections() {
                 .and_then(|v| v.as_array())
                 .unwrap_or(&empty_vec);
 
-            let found = collections
-                .iter()
-                .any(|c| c.get("name").and_then(|v| v.as_str()) == Some(&harness.test_collection_name));
+            let found = collections.iter().any(|c| {
+                c.get("name").and_then(|v| v.as_str()) == Some(&harness.test_collection_name)
+            });
 
             assert!(found, "Created collection should be in the list");
 
@@ -685,9 +686,9 @@ async fn test_list_collections_with_stats() {
                 .unwrap_or(&empty_vec);
 
             // Find our collection
-            let our_collection = collections
-                .iter()
-                .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(&harness.test_collection_name));
+            let our_collection = collections.iter().find(|c| {
+                c.get("name").and_then(|v| v.as_str()) == Some(&harness.test_collection_name)
+            });
 
             if let Some(coll) = our_collection {
                 // When include_stats is true, record_count should be present
@@ -1554,9 +1555,15 @@ async fn test_complete_workflow() {
         "enforcement": "hybrid"
     });
 
-    match harness.create_collection_with_schema(Some(schema), true).await {
+    match harness
+        .create_collection_with_schema(Some(schema), true)
+        .await
+    {
         Ok(response) => {
-            println!("  Collection created: {}", response.get("collection_id").unwrap_or(&json!("unknown")));
+            println!(
+                "  Collection created: {}",
+                response.get("collection_id").unwrap_or(&json!("unknown"))
+            );
         }
         Err(e) => {
             eprintln!("  Failed to create collection: {}", e);
@@ -1569,7 +1576,10 @@ async fn test_complete_workflow() {
     let records = generate_test_records_with_text(15, TEST_DIMENSION as usize);
     match harness.insert_records(records, None).await {
         Ok(response) => {
-            let count = response.get("inserted_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let count = response
+                .get("inserted_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             println!("  Inserted {} records", count);
         }
         Err(e) => {
@@ -1597,10 +1607,20 @@ async fn test_complete_workflow() {
     // Step 4: Search without filters
     println!("Step 4: Searching without filters...");
     let query_vector: Vec<f32> = vec![0.5; TEST_DIMENSION as usize];
-    match harness.search(query_vector.clone(), 5, None, None, None).await {
+    match harness
+        .search(query_vector.clone(), 5, None, None, None)
+        .await
+    {
         Ok(response) => {
-            let results = response.get("results").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-            let latency = response.get("latency_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+            let results = response
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let latency = response
+                .get("latency_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             println!("  Found {} results in {}ms", results, latency);
         }
         Err(e) => {
@@ -1615,9 +1635,16 @@ async fn test_complete_workflow() {
         "op": "eq",
         "value": "cat_0"
     })];
-    match harness.search(query_vector, 10, Some(filters), None, Some(true)).await {
+    match harness
+        .search(query_vector, 10, Some(filters), None, Some(true))
+        .await
+    {
         Ok(response) => {
-            let results = response.get("results").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            let results = response
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
             println!("  Found {} filtered results", results);
         }
         Err(e) => {
@@ -1678,13 +1705,14 @@ async fn test_v2_api_summary() {
     };
 
     let available = harness.check_server().await;
-    println!(
-        "\nServer Status ({}):",
-        REST_BASE_URL
-    );
+    println!("\nServer Status ({}):", REST_BASE_URL);
     println!(
         "  REST API: {}",
-        if available { "AVAILABLE" } else { "NOT AVAILABLE" }
+        if available {
+            "AVAILABLE"
+        } else {
+            "NOT AVAILABLE"
+        }
     );
 
     if available {

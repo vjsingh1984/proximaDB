@@ -279,3 +279,567 @@ impl std::fmt::Display for SecurityAlertSeverity {
         write!(f, "{}", s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== AuditEvent Tests ====================
+
+    #[test]
+    fn test_audit_event_new_creates_valid_event() {
+        let resource = AuditResource::new("collection".to_string(), "test-collection".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        );
+
+        assert!(!event.event_id.is_empty());
+        assert_eq!(event.event_type, AuditEventType::DataAccess);
+        assert_eq!(event.action, "read");
+        assert!(matches!(event.result, AuditResult::Success));
+        assert!(event.user_id.is_none());
+        assert!(event.tenant_id.is_none());
+        assert!(event.risk_score.is_none());
+    }
+
+    #[test]
+    fn test_audit_event_with_user() {
+        let resource = AuditResource::new("collection".to_string(), "test-collection".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::Authentication,
+            resource,
+            "login".to_string(),
+            AuditResult::Success,
+        )
+        .with_user("user-123".to_string());
+
+        assert_eq!(event.user_id, Some("user-123".to_string()));
+    }
+
+    #[test]
+    fn test_audit_event_with_tenant() {
+        let resource = AuditResource::new("system".to_string(), "config".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::SystemConfiguration,
+            resource,
+            "update".to_string(),
+            AuditResult::Success,
+        )
+        .with_tenant("tenant-abc".to_string());
+
+        assert_eq!(event.tenant_id, Some("tenant-abc".to_string()));
+    }
+
+    #[test]
+    fn test_audit_event_with_request_context() {
+        let resource = AuditResource::new("api".to_string(), "endpoint".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::APIAccess,
+            resource,
+            "call".to_string(),
+            AuditResult::Success,
+        )
+        .with_request_context(
+            "req-12345".to_string(),
+            Some("192.168.1.100".to_string()),
+            Some("Mozilla/5.0".to_string()),
+        );
+
+        assert_eq!(event.request_id, Some("req-12345".to_string()));
+        assert_eq!(event.ip_address, Some("192.168.1.100".to_string()));
+        assert_eq!(event.user_agent, Some("Mozilla/5.0".to_string()));
+    }
+
+    #[test]
+    fn test_audit_event_with_detail() {
+        let resource = AuditResource::new("vector".to_string(), "vec-1".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::DataModification,
+            resource,
+            "insert".to_string(),
+            AuditResult::Success,
+        )
+        .with_detail("vector_count".to_string(), serde_json::json!(100))
+        .with_detail("dimension".to_string(), serde_json::json!(768));
+
+        assert_eq!(event.details.len(), 2);
+        assert_eq!(
+            event.details.get("vector_count"),
+            Some(&serde_json::json!(100))
+        );
+        assert_eq!(
+            event.details.get("dimension"),
+            Some(&serde_json::json!(768))
+        );
+    }
+
+    #[test]
+    fn test_audit_event_with_risk_score_clamping() {
+        let resource = AuditResource::new("collection".to_string(), "test".to_string());
+
+        // Test clamping above 1.0
+        let event_high = AuditEvent::new(
+            AuditEventType::SecurityEvent,
+            resource.clone(),
+            "suspicious".to_string(),
+            AuditResult::Success,
+        )
+        .with_risk_score(1.5);
+        assert_eq!(event_high.risk_score, Some(1.0));
+
+        // Test clamping below 0.0
+        let event_low = AuditEvent::new(
+            AuditEventType::SecurityEvent,
+            resource.clone(),
+            "normal".to_string(),
+            AuditResult::Success,
+        )
+        .with_risk_score(-0.5);
+        assert_eq!(event_low.risk_score, Some(0.0));
+
+        // Test normal value
+        let event_normal = AuditEvent::new(
+            AuditEventType::SecurityEvent,
+            resource,
+            "moderate".to_string(),
+            AuditResult::Success,
+        )
+        .with_risk_score(0.65);
+        assert_eq!(event_normal.risk_score, Some(0.65));
+    }
+
+    #[test]
+    fn test_audit_event_builder_chain() {
+        let resource = AuditResource::new("collection".to_string(), "products".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "search".to_string(),
+            AuditResult::Success,
+        )
+        .with_user("user-1".to_string())
+        .with_tenant("tenant-1".to_string())
+        .with_request_context("req-1".to_string(), Some("10.0.0.1".to_string()), None)
+        .with_detail("query".to_string(), serde_json::json!("test query"))
+        .with_risk_score(0.3);
+
+        assert_eq!(event.user_id, Some("user-1".to_string()));
+        assert_eq!(event.tenant_id, Some("tenant-1".to_string()));
+        assert_eq!(event.request_id, Some("req-1".to_string()));
+        assert_eq!(event.ip_address, Some("10.0.0.1".to_string()));
+        assert!(event.user_agent.is_none());
+        assert_eq!(event.details.len(), 1);
+        assert_eq!(event.risk_score, Some(0.3));
+    }
+
+    // ==================== AuditResource Tests ====================
+
+    #[test]
+    fn test_audit_resource_new() {
+        let resource = AuditResource::new("collection".to_string(), "my-collection".to_string());
+
+        assert_eq!(resource.resource_type, "collection");
+        assert_eq!(resource.resource_id, "my-collection");
+        assert!(resource.parent_resource.is_none());
+    }
+
+    #[test]
+    fn test_audit_resource_with_parent() {
+        let parent = AuditResource::new("tenant".to_string(), "tenant-123".to_string());
+        let child = AuditResource::new("collection".to_string(), "my-collection".to_string())
+            .with_parent(parent);
+
+        assert_eq!(child.resource_type, "collection");
+        assert_eq!(child.resource_id, "my-collection");
+        assert!(child.parent_resource.is_some());
+
+        let parent_ref = child.parent_resource.as_ref().unwrap();
+        assert_eq!(parent_ref.resource_type, "tenant");
+        assert_eq!(parent_ref.resource_id, "tenant-123");
+    }
+
+    #[test]
+    fn test_audit_resource_nested_hierarchy() {
+        let tenant = AuditResource::new("tenant".to_string(), "tenant-1".to_string());
+        let collection = AuditResource::new("collection".to_string(), "collection-1".to_string())
+            .with_parent(tenant);
+        let vector = AuditResource::new("vector".to_string(), "vector-1".to_string())
+            .with_parent(collection);
+
+        assert_eq!(vector.resource_type, "vector");
+        let parent = vector.parent_resource.as_ref().unwrap();
+        assert_eq!(parent.resource_type, "collection");
+        let grandparent = parent.parent_resource.as_ref().unwrap();
+        assert_eq!(grandparent.resource_type, "tenant");
+    }
+
+    // ==================== AuditResult Tests ====================
+
+    #[test]
+    fn test_audit_result_success() {
+        let result = AuditResult::Success;
+        assert!(matches!(result, AuditResult::Success));
+    }
+
+    #[test]
+    fn test_audit_result_failure() {
+        let result = AuditResult::Failure {
+            error_code: "AUTH_FAILED".to_string(),
+            error_message: "Invalid credentials".to_string(),
+        };
+
+        if let AuditResult::Failure {
+            error_code,
+            error_message,
+        } = result
+        {
+            assert_eq!(error_code, "AUTH_FAILED");
+            assert_eq!(error_message, "Invalid credentials");
+        } else {
+            panic!("Expected Failure variant");
+        }
+    }
+
+    #[test]
+    fn test_audit_result_partial() {
+        let result = AuditResult::Partial {
+            warnings: vec![
+                "Some vectors skipped".to_string(),
+                "Rate limit applied".to_string(),
+            ],
+        };
+
+        if let AuditResult::Partial { warnings } = result {
+            assert_eq!(warnings.len(), 2);
+            assert_eq!(warnings[0], "Some vectors skipped");
+        } else {
+            panic!("Expected Partial variant");
+        }
+    }
+
+    // ==================== SecurityAlert Tests ====================
+
+    #[test]
+    fn test_security_alert_new() {
+        let alert = SecurityAlert::new(
+            SecurityAlertType::SuspiciousAuthActivity,
+            SecurityAlertSeverity::High,
+            "Multiple failed login attempts detected".to_string(),
+        );
+
+        assert!(!alert.alert_id.is_empty());
+        assert!(matches!(
+            alert.alert_type,
+            SecurityAlertType::SuspiciousAuthActivity
+        ));
+        assert!(matches!(alert.severity, SecurityAlertSeverity::High));
+        assert_eq!(alert.description, "Multiple failed login attempts detected");
+        assert!(alert.user_id.is_none());
+        assert!(alert.ip_address.is_none());
+        assert!(alert.related_event_id.is_empty());
+    }
+
+    #[test]
+    fn test_security_alert_with_user() {
+        let alert = SecurityAlert::new(
+            SecurityAlertType::BruteForceAttack,
+            SecurityAlertSeverity::Critical,
+            "Brute force attack detected".to_string(),
+        )
+        .with_user("attacker-user".to_string());
+
+        assert_eq!(alert.user_id, Some("attacker-user".to_string()));
+    }
+
+    #[test]
+    fn test_security_alert_with_network_context() {
+        let alert = SecurityAlert::new(
+            SecurityAlertType::CrossTenantAccess,
+            SecurityAlertSeverity::Critical,
+            "Cross-tenant access attempt".to_string(),
+        )
+        .with_network_context("192.168.1.50".to_string());
+
+        assert_eq!(alert.ip_address, Some("192.168.1.50".to_string()));
+    }
+
+    #[test]
+    fn test_security_alert_with_related_event() {
+        let alert = SecurityAlert::new(
+            SecurityAlertType::PrivilegeEscalation,
+            SecurityAlertSeverity::High,
+            "Privilege escalation attempt".to_string(),
+        )
+        .with_related_event("evt-12345".to_string());
+
+        assert_eq!(alert.related_event_id, "evt-12345");
+    }
+
+    #[test]
+    fn test_security_alert_builder_chain() {
+        let alert = SecurityAlert::new(
+            SecurityAlertType::DataExfiltration,
+            SecurityAlertSeverity::Critical,
+            "Large data export detected".to_string(),
+        )
+        .with_user("suspicious-user".to_string())
+        .with_network_context("10.0.0.5".to_string())
+        .with_related_event("evt-99999".to_string());
+
+        assert_eq!(alert.user_id, Some("suspicious-user".to_string()));
+        assert_eq!(alert.ip_address, Some("10.0.0.5".to_string()));
+        assert_eq!(alert.related_event_id, "evt-99999");
+    }
+
+    // ==================== AuditEventType Tests ====================
+
+    #[test]
+    fn test_audit_event_type_from_str() {
+        assert_eq!(
+            "authentication".parse::<AuditEventType>().unwrap(),
+            AuditEventType::Authentication
+        );
+        assert_eq!(
+            "authorization".parse::<AuditEventType>().unwrap(),
+            AuditEventType::Authorization
+        );
+        assert_eq!(
+            "data_access".parse::<AuditEventType>().unwrap(),
+            AuditEventType::DataAccess
+        );
+        assert_eq!(
+            "data_modification".parse::<AuditEventType>().unwrap(),
+            AuditEventType::DataModification
+        );
+        assert_eq!(
+            "system_configuration".parse::<AuditEventType>().unwrap(),
+            AuditEventType::SystemConfiguration
+        );
+        assert_eq!(
+            "security_event".parse::<AuditEventType>().unwrap(),
+            AuditEventType::SecurityEvent
+        );
+        assert_eq!(
+            "compliance_event".parse::<AuditEventType>().unwrap(),
+            AuditEventType::ComplianceEvent
+        );
+        assert_eq!(
+            "performance_event".parse::<AuditEventType>().unwrap(),
+            AuditEventType::PerformanceEvent
+        );
+        assert_eq!(
+            "tenant_management".parse::<AuditEventType>().unwrap(),
+            AuditEventType::TenantManagement
+        );
+        assert_eq!(
+            "api_access".parse::<AuditEventType>().unwrap(),
+            AuditEventType::APIAccess
+        );
+    }
+
+    #[test]
+    fn test_audit_event_type_from_str_case_insensitive() {
+        assert_eq!(
+            "AUTHENTICATION".parse::<AuditEventType>().unwrap(),
+            AuditEventType::Authentication
+        );
+        assert_eq!(
+            "Authentication".parse::<AuditEventType>().unwrap(),
+            AuditEventType::Authentication
+        );
+        assert_eq!(
+            "DATA_ACCESS".parse::<AuditEventType>().unwrap(),
+            AuditEventType::DataAccess
+        );
+    }
+
+    #[test]
+    fn test_audit_event_type_from_str_invalid() {
+        let result = "invalid_type".parse::<AuditEventType>();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown audit event type"));
+    }
+
+    #[test]
+    fn test_audit_event_type_display() {
+        assert_eq!(AuditEventType::Authentication.to_string(), "authentication");
+        assert_eq!(AuditEventType::Authorization.to_string(), "authorization");
+        assert_eq!(AuditEventType::DataAccess.to_string(), "data_access");
+        assert_eq!(
+            AuditEventType::DataModification.to_string(),
+            "data_modification"
+        );
+        assert_eq!(
+            AuditEventType::SystemConfiguration.to_string(),
+            "system_configuration"
+        );
+        assert_eq!(AuditEventType::SecurityEvent.to_string(), "security_event");
+        assert_eq!(
+            AuditEventType::ComplianceEvent.to_string(),
+            "compliance_event"
+        );
+        assert_eq!(
+            AuditEventType::PerformanceEvent.to_string(),
+            "performance_event"
+        );
+        assert_eq!(
+            AuditEventType::TenantManagement.to_string(),
+            "tenant_management"
+        );
+        assert_eq!(AuditEventType::APIAccess.to_string(), "api_access");
+    }
+
+    // ==================== SecurityAlertType Tests ====================
+
+    #[test]
+    fn test_security_alert_type_display() {
+        assert_eq!(
+            SecurityAlertType::SuspiciousAuthActivity.to_string(),
+            "suspicious_auth_activity"
+        );
+        assert_eq!(
+            SecurityAlertType::CrossTenantAccess.to_string(),
+            "cross_tenant_access"
+        );
+        assert_eq!(
+            SecurityAlertType::PrivilegeEscalation.to_string(),
+            "privilege_escalation"
+        );
+        assert_eq!(
+            SecurityAlertType::DataExfiltration.to_string(),
+            "data_exfiltration"
+        );
+        assert_eq!(
+            SecurityAlertType::UnauthorizedAPIAccess.to_string(),
+            "unauthorized_api_access"
+        );
+        assert_eq!(
+            SecurityAlertType::BruteForceAttack.to_string(),
+            "brute_force_attack"
+        );
+        assert_eq!(
+            SecurityAlertType::AnomalousDataAccess.to_string(),
+            "anomalous_data_access"
+        );
+    }
+
+    // ==================== SecurityAlertSeverity Tests ====================
+
+    #[test]
+    fn test_security_alert_severity_display() {
+        assert_eq!(SecurityAlertSeverity::Low.to_string(), "low");
+        assert_eq!(SecurityAlertSeverity::Medium.to_string(), "medium");
+        assert_eq!(SecurityAlertSeverity::High.to_string(), "high");
+        assert_eq!(SecurityAlertSeverity::Critical.to_string(), "critical");
+    }
+
+    // ==================== Serialization Tests ====================
+
+    #[test]
+    fn test_audit_event_serialization() {
+        let resource = AuditResource::new("collection".to_string(), "test".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        )
+        .with_user("test-user".to_string());
+
+        let json = serde_json::to_string(&event).expect("Failed to serialize AuditEvent");
+        assert!(json.contains("test-user"));
+        assert!(json.contains("DataAccess"));
+
+        let deserialized: AuditEvent =
+            serde_json::from_str(&json).expect("Failed to deserialize AuditEvent");
+        assert_eq!(deserialized.user_id, Some("test-user".to_string()));
+        assert_eq!(deserialized.event_type, AuditEventType::DataAccess);
+    }
+
+    #[test]
+    fn test_audit_result_serialization() {
+        let success = AuditResult::Success;
+        let success_json = serde_json::to_string(&success).expect("Failed to serialize");
+        assert!(success_json.contains("Success"));
+
+        let failure = AuditResult::Failure {
+            error_code: "ERR001".to_string(),
+            error_message: "Test error".to_string(),
+        };
+        let failure_json = serde_json::to_string(&failure).expect("Failed to serialize");
+        assert!(failure_json.contains("ERR001"));
+        assert!(failure_json.contains("Test error"));
+
+        let partial = AuditResult::Partial {
+            warnings: vec!["warning1".to_string()],
+        };
+        let partial_json = serde_json::to_string(&partial).expect("Failed to serialize");
+        assert!(partial_json.contains("warning1"));
+    }
+
+    #[test]
+    fn test_security_alert_serialization() {
+        let alert = SecurityAlert::new(
+            SecurityAlertType::BruteForceAttack,
+            SecurityAlertSeverity::Critical,
+            "Test alert".to_string(),
+        );
+
+        let json = serde_json::to_string(&alert).expect("Failed to serialize SecurityAlert");
+        assert!(json.contains("BruteForceAttack"));
+        assert!(json.contains("Critical"));
+        assert!(json.contains("Test alert"));
+
+        let deserialized: SecurityAlert =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert!(matches!(
+            deserialized.alert_type,
+            SecurityAlertType::BruteForceAttack
+        ));
+        assert!(matches!(
+            deserialized.severity,
+            SecurityAlertSeverity::Critical
+        ));
+    }
+
+    #[test]
+    fn test_audit_resource_serialization() {
+        let parent = AuditResource::new("tenant".to_string(), "t1".to_string());
+        let resource =
+            AuditResource::new("collection".to_string(), "c1".to_string()).with_parent(parent);
+
+        let json = serde_json::to_string(&resource).expect("Failed to serialize");
+        assert!(json.contains("collection"));
+        assert!(json.contains("tenant"));
+
+        let deserialized: AuditResource =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(deserialized.resource_type, "collection");
+        assert!(deserialized.parent_resource.is_some());
+    }
+
+    // ==================== Hash and Eq Tests ====================
+
+    #[test]
+    fn test_audit_event_type_hash_eq() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(AuditEventType::Authentication);
+        set.insert(AuditEventType::Authorization);
+        set.insert(AuditEventType::Authentication); // Duplicate
+
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&AuditEventType::Authentication));
+        assert!(set.contains(&AuditEventType::Authorization));
+    }
+
+    #[test]
+    fn test_audit_event_type_equality() {
+        assert_eq!(AuditEventType::DataAccess, AuditEventType::DataAccess);
+        assert_ne!(AuditEventType::DataAccess, AuditEventType::DataModification);
+    }
+}

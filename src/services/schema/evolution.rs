@@ -185,16 +185,10 @@ pub enum SchemaChange {
     },
 
     /// Column was removed
-    ColumnRemoved {
-        column_name: String,
-        data_type: i32,
-    },
+    ColumnRemoved { column_name: String, data_type: i32 },
 
     /// Column was renamed
-    ColumnRenamed {
-        old_name: String,
-        new_name: String,
-    },
+    ColumnRenamed { old_name: String, new_name: String },
 
     /// Column type was changed
     TypeChanged {
@@ -229,9 +223,9 @@ impl SchemaChange {
     pub fn is_breaking(&self) -> bool {
         match self {
             SchemaChange::ColumnRemoved { .. } => true,
-            SchemaChange::TypeChanged { old_type, new_type, .. } => {
-                !is_safe_type_widening(*old_type, *new_type)
-            }
+            SchemaChange::TypeChanged {
+                old_type, new_type, ..
+            } => !is_safe_type_widening(*old_type, *new_type),
             SchemaChange::NullabilityChanged {
                 old_nullable,
                 new_nullable,
@@ -249,7 +243,11 @@ impl SchemaChange {
                 nullable,
                 ..
             } => {
-                let null_str = if *nullable { "nullable" } else { "non-nullable" };
+                let null_str = if *nullable {
+                    "nullable"
+                } else {
+                    "non-nullable"
+                };
                 format!("Added {} column '{}'", null_str, column_name)
             }
             SchemaChange::ColumnRemoved { column_name, .. } => {
@@ -638,7 +636,10 @@ impl SchemaEvolutionService {
 
             if !self.config.allow_breaking_changes {
                 for change in breaking_changes {
-                    result.add_error(format!("Breaking change detected: {}", change.description()));
+                    result.add_error(format!(
+                        "Breaking change detected: {}",
+                        change.description()
+                    ));
                 }
             } else {
                 for change in breaking_changes {
@@ -744,7 +745,11 @@ impl SchemaEvolutionService {
         // Analyze each change for compatibility
         for change in &changes {
             match change {
-                SchemaChange::ColumnAdded { column_name, nullable, .. } => {
+                SchemaChange::ColumnAdded {
+                    column_name,
+                    nullable,
+                    ..
+                } => {
                     if !nullable {
                         // Check for default value
                         let has_default = new_schema
@@ -841,7 +846,11 @@ impl SchemaEvolutionService {
         // Determine final compatibility level
         if !result.is_compatible {
             result.compatibility_level = CompatibilityLevel::None;
-        } else if result.issues.iter().any(|i| i.severity == IssueSeverity::Warning) {
+        } else if result
+            .issues
+            .iter()
+            .any(|i| i.severity == IssueSeverity::Warning)
+        {
             if result.compatibility_level == CompatibilityLevel::Full {
                 result.compatibility_level = CompatibilityLevel::Backward;
             }
@@ -863,12 +872,12 @@ impl SchemaEvolutionService {
     ///
     /// Vector of `SchemaVersion` in chronological order.
     pub fn get_schema_history(&self, collection_name: &str) -> Result<Vec<SchemaVersion>> {
-        let history = self.history.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let history = self
+            .history
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
-        Ok(history
-            .get(collection_name)
-            .cloned()
-            .unwrap_or_default())
+        Ok(history.get(collection_name).cloned().unwrap_or_default())
     }
 
     /// Store a schema version in history
@@ -878,7 +887,10 @@ impl SchemaEvolutionService {
     /// * `collection_name` - Name of the collection
     /// * `version` - Schema version to store
     pub fn store_version(&self, collection_name: &str, version: SchemaVersion) -> Result<()> {
-        let mut history = self.history.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut history = self
+            .history
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
 
         let versions = history
             .entry(collection_name.to_string())
@@ -968,7 +980,11 @@ impl SchemaEvolutionService {
     }
 
     /// Get a specific schema version
-    pub fn get_version(&self, collection_name: &str, version: u64) -> Result<Option<SchemaVersion>> {
+    pub fn get_version(
+        &self,
+        collection_name: &str,
+        version: u64,
+    ) -> Result<Option<SchemaVersion>> {
         let history = self.get_schema_history(collection_name)?;
 
         Ok(history.into_iter().find(|v| v.version == version))
@@ -987,10 +1003,16 @@ impl SchemaEvolutionService {
         let mut changes = Vec::new();
 
         // Build column maps
-        let old_columns: HashMap<&str, &TypedColumnConfig> =
-            old_schema.columns.iter().map(|c| (c.name.as_str(), c)).collect();
-        let new_columns: HashMap<&str, &TypedColumnConfig> =
-            new_schema.columns.iter().map(|c| (c.name.as_str(), c)).collect();
+        let old_columns: HashMap<&str, &TypedColumnConfig> = old_schema
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
+        let new_columns: HashMap<&str, &TypedColumnConfig> = new_schema
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c))
+            .collect();
 
         let old_names: HashSet<&str> = old_columns.keys().copied().collect();
         let new_names: HashSet<&str> = new_columns.keys().copied().collect();
@@ -1165,10 +1187,7 @@ impl SchemaEvolutionService {
             // Note: We don't remove the add/remove changes here as it would
             // modify the vector while iterating. In production, this should
             // be a configuration option for the user to confirm renames.
-            changes.push(SchemaChange::ColumnRenamed {
-                old_name,
-                new_name,
-            });
+            changes.push(SchemaChange::ColumnRenamed { old_name, new_name });
         }
     }
 
@@ -1275,7 +1294,9 @@ pub fn column_type_to_filterable(data_type: &ColumnDataType) -> FilterableDataTy
         ColumnDataType::Date => FilterableDataType::FilterableDate,
         ColumnDataType::Time => FilterableDataType::FilterableTime,
         ColumnDataType::Uuid => FilterableDataType::FilterableUuid,
-        ColumnDataType::Binary | ColumnDataType::BinaryLarge => FilterableDataType::FilterableBinary,
+        ColumnDataType::Binary | ColumnDataType::BinaryLarge => {
+            FilterableDataType::FilterableBinary
+        }
         ColumnDataType::Json => FilterableDataType::FilterableJson,
         ColumnDataType::ArrayText => FilterableDataType::FilterableArrayString,
         ColumnDataType::ArrayInteger => FilterableDataType::FilterableArrayInteger,
@@ -1424,9 +1445,11 @@ mod tests {
     fn test_evolve_schema_success() {
         let service = SchemaEvolutionService::with_defaults();
 
-        let old_schema = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let old_schema = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
 
         let new_schema = create_test_schema(vec![
             ("id", FilterableDataType::FilterableString as i32, false),
@@ -1445,9 +1468,11 @@ mod tests {
     fn test_evolve_schema_fails_non_nullable_without_default() {
         let service = SchemaEvolutionService::with_defaults();
 
-        let old_schema = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let old_schema = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
 
         let new_schema = create_test_schema(vec![
             ("id", FilterableDataType::FilterableString as i32, false),
@@ -1465,9 +1490,11 @@ mod tests {
     fn test_validate_compatibility_backward() {
         let service = SchemaEvolutionService::with_defaults();
 
-        let old_schema = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let old_schema = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
 
         let new_schema = create_test_schema(vec![
             ("id", FilterableDataType::FilterableString as i32, false),
@@ -1492,20 +1519,29 @@ mod tests {
             ("email", FilterableDataType::FilterableText as i32, true),
         ]);
 
-        let new_schema = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let new_schema = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
 
         let result = service.validate_compatibility(&old_schema, &new_schema);
 
-        assert!(result.issues.iter().any(|i| i.severity == IssueSeverity::Warning));
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| i.severity == IssueSeverity::Warning)
+        );
     }
 
     #[test]
     fn test_schema_version_creation() {
-        let schema = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let schema = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
 
         let version = SchemaVersion::new(1, schema, None, vec![]);
 
@@ -1519,9 +1555,11 @@ mod tests {
     fn test_schema_history() {
         let service = SchemaEvolutionService::with_defaults();
 
-        let schema1 = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let schema1 = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
         let version1 = SchemaVersion::new(1, schema1, None, vec![]);
 
         service.store_version("test_collection", version1).unwrap();
@@ -1544,9 +1582,11 @@ mod tests {
     fn test_schema_rollback() {
         let service = SchemaEvolutionService::with_defaults();
 
-        let schema1 = create_test_schema(vec![
-            ("id", FilterableDataType::FilterableString as i32, false),
-        ]);
+        let schema1 = create_test_schema(vec![(
+            "id",
+            FilterableDataType::FilterableString as i32,
+            false,
+        )]);
         let version1 = SchemaVersion::new(1, schema1.clone(), None, vec![]);
         service.store_version("test_collection", version1).unwrap();
 

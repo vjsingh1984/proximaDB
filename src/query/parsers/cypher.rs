@@ -77,9 +77,9 @@
 use crate::core::error::ProximaDBError;
 use crate::graph::query::ast::{
     CompiledPattern, CreateClause, CreateEdgeSpec, CreateNodeSpec, CypherQuery, DeleteClause,
-    EdgeDirection, EdgePattern, MatchPattern, MergeClause, NodePattern,
-    PropertyConstraint, PropertyProjection, ReadingClause, RemoveClause, RemoveItem, ReturnSpec,
-    SetClause, SetItem, UpdatingClause, WhereClause, WithClause,
+    EdgeDirection, EdgePattern, MatchPattern, MergeClause, NodePattern, PropertyConstraint,
+    PropertyProjection, ReadingClause, RemoveClause, RemoveItem, ReturnSpec, SetClause, SetItem,
+    UpdatingClause, WhereClause, WithClause,
 };
 use nom::{
     IResult,
@@ -150,23 +150,23 @@ pub enum Token {
     Semicolon,
 
     // Operators
-    Arrow,         // ->
-    LeftArrow,     // <-
-    Dash,          // -
-    Equals,        // =
-    NotEquals,     // <>
-    LessThan,      // <
-    GreaterThan,   // >
-    LessOrEqual,   // <=
-    GreaterOrEqual,// >=
-    Plus,          // +
-    Minus,         // -
-    Asterisk,      // *
-    Slash,         // /
-    Percent,       // %
-    Caret,         // ^
-    PlusEquals,    // +=
-    DoubleDot,     // ..
+    Arrow,          // ->
+    LeftArrow,      // <-
+    Dash,           // -
+    Equals,         // =
+    NotEquals,      // <>
+    LessThan,       // <
+    GreaterThan,    // >
+    LessOrEqual,    // <=
+    GreaterOrEqual, // >=
+    Plus,           // +
+    Minus,          // -
+    Asterisk,       // *
+    Slash,          // /
+    Percent,        // %
+    Caret,          // ^
+    PlusEquals,     // +=
+    DoubleDot,      // ..
 
     // Literals
     Integer(i64),
@@ -267,7 +267,11 @@ impl CypherLexer {
         }
 
         // Numbers
-        if c.is_ascii_digit() || (c == '-' && self.position + 1 < chars.len() && chars[self.position + 1].is_ascii_digit()) {
+        if c.is_ascii_digit()
+            || (c == '-'
+                && self.position + 1 < chars.len()
+                && chars[self.position + 1].is_ascii_digit())
+        {
             return self.consume_number(chars);
         }
 
@@ -346,7 +350,9 @@ impl CypherLexer {
             self.column += 1;
         }
 
-        Err(ProximaDBError::InvalidInput("Unterminated string literal".to_string()))
+        Err(ProximaDBError::InvalidInput(
+            "Unterminated string literal".to_string(),
+        ))
     }
 
     fn consume_number(&mut self, chars: &[char]) -> Result<Token, ProximaDBError> {
@@ -384,13 +390,17 @@ impl CypherLexer {
         }
 
         // Exponent part
-        if self.position < chars.len() && (chars[self.position] == 'e' || chars[self.position] == 'E') {
+        if self.position < chars.len()
+            && (chars[self.position] == 'e' || chars[self.position] == 'E')
+        {
             is_float = true;
             num_str.push('e');
             self.position += 1;
             self.column += 1;
 
-            if self.position < chars.len() && (chars[self.position] == '+' || chars[self.position] == '-') {
+            if self.position < chars.len()
+                && (chars[self.position] == '+' || chars[self.position] == '-')
+            {
                 num_str.push(chars[self.position]);
                 self.position += 1;
                 self.column += 1;
@@ -404,9 +414,9 @@ impl CypherLexer {
         }
 
         if is_float {
-            let f: f64 = num_str.parse().map_err(|_| {
-                ProximaDBError::InvalidInput(format!("Invalid float: {}", num_str))
-            })?;
+            let f: f64 = num_str
+                .parse()
+                .map_err(|_| ProximaDBError::InvalidInput(format!("Invalid float: {}", num_str)))?;
             Ok(Token::Float(f))
         } else {
             let i: i64 = num_str.parse().map_err(|_| {
@@ -438,7 +448,9 @@ impl CypherLexer {
             return Ok(Token::Identifier(ident));
         }
 
-        while self.position < chars.len() && (chars[self.position].is_alphanumeric() || chars[self.position] == '_') {
+        while self.position < chars.len()
+            && (chars[self.position].is_alphanumeric() || chars[self.position] == '_')
+        {
             ident.push(chars[self.position]);
             self.position += 1;
             self.column += 1;
@@ -527,7 +539,9 @@ impl CypherLexer {
         self.column += 1;
 
         let mut name = String::new();
-        while self.position < chars.len() && (chars[self.position].is_alphanumeric() || chars[self.position] == '_') {
+        while self.position < chars.len()
+            && (chars[self.position].is_alphanumeric() || chars[self.position] == '_')
+        {
             name.push(chars[self.position]);
             self.position += 1;
             self.column += 1;
@@ -538,36 +552,149 @@ impl CypherLexer {
 
     fn consume_operator(&mut self, chars: &[char]) -> Result<Token, ProximaDBError> {
         let c = chars[self.position];
-        let next = if self.position + 1 < chars.len() { Some(chars[self.position + 1]) } else { None };
+        let next = if self.position + 1 < chars.len() {
+            Some(chars[self.position + 1])
+        } else {
+            None
+        };
 
         let token = match (c, next) {
-            ('-', Some('>')) => { self.position += 2; self.column += 2; Token::Arrow }
-            ('<', Some('-')) => { self.position += 2; self.column += 2; Token::LeftArrow }
-            ('<', Some('>')) => { self.position += 2; self.column += 2; Token::NotEquals }
-            ('<', Some('=')) => { self.position += 2; self.column += 2; Token::LessOrEqual }
-            ('>', Some('=')) => { self.position += 2; self.column += 2; Token::GreaterOrEqual }
-            ('+', Some('=')) => { self.position += 2; self.column += 2; Token::PlusEquals }
-            ('.', Some('.')) => { self.position += 2; self.column += 2; Token::DoubleDot }
-            ('(', _) => { self.position += 1; self.column += 1; Token::OpenParen }
-            (')', _) => { self.position += 1; self.column += 1; Token::CloseParen }
-            ('[', _) => { self.position += 1; self.column += 1; Token::OpenBracket }
-            (']', _) => { self.position += 1; self.column += 1; Token::CloseBracket }
-            ('{', _) => { self.position += 1; self.column += 1; Token::OpenBrace }
-            ('}', _) => { self.position += 1; self.column += 1; Token::CloseBrace }
-            (',', _) => { self.position += 1; self.column += 1; Token::Comma }
-            (':', _) => { self.position += 1; self.column += 1; Token::Colon }
-            ('.', _) => { self.position += 1; self.column += 1; Token::Dot }
-            (';', _) => { self.position += 1; self.column += 1; Token::Semicolon }
-            ('-', _) => { self.position += 1; self.column += 1; Token::Dash }
-            ('=', _) => { self.position += 1; self.column += 1; Token::Equals }
-            ('<', _) => { self.position += 1; self.column += 1; Token::LessThan }
-            ('>', _) => { self.position += 1; self.column += 1; Token::GreaterThan }
-            ('+', _) => { self.position += 1; self.column += 1; Token::Plus }
-            ('*', _) => { self.position += 1; self.column += 1; Token::Asterisk }
-            ('/', _) => { self.position += 1; self.column += 1; Token::Slash }
-            ('%', _) => { self.position += 1; self.column += 1; Token::Percent }
-            ('^', _) => { self.position += 1; self.column += 1; Token::Caret }
-            _ => return Err(ProximaDBError::InvalidInput(format!("Unexpected character: {}", c))),
+            ('-', Some('>')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::Arrow
+            }
+            ('<', Some('-')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::LeftArrow
+            }
+            ('<', Some('>')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::NotEquals
+            }
+            ('<', Some('=')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::LessOrEqual
+            }
+            ('>', Some('=')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::GreaterOrEqual
+            }
+            ('+', Some('=')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::PlusEquals
+            }
+            ('.', Some('.')) => {
+                self.position += 2;
+                self.column += 2;
+                Token::DoubleDot
+            }
+            ('(', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::OpenParen
+            }
+            (')', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::CloseParen
+            }
+            ('[', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::OpenBracket
+            }
+            (']', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::CloseBracket
+            }
+            ('{', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::OpenBrace
+            }
+            ('}', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::CloseBrace
+            }
+            (',', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Comma
+            }
+            (':', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Colon
+            }
+            ('.', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Dot
+            }
+            (';', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Semicolon
+            }
+            ('-', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Dash
+            }
+            ('=', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Equals
+            }
+            ('<', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::LessThan
+            }
+            ('>', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::GreaterThan
+            }
+            ('+', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Plus
+            }
+            ('*', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Asterisk
+            }
+            ('/', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Slash
+            }
+            ('%', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Percent
+            }
+            ('^', _) => {
+                self.position += 1;
+                self.column += 1;
+                Token::Caret
+            }
+            _ => {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Unexpected character: {}",
+                    c
+                )));
+            }
         };
 
         Ok(token)
@@ -614,7 +741,10 @@ impl CypherParser {
     }
 
     /// Parse into CompiledPattern for backward compatibility
-    pub fn parse_to_compiled_pattern(&self, input: &str) -> Result<CompiledPattern, ProximaDBError> {
+    pub fn parse_to_compiled_pattern(
+        &self,
+        input: &str,
+    ) -> Result<CompiledPattern, ProximaDBError> {
         match parse_simple_query(input.trim()) {
             Ok((_, compiled)) => Ok(compiled),
             Err(e) => Err(ProximaDBError::InvalidInput(format!(
@@ -657,11 +787,7 @@ fn identifier(input: &str) -> ParseResult<String> {
 /// Parse backtick-quoted identifier
 fn quoted_identifier(input: &str) -> ParseResult<String> {
     map(
-        delimited(
-            char('`'),
-            take_while1(|c| c != '`'),
-            char('`'),
-        ),
+        delimited(char('`'), take_while1(|c| c != '`'), char('`')),
         String::from,
     )(input)
 }
@@ -675,19 +801,11 @@ fn any_identifier(input: &str) -> ParseResult<String> {
 fn string_literal(input: &str) -> ParseResult<String> {
     alt((
         map(
-            delimited(
-                char('"'),
-                take_while(|c| c != '"'),
-                char('"'),
-            ),
+            delimited(char('"'), take_while(|c| c != '"'), char('"')),
             String::from,
         ),
         map(
-            delimited(
-                char('\''),
-                take_while(|c| c != '\''),
-                char('\''),
-            ),
+            delimited(char('\''), take_while(|c| c != '\''), char('\'')),
             String::from,
         ),
     ))(input)
@@ -695,13 +813,9 @@ fn string_literal(input: &str) -> ParseResult<String> {
 
 /// Parse integer literal
 fn integer_literal(input: &str) -> ParseResult<i64> {
-    map_res(
-        recognize(tuple((
-            opt(char('-')),
-            digit1,
-        ))),
-        |s: &str| s.parse::<i64>(),
-    )(input)
+    map_res(recognize(tuple((opt(char('-')), digit1))), |s: &str| {
+        s.parse::<i64>()
+    })(input)
 }
 
 /// Parse float literal
@@ -712,11 +826,7 @@ fn float_literal(input: &str) -> ParseResult<f64> {
             digit1,
             char('.'),
             digit1,
-            opt(tuple((
-                one_of("eE"),
-                opt(one_of("+-")),
-                digit1,
-            ))),
+            opt(tuple((one_of("eE"), opt(one_of("+-")), digit1))),
         ))),
         |s: &str| s.parse::<f64>(),
     )(input)
@@ -739,10 +849,14 @@ fn null_literal(input: &str) -> ParseResult<serde_json::Value> {
 fn property_value(input: &str) -> ParseResult<serde_json::Value> {
     alt((
         map(string_literal, serde_json::Value::String),
-        map(float_literal, |f| serde_json::Value::Number(
-            serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0))
-        )),
-        map(integer_literal, |i| serde_json::Value::Number(serde_json::Number::from(i))),
+        map(float_literal, |f| {
+            serde_json::Value::Number(
+                serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0)),
+            )
+        }),
+        map(integer_literal, |i| {
+            serde_json::Value::Number(serde_json::Number::from(i))
+        }),
         map(boolean_literal, serde_json::Value::Bool),
         null_literal,
         // Array value
@@ -813,10 +927,7 @@ fn parse_labels(input: &str) -> ParseResult<Vec<String>> {
 
 /// Parse optional labels
 fn parse_optional_labels(input: &str) -> ParseResult<Vec<String>> {
-    map(
-        opt(parse_labels),
-        |labels| labels.unwrap_or_default(),
-    )(input)
+    map(opt(parse_labels), |labels| labels.unwrap_or_default())(input)
 }
 
 /// Parse node pattern: (variable:Label {props})
@@ -843,18 +954,12 @@ fn parse_node_pattern(input: &str) -> ParseResult<NodePattern> {
 
 /// Parse edge direction left: <- or -
 fn parse_edge_left(input: &str) -> ParseResult<bool> {
-    alt((
-        value(true, tag("<-")),
-        value(false, tag("-")),
-    ))(input)
+    alt((value(true, tag("<-")), value(false, tag("-"))))(input)
 }
 
 /// Parse edge direction right: -> or -
 fn parse_edge_right(input: &str) -> ParseResult<bool> {
-    alt((
-        value(true, tag("->")),
-        value(false, tag("-")),
-    ))(input)
+    alt((value(true, tag("->")), value(false, tag("-"))))(input)
 }
 
 /// Parse variable-length path: *min..max or *max or *
@@ -881,18 +986,17 @@ fn parse_var_length(input: &str) -> ParseResult<(u32, u32)> {
 
 /// Parse edge type: :TYPE1|TYPE2
 fn parse_edge_types(input: &str) -> ParseResult<Vec<String>> {
-    preceded(
-        char(':'),
-        separated_list1(char('|'), any_identifier),
-    )(input)
+    preceded(char(':'), separated_list1(char('|'), any_identifier))(input)
 }
 
 /// Parse edge specification: [variable:TYPE {props}]
-fn parse_edge_spec(input: &str) -> ParseResult<(
-    Option<String>,      // variable
-    Vec<String>,         // edge types
+fn parse_edge_spec(
+    input: &str,
+) -> ParseResult<(
+    Option<String>,                      // variable
+    Vec<String>,                         // edge types
     HashMap<String, PropertyConstraint>, // properties
-    Option<(u32, u32)>,  // variable length
+    Option<(u32, u32)>,                  // variable length
 )> {
     map(
         delimited(
@@ -906,38 +1010,31 @@ fn parse_edge_spec(input: &str) -> ParseResult<(
             )),
             char(']'),
         ),
-        |(var, types, var_len, props, _)| (
-            var,
-            types.unwrap_or_default(),
-            props.unwrap_or_default(),
-            var_len,
-        ),
+        |(var, types, var_len, props, _)| {
+            (
+                var,
+                types.unwrap_or_default(),
+                props.unwrap_or_default(),
+                var_len,
+            )
+        },
     )(input)
 }
 
 /// Parse full edge pattern: <-[spec]- or -[spec]-> or -[spec]-
-fn parse_edge_pattern_full(input: &str) -> ParseResult<(
-    bool,                 // is incoming
-    Option<String>,       // variable
-    Vec<String>,          // edge types
+fn parse_edge_pattern_full(
+    input: &str,
+) -> ParseResult<(
+    bool,                                // is incoming
+    Option<String>,                      // variable
+    Vec<String>,                         // edge types
     HashMap<String, PropertyConstraint>, // properties
-    bool,                 // is outgoing
-    Option<(u32, u32)>,   // variable length
+    bool,                                // is outgoing
+    Option<(u32, u32)>,                  // variable length
 )> {
     map(
-        tuple((
-            parse_edge_left,
-            parse_edge_spec,
-            parse_edge_right,
-        )),
-        |(left, (var, types, props, var_len), right)| (
-            left,
-            var,
-            types,
-            props,
-            right,
-            var_len,
-        ),
+        tuple((parse_edge_left, parse_edge_spec, parse_edge_right)),
+        |(left, (var, types, props, var_len), right)| (left, var, types, props, right, var_len),
     )(input)
 }
 
@@ -949,7 +1046,11 @@ fn parse_path_segment(input: &str) -> ParseResult<(NodePattern, EdgePattern, Nod
             preceded(multispace0, parse_edge_pattern_full),
             preceded(multispace0, parse_node_pattern),
         )),
-        |(from_node, (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_len), to_node)| {
+        |(
+            from_node,
+            (is_incoming, edge_var, edge_types, edge_props, is_outgoing, _var_len),
+            to_node,
+        )| {
             let direction = match (is_incoming, is_outgoing) {
                 (false, true) => EdgeDirection::Outgoing,
                 (true, false) => EdgeDirection::Incoming,
@@ -1136,10 +1237,7 @@ fn parse_where_primary(input: &str) -> ParseResult<WhereClause> {
     alt((
         // NOT condition
         map(
-            preceded(
-                pair(tag_no_case("NOT"), multispace1),
-                parse_where_primary,
-            ),
+            preceded(pair(tag_no_case("NOT"), multispace1), parse_where_primary),
             |cond| WhereClause::Not(Box::new(cond)),
         ),
         // Parenthesized condition
@@ -1165,7 +1263,11 @@ fn parse_where_condition(input: &str) -> ParseResult<WhereClause> {
 
     // Try to parse chained AND/OR
     let result = many0(tuple((
-        delimited(multispace1, alt((tag_no_case("AND"), tag_no_case("OR"), tag_no_case("XOR"))), multispace1),
+        delimited(
+            multispace1,
+            alt((tag_no_case("AND"), tag_no_case("OR"), tag_no_case("XOR"))),
+            multispace1,
+        ),
         parse_where_primary,
     )))(input);
 
@@ -1178,9 +1280,13 @@ fn parse_where_condition(input: &str) -> ParseResult<WhereClause> {
                     "OR" => WhereClause::Or(Box::new(current), Box::new(right)),
                     "XOR" => {
                         // XOR = (A OR B) AND NOT (A AND B)
-                        let a_or_b = WhereClause::Or(Box::new(current.clone()), Box::new(right.clone()));
+                        let a_or_b =
+                            WhereClause::Or(Box::new(current.clone()), Box::new(right.clone()));
                         let a_and_b = WhereClause::And(Box::new(current), Box::new(right));
-                        WhereClause::And(Box::new(a_or_b), Box::new(WhereClause::Not(Box::new(a_and_b))))
+                        WhereClause::And(
+                            Box::new(a_or_b),
+                            Box::new(WhereClause::Not(Box::new(a_and_b))),
+                        )
                     }
                     _ => unreachable!(),
                 };
@@ -1569,7 +1675,9 @@ fn parse_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePat
                 delimited(multispace0, char(','), multispace0),
                 alt((
                     // Path pattern
-                    map(parse_path_segment, |(from, edge, to)| (vec![from, to], vec![edge])),
+                    map(parse_path_segment, |(from, edge, to)| {
+                        (vec![from, to], vec![edge])
+                    }),
                     // Simple node
                     map(parse_node_pattern, |node| (vec![node], vec![])),
                 )),
@@ -1590,12 +1698,19 @@ fn parse_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePat
 /// Parse OPTIONAL MATCH clause
 fn parse_optional_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePattern>)> {
     preceded(
-        tuple((tag_no_case("OPTIONAL"), multispace1, tag_no_case("MATCH"), multispace1)),
+        tuple((
+            tag_no_case("OPTIONAL"),
+            multispace1,
+            tag_no_case("MATCH"),
+            multispace1,
+        )),
         map(
             separated_list1(
                 delimited(multispace0, char(','), multispace0),
                 alt((
-                    map(parse_path_segment, |(from, edge, to)| (vec![from, to], vec![edge])),
+                    map(parse_path_segment, |(from, edge, to)| {
+                        (vec![from, to], vec![edge])
+                    }),
                     map(parse_node_pattern, |node| (vec![node], vec![])),
                 )),
             ),
@@ -1640,9 +1755,11 @@ fn parse_create_node_spec(input: &str) -> ParseResult<CreateNodeSpec> {
 }
 
 /// Parse CREATE edge spec
-fn parse_create_edge_spec(input: &str) -> ParseResult<(
-    Option<String>,       // variable
-    Option<String>,       // edge type
+fn parse_create_edge_spec(
+    input: &str,
+) -> ParseResult<(
+    Option<String>,                     // variable
+    Option<String>,                     // edge type
     HashMap<String, serde_json::Value>, // properties
     EdgeDirection,
 )> {
@@ -1673,7 +1790,9 @@ fn parse_create_edge_spec(input: &str) -> ParseResult<(
 }
 
 /// Parse CREATE edge pattern: (a)-[r:TYPE]->(b)
-fn parse_create_edge_pattern(input: &str) -> ParseResult<(CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
+fn parse_create_edge_pattern(
+    input: &str,
+) -> ParseResult<(CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
     map(
         tuple((
             parse_create_node_spec,
@@ -1681,8 +1800,14 @@ fn parse_create_edge_pattern(input: &str) -> ParseResult<(CreateNodeSpec, Create
             preceded(multispace0, parse_create_node_spec),
         )),
         |(from_node, (edge_var, edge_type, edge_props, _direction), to_node)| {
-            let from_var = from_node.variable.clone().unwrap_or_else(|| "_from".to_string());
-            let to_var = to_node.variable.clone().unwrap_or_else(|| "_to".to_string());
+            let from_var = from_node
+                .variable
+                .clone()
+                .unwrap_or_else(|| "_from".to_string());
+            let to_var = to_node
+                .variable
+                .clone()
+                .unwrap_or_else(|| "_to".to_string());
 
             let edge = CreateEdgeSpec {
                 variable: edge_var,
@@ -1705,7 +1830,9 @@ fn parse_create_clause(input: &str) -> ParseResult<CreateClause> {
             separated_list1(
                 delimited(multispace0, char(','), multispace0),
                 alt((
-                    map(parse_create_edge_pattern, |(from, edge, to)| (vec![from, to], vec![edge])),
+                    map(parse_create_edge_pattern, |(from, edge, to)| {
+                        (vec![from, to], vec![edge])
+                    }),
                     map(parse_create_node_spec, |node| (vec![node], vec![])),
                 )),
             ),
@@ -1728,8 +1855,16 @@ fn parse_delete_clause(input: &str) -> ParseResult<DeleteClause> {
         // DETACH DELETE
         map(
             preceded(
-                tuple((tag_no_case("DETACH"), multispace1, tag_no_case("DELETE"), multispace1)),
-                separated_list1(delimited(multispace0, char(','), multispace0), any_identifier),
+                tuple((
+                    tag_no_case("DETACH"),
+                    multispace1,
+                    tag_no_case("DELETE"),
+                    multispace1,
+                )),
+                separated_list1(
+                    delimited(multispace0, char(','), multispace0),
+                    any_identifier,
+                ),
             ),
             |vars| DeleteClause {
                 variables: vars,
@@ -1740,7 +1875,10 @@ fn parse_delete_clause(input: &str) -> ParseResult<DeleteClause> {
         map(
             preceded(
                 pair(tag_no_case("DELETE"), multispace1),
-                separated_list1(delimited(multispace0, char(','), multispace0), any_identifier),
+                separated_list1(
+                    delimited(multispace0, char(','), multispace0),
+                    any_identifier,
+                ),
             ),
             |vars| DeleteClause {
                 variables: vars,
@@ -1808,7 +1946,10 @@ fn parse_set_clause(input: &str) -> ParseResult<SetClause> {
     preceded(
         pair(tag_no_case("SET"), multispace1),
         map(
-            separated_list1(delimited(multispace0, char(','), multispace0), parse_set_item),
+            separated_list1(
+                delimited(multispace0, char(','), multispace0),
+                parse_set_item,
+            ),
             |items| SetClause { items },
         ),
     )(input)
@@ -1841,7 +1982,10 @@ fn parse_remove_clause(input: &str) -> ParseResult<RemoveClause> {
     preceded(
         pair(tag_no_case("REMOVE"), multispace1),
         map(
-            separated_list1(delimited(multispace0, char(','), multispace0), parse_remove_item),
+            separated_list1(
+                delimited(multispace0, char(','), multispace0),
+                parse_remove_item,
+            ),
             |items| RemoveClause { items },
         ),
     )(input)
@@ -1857,7 +2001,9 @@ fn parse_merge_clause(input: &str) -> ParseResult<MergeClause> {
                     separated_list1(
                         delimited(multispace0, char(','), multispace0),
                         alt((
-                            map(parse_path_segment, |(from, edge, to)| (vec![from, to], vec![edge])),
+                            map(parse_path_segment, |(from, edge, to)| {
+                                (vec![from, to], vec![edge])
+                            }),
                             map(parse_node_pattern, |node| (vec![node], vec![])),
                         )),
                     ),
@@ -1878,11 +2024,23 @@ fn parse_merge_clause(input: &str) -> ParseResult<MergeClause> {
                 ),
             ),
             opt(preceded(
-                tuple((multispace1, tag_no_case("ON"), multispace1, tag_no_case("CREATE"), multispace1)),
+                tuple((
+                    multispace1,
+                    tag_no_case("ON"),
+                    multispace1,
+                    tag_no_case("CREATE"),
+                    multispace1,
+                )),
                 parse_set_clause,
             )),
             opt(preceded(
-                tuple((multispace1, tag_no_case("ON"), multispace1, tag_no_case("MATCH"), multispace1)),
+                tuple((
+                    multispace1,
+                    tag_no_case("ON"),
+                    multispace1,
+                    tag_no_case("MATCH"),
+                    multispace1,
+                )),
                 parse_set_clause,
             )),
         )),
@@ -2118,7 +2276,8 @@ impl CypherVisitor for QueryValidator {
             UpdatingClause::Delete(delete) => {
                 for var in &delete.variables {
                     if !self.variables.contains(var) {
-                        self.errors.push(format!("DELETE references undefined variable: {}", var));
+                        self.errors
+                            .push(format!("DELETE references undefined variable: {}", var));
                     }
                 }
             }
@@ -2131,7 +2290,8 @@ impl CypherVisitor for QueryValidator {
                         SetItem::AddLabel { variable, .. } => variable,
                     };
                     if !self.variables.contains(var) {
-                        self.errors.push(format!("SET references undefined variable: {}", var));
+                        self.errors
+                            .push(format!("SET references undefined variable: {}", var));
                     }
                 }
             }
@@ -2142,7 +2302,8 @@ impl CypherVisitor for QueryValidator {
                         RemoveItem::Label { variable, .. } => variable,
                     };
                     if !self.variables.contains(var) {
-                        self.errors.push(format!("REMOVE references undefined variable: {}", var));
+                        self.errors
+                            .push(format!("REMOVE references undefined variable: {}", var));
                     }
                 }
             }
@@ -2174,7 +2335,8 @@ impl CypherVisitor for QueryValidator {
         match clause {
             WhereClause::Property { variable, .. } => {
                 if !self.variables.contains(variable) {
-                    self.errors.push(format!("WHERE references undefined variable: {}", variable));
+                    self.errors
+                        .push(format!("WHERE references undefined variable: {}", variable));
                 }
             }
             WhereClause::And(left, right) | WhereClause::Or(left, right) => {
@@ -2199,7 +2361,8 @@ impl CypherVisitor for QueryValidator {
                 PropertyProjection::Count => continue,
             };
             if !self.variables.contains(var) {
-                self.errors.push(format!("RETURN references undefined variable: {}", var));
+                self.errors
+                    .push(format!("RETURN references undefined variable: {}", var));
             }
         }
     }
@@ -2258,7 +2421,10 @@ pub enum GraphQueryType {
 }
 
 /// Convert CypherQuery AST to executable GraphQuery
-pub fn cypher_to_graph_query(cypher: &CypherQuery, graph_id: &str) -> Result<GraphQuery, ProximaDBError> {
+pub fn cypher_to_graph_query(
+    cypher: &CypherQuery,
+    graph_id: &str,
+) -> Result<GraphQuery, ProximaDBError> {
     // Determine query type based on clauses
     let query_type = if !cypher.updating_clauses.is_empty() {
         // Has updating clauses
@@ -2328,10 +2494,9 @@ pub fn cypher_to_graph_query(cypher: &CypherQuery, graph_id: &str) -> Result<Gra
             ));
         }
 
-        let return_spec = cypher
-            .return_spec
-            .clone()
-            .ok_or_else(|| ProximaDBError::InvalidInput("Read query must have RETURN clause".to_string()))?;
+        let return_spec = cypher.return_spec.clone().ok_or_else(|| {
+            ProximaDBError::InvalidInput("Read query must have RETURN clause".to_string())
+        })?;
 
         GraphQueryType::Match {
             patterns,
@@ -2391,14 +2556,18 @@ mod tests {
     #[test]
     fn test_parse_match_with_properties() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person {name: 'Alice', age: 30}) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person {name: 'Alice', age: 30}) RETURN n")
+            .unwrap();
         assert_eq!(query.reading_clauses.len(), 1);
     }
 
     #[test]
     fn test_parse_match_with_edge() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a, r, b").unwrap();
+        let query = parser
+            .parse("MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a, r, b")
+            .unwrap();
         assert_eq!(query.reading_clauses.len(), 1);
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert_eq!(pattern.nodes.len(), 2);
@@ -2409,7 +2578,9 @@ mod tests {
     #[test]
     fn test_parse_where_clause() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) WHERE n.age > 25 RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) WHERE n.age > 25 RETURN n")
+            .unwrap();
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert!(pattern.where_clause.is_some());
         }
@@ -2418,7 +2589,9 @@ mod tests {
     #[test]
     fn test_parse_where_and() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) WHERE n.age > 25 AND n.name = 'Alice' RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) WHERE n.age > 25 AND n.name = 'Alice' RETURN n")
+            .unwrap();
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert!(pattern.where_clause.is_some());
             if let Some(WhereClause::And(_, _)) = &pattern.where_clause {
@@ -2432,7 +2605,9 @@ mod tests {
     #[test]
     fn test_parse_create() {
         let parser = CypherParser::new();
-        let query = parser.parse("CREATE (n:Person {name: 'Alice'}) RETURN n").unwrap();
+        let query = parser
+            .parse("CREATE (n:Person {name: 'Alice'}) RETURN n")
+            .unwrap();
         assert!(!query.is_read_only());
         assert!(query.has_create());
     }
@@ -2440,21 +2615,27 @@ mod tests {
     #[test]
     fn test_parse_delete() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) WHERE n.age > 100 DELETE n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) WHERE n.age > 100 DELETE n")
+            .unwrap();
         assert!(query.has_delete());
     }
 
     #[test]
     fn test_parse_set() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person {name: 'Alice'}) SET n.age = 31 RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person {name: 'Alice'}) SET n.age = 31 RETURN n")
+            .unwrap();
         assert!(!query.is_read_only());
     }
 
     #[test]
     fn test_parse_merge() {
         let parser = CypherParser::new();
-        let query = parser.parse("MERGE (n:Person {name: 'Alice'}) RETURN n").unwrap();
+        let query = parser
+            .parse("MERGE (n:Person {name: 'Alice'}) RETURN n")
+            .unwrap();
         assert!(query.has_merge());
     }
 
@@ -2463,14 +2644,19 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser.parse("MATCH (n:Person) RETURN COUNT(*)").unwrap();
         if let Some(ref return_spec) = query.return_spec {
-            assert!(matches!(return_spec.projections[0], PropertyProjection::Count));
+            assert!(matches!(
+                return_spec.projections[0],
+                PropertyProjection::Count
+            ));
         }
     }
 
     #[test]
     fn test_parse_order_limit() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN n ORDER BY n ASC LIMIT 10").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN n ORDER BY n ASC LIMIT 10")
+            .unwrap();
         if let Some(ref return_spec) = query.return_spec {
             assert_eq!(return_spec.order_by.len(), 1);
             assert_eq!(return_spec.limit, Some(10));
@@ -2490,13 +2676,18 @@ mod tests {
         let cypher = parser.parse("MATCH (n:Person) RETURN n").unwrap();
         let graph_query = cypher_to_graph_query(&cypher, "test_graph").unwrap();
         assert_eq!(graph_query.graph_id, "test_graph");
-        assert!(matches!(graph_query.query_type, GraphQueryType::Match { .. }));
+        assert!(matches!(
+            graph_query.query_type,
+            GraphQueryType::Match { .. }
+        ));
     }
 
     #[test]
     fn test_parse_optional_match() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) OPTIONAL MATCH (n)-[r:KNOWS]->(m) RETURN n, m").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) OPTIONAL MATCH (n)-[r:KNOWS]->(m) RETURN n, m")
+            .unwrap();
         assert_eq!(query.reading_clauses.len(), 2);
         if let ReadingClause::Match { optional, .. } = &query.reading_clauses[1] {
             assert!(*optional);

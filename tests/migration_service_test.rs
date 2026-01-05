@@ -22,11 +22,12 @@
 use std::collections::HashMap;
 
 use proximadb::core::types::{ColumnDataType, TypedValue};
-use proximadb::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, VectorRecord, sql_value::Value as SqlValueVariant};
+use proximadb::proto::proximadb_v1::{
+    SqlArray, SqlObject, SqlValue, VectorRecord, sql_value::Value as SqlValueVariant,
+};
 use proximadb::services::conversion::record_converter::{ProximaRecord, RecordConverter};
 use proximadb::services::migration::{
-    MigrationConfig, MigrationError, MigrationMode, RecordMigrationService,
-    ValidationErrorCode,
+    MigrationConfig, MigrationError, MigrationMode, RecordMigrationService, ValidationErrorCode,
 };
 use proximadb::services::schema::{InferenceConfig, SchemaInferenceService};
 
@@ -406,9 +407,11 @@ fn test_convert_record_with_text_column_extraction() {
     assert!(!proxima.typed_fields.contains_key("content"));
     assert_eq!(proxima.text_fields.len(), 1);
     assert_eq!(proxima.text_fields[0].name, "content");
-    assert!(proxima.text_fields[0]
-        .content
-        .contains("main document content"));
+    assert!(
+        proxima.text_fields[0]
+            .content
+            .contains("main document content")
+    );
 
     // Category should still be in typed_fields
     assert!(proxima.typed_fields.contains_key("category"));
@@ -458,7 +461,13 @@ fn test_infer_schema_from_records_with_strings() {
     let service = SchemaInferenceService::new(InferenceConfig::default());
 
     let records: Vec<VectorRecord> = (0..5)
-        .map(|i| create_record_with_string_metadata(&format!("doc_{}", i), "name", &format!("Item {}", i)))
+        .map(|i| {
+            create_record_with_string_metadata(
+                &format!("doc_{}", i),
+                "name",
+                &format!("Item {}", i),
+            )
+        })
         .collect();
 
     let schema = service.infer_schema(&records);
@@ -682,7 +691,10 @@ fn test_infer_schema_detects_decimal_columns() {
     let schema = service.infer_schema(&records);
 
     let price_col = schema.get_column("price").unwrap();
-    assert!(matches!(price_col.data_type, ColumnDataType::Decimal { .. }));
+    assert!(matches!(
+        price_col.data_type,
+        ColumnDataType::Decimal { .. }
+    ));
 }
 
 #[test]
@@ -732,10 +744,10 @@ fn test_infer_schema_mixed_types_fallback_to_text() {
     // Mix of different patterns that don't meet threshold
     let values = vec![
         "550e8400-e29b-41d4-a716-446655440000", // UUID
-        "not-a-uuid",                            // Random text
-        "hello world",                           // Random text
+        "not-a-uuid",                           // Random text
+        "hello world",                          // Random text
         "123e4567-e89b-12d3-a456-426614174000", // UUID
-        "random text again",                     // Random text
+        "random text again",                    // Random text
     ];
 
     let records: Vec<VectorRecord> = values
@@ -808,7 +820,10 @@ fn test_migrate_batch_populates_typed_fields_correctly() {
             proxima.typed_fields.contains_key("priority"),
             "Should have priority"
         );
-        assert!(proxima.typed_fields.contains_key("score"), "Should have score");
+        assert!(
+            proxima.typed_fields.contains_key("score"),
+            "Should have score"
+        );
         assert!(
             proxima.typed_fields.contains_key("is_active"),
             "Should have is_active"
@@ -853,12 +868,14 @@ fn test_migrate_batch_preserves_vector_dimensions() {
         assert_eq!(
             proxima.vector.len(),
             dimensions[i],
-            "Vector length should match for record {}", i
+            "Vector length should match for record {}",
+            i
         );
         assert_eq!(
             proxima.vector_dimension,
             Some(dimensions[i] as u32),
-            "Vector dimension should match for record {}", i
+            "Vector dimension should match for record {}",
+            i
         );
     }
 }
@@ -879,10 +896,7 @@ fn test_migrate_batch_with_schema_inference() {
 
     for result in results {
         let proxima = result.unwrap();
-        assert_eq!(
-            proxima.schema_id,
-            Some("inferred_schema_001".to_string())
-        );
+        assert_eq!(proxima.schema_id, Some("inferred_schema_001".to_string()));
     }
 }
 
@@ -902,7 +916,10 @@ fn test_migrate_empty_metadata_records() {
     let results = service.migrate_batch(&records, None);
 
     for result in results {
-        assert!(result.is_ok(), "Empty metadata records should migrate successfully");
+        assert!(
+            result.is_ok(),
+            "Empty metadata records should migrate successfully"
+        );
         let proxima = result.unwrap();
         assert!(proxima.typed_fields.is_empty());
         assert!(proxima.text_fields.is_empty());
@@ -1211,7 +1228,11 @@ async fn test_migrate_records_async() {
         .collect();
 
     let result = service
-        .migrate_records("test_collection", records.into_iter(), MigrationMode::DualWrite)
+        .migrate_records(
+            "test_collection",
+            records.into_iter(),
+            MigrationMode::DualWrite,
+        )
         .await;
 
     assert!(result.is_ok());
@@ -1231,7 +1252,11 @@ async fn test_migrate_empty_records() {
     let records: Vec<VectorRecord> = vec![];
 
     let result = service
-        .migrate_records("empty_collection", records.into_iter(), MigrationMode::DualWrite)
+        .migrate_records(
+            "empty_collection",
+            records.into_iter(),
+            MigrationMode::DualWrite,
+        )
         .await;
 
     assert!(result.is_ok());
@@ -1292,21 +1317,20 @@ fn test_migration_config_builder() {
 #[test]
 fn test_batch_conversion() {
     let records: Vec<VectorRecord> = (0..5)
-        .map(|i| {
-            VectorRecord {
-                id: format!("doc_{}", i),
-                vector: vec![0.1 * i as f32; 4],
-                metadata: HashMap::new(),
-                timestamp: Some(1704067200000 + i as i64 * 1000),
-                updated_at: None,
-                expires_at: None,
-                version: Some(i as u32),
-                source: None,
-            }
+        .map(|i| VectorRecord {
+            id: format!("doc_{}", i),
+            vector: vec![0.1 * i as f32; 4],
+            metadata: HashMap::new(),
+            timestamp: Some(1704067200000 + i as i64 * 1000),
+            updated_at: None,
+            expires_at: None,
+            version: Some(i as u32),
+            source: None,
         })
         .collect();
 
-    let proxima_records = RecordConverter::batch_vector_to_proxima(&records, Some("batch_schema"), &[]);
+    let proxima_records =
+        RecordConverter::batch_vector_to_proxima(&records, Some("batch_schema"), &[]);
 
     assert_eq!(proxima_records.len(), 5);
     for (i, proxima) in proxima_records.iter().enumerate() {
@@ -1391,10 +1415,12 @@ fn test_validate_record_empty_id_fails() {
     assert!(!result.valid);
     assert!(!result.errors.is_empty());
     assert!(result.errors.iter().any(|e| e.field == "id"));
-    assert!(result
-        .errors
-        .iter()
-        .any(|e| e.code == ValidationErrorCode::RequiredFieldMissing));
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.code == ValidationErrorCode::RequiredFieldMissing)
+    );
 }
 
 #[test]
@@ -1427,8 +1453,10 @@ fn test_validate_record_dimension_mismatch() {
     let result = service.validate_record(&proxima, None);
 
     assert!(!result.valid);
-    assert!(result
-        .errors
-        .iter()
-        .any(|e| e.code == ValidationErrorCode::DimensionMismatch));
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.code == ValidationErrorCode::DimensionMismatch)
+    );
 }

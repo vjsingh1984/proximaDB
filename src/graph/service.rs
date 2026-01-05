@@ -131,10 +131,11 @@ impl GraphOperationsService {
         let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
         // Initialize transaction manager with empty shards (will be populated as graphs are created)
-        let transaction_manager = Arc::new(service_transactions::TransactionManager::with_defaults(
-            std::collections::HashMap::new(),
-            std::time::Duration::from_secs(30),
-        ));
+        let transaction_manager =
+            Arc::new(service_transactions::TransactionManager::with_defaults(
+                std::collections::HashMap::new(),
+                std::time::Duration::from_secs(30),
+            ));
 
         let service = Self {
             mode: OperationMode::Unified,
@@ -204,10 +205,11 @@ impl GraphOperationsService {
         let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
         // Initialize transaction manager with empty shards
-        let transaction_manager = Arc::new(service_transactions::TransactionManager::with_defaults(
-            std::collections::HashMap::new(),
-            std::time::Duration::from_secs(30),
-        ));
+        let transaction_manager =
+            Arc::new(service_transactions::TransactionManager::with_defaults(
+                std::collections::HashMap::new(),
+                std::time::Duration::from_secs(30),
+            ));
 
         let service = Self {
             mode: OperationMode::Unified,

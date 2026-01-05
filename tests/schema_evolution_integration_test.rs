@@ -33,8 +33,7 @@ use proximadb::proto::proximadb_v1::{
 };
 use proximadb::services::conversion::record_converter::{ProximaRecord, RecordConverter};
 use proximadb::services::migration::{
-    MigrationConfig, MigrationError, MigrationMode, RecordMigrationService,
-    ValidationErrorCode,
+    MigrationConfig, MigrationError, MigrationMode, RecordMigrationService, ValidationErrorCode,
 };
 use proximadb::services::schema::{InferenceConfig, SchemaInferenceService};
 
@@ -282,7 +281,11 @@ mod schema_evolution_tests {
         // Second batch has floats (type widening needed)
         let float_records: Vec<VectorRecord> = (0..5)
             .map(|i| {
-                create_record_with_float_metadata(&format!("doc_float_{}", i), "value", i as f64 * 10.5)
+                create_record_with_float_metadata(
+                    &format!("doc_float_{}", i),
+                    "value",
+                    i as f64 * 10.5,
+                )
             })
             .collect();
 
@@ -296,7 +299,10 @@ mod schema_evolution_tests {
             (&int_col.data_type, &float_col.data_type),
             (ColumnDataType::Integer, ColumnDataType::Float)
         );
-        assert!(is_compatible, "Integer to Float should be a valid type widening");
+        assert!(
+            is_compatible,
+            "Integer to Float should be a valid type widening"
+        );
     }
 
     #[test]
@@ -309,7 +315,9 @@ mod schema_evolution_tests {
 
         // Short text records
         let short_records: Vec<VectorRecord> = (0..5)
-            .map(|i| create_record_with_string_metadata(&format!("doc_{}", i), "content", "Short text"))
+            .map(|i| {
+                create_record_with_string_metadata(&format!("doc_{}", i), "content", "Short text")
+            })
             .collect();
 
         let short_schema = service.infer_schema(&short_records);
@@ -320,7 +328,11 @@ mod schema_evolution_tests {
         let long_text = "a".repeat(100);
         let long_records: Vec<VectorRecord> = (0..5)
             .map(|i| {
-                create_record_with_string_metadata(&format!("doc_long_{}", i), "content", &long_text)
+                create_record_with_string_metadata(
+                    &format!("doc_long_{}", i),
+                    "content",
+                    &long_text,
+                )
             })
             .collect();
 
@@ -364,8 +376,14 @@ mod schema_evolution_tests {
 
         // Verify the chain
         assert!(v1_schema.parent_schema_id.is_none());
-        assert_eq!(v2_schema.parent_schema_id, Some(v1_schema.schema_id.clone()));
-        assert_eq!(v3_schema.parent_schema_id, Some(v2_schema.schema_id.clone()));
+        assert_eq!(
+            v2_schema.parent_schema_id,
+            Some(v1_schema.schema_id.clone())
+        );
+        assert_eq!(
+            v3_schema.parent_schema_id,
+            Some(v2_schema.schema_id.clone())
+        );
 
         // Count evolution steps (v1 -> v2 -> v3 = 3 versions)
         assert_eq!(v1_schema.columns.len(), 1);
@@ -379,7 +397,11 @@ mod schema_evolution_tests {
 
         // Verify semantic versioning format
         let version_parts: Vec<&str> = schema.schema_version.split('.').collect();
-        assert_eq!(version_parts.len(), 3, "Version should be MAJOR.MINOR.PATCH");
+        assert_eq!(
+            version_parts.len(),
+            3,
+            "Version should be MAJOR.MINOR.PATCH"
+        );
 
         // Simulate version bumps
         let major_bump = "2.0.0";
@@ -401,7 +423,13 @@ mod schema_evolution_tests {
 
         // First batch with only name
         let batch1: Vec<VectorRecord> = (0..5)
-            .map(|i| create_record_with_string_metadata(&format!("doc_{}", i), "name", &format!("Item {}", i)))
+            .map(|i| {
+                create_record_with_string_metadata(
+                    &format!("doc_{}", i),
+                    "name",
+                    &format!("Item {}", i),
+                )
+            })
             .collect();
 
         let schema1 = service.infer_schema(&batch1);
@@ -457,10 +485,7 @@ mod migration_edge_cases_tests {
 
         // Validate mode transitions
         // Legacy -> DualWrite: Valid
-        assert!(
-            service
-                .is_migration_active("test_collection") == false
-        );
+        assert!(service.is_migration_active("test_collection") == false);
 
         // Test valid transition: Legacy -> DualWrite
         let result = validate_mode_transition(MigrationMode::Legacy, MigrationMode::DualWrite);
@@ -518,7 +543,11 @@ mod migration_edge_cases_tests {
 
         // Migrate first batch
         let result1 = service
-            .migrate_records("concurrent_test", batch1.into_iter(), MigrationMode::DualWrite)
+            .migrate_records(
+                "concurrent_test",
+                batch1.into_iter(),
+                MigrationMode::DualWrite,
+            )
             .await;
 
         assert!(result1.is_ok());
@@ -528,7 +557,11 @@ mod migration_edge_cases_tests {
 
         // Migrate second batch (simulating concurrent writes)
         let result2 = service
-            .migrate_records("concurrent_test_2", batch2.into_iter(), MigrationMode::DualWrite)
+            .migrate_records(
+                "concurrent_test_2",
+                batch2.into_iter(),
+                MigrationMode::DualWrite,
+            )
             .await;
 
         assert!(result2.is_ok());
@@ -550,7 +583,8 @@ mod migration_edge_cases_tests {
         // Create 1500 records
         let large_batch: Vec<VectorRecord> = (0..1500)
             .map(|i| {
-                let mut record = create_simple_record(&format!("large_doc_{:05}", i), vec![0.1, 0.2, 0.3, 0.4]);
+                let mut record =
+                    create_simple_record(&format!("large_doc_{:05}", i), vec![0.1, 0.2, 0.3, 0.4]);
                 record.metadata.insert(
                     "index".to_string(),
                     SqlValue {
@@ -568,7 +602,11 @@ mod migration_edge_cases_tests {
             .collect();
 
         let result = service
-            .migrate_records("large_batch_test", large_batch.into_iter(), MigrationMode::DualWrite)
+            .migrate_records(
+                "large_batch_test",
+                large_batch.into_iter(),
+                MigrationMode::DualWrite,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -597,7 +635,9 @@ mod migration_edge_cases_tests {
 
         // Create 5000 records
         let very_large_batch: Vec<VectorRecord> = (0..5000)
-            .map(|i| create_simple_record(&format!("vl_doc_{:06}", i), vec![0.1, 0.2, 0.3, 0.4, 0.5]))
+            .map(|i| {
+                create_simple_record(&format!("vl_doc_{:06}", i), vec![0.1, 0.2, 0.3, 0.4, 0.5])
+            })
             .collect();
 
         let result = service
@@ -774,7 +814,11 @@ mod validation_scenario_tests {
 
         assert!(results[0].is_err());
         if let Err(MigrationError::ValidationFailed(msg)) = &results[0] {
-            assert!(msg.contains("id"), "Error message should mention 'id': {}", msg);
+            assert!(
+                msg.contains("id"),
+                "Error message should mention 'id': {}",
+                msg
+            );
         } else {
             panic!("Expected ValidationFailed error");
         }
@@ -814,10 +858,12 @@ mod validation_scenario_tests {
         let result = service.validate_record(&proxima, None);
 
         assert!(!result.valid);
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.code == ValidationErrorCode::DimensionMismatch));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.code == ValidationErrorCode::DimensionMismatch)
+        );
     }
 
     #[test]
@@ -825,10 +871,10 @@ mod validation_scenario_tests {
         let service = RecordMigrationService::new(MigrationConfig::default());
 
         let test_cases = vec![
-            (vec![0.1, 0.2], Some(3u32)),      // 2 elements, declared 3
-            (vec![0.1, 0.2, 0.3], Some(128)),  // 3 elements, declared 128
-            (vec![0.1; 128], Some(256)),       // 128 elements, declared 256
-            (vec![0.1; 768], Some(1536)),      // 768 elements, declared 1536
+            (vec![0.1, 0.2], Some(3u32)),     // 2 elements, declared 3
+            (vec![0.1, 0.2, 0.3], Some(128)), // 3 elements, declared 128
+            (vec![0.1; 128], Some(256)),      // 128 elements, declared 256
+            (vec![0.1; 768], Some(1536)),     // 768 elements, declared 1536
         ];
 
         for (vector, declared_dim) in test_cases {
@@ -892,21 +938,31 @@ mod validation_scenario_tests {
                 .any(|e| e.field == "name" && e.code == ValidationErrorCode::RequiredFieldMissing)
         );
         assert!(
-            result.errors.iter().any(|e| e.field == "count"
-                && e.code == ValidationErrorCode::RequiredFieldMissing)
+            result
+                .errors
+                .iter()
+                .any(|e| e.field == "count" && e.code == ValidationErrorCode::RequiredFieldMissing)
         );
     }
 
     #[test]
     fn test_schema_compatibility_type_mismatch() {
-        let columns = vec![create_column_def("count", ColumnDataType::Integer, false, false)];
+        let columns = vec![create_column_def(
+            "count",
+            ColumnDataType::Integer,
+            false,
+            false,
+        )];
         let schema = create_test_schema("typed_schema", columns);
 
         let service = RecordMigrationService::new(MigrationConfig::default());
 
         // Create a record with wrong type for count (Text instead of Integer)
         let mut typed_fields = HashMap::new();
-        typed_fields.insert("count".to_string(), TypedValue::Text("not_an_integer".to_string()));
+        typed_fields.insert(
+            "count".to_string(),
+            TypedValue::Text("not_an_integer".to_string()),
+        );
 
         let proxima = ProximaRecord {
             id: "test_record".to_string(),
@@ -919,10 +975,12 @@ mod validation_scenario_tests {
         let result = service.validate_record(&proxima, Some(&schema));
 
         assert!(!result.valid);
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.field == "count" && e.code == ValidationErrorCode::TypeMismatch));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.field == "count" && e.code == ValidationErrorCode::TypeMismatch)
+        );
     }
 
     #[test]
@@ -1144,7 +1202,8 @@ mod text_column_edge_cases_tests {
         ];
 
         for (i, unicode_text) in unicode_texts.iter().enumerate() {
-            let mut record = create_simple_record(&format!("doc_unicode_{}", i), vec![0.1, 0.2, 0.3]);
+            let mut record =
+                create_simple_record(&format!("doc_unicode_{}", i), vec![0.1, 0.2, 0.3]);
             record.metadata.insert(
                 "unicode_content".to_string(),
                 SqlValue {
@@ -1202,7 +1261,8 @@ mod text_column_edge_cases_tests {
         ];
 
         for (i, special_text) in special_texts.iter().enumerate() {
-            let mut record = create_simple_record(&format!("doc_special_{}", i), vec![0.1, 0.2, 0.3]);
+            let mut record =
+                create_simple_record(&format!("doc_special_{}", i), vec![0.1, 0.2, 0.3]);
             record.metadata.insert(
                 "special_content".to_string(),
                 SqlValue {
@@ -1320,7 +1380,11 @@ mod text_column_edge_cases_tests {
         // Should have 3 text fields
         assert_eq!(proxima.text_fields.len(), 3);
 
-        let text_field_names: Vec<&str> = proxima.text_fields.iter().map(|tf| tf.name.as_str()).collect();
+        let text_field_names: Vec<&str> = proxima
+            .text_fields
+            .iter()
+            .map(|tf| tf.name.as_str())
+            .collect();
         assert!(text_field_names.contains(&"title"));
         assert!(text_field_names.contains(&"description"));
         assert!(text_field_names.contains(&"content"));
@@ -1396,8 +1460,11 @@ mod text_column_edge_cases_tests {
         // (they might be in typed_fields as Null or not present)
         // The exact behavior depends on implementation
         assert!(
-            proxima.text_fields.is_empty() ||
-            proxima.text_fields.iter().all(|tf| tf.name != "nullable_content" || tf.content.is_empty())
+            proxima.text_fields.is_empty()
+                || proxima
+                    .text_fields
+                    .iter()
+                    .all(|tf| tf.name != "nullable_content" || tf.content.is_empty())
         );
     }
 

@@ -349,13 +349,21 @@ impl FilterBuilder {
 
     /// Add a starts-with condition
     pub fn starts_with(mut self, field: impl Into<String>, prefix: impl Into<String>) -> Self {
-        self.add_condition(FilterCondition::new(field, FilterOp::StartsWith, prefix.into()));
+        self.add_condition(FilterCondition::new(
+            field,
+            FilterOp::StartsWith,
+            prefix.into(),
+        ));
         self
     }
 
     /// Add an ends-with condition
     pub fn ends_with(mut self, field: impl Into<String>, suffix: impl Into<String>) -> Self {
-        self.add_condition(FilterCondition::new(field, FilterOp::EndsWith, suffix.into()));
+        self.add_condition(FilterCondition::new(
+            field,
+            FilterOp::EndsWith,
+            suffix.into(),
+        ));
         self
     }
 
@@ -485,7 +493,10 @@ pub fn and_filters(filters: Vec<Filter>) -> Filter {
 
 /// Create an OR filter combining multiple filters
 pub fn or_filters(filters: Vec<Filter>) -> Filter {
-    let conditions: Vec<FilterNode> = filters.into_iter().map(|f| FilterNode::Group(f.root)).collect();
+    let conditions: Vec<FilterNode> = filters
+        .into_iter()
+        .map(|f| FilterNode::Group(f.root))
+        .collect();
 
     Filter {
         root: FilterGroup {
@@ -531,10 +542,7 @@ mod tests {
             .eq("category", "tech")
             .gte("rating", 4)
             .build();
-        assert_eq!(
-            filter.to_expression(),
-            "category = 'tech' AND rating >= 4"
-        );
+        assert_eq!(filter.to_expression(), "category = 'tech' AND rating >= 4");
     }
 
     #[test]

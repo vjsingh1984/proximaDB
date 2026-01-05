@@ -385,7 +385,9 @@ impl ObservabilityStorage {
             .get(namespace)
             .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", namespace))?;
 
-        ns.traces.query_by_service(service, start_ns, end_ns, limit).await
+        ns.traces
+            .query_by_service(service, start_ns, end_ns, limit)
+            .await
     }
 
     /// Get storage statistics for a namespace

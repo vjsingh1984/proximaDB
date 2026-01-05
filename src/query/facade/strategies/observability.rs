@@ -294,8 +294,8 @@ impl ObservabilityStrategy {
         content: &str,
         start_time: Instant,
     ) -> Result<QueryResult> {
-        use crate::observability::query::promql::PromQLParser;
         use crate::observability::query::PromQLQueryParams;
+        use crate::observability::query::promql::PromQLParser;
 
         debug!(
             namespace = %namespace,
@@ -479,8 +479,18 @@ impl ObservabilityStrategy {
 
         // Check for aggregation functions
         let agg_funcs = [
-            "sum(", "avg(", "min(", "max(", "count(", "rate(", "irate(", "increase(",
-            "histogram_quantile(", "topk(", "bottomk(", "stddev(",
+            "sum(",
+            "avg(",
+            "min(",
+            "max(",
+            "count(",
+            "rate(",
+            "irate(",
+            "increase(",
+            "histogram_quantile(",
+            "topk(",
+            "bottomk(",
+            "stddev(",
         ];
         for func in &agg_funcs {
             if s.to_lowercase().starts_with(func) {
@@ -796,7 +806,12 @@ impl ObservabilityStrategy {
         let traces = self
             .query_engine
             .storage()
-            .query_traces_by_time(namespace, query.start_time_ns, query.end_time_ns, query.limit)
+            .query_traces_by_time(
+                namespace,
+                query.start_time_ns,
+                query.end_time_ns,
+                query.limit,
+            )
             .await?;
 
         // Filter the traces using the query
@@ -1222,8 +1237,18 @@ mod tests {
 
             // Check for aggregation functions
             let agg_funcs = [
-                "sum(", "avg(", "min(", "max(", "count(", "rate(", "irate(", "increase(",
-                "histogram_quantile(", "topk(", "bottomk(", "stddev(",
+                "sum(",
+                "avg(",
+                "min(",
+                "max(",
+                "count(",
+                "rate(",
+                "irate(",
+                "increase(",
+                "histogram_quantile(",
+                "topk(",
+                "bottomk(",
+                "stddev(",
             ];
             for func in &agg_funcs {
                 if s.to_lowercase().starts_with(func) {

@@ -285,11 +285,7 @@ impl LocalTransactionCoordinator {
         graph_id: &str,
         participants: Vec<ShardId>,
     ) -> std::result::Result<TransactionId, ProximaDBError> {
-        let tx = TransactionMetadata::new(
-            graph_id.to_string(),
-            participants,
-            self.default_timeout,
-        );
+        let tx = TransactionMetadata::new(graph_id.to_string(), participants, self.default_timeout);
         let tx_id = tx.id.clone();
 
         let mut transactions = self.transactions.write().await;
@@ -326,7 +322,9 @@ impl LocalTransactionCoordinator {
         if tx.is_timed_out() {
             drop(transactions);
             self.abort(tx_id).await?;
-            return Err(ProximaDBError::Internal("Transaction timed out".to_string()));
+            return Err(ProximaDBError::Internal(
+                "Transaction timed out".to_string(),
+            ));
         }
 
         tx.operations.push(op);
@@ -339,9 +337,9 @@ impl LocalTransactionCoordinator {
         // Get transaction and update state
         let (graph_id, operations) = {
             let mut transactions = self.transactions.write().await;
-            let tx = transactions
-                .get_mut(&tx_id)
-                .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
+            let tx = transactions.get_mut(&tx_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
+            })?;
 
             tx.state = TransactionState::Committing;
             (tx.graph_id.clone(), tx.operations.clone())
@@ -349,9 +347,9 @@ impl LocalTransactionCoordinator {
 
         // Get engine and apply operations
         let engines = self.engines.read().await;
-        let engine = engines
-            .get(&graph_id)
-            .ok_or_else(|| ProximaDBError::Internal(format!("Engine for graph {} not found", graph_id)))?;
+        let engine = engines.get(&graph_id).ok_or_else(|| {
+            ProximaDBError::Internal(format!("Engine for graph {} not found", graph_id))
+        })?;
 
         // Apply all operations
         for op in operations {
@@ -646,7 +644,10 @@ impl TransactionManager {
         isolation: IsolationLevel,
     ) -> Result<TransactionId> {
         // Start transaction via local coordinator
-        let tx_id = self.coordinator.begin_transaction(graph_id, participants).await?;
+        let tx_id = self
+            .coordinator
+            .begin_transaction(graph_id, participants)
+            .await?;
 
         // Create unit of work
         let uow = UnitOfWork::new(tx_id.clone(), graph_id.to_string(), isolation);
@@ -671,14 +672,11 @@ impl TransactionManager {
     }
 
     /// Register a node operation within a transaction
-    pub async fn register_node_insert(
-        &self,
-        tx_id: &TransactionId,
-        node: Node,
-    ) -> Result<()> {
-        let uow_ref = self.active_uows.get(tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
+    pub async fn register_node_insert(&self, tx_id: &TransactionId, node: Node) -> Result<()> {
+        let uow_ref = self
+            .active_uows
+            .get(tx_id)
+            .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
 
         let mut uow = uow_ref.write().await;
         if !uow.is_active {
@@ -692,14 +690,11 @@ impl TransactionManager {
     }
 
     /// Register a node update within a transaction
-    pub async fn register_node_update(
-        &self,
-        tx_id: &TransactionId,
-        node: Node,
-    ) -> Result<()> {
-        let uow_ref = self.active_uows.get(tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
+    pub async fn register_node_update(&self, tx_id: &TransactionId, node: Node) -> Result<()> {
+        let uow_ref = self
+            .active_uows
+            .get(tx_id)
+            .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
 
         let mut uow = uow_ref.write().await;
         if !uow.is_active {
@@ -713,14 +708,11 @@ impl TransactionManager {
     }
 
     /// Register a node deletion within a transaction
-    pub async fn register_node_delete(
-        &self,
-        tx_id: &TransactionId,
-        node_id: String,
-    ) -> Result<()> {
-        let uow_ref = self.active_uows.get(tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
+    pub async fn register_node_delete(&self, tx_id: &TransactionId, node_id: String) -> Result<()> {
+        let uow_ref = self
+            .active_uows
+            .get(tx_id)
+            .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
 
         let mut uow = uow_ref.write().await;
         if !uow.is_active {
@@ -734,14 +726,11 @@ impl TransactionManager {
     }
 
     /// Register an edge insertion within a transaction
-    pub async fn register_edge_insert(
-        &self,
-        tx_id: &TransactionId,
-        edge: Edge,
-    ) -> Result<()> {
-        let uow_ref = self.active_uows.get(tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
+    pub async fn register_edge_insert(&self, tx_id: &TransactionId, edge: Edge) -> Result<()> {
+        let uow_ref = self
+            .active_uows
+            .get(tx_id)
+            .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
 
         let mut uow = uow_ref.write().await;
         if !uow.is_active {
@@ -755,14 +744,11 @@ impl TransactionManager {
     }
 
     /// Register an edge update within a transaction
-    pub async fn register_edge_update(
-        &self,
-        tx_id: &TransactionId,
-        edge: Edge,
-    ) -> Result<()> {
-        let uow_ref = self.active_uows.get(tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
+    pub async fn register_edge_update(&self, tx_id: &TransactionId, edge: Edge) -> Result<()> {
+        let uow_ref = self
+            .active_uows
+            .get(tx_id)
+            .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
 
         let mut uow = uow_ref.write().await;
         if !uow.is_active {
@@ -776,14 +762,11 @@ impl TransactionManager {
     }
 
     /// Register an edge deletion within a transaction
-    pub async fn register_edge_delete(
-        &self,
-        tx_id: &TransactionId,
-        edge_id: String,
-    ) -> Result<()> {
-        let uow_ref = self.active_uows.get(tx_id).ok_or_else(|| {
-            ProximaDBError::Internal(format!("Transaction {} not found", tx_id))
-        })?;
+    pub async fn register_edge_delete(&self, tx_id: &TransactionId, edge_id: String) -> Result<()> {
+        let uow_ref = self
+            .active_uows
+            .get(tx_id)
+            .ok_or_else(|| ProximaDBError::Internal(format!("Transaction {} not found", tx_id)))?;
 
         let mut uow = uow_ref.write().await;
         if !uow.is_active {
@@ -871,10 +854,7 @@ impl TransactionManager {
     }
 
     /// Get the current state of a transaction
-    pub async fn get_transaction_state(
-        &self,
-        tx_id: &TransactionId,
-    ) -> Result<TransactionState> {
+    pub async fn get_transaction_state(&self, tx_id: &TransactionId) -> Result<TransactionState> {
         self.coordinator.get_state(tx_id).await
     }
 
@@ -978,7 +958,8 @@ mod tests {
         let mut shards = HashMap::new();
         shards.insert("test_graph".to_string(), orion as Arc<dyn GraphEngine>);
 
-        let coordinator = LocalTransactionCoordinator::with_engines(shards, Duration::from_secs(30));
+        let coordinator =
+            LocalTransactionCoordinator::with_engines(shards, Duration::from_secs(30));
 
         let tx_id = coordinator
             .begin_transaction("test_graph", vec!["test_graph".to_string()])
@@ -992,7 +973,10 @@ mod tests {
             .expect("commit failed");
 
         // Verify state
-        let state = coordinator.get_state(&tx_id).await.expect("get_state failed");
+        let state = coordinator
+            .get_state(&tx_id)
+            .await
+            .expect("get_state failed");
         assert_eq!(state, TransactionState::Committed);
     }
 
