@@ -77,6 +77,11 @@ pub use query::{PatternMatcher, QueryPlanner};
 pub use service::GraphOperationsService;
 // Backward compatibility alias
 pub use service::GraphOperationsService as GraphService;
+// Transaction support types
+pub use service::{
+    IsolationLevel, TransactionHandle, TransactionId, TransactionManager, TransactionState,
+    UnitOfWork,
+};
 
 // Algorithm types for high-level API
 pub use service_algorithms::{

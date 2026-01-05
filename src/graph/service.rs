@@ -67,9 +67,15 @@ mod service_helpers;
 mod service_node_ops;
 #[path = "service_schema_validation.rs"]
 mod service_schema_validation;
+#[path = "service_transactions.rs"]
+mod service_transactions;
 #[path = "service_traversal_api.rs"]
 mod service_traversal_api;
 pub(super) use service_helpers::*;
+pub use service_transactions::{
+    IsolationLevel, TransactionHandle, TransactionId, TransactionManager, TransactionState,
+    UnitOfWork,
+};
 
 use crate::core::error::ProximaDBError;
 use crate::graph::{
@@ -110,8 +116,8 @@ pub struct GraphOperationsService {
     edge_type_counts: Arc<DashMap<String, AtomicU64>>,
     /// Graph traversal runtime settings
     graph_settings: crate::core::context::GraphTraversalSettings,
-    // Transaction coordinator (future: integrate with existing WAL)
-    // transaction_coordinator: Arc<TransactionCoordinator>,
+    /// Transaction manager for ACID transaction support
+    transaction_manager: Arc<service_transactions::TransactionManager>,
 }
 
 impl GraphOperationsService {
@@ -124,6 +130,12 @@ impl GraphOperationsService {
         // Initialize graph settings from global if available
         let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
+        // Initialize transaction manager with empty shards (will be populated as graphs are created)
+        let transaction_manager = Arc::new(service_transactions::TransactionManager::with_defaults(
+            std::collections::HashMap::new(),
+            std::time::Duration::from_secs(30),
+        ));
+
         let service = Self {
             mode: OperationMode::Unified,
             collection_service,
@@ -134,6 +146,7 @@ impl GraphOperationsService {
             stats_edges: Arc::new(AtomicU64::new(0)),
             edge_type_counts: Arc::new(DashMap::new()),
             graph_settings: default_settings,
+            transaction_manager,
         };
 
         // Register lightweight graph cache providers with orchestrator
@@ -190,6 +203,12 @@ impl GraphOperationsService {
 
         let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
+        // Initialize transaction manager with empty shards
+        let transaction_manager = Arc::new(service_transactions::TransactionManager::with_defaults(
+            std::collections::HashMap::new(),
+            std::time::Duration::from_secs(30),
+        ));
+
         let service = Self {
             mode: OperationMode::Unified,
             collection_service,
@@ -200,6 +219,7 @@ impl GraphOperationsService {
             stats_edges: Arc::new(AtomicU64::new(0)),
             edge_type_counts: Arc::new(DashMap::new()),
             graph_settings: default_settings,
+            transaction_manager,
         };
 
         // Register cache providers
@@ -639,6 +659,308 @@ impl GraphOperationsService {
         }
         Ok(())
     }
+
+    // =========================================================================
+    // Transaction Management API
+    // =========================================================================
+
+    /// Begin a new transaction on a graph
+    ///
+    /// Creates a new transaction with the default isolation level (ReadCommitted).
+    /// All graph operations performed within this transaction will be atomic.
+    ///
+    /// # Arguments
+    /// * `graph_id` - The ID of the graph to operate on
+    ///
+    /// # Returns
+    /// * `TransactionId` - A unique identifier for this transaction
+    ///
+    /// # Example
+    /// ```ignore
+    /// let tx_id = service.begin_transaction("my_graph").await?;
+    /// // ... perform operations ...
+    /// service.commit_transaction(tx_id).await?;
+    /// ```
+    pub async fn begin_transaction(
+        &self,
+        graph_id: &str,
+    ) -> Result<service_transactions::TransactionId> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Ensure the graph exists
+        let _ = self.get_or_create_graph_engine(graph_id).await?;
+
+        // Use the graph ID as the shard ID for single-graph transactions
+        let shard_id = format!("shard_{}", graph_id);
+        self.transaction_manager
+            .begin_transaction(graph_id, vec![shard_id])
+            .await
+    }
+
+    /// Begin a transaction with specific isolation level
+    ///
+    /// # Arguments
+    /// * `graph_id` - The ID of the graph to operate on
+    /// * `isolation` - The isolation level for this transaction
+    ///
+    /// # Returns
+    /// * `TransactionId` - A unique identifier for this transaction
+    pub async fn begin_transaction_with_isolation(
+        &self,
+        graph_id: &str,
+        isolation: service_transactions::IsolationLevel,
+    ) -> Result<service_transactions::TransactionId> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Ensure the graph exists
+        let _ = self.get_or_create_graph_engine(graph_id).await?;
+
+        let shard_id = format!("shard_{}", graph_id);
+        self.transaction_manager
+            .begin_transaction_with_isolation(graph_id, vec![shard_id], isolation)
+            .await
+    }
+
+    /// Commit a transaction
+    ///
+    /// Atomically applies all changes made within the transaction. If any
+    /// operation fails, the entire transaction is rolled back.
+    ///
+    /// # Arguments
+    /// * `tx_id` - The transaction ID returned from `begin_transaction`
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The transaction does not exist
+    /// - The transaction has already been committed or rolled back
+    /// - A 2PC participant votes to abort
+    pub async fn commit_transaction(
+        &self,
+        tx_id: service_transactions::TransactionId,
+    ) -> Result<()> {
+        self.transaction_manager.commit_transaction(tx_id).await
+    }
+
+    /// Rollback a transaction
+    ///
+    /// Discards all pending changes and releases any acquired locks.
+    ///
+    /// # Arguments
+    /// * `tx_id` - The transaction ID returned from `begin_transaction`
+    pub async fn rollback_transaction(
+        &self,
+        tx_id: service_transactions::TransactionId,
+    ) -> Result<()> {
+        self.transaction_manager.rollback_transaction(tx_id).await
+    }
+
+    /// Get the current state of a transaction
+    ///
+    /// # Arguments
+    /// * `tx_id` - The transaction ID to query
+    ///
+    /// # Returns
+    /// The current `TransactionState` (Active, Preparing, Committed, etc.)
+    pub async fn get_transaction_state(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+    ) -> Result<service_transactions::TransactionState> {
+        self.transaction_manager.get_transaction_state(tx_id).await
+    }
+
+    /// Check if a transaction is still active
+    pub fn is_transaction_active(&self, tx_id: &service_transactions::TransactionId) -> bool {
+        self.transaction_manager.is_transaction_active(tx_id)
+    }
+
+    /// Get a RAII transaction handle for automatic rollback on drop
+    ///
+    /// The returned handle will automatically rollback the transaction if
+    /// dropped without an explicit commit or rollback call. This ensures
+    /// no dangling transactions.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let handle = service.begin_transaction_handle("my_graph").await?;
+    /// // ... perform operations using handle.id() ...
+    /// handle.commit().await?; // Or handle.rollback().await?
+    /// // If handle is dropped without commit/rollback, it auto-rollbacks
+    /// ```
+    pub async fn begin_transaction_handle(
+        &self,
+        graph_id: &str,
+    ) -> Result<service_transactions::TransactionHandle> {
+        let tx_id = self.begin_transaction(graph_id).await?;
+        Ok(service_transactions::TransactionHandle::new(
+            tx_id,
+            self.transaction_manager.clone(),
+        ))
+    }
+
+    // =========================================================================
+    // Transaction-Aware Graph Operations
+    // =========================================================================
+
+    /// Create a node within a transaction
+    ///
+    /// The node will not be visible to other transactions until commit.
+    pub async fn create_node_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        node: Node,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate schema before registering
+        self.enforce_schema_on_node(graph_id, &node).await?;
+        self.enforce_unique_constraints_on_node(graph_id, &node)?;
+        self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_node_insert(tx_id, node)
+            .await
+    }
+
+    /// Update a node within a transaction
+    pub async fn update_node_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        node: Node,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate schema before registering
+        self.enforce_schema_on_node(graph_id, &node).await?;
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_node_update(tx_id, node)
+            .await
+    }
+
+    /// Delete a node within a transaction
+    pub async fn delete_node_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        _graph_id: &str,
+        node_id: String,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_node_delete(tx_id, node_id)
+            .await
+    }
+
+    /// Create an edge within a transaction
+    pub async fn create_edge_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        edge: Edge,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate endpoints exist (best effort - may be in pending inserts)
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        if let (Some(from), Some(to)) = (
+            engine.get_node(&edge.from_node_id)?,
+            engine.get_node(&edge.to_node_id)?,
+        ) {
+            self.enforce_schema_on_edge(graph_id, &edge, &from.labels, &to.labels)
+                .await?;
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_edge_insert(tx_id, edge)
+            .await
+    }
+
+    /// Update an edge within a transaction
+    pub async fn update_edge_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        edge: Edge,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate schema
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        if let (Some(from), Some(to)) = (
+            engine.get_node(&edge.from_node_id)?,
+            engine.get_node(&edge.to_node_id)?,
+        ) {
+            self.enforce_schema_on_edge(graph_id, &edge, &from.labels, &to.labels)
+                .await?;
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_edge_update(tx_id, edge)
+            .await
+    }
+
+    /// Delete an edge within a transaction
+    pub async fn delete_edge_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        _graph_id: &str,
+        edge_id: String,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_edge_delete(tx_id, edge_id)
+            .await
+    }
+
+    /// Get access to the transaction manager for advanced usage
+    pub fn transaction_manager(&self) -> Arc<service_transactions::TransactionManager> {
+        self.transaction_manager.clone()
+    }
+
+    // =========================================================================
+    // End Transaction Management API
+    // =========================================================================
 
     // create_node moved to service_node_ops.rs
 
