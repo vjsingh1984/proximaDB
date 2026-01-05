@@ -1321,7 +1321,8 @@ mod tests {
         stats.migrated_records = 50;
         stats.failed_records = 5;
 
-        assert_eq!(stats.progress_percent(), 55.0);
+        // Use approximate comparison for floating point
+        assert!((stats.progress_percent() - 55.0).abs() < 0.001);
         assert!(!stats.is_complete());
 
         stats.migrated_records = 95;

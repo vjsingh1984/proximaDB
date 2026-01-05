@@ -976,13 +976,17 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_manager_begin_commit() {
         let orion = Arc::new(OrionGraphEngine::new());
-        let mut shards = HashMap::new();
-        shards.insert("shard_test".to_string(), orion as Arc<dyn GraphEngine>);
 
-        let manager = TransactionManager::with_defaults(shards, Duration::from_secs(30));
+        let coordinator = Arc::new(LocalTransactionCoordinator::new(Duration::from_secs(30)));
+        // Register the engine with the coordinator
+        coordinator
+            .register_engine("test_graph".to_string(), orion)
+            .await;
+
+        let manager = TransactionManager::new(coordinator);
 
         let tx_id = manager
-            .begin_transaction("test_graph", vec!["shard_test".to_string()])
+            .begin_transaction("test_graph", vec!["test_graph".to_string()])
             .await
             .expect("Failed to begin transaction");
 

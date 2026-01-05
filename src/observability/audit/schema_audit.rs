@@ -56,6 +56,7 @@ use std::collections::VecDeque;
 
 /// Type of schema change
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SchemaChangeType {
     /// Schema was created
     Created,
