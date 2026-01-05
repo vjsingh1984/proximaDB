@@ -1232,7 +1232,11 @@ class MultiModalQueryExecutor:
         )
 
     def _execute_vector(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute vector search component."""
+        """Execute vector search component.
+
+        Searches for similar vectors in the specified collection and returns
+        results with score and metadata.
+        """
         try:
             results = self._client.search(
                 collection=component["collection"],
@@ -1245,15 +1249,19 @@ class MultiModalQueryExecutor:
                     "id": r.id,
                     "score": r.score,
                     "metadata": r.metadata,
-                    "_source": "vector",
+                    "_source_type": "vector",
                 }
                 for r in results
             ]
-        except Exception as e:
+        except Exception:
             return []
 
     def _execute_graph(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute graph traversal component."""
+        """Execute graph traversal component.
+
+        Performs graph traversal starting from specified nodes or nodes
+        with a given label, following edges up to max_depth hops.
+        """
         try:
             # Use graph analytics if available
             if hasattr(self._client, 'graph'):
@@ -1269,7 +1277,9 @@ class MultiModalQueryExecutor:
                         "id": r.get("id"),
                         "node": r,
                         "depth": r.get("depth", 0),
-                        "_source": "graph",
+                        "labels": r.get("labels", []),
+                        "properties": r.get("properties", {}),
+                        "_source_type": "graph",
                     }
                     for r in results
                 ]
@@ -1278,7 +1288,10 @@ class MultiModalQueryExecutor:
             return []
 
     def _execute_document(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute document query component."""
+        """Execute document query component.
+
+        Queries documents from a collection with optional filters and text search.
+        """
         try:
             if hasattr(self._client, 'query_documents'):
                 results = self._client.query_documents(
@@ -1291,7 +1304,7 @@ class MultiModalQueryExecutor:
                     {
                         "id": r.get("id"),
                         "document": r,
-                        "_source": "document",
+                        "_source_type": "document",
                     }
                     for r in results
                 ]
@@ -1300,7 +1313,10 @@ class MultiModalQueryExecutor:
             return []
 
     def _execute_logs(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute log query component."""
+        """Execute log query component.
+
+        Searches logs within a time range with optional service and text filters.
+        """
         try:
             if hasattr(self._client, 'query_logs'):
                 results = self._client.query_logs(
@@ -1315,7 +1331,7 @@ class MultiModalQueryExecutor:
                         "id": r.get("id"),
                         "log": r,
                         "timestamp": r.get("timestamp"),
-                        "_source": "logs",
+                        "_source_type": "logs",
                     }
                     for r in results
                 ]
@@ -1324,7 +1340,10 @@ class MultiModalQueryExecutor:
             return []
 
     def _execute_metrics(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute metric aggregation component."""
+        """Execute metric aggregation component.
+
+        Aggregates metrics over a time range with optional grouping.
+        """
         try:
             if hasattr(self._client, 'aggregate_metrics'):
                 results = self._client.aggregate_metrics(
@@ -1338,7 +1357,7 @@ class MultiModalQueryExecutor:
                         "metric_name": r.get("name"),
                         "value": r.get("value"),
                         "timestamp": r.get("timestamp"),
-                        "_source": "metrics",
+                        "_source_type": "metrics",
                     }
                     for r in results
                 ]

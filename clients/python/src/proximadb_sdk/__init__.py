@@ -708,6 +708,7 @@ try:
         EmbeddedProximaDB,
         EmbeddedCollection,
         EmbeddedConfig,
+        EmbeddedMultiModalQueryExecutor,
         connect_embedded,
         # Embedding model classes
         BaseEmbeddingModel,
@@ -731,6 +732,7 @@ if _embedded_available:
         "EmbeddedProximaDB",
         "EmbeddedCollection",
         "EmbeddedConfig",
+        "EmbeddedMultiModalQueryExecutor",
         "connect_embedded",
         # Embedding models
         "BaseEmbeddingModel",
