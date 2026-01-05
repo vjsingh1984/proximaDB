@@ -58,7 +58,7 @@ class SentenceTransformerMixin:
                 self.config.model.name,
                 device=self.config.device,
                 trust_remote_code=self.config.trust_remote_code,
-                cache_folder=self.config.cache_dir
+                cache_folder=self.config.cache_dir,
             )
             logger.info(f"Model loaded: {self.config.model.name}")
             return model
@@ -86,22 +86,22 @@ class SentenceTransformerMixin:
 
         self.ensure_initialized()
 
-        logger.debug(f"Embedding {len(texts)} texts (batch_size={self.config.batch_size})")
+        logger.debug(
+            f"Embedding {len(texts)} texts (batch_size={self.config.batch_size})"
+        )
 
         embeddings = self._model.encode(
             texts,
             batch_size=self.config.batch_size,
             normalize_embeddings=self.config.normalize,
             show_progress_bar=False,
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
 
         return embeddings
 
     def embed_batch(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
+        self, texts: List[str], batch_size: Optional[int] = None
     ) -> np.ndarray:
         """
         Embed texts with custom batch size

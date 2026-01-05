@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 class FilterOp(str, Enum):
     """Filter operations"""
+
     EQUALS = "equals"
     NOT_EQUALS = "not_equals"
     GREATER_THAN = "gt"
@@ -27,6 +28,7 @@ class FilterOp(str, Enum):
 
 class LogicalOp(str, Enum):
     """Logical operators for combining filters"""
+
     AND = "and"
     OR = "or"
     NOT = "not"
@@ -35,35 +37,41 @@ class LogicalOp(str, Enum):
 @dataclass
 class FilterCondition:
     """A single filter condition"""
+
     field: str
     operation: FilterOp
     value: Any = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
         return {
             "field": self.field,
             "operation": self.operation.value,
-            "value": self.value
+            "value": self.value,
         }
 
 
 @dataclass
 class FilterGroup:
     """A group of filter conditions with a logical operator"""
+
     operator: LogicalOp = LogicalOp.AND
-    conditions: List[Union[FilterCondition, 'FilterGroup']] = field(default_factory=list)
-    
-    def add_condition(self, field: str, operation: FilterOp, value: Any = None) -> 'FilterGroup':
+    conditions: List[Union[FilterCondition, "FilterGroup"]] = field(
+        default_factory=list
+    )
+
+    def add_condition(
+        self, field: str, operation: FilterOp, value: Any = None
+    ) -> "FilterGroup":
         """Add a filter condition to this group"""
         self.conditions.append(FilterCondition(field, operation, value))
         return self
-    
-    def add_group(self, group: 'FilterGroup') -> 'FilterGroup':
+
+    def add_group(self, group: "FilterGroup") -> "FilterGroup":
         """Add a nested filter group"""
         self.conditions.append(group)
         return self
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
         return {
@@ -71,32 +79,32 @@ class FilterGroup:
             "conditions": [
                 c.to_dict() if isinstance(c, FilterCondition) else c.to_dict()
                 for c in self.conditions
-            ]
+            ],
         }
 
 
 class FilterBuilder:
     """
     Fluent filter builder for complex metadata queries
-    
+
     Examples:
         # Simple equality filter
         filter = FilterBuilder().equals("category", "electronics").build()
-        
+
         # Multiple AND conditions
         filter = (FilterBuilder()
             .equals("category", "electronics")
             .greater_than("price", 100)
             .less_than("price", 1000)
             .build())
-        
+
         # OR conditions
         filter = (FilterBuilder()
             .or_()
             .equals("brand", "Apple")
             .equals("brand", "Samsung")
             .build())
-        
+
         # Complex nested filters
         filter = (FilterBuilder()
             .equals("category", "electronics")
@@ -109,116 +117,116 @@ class FilterBuilder:
             .greater_than("rating", 4.0)
             .build())
     """
-    
+
     def __init__(self):
         self._root = FilterGroup(operator=LogicalOp.AND)
         self._current_group = self._root
         self._group_stack = []
-    
-    def and_(self) -> 'FilterBuilder':
+
+    def and_(self) -> "FilterBuilder":
         """Start a new AND group"""
         new_group = FilterGroup(operator=LogicalOp.AND)
         self._current_group.add_group(new_group)
         self._group_stack.append(self._current_group)
         self._current_group = new_group
         return self
-    
-    def or_(self) -> 'FilterBuilder':
+
+    def or_(self) -> "FilterBuilder":
         """Start a new OR group"""
         new_group = FilterGroup(operator=LogicalOp.OR)
         self._current_group.add_group(new_group)
         self._group_stack.append(self._current_group)
         self._current_group = new_group
         return self
-    
-    def not_(self) -> 'FilterBuilder':
+
+    def not_(self) -> "FilterBuilder":
         """Start a new NOT group"""
         new_group = FilterGroup(operator=LogicalOp.NOT)
         self._current_group.add_group(new_group)
         self._group_stack.append(self._current_group)
         self._current_group = new_group
         return self
-    
-    def end_group(self) -> 'FilterBuilder':
+
+    def end_group(self) -> "FilterBuilder":
         """End the current group and return to parent"""
         if self._group_stack:
             self._current_group = self._group_stack.pop()
         return self
-    
-    def and_group(self, other: 'FilterBuilder') -> 'FilterBuilder':
+
+    def and_group(self, other: "FilterBuilder") -> "FilterBuilder":
         """Add another filter builder's conditions as an AND group"""
         self._current_group.add_group(other._root)
         return self
-    
-    def or_group(self, other: 'FilterBuilder') -> 'FilterBuilder':
+
+    def or_group(self, other: "FilterBuilder") -> "FilterBuilder":
         """Add another filter builder's conditions as an OR group"""
         other._root.operator = LogicalOp.OR
         self._current_group.add_group(other._root)
         return self
-    
-    def equals(self, field: str, value: Any) -> 'FilterBuilder':
+
+    def equals(self, field: str, value: Any) -> "FilterBuilder":
         """Add an equality filter"""
         self._current_group.add_condition(field, FilterOp.EQUALS, value)
         return self
-    
-    def not_equals(self, field: str, value: Any) -> 'FilterBuilder':
+
+    def not_equals(self, field: str, value: Any) -> "FilterBuilder":
         """Add a not-equals filter"""
         self._current_group.add_condition(field, FilterOp.NOT_EQUALS, value)
         return self
-    
-    def greater_than(self, field: str, value: Any) -> 'FilterBuilder':
+
+    def greater_than(self, field: str, value: Any) -> "FilterBuilder":
         """Add a greater-than filter"""
         self._current_group.add_condition(field, FilterOp.GREATER_THAN, value)
         return self
-    
-    def gte(self, field: str, value: Any) -> 'FilterBuilder':
+
+    def gte(self, field: str, value: Any) -> "FilterBuilder":
         """Add a greater-than-or-equal filter"""
         self._current_group.add_condition(field, FilterOp.GREATER_THAN_OR_EQUAL, value)
         return self
-    
-    def less_than(self, field: str, value: Any) -> 'FilterBuilder':
+
+    def less_than(self, field: str, value: Any) -> "FilterBuilder":
         """Add a less-than filter"""
         self._current_group.add_condition(field, FilterOp.LESS_THAN, value)
         return self
-    
-    def lte(self, field: str, value: Any) -> 'FilterBuilder':
+
+    def lte(self, field: str, value: Any) -> "FilterBuilder":
         """Add a less-than-or-equal filter"""
         self._current_group.add_condition(field, FilterOp.LESS_THAN_OR_EQUAL, value)
         return self
-    
-    def in_(self, field: str, values: List[Any]) -> 'FilterBuilder':
+
+    def in_(self, field: str, values: List[Any]) -> "FilterBuilder":
         """Add an IN filter"""
         self._current_group.add_condition(field, FilterOp.IN, values)
         return self
-    
-    def not_in(self, field: str, values: List[Any]) -> 'FilterBuilder':
+
+    def not_in(self, field: str, values: List[Any]) -> "FilterBuilder":
         """Add a NOT IN filter"""
         self._current_group.add_condition(field, FilterOp.NOT_IN, values)
         return self
-    
-    def contains(self, field: str, value: str) -> 'FilterBuilder':
+
+    def contains(self, field: str, value: str) -> "FilterBuilder":
         """Add a contains filter (for string fields)"""
         self._current_group.add_condition(field, FilterOp.CONTAINS, value)
         return self
-    
-    def exists(self, field: str) -> 'FilterBuilder':
+
+    def exists(self, field: str) -> "FilterBuilder":
         """Add an exists filter"""
         self._current_group.add_condition(field, FilterOp.EXISTS)
         return self
-    
-    def not_exists(self, field: str) -> 'FilterBuilder':
+
+    def not_exists(self, field: str) -> "FilterBuilder":
         """Add a not-exists filter"""
         self._current_group.add_condition(field, FilterOp.NOT_EXISTS)
         return self
-    
+
     def build(self) -> FilterGroup:
         """Build and return the filter group"""
         return self._root
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
         return self._root.to_dict()
-    
+
     def to_proto_filter(self) -> Any:
         """Convert to ProximaDB proto MetadataFilter (v1 proto structure)
 
@@ -291,6 +299,7 @@ class FilterBuilder:
                 if proto_op is None:
                     # Unsupported operation - raise error
                     import warnings
+
                     warnings.warn(
                         f"Filter operation {condition.operation} not supported in v1 proto, skipping. "
                         f"Supported operations: {list(comparison_op_map.keys())}"
@@ -299,8 +308,7 @@ class FilterBuilder:
 
                 # Create FilterClause
                 filter_clause = entity_pb2.FilterClause(
-                    field=condition.field,
-                    op=proto_op
+                    field=condition.field, op=proto_op
                 )
 
                 # Set value using oneof based on type
@@ -322,6 +330,7 @@ class FilterBuilder:
                     # Different operator - we lose nesting structure
                     # Add all clauses but with a warning
                     import warnings
+
                     warnings.warn(
                         f"Nested filter groups with different operators may lose structure when converted to proto. "
                         f"Parent operator: {group.operator}, Nested operator: {condition.operator}"
@@ -329,7 +338,7 @@ class FilterBuilder:
                     meta_filter.clauses.extend(nested_filter.clauses)
 
         return meta_filter
-    
+
     def _set_filter_clause_value(self, filter_clause: Any, value: Any) -> None:
         """Set value in FilterClause using oneof (v1 proto)
 
@@ -402,7 +411,9 @@ def or_filters(*filters: FilterBuilder) -> FilterBuilder:
     for f in filters:
         for condition in f._root.conditions:
             if isinstance(condition, FilterCondition):
-                builder._current_group.add_condition(condition.field, condition.operation, condition.value)
+                builder._current_group.add_condition(
+                    condition.field, condition.operation, condition.value
+                )
             else:
                 builder._current_group.add_group(condition)
     builder.end_group()

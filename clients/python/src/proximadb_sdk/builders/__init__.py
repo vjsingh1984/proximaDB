@@ -10,6 +10,6 @@ from .insert import InsertBuilder
 
 __all__ = [
     "SearchBuilder",
-    "CollectionBuilder", 
+    "CollectionBuilder",
     "InsertBuilder",
 ]

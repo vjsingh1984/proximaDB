@@ -59,7 +59,7 @@ def get_provider(name: str, **config_kwargs):
             mteb_score=default_config.model.mteb_score,
             languages=default_config.model.languages,
             description=default_config.model.description,
-            use_case=default_config.model.use_case
+            use_case=default_config.model.use_case,
         )
         config_kwargs["model"] = new_model
 
@@ -81,10 +81,11 @@ def get_provider_info(name: str) -> dict:
 def get_embedding_provider(provider: str, **kwargs):
     """DEPRECATED: Use get_provider() instead"""
     import warnings
+
     warnings.warn(
         "get_embedding_provider() is deprecated. Use get_provider()",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     return get_provider(provider, **kwargs)
 
@@ -92,10 +93,11 @@ def get_embedding_provider(provider: str, **kwargs):
 def get_default_embedding_provider():
     """DEPRECATED: Use get_provider('simulated') instead"""
     import warnings
+
     warnings.warn(
         "get_default_embedding_provider() is deprecated. Use get_provider('simulated')",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     return get_provider("simulated")
 

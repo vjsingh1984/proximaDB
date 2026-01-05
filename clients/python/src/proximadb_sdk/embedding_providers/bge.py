@@ -44,26 +44,26 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             "dimension": 1024,
             "max_length": 512,
             "description": "Best quality English embeddings, top MTEB performer",
-            "use_case": "Maximum accuracy, research, when quality > speed"
+            "use_case": "Maximum accuracy, research, when quality > speed",
         },
         "BAAI/bge-base-en-v1.5": {
             "dimension": 768,
             "max_length": 512,
             "description": "Balanced quality and speed for English",
-            "use_case": "Production use, good balance"
+            "use_case": "Production use, good balance",
         },
         "BAAI/bge-small-en-v1.5": {
             "dimension": 384,
             "max_length": 512,
             "description": "Fast and efficient for English",
-            "use_case": "High throughput, latency-sensitive applications"
+            "use_case": "High throughput, latency-sensitive applications",
         },
         "BAAI/bge-m3": {
             "dimension": 1024,
             "max_length": 8192,
             "description": "Multilingual model supporting 100+ languages",
-            "use_case": "Cross-lingual retrieval, multilingual applications"
-        }
+            "use_case": "Cross-lingual retrieval, multilingual applications",
+        },
     }
 
     # Instruction prefix for queries (improves retrieval performance)
@@ -88,8 +88,8 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             max_length=512,
             extra_params={
                 "use_query_instruction": False,  # Set True for queries, False for passages
-                "trust_remote_code": True  # Required for some BGE models
-            }
+                "trust_remote_code": True,  # Required for some BGE models
+            },
         )
 
     def _initialize(self) -> None:
@@ -105,7 +105,7 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             self.model = SentenceTransformer(
                 self.config.model_name,
                 device=self.config.device,
-                trust_remote_code=trust_remote_code
+                trust_remote_code=trust_remote_code,
             )
 
             # Update dimension if it's a known BGE model
@@ -119,13 +119,17 @@ class BGEEmbeddingProvider(EmbeddingProvider):
                 self.config.dimension = dummy_embedding.shape[1]
 
             self._available = True
-            logger.info(f"Initialized BGE model: {self.config.model_name} "
-                       f"(dimension: {self.config.dimension}, max_length: {self.config.max_length})")
+            logger.info(
+                f"Initialized BGE model: {self.config.model_name} "
+                f"(dimension: {self.config.dimension}, max_length: {self.config.max_length})"
+            )
 
         except ImportError:
             self._available = False
-            logger.warning("sentence-transformers not installed. "
-                          "Install with: pip install sentence-transformers")
+            logger.warning(
+                "sentence-transformers not installed. "
+                "Install with: pip install sentence-transformers"
+            )
         except Exception as e:
             self._available = False
             logger.error(f"Failed to initialize BGE model: {e}")
@@ -145,7 +149,11 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             Texts with instruction prefix applied if appropriate
         """
         extra_params = self.config.extra_params or {}
-        use_instruction = is_query if is_query is not None else extra_params.get("use_query_instruction", False)
+        use_instruction = (
+            is_query
+            if is_query is not None
+            else extra_params.get("use_query_instruction", False)
+        )
 
         if use_instruction:
             return [self.QUERY_INSTRUCTION + text for text in texts]
@@ -176,8 +184,10 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             Array of embeddings with shape (len(texts), dimension)
         """
         if not self._available:
-            raise RuntimeError("BGE model not available. "
-                             "Install with: pip install sentence-transformers")
+            raise RuntimeError(
+                "BGE model not available. "
+                "Install with: pip install sentence-transformers"
+            )
 
         if not texts:
             return np.array([])
@@ -191,12 +201,14 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             batch_size=self.config.batch_size,
             show_progress_bar=False,
             normalize_embeddings=self.config.normalize,
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
 
         return embeddings
 
-    def embed_documents(self, documents: List[Dict[str, Any]], text_field: str = 'text') -> np.ndarray:
+    def embed_documents(
+        self, documents: List[Dict[str, Any]], text_field: str = "text"
+    ) -> np.ndarray:
         """
         Generate embeddings for documents (passages, NOT queries)
 
@@ -207,7 +219,7 @@ class BGEEmbeddingProvider(EmbeddingProvider):
         Returns:
             Array of embedding vectors
         """
-        texts = [doc.get(text_field, '') for doc in documents]
+        texts = [doc.get(text_field, "") for doc in documents]
         # Documents are passages, not queries - don't use instruction
         return self.embed_texts(texts, is_query=False)
 
@@ -251,16 +263,18 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             "max_length": self.config.max_length,
             "provider": "bge",
             "normalize": self.config.normalize,
-            "available": self._available
+            "available": self._available,
         }
 
         # Add model-specific info if it's a known BGE model
         if self.config.model_name in self.BGE_MODELS:
             model_spec = self.BGE_MODELS[self.config.model_name]
-            info.update({
-                "description": model_spec["description"],
-                "use_case": model_spec["use_case"]
-            })
+            info.update(
+                {
+                    "description": model_spec["description"],
+                    "use_case": model_spec["use_case"],
+                }
+            )
 
         return info
 
@@ -290,7 +304,7 @@ class BGEEmbeddingProvider(EmbeddingProvider):
             "best_quality": "BAAI/bge-large-en-v1.5",
             "balanced": "BAAI/bge-base-en-v1.5",
             "fast": "BAAI/bge-small-en-v1.5",
-            "multilingual": "BAAI/bge-m3"
+            "multilingual": "BAAI/bge-m3",
         }
 
         return recommendations.get(use_case, "BAAI/bge-base-en-v1.5")

@@ -36,8 +36,17 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import (
-    List, Dict, Optional, Any, Set, Tuple,
-    Iterator, Callable, Union, Protocol, TypeVar
+    List,
+    Dict,
+    Optional,
+    Any,
+    Set,
+    Tuple,
+    Iterator,
+    Callable,
+    Union,
+    Protocol,
+    TypeVar,
 )
 import subprocess
 import os
@@ -55,8 +64,10 @@ logger = logging.getLogger(__name__)
 # Enums and Types
 # =============================================================================
 
+
 class VCSType(Enum):
     """Supported version control systems"""
+
     GIT = auto()
     MERCURIAL = auto()
     SVN = auto()
@@ -65,6 +76,7 @@ class VCSType(Enum):
 
 class ChangeType(Enum):
     """Types of file changes"""
+
     ADDED = "A"
     MODIFIED = "M"
     DELETED = "D"
@@ -76,11 +88,12 @@ class ChangeType(Enum):
 
 class BranchType(Enum):
     """Branch classification"""
-    MAIN = auto()      # main, master
-    DEVELOP = auto()   # develop, dev
-    FEATURE = auto()   # feature/*
-    RELEASE = auto()   # release/*
-    HOTFIX = auto()    # hotfix/*
+
+    MAIN = auto()  # main, master
+    DEVELOP = auto()  # develop, dev
+    FEATURE = auto()  # feature/*
+    RELEASE = auto()  # release/*
+    HOTFIX = auto()  # hotfix/*
     OTHER = auto()
 
 
@@ -88,9 +101,11 @@ class BranchType(Enum):
 # Data Classes
 # =============================================================================
 
+
 @dataclass
 class Author:
     """Git author information"""
+
     name: str
     email: str
 
@@ -106,6 +121,7 @@ class Author:
 @dataclass
 class Commit:
     """Git commit information"""
+
     hash: str
     short_hash: str
     author: Author
@@ -128,6 +144,7 @@ class Commit:
 @dataclass
 class Branch:
     """Git branch information"""
+
     name: str
     commit_hash: str
     is_current: bool = False
@@ -139,15 +156,15 @@ class Branch:
     def classify(cls, name: str) -> BranchType:
         """Classify branch by name"""
         name_lower = name.lower()
-        if name_lower in ('main', 'master'):
+        if name_lower in ("main", "master"):
             return BranchType.MAIN
-        elif name_lower in ('develop', 'dev', 'development'):
+        elif name_lower in ("develop", "dev", "development"):
             return BranchType.DEVELOP
-        elif name_lower.startswith('feature/') or name_lower.startswith('feat/'):
+        elif name_lower.startswith("feature/") or name_lower.startswith("feat/"):
             return BranchType.FEATURE
-        elif name_lower.startswith('release/') or name_lower.startswith('rel/'):
+        elif name_lower.startswith("release/") or name_lower.startswith("rel/"):
             return BranchType.RELEASE
-        elif name_lower.startswith('hotfix/') or name_lower.startswith('fix/'):
+        elif name_lower.startswith("hotfix/") or name_lower.startswith("fix/"):
             return BranchType.HOTFIX
         return BranchType.OTHER
 
@@ -155,6 +172,7 @@ class Branch:
 @dataclass
 class Tag:
     """Git tag information"""
+
     name: str
     commit_hash: str
     is_annotated: bool = False
@@ -166,6 +184,7 @@ class Tag:
 @dataclass
 class FileChange:
     """Represents a file change between commits"""
+
     path: str
     change_type: ChangeType
     old_path: Optional[str] = None  # For renames/copies
@@ -179,12 +198,41 @@ class FileChange:
     def is_code_file(self) -> bool:
         """Check if this is a code file based on extension"""
         code_extensions = {
-            '.py', '.rs', '.go', '.js', '.ts', '.jsx', '.tsx',
-            '.java', '.kt', '.scala', '.c', '.cpp', '.h', '.hpp',
-            '.cs', '.rb', '.php', '.swift', '.m', '.mm',
-            '.sh', '.bash', '.zsh', '.ps1',
-            '.sql', '.lua', '.pl', '.pm', '.r',
-            '.hs', '.ex', '.exs', '.erl', '.clj', '.lisp',
+            ".py",
+            ".rs",
+            ".go",
+            ".js",
+            ".ts",
+            ".jsx",
+            ".tsx",
+            ".java",
+            ".kt",
+            ".scala",
+            ".c",
+            ".cpp",
+            ".h",
+            ".hpp",
+            ".cs",
+            ".rb",
+            ".php",
+            ".swift",
+            ".m",
+            ".mm",
+            ".sh",
+            ".bash",
+            ".zsh",
+            ".ps1",
+            ".sql",
+            ".lua",
+            ".pl",
+            ".pm",
+            ".r",
+            ".hs",
+            ".ex",
+            ".exs",
+            ".erl",
+            ".clj",
+            ".lisp",
         }
         return Path(self.path).suffix.lower() in code_extensions
 
@@ -192,6 +240,7 @@ class FileChange:
 @dataclass
 class DiffHunk:
     """A hunk from a unified diff"""
+
     old_start: int
     old_count: int
     new_start: int
@@ -203,6 +252,7 @@ class DiffHunk:
 @dataclass
 class FileDiff:
     """Detailed diff for a single file"""
+
     path: str
     old_path: Optional[str]
     change_type: ChangeType
@@ -212,23 +262,24 @@ class FileDiff:
     @property
     def total_additions(self) -> int:
         return sum(
-            line.startswith('+') and not line.startswith('+++')
+            line.startswith("+") and not line.startswith("+++")
             for hunk in self.hunks
-            for line in hunk.content.split('\n')
+            for line in hunk.content.split("\n")
         )
 
     @property
     def total_deletions(self) -> int:
         return sum(
-            line.startswith('-') and not line.startswith('---')
+            line.startswith("-") and not line.startswith("---")
             for hunk in self.hunks
-            for line in hunk.content.split('\n')
+            for line in hunk.content.split("\n")
         )
 
 
 @dataclass
 class BlameEntry:
     """Blame information for a line range"""
+
     commit_hash: str
     author: Author
     timestamp: datetime
@@ -240,6 +291,7 @@ class BlameEntry:
 @dataclass
 class RepositoryInfo:
     """Repository metadata"""
+
     root_path: Path
     vcs_type: VCSType
     remote_url: Optional[str] = None
@@ -270,6 +322,7 @@ class RepositoryInfo:
 @dataclass
 class IndexState:
     """Tracks the state of the index for a repository"""
+
     repository_id: str
     last_indexed_commit: Optional[str] = None
     last_indexed_time: Optional[datetime] = None
@@ -280,7 +333,9 @@ class IndexState:
         return {
             "repository_id": self.repository_id,
             "last_indexed_commit": self.last_indexed_commit,
-            "last_indexed_time": self.last_indexed_time.isoformat() if self.last_indexed_time else None,
+            "last_indexed_time": (
+                self.last_indexed_time.isoformat() if self.last_indexed_time else None
+            ),
             "indexed_files": self.indexed_files,
             "branch_states": self.branch_states,
         }
@@ -290,7 +345,11 @@ class IndexState:
         return cls(
             repository_id=data["repository_id"],
             last_indexed_commit=data.get("last_indexed_commit"),
-            last_indexed_time=datetime.fromisoformat(data["last_indexed_time"]) if data.get("last_indexed_time") else None,
+            last_indexed_time=(
+                datetime.fromisoformat(data["last_indexed_time"])
+                if data.get("last_indexed_time")
+                else None
+            ),
             indexed_files=data.get("indexed_files", {}),
             branch_states=data.get("branch_states", {}),
         )
@@ -299,6 +358,7 @@ class IndexState:
 # =============================================================================
 # Abstract VCS Interface (Strategy Pattern)
 # =============================================================================
+
 
 class VCSBackend(ABC):
     """Abstract interface for version control systems"""
@@ -403,6 +463,7 @@ class VCSBackend(ABC):
 # Git Implementation
 # =============================================================================
 
+
 class GitRepository(VCSBackend):
     """Git repository implementation"""
 
@@ -446,7 +507,7 @@ class GitRepository(VCSBackend):
 
     def _parse_commit(self, output: str) -> Commit:
         """Parse git log --format output into Commit"""
-        lines = output.strip().split('\n')
+        lines = output.strip().split("\n")
         if len(lines) < 6:
             raise ValueError(f"Invalid commit output: {output}")
 
@@ -455,13 +516,15 @@ class GitRepository(VCSBackend):
         author_name, author_email = self._parse_author(lines[2])
         committer_name, committer_email = self._parse_author(lines[3])
         timestamp = datetime.fromtimestamp(int(lines[4]))
-        message = '\n'.join(lines[5:])
+        message = "\n".join(lines[5:])
 
         return Commit(
             hash=commit_hash,
             short_hash=commit_hash[:7],
             author=Author(author_name, author_email),
-            committer=Author(committer_name, committer_email) if committer_name else None,
+            committer=(
+                Author(committer_name, committer_email) if committer_name else None
+            ),
             timestamp=timestamp,
             message=message,
             parent_hashes=parent_hashes,
@@ -469,7 +532,7 @@ class GitRepository(VCSBackend):
 
     def _parse_author(self, line: str) -> Tuple[str, str]:
         """Parse author line 'Name <email>'"""
-        match = re.match(r'^(.+?)\s*<(.+?)>$', line.strip())
+        match = re.match(r"^(.+?)\s*<(.+?)>$", line.strip())
         if match:
             return match.group(1), match.group(2)
         return line.strip(), ""
@@ -484,7 +547,8 @@ class GitRepository(VCSBackend):
     def get_current_commit(self) -> Optional[Commit]:
         try:
             result = self._run_git(
-                "log", "-1",
+                "log",
+                "-1",
                 "--format=%H%n%P%n%an <%ae>%n%cn <%ce>%n%ct%n%B",
             )
             return self._parse_commit(result.stdout)
@@ -505,26 +569,30 @@ class GitRepository(VCSBackend):
         # Get local branches
         try:
             result = self._run_git(
-                "branch", "-v", "--format=%(refname:short)|%(objectname)|%(HEAD)|%(upstream:short)"
+                "branch",
+                "-v",
+                "--format=%(refname:short)|%(objectname)|%(HEAD)|%(upstream:short)",
             )
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if not line:
                     continue
-                parts = line.split('|')
+                parts = line.split("|")
                 if len(parts) >= 3:
                     name = parts[0]
                     commit_hash = parts[1]
-                    is_current = parts[2] == '*'
+                    is_current = parts[2] == "*"
                     upstream = parts[3] if len(parts) > 3 and parts[3] else None
 
-                    branches.append(Branch(
-                        name=name,
-                        commit_hash=commit_hash,
-                        is_current=is_current,
-                        is_remote=False,
-                        upstream=upstream,
-                        branch_type=Branch.classify(name),
-                    ))
+                    branches.append(
+                        Branch(
+                            name=name,
+                            commit_hash=commit_hash,
+                            is_current=is_current,
+                            is_remote=False,
+                            upstream=upstream,
+                            branch_type=Branch.classify(name),
+                        )
+                    )
         except subprocess.CalledProcessError:
             pass
 
@@ -534,21 +602,23 @@ class GitRepository(VCSBackend):
                 result = self._run_git(
                     "branch", "-r", "-v", "--format=%(refname:short)|%(objectname)"
                 )
-                for line in result.stdout.strip().split('\n'):
-                    if not line or '->' in line:  # Skip symbolic refs
+                for line in result.stdout.strip().split("\n"):
+                    if not line or "->" in line:  # Skip symbolic refs
                         continue
-                    parts = line.split('|')
+                    parts = line.split("|")
                     if len(parts) >= 2:
                         name = parts[0]
                         commit_hash = parts[1]
 
-                        branches.append(Branch(
-                            name=name,
-                            commit_hash=commit_hash,
-                            is_current=False,
-                            is_remote=True,
-                            branch_type=Branch.classify(name.split('/')[-1]),
-                        ))
+                        branches.append(
+                            Branch(
+                                name=name,
+                                commit_hash=commit_hash,
+                                is_current=False,
+                                is_remote=True,
+                                branch_type=Branch.classify(name.split("/")[-1]),
+                            )
+                        )
             except subprocess.CalledProcessError:
                 pass
 
@@ -558,12 +628,14 @@ class GitRepository(VCSBackend):
         tags = []
         try:
             result = self._run_git(
-                "tag", "-l", "--format=%(refname:short)|%(objectname)|%(objecttype)|%(taggername) <%(taggeremail)>|%(taggerdate:unix)|%(subject)"
+                "tag",
+                "-l",
+                "--format=%(refname:short)|%(objectname)|%(objecttype)|%(taggername) <%(taggeremail)>|%(taggerdate:unix)|%(subject)",
             )
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if not line:
                     continue
-                parts = line.split('|')
+                parts = line.split("|")
                 if len(parts) >= 2:
                     name = parts[0]
                     commit_hash = parts[1]
@@ -596,7 +668,9 @@ class GitRepository(VCSBackend):
 
         try:
             result = self._run_git(
-                "log", "-1", ref,
+                "log",
+                "-1",
+                ref,
                 "--format=%H%n%P%n%an <%ae>%n%cn <%ce>%n%ct%n%B",
             )
             commit = self._parse_commit(result.stdout)
@@ -628,7 +702,7 @@ class GitRepository(VCSBackend):
 
         try:
             result = self._run_git(*args)
-            entries = result.stdout.split('\x00')
+            entries = result.stdout.split("\x00")
 
             for entry in entries:
                 entry = entry.strip()
@@ -679,12 +753,14 @@ class GitRepository(VCSBackend):
             if include_untracked:
                 try:
                     result = self._run_git("ls-files", "--others", "--exclude-standard")
-                    for line in result.stdout.strip().split('\n'):
+                    for line in result.stdout.strip().split("\n"):
                         if line:
-                            changes.append(FileChange(
-                                path=line,
-                                change_type=ChangeType.UNTRACKED,
-                            ))
+                            changes.append(
+                                FileChange(
+                                    path=line,
+                                    change_type=ChangeType.UNTRACKED,
+                                )
+                            )
                 except subprocess.CalledProcessError:
                     pass
 
@@ -693,29 +769,31 @@ class GitRepository(VCSBackend):
     def _parse_diff_name_status(self, output: str) -> List[FileChange]:
         """Parse git diff --name-status output"""
         changes = []
-        for line in output.strip().split('\n'):
+        for line in output.strip().split("\n"):
             if not line:
                 continue
-            parts = line.split('\t')
+            parts = line.split("\t")
             if len(parts) >= 2:
                 status = parts[0][0]  # First char is the status
                 path = parts[-1]
                 old_path = parts[1] if len(parts) > 2 else None
 
                 change_type = {
-                    'A': ChangeType.ADDED,
-                    'M': ChangeType.MODIFIED,
-                    'D': ChangeType.DELETED,
-                    'R': ChangeType.RENAMED,
-                    'C': ChangeType.COPIED,
-                    'T': ChangeType.TYPE_CHANGED,
+                    "A": ChangeType.ADDED,
+                    "M": ChangeType.MODIFIED,
+                    "D": ChangeType.DELETED,
+                    "R": ChangeType.RENAMED,
+                    "C": ChangeType.COPIED,
+                    "T": ChangeType.TYPE_CHANGED,
                 }.get(status, ChangeType.MODIFIED)
 
-                changes.append(FileChange(
-                    path=path,
-                    change_type=change_type,
-                    old_path=old_path,
-                ))
+                changes.append(
+                    FileChange(
+                        path=path,
+                        change_type=change_type,
+                        old_path=old_path,
+                    )
+                )
         return changes
 
     def get_file_diff(
@@ -737,7 +815,7 @@ class GitRepository(VCSBackend):
     def _parse_unified_diff(self, output: str, path: str) -> FileDiff:
         """Parse unified diff format"""
         hunks = []
-        lines = output.split('\n')
+        lines = output.split("\n")
 
         i = 0
         old_path = None
@@ -746,12 +824,12 @@ class GitRepository(VCSBackend):
         # Parse header
         while i < len(lines):
             line = lines[i]
-            if line.startswith('Binary files'):
+            if line.startswith("Binary files"):
                 is_binary = True
                 break
-            if line.startswith('--- a/'):
+            if line.startswith("--- a/"):
                 old_path = line[6:]
-            if line.startswith('@@'):
+            if line.startswith("@@"):
                 break
             i += 1
 
@@ -762,14 +840,16 @@ class GitRepository(VCSBackend):
         while i < len(lines):
             line = lines[i]
 
-            if line.startswith('@@'):
+            if line.startswith("@@"):
                 # Save previous hunk
                 if current_hunk:
-                    current_hunk.content = '\n'.join(hunk_content)
+                    current_hunk.content = "\n".join(hunk_content)
                     hunks.append(current_hunk)
 
                 # Parse hunk header: @@ -start,count +start,count @@
-                match = re.match(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$', line)
+                match = re.match(
+                    r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$", line
+                )
                 if match:
                     current_hunk = DiffHunk(
                         old_start=int(match.group(1)),
@@ -787,12 +867,12 @@ class GitRepository(VCSBackend):
 
         # Save last hunk
         if current_hunk:
-            current_hunk.content = '\n'.join(hunk_content)
+            current_hunk.content = "\n".join(hunk_content)
             hunks.append(current_hunk)
 
         # Determine change type
         change_type = ChangeType.MODIFIED
-        if old_path is None or old_path == '/dev/null':
+        if old_path is None or old_path == "/dev/null":
             change_type = ChangeType.ADDED
 
         return FileDiff(
@@ -821,9 +901,7 @@ class GitRepository(VCSBackend):
     ) -> List[BlameEntry]:
         entries = []
         try:
-            result = self._run_git(
-                "blame", "-p", ref, "--", path
-            )
+            result = self._run_git("blame", "-p", ref, "--", path)
             entries = self._parse_blame_porcelain(result.stdout)
         except subprocess.CalledProcessError:
             pass
@@ -832,14 +910,14 @@ class GitRepository(VCSBackend):
     def _parse_blame_porcelain(self, output: str) -> List[BlameEntry]:
         """Parse git blame -p (porcelain) output"""
         entries = []
-        lines = output.split('\n')
+        lines = output.split("\n")
 
         i = 0
         while i < len(lines):
             line = lines[i]
 
             # Header line: hash orig-line final-line [num-lines]
-            match = re.match(r'^([0-9a-f]{40}) (\d+) (\d+)(?: (\d+))?$', line)
+            match = re.match(r"^([0-9a-f]{40}) (\d+) (\d+)(?: (\d+))?$", line)
             if match:
                 commit_hash = match.group(1)
                 line_num = int(match.group(3))
@@ -852,30 +930,32 @@ class GitRepository(VCSBackend):
                 content_lines = []
 
                 i += 1
-                while i < len(lines) and not lines[i].startswith('\t'):
+                while i < len(lines) and not lines[i].startswith("\t"):
                     meta_line = lines[i]
-                    if meta_line.startswith('author '):
+                    if meta_line.startswith("author "):
                         author_name = meta_line[7:]
-                    elif meta_line.startswith('author-mail '):
-                        author_email = meta_line[12:].strip('<>')
-                    elif meta_line.startswith('author-time '):
+                    elif meta_line.startswith("author-mail "):
+                        author_email = meta_line[12:].strip("<>")
+                    elif meta_line.startswith("author-time "):
                         timestamp = datetime.fromtimestamp(int(meta_line[12:]))
                     i += 1
 
                 # Get content line
-                if i < len(lines) and lines[i].startswith('\t'):
+                if i < len(lines) and lines[i].startswith("\t"):
                     content_lines.append(lines[i][1:])
                     i += 1
 
                 if author_name and timestamp:
-                    entries.append(BlameEntry(
-                        commit_hash=commit_hash,
-                        author=Author(author_name, author_email),
-                        timestamp=timestamp,
-                        line_start=line_num,
-                        line_end=line_num + num_lines - 1,
-                        content='\n'.join(content_lines),
-                    ))
+                    entries.append(
+                        BlameEntry(
+                            commit_hash=commit_hash,
+                            author=Author(author_name, author_email),
+                            timestamp=timestamp,
+                            line_start=line_num,
+                            line_end=line_num + num_lines - 1,
+                            content="\n".join(content_lines),
+                        )
+                    )
             else:
                 i += 1
 
@@ -910,9 +990,9 @@ class GitRepository(VCSBackend):
         authors = set()
         try:
             result = self._run_git("log", "--format=%an|%ae")
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if line:
-                    parts = line.split('|')
+                    parts = line.split("|")
                     if len(parts) == 2:
                         authors.add(Author(parts[0], parts[1]))
         except subprocess.CalledProcessError:
@@ -944,6 +1024,7 @@ class GitRepository(VCSBackend):
 # =============================================================================
 # Repository Manager (Facade)
 # =============================================================================
+
 
 class RepositoryManager:
     """
@@ -1039,7 +1120,7 @@ class RepositoryManager:
 
     def get_info(self) -> RepositoryInfo:
         """Get repository information"""
-        stats = self._backend.get_stats() if hasattr(self._backend, 'get_stats') else {}
+        stats = self._backend.get_stats() if hasattr(self._backend, "get_stats") else {}
         current_commit = self._backend.get_current_commit()
 
         return RepositoryInfo(
@@ -1080,12 +1161,14 @@ class RepositoryManager:
         if isinstance(self._backend, GitRepository):
             try:
                 result = self._backend._run_git("ls-files")
-                for line in result.stdout.strip().split('\n'):
+                for line in result.stdout.strip().split("\n"):
                     if line:
-                        changes.append(FileChange(
-                            path=line,
-                            change_type=ChangeType.ADDED,
-                        ))
+                        changes.append(
+                            FileChange(
+                                path=line,
+                                change_type=ChangeType.ADDED,
+                            )
+                        )
             except subprocess.CalledProcessError:
                 pass
         return changes
@@ -1111,10 +1194,7 @@ class RepositoryManager:
             changes = [c for c in changes if c.is_code_file]
 
         if extensions:
-            changes = [
-                c for c in changes
-                if Path(c.path).suffix.lower() in extensions
-            ]
+            changes = [c for c in changes if Path(c.path).suffix.lower() in extensions]
 
         # Filter out deleted files (they need different handling)
         return [c for c in changes if c.change_type != ChangeType.DELETED]
@@ -1206,6 +1286,7 @@ class RepositoryManager:
 # Utility Functions
 # =============================================================================
 
+
 def is_git_repository(path: Union[str, Path]) -> bool:
     """Check if path is inside a git repository"""
     return RepositoryManager.detect_vcs(path) == VCSType.GIT
@@ -1267,6 +1348,7 @@ def get_file_git_info(
 # =============================================================================
 # Context Manager for Repository Operations
 # =============================================================================
+
 
 @contextmanager
 def repository_context(

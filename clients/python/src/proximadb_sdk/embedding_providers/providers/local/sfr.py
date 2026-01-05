@@ -22,7 +22,7 @@ SFR_MODELS = {
         mteb_score=66.4,
         languages="en",
         description="Top MTEB performer, best accuracy, retrieval-optimized",
-        use_case="Maximum accuracy, research, when quality is paramount"
+        use_case="Maximum accuracy, research, when quality is paramount",
     ),
     "Salesforce/SFR-Embedding-Mistral": ModelMetadata(
         name="Salesforce/SFR-Embedding-Mistral",
@@ -34,8 +34,8 @@ SFR_MODELS = {
         mteb_score=65.0,
         languages="en",
         description="Based on Mistral, long context support",
-        use_case="Long documents, maximum context length"
-    )
+        use_case="Long documents, maximum context length",
+    ),
 }
 
 
@@ -43,13 +43,9 @@ SFR_MODELS = {
     name="sfr",
     models=SFR_MODELS,
     aliases=["salesforce"],
-    description="Salesforce's top-tier embeddings (highest MTEB score)"
+    description="Salesforce's top-tier embeddings (highest MTEB score)",
 )
-class SFRProvider(
-    InstructionMixin,
-    SentenceTransformerMixin,
-    BaseEmbeddingProvider
-):
+class SFRProvider(InstructionMixin, SentenceTransformerMixin, BaseEmbeddingProvider):
     """
     SFR embedding provider
 
@@ -83,5 +79,5 @@ class SFRProvider(
             model=SFR_MODELS["Salesforce/SFR-Embedding-2_R"],
             batch_size=16,  # Smaller batch for large model
             normalize=True,
-            extra={"use_query_instruction": True}
+            extra={"use_query_instruction": True},
         )

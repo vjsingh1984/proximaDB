@@ -325,24 +325,24 @@ class ProtoConverter:
         """Convert a VectorRecord to a dictionary for REST API."""
         if isinstance(record, dict):
             return record
-        if hasattr(record, 'model_dump'):
+        if hasattr(record, "model_dump"):
             return record.model_dump(exclude_none=True)
-        if hasattr(record, 'dict'):
+        if hasattr(record, "dict"):
             return record.dict(exclude_none=True)
         return {
-            'id': getattr(record, 'id', ''),
-            'vector': list(getattr(record, 'vector', [])),
-            'metadata': getattr(record, 'metadata', None),
+            "id": getattr(record, "id", ""),
+            "vector": list(getattr(record, "vector", [])),
+            "metadata": getattr(record, "metadata", None),
         }
 
     @classmethod
     def dict_to_search_result(cls, data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize a search result dictionary."""
         return {
-            'id': data.get('id', data.get('vector_id', '')),
-            'score': data.get('score', data.get('distance', 0.0)),
-            'vector': data.get('vector', []),
-            'metadata': data.get('metadata', {}),
+            "id": data.get("id", data.get("vector_id", "")),
+            "score": data.get("score", data.get("distance", 0.0)),
+            "vector": data.get("vector", []),
+            "metadata": data.get("metadata", {}),
         }
 
     @classmethod
@@ -353,15 +353,15 @@ class ProtoConverter:
         distance_metric: Union[str, int, Enum, None] = None,
         storage_engine: Union[str, int, Enum, None] = None,
         index_type: Union[str, int, Enum, None] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Build a collection config dictionary for REST API."""
         config = {
-            'name': name,
-            'dimension': dimension,
-            'distance_metric': cls.distance_metric_to_str(distance_metric),
-            'storage_engine': cls.storage_engine_to_str(storage_engine),
-            'index_type': cls.index_type_to_str(index_type),
+            "name": name,
+            "dimension": dimension,
+            "distance_metric": cls.distance_metric_to_str(distance_metric),
+            "storage_engine": cls.storage_engine_to_str(storage_engine),
+            "index_type": cls.index_type_to_str(index_type),
         }
         config.update(kwargs)
         return config
@@ -370,6 +370,7 @@ class ProtoConverter:
 # =========================================================================
 # Convenience Functions (for direct import)
 # =========================================================================
+
 
 def distance_metric_to_int(value: Union[str, int, Enum, None]) -> int:
     """Convert distance metric to integer."""

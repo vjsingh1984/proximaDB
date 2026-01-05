@@ -137,7 +137,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Install System Dependencies
@@ -153,7 +153,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - name: Install System Dependencies
@@ -267,7 +267,7 @@ jobs:
     if: needs.changes.outputs.rust_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - name: Check Format
@@ -330,12 +330,37 @@ jobs:
           output: 'rust-trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
-      - name: Upload Trivy Results to GitHub Security
+      - name: Upload Python Trivy Results
+        if: needs.changes.outputs.python == 'true' && always()
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
         with:
-          sarif_file: '.'
-          category: 'sdk-security'
+          sarif_file: 'python-trivy-results.sarif'
+          category: 'python-sdk-security'
+        continue-on-error: true
+
+      - name: Upload Go Trivy Results
+        if: needs.changes.outputs.go_sdk == 'true' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'go-trivy-results.sarif'
+          category: 'go-sdk-security'
+        continue-on-error: true
+
+      - name: Upload Node.js Trivy Results
+        if: needs.changes.outputs.nodejs_sdk == 'true' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'nodejs-trivy-results.sarif'
+          category: 'nodejs-sdk-security'
+        continue-on-error: true
+
+      - name: Upload Rust Trivy Results
+        if: needs.changes.outputs.rust_sdk == 'true' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'rust-trivy-results.sarif'
+          category: 'rust-sdk-security'
+        continue-on-error: true
 
   docs-validation:
     name: Docs Validation
@@ -370,7 +395,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -415,7 +440,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -441,7 +466,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-dev"
@@ -473,7 +498,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-dev"
@@ -502,7 +527,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-dev"
@@ -531,7 +556,7 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-dev"
@@ -556,7 +581,7 @@ jobs:
     needs: [rust-test]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-rust-coverage"
@@ -816,7 +841,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-action@stable
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:

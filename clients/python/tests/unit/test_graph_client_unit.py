@@ -34,7 +34,7 @@ class TestGraphClientBasicOperations:
         result = rest_client.create_node(
             node_id=f"node_{int(time.time() * 1000)}",
             labels=["TestLabel"],
-            properties={"name": "Test Node", "value": 42}
+            properties={"name": "Test Node", "value": 42},
         )
 
         # Verify result
@@ -45,7 +45,7 @@ class TestGraphClientBasicOperations:
         result = rest_client.create_node(
             node_id=f"multi_label_node_{int(time.time() * 1000)}",
             labels=["Label1", "Label2", "Label3"],
-            properties={"type": "multi-label"}
+            properties={"type": "multi-label"},
         )
 
         assert result is not None
@@ -55,7 +55,7 @@ class TestGraphClientBasicOperations:
         result = rest_client.create_node(
             node_id=f"empty_props_node_{int(time.time() * 1000)}",
             labels=["TestLabel"],
-            properties={}
+            properties={},
         )
 
         assert result is not None
@@ -67,15 +67,11 @@ class TestGraphClientBasicOperations:
         node2_id = f"edge_test_node2_{int(time.time() * 1000)}"
 
         rest_client.create_node(
-            node_id=node1_id,
-            labels=["Person"],
-            properties={"name": "Alice"}
+            node_id=node1_id, labels=["Person"], properties={"name": "Alice"}
         )
 
         rest_client.create_node(
-            node_id=node2_id,
-            labels=["Person"],
-            properties={"name": "Bob"}
+            node_id=node2_id, labels=["Person"], properties={"name": "Bob"}
         )
 
         # Create edge between them
@@ -83,7 +79,7 @@ class TestGraphClientBasicOperations:
             edge_id=f"edge_{int(time.time() * 1000)}",
             from_node_id=node1_id,
             to_node_id=node2_id,
-            edge_type="KNOWS"
+            edge_type="KNOWS",
         )
 
         assert result is not None
@@ -101,7 +97,7 @@ class TestGraphClientBasicOperations:
             from_node_id=node1_id,
             to_node_id=node2_id,
             edge_type="RELATES_TO",
-            properties={"strength": "strong", "since": "2024"}
+            properties={"strength": "strong", "since": "2024"},
         )
 
         assert result is not None
@@ -119,7 +115,7 @@ class TestGraphClientBasicOperations:
             from_node_id=node1_id,
             to_node_id=node2_id,
             edge_type="CONNECTED",
-            weight=1.5
+            weight=1.5,
         )
 
         assert result is not None
@@ -134,9 +130,7 @@ class TestGraphClientParameterValidation:
         # This test verifies the parameter is passed correctly
         try:
             rest_client.create_node(
-                node_id="valid_node_id",
-                labels=["Test"],
-                properties={}
+                node_id="valid_node_id", labels=["Test"], properties={}
             )
             # If no error, validation passed
         except TypeError as e:
@@ -155,9 +149,7 @@ class TestGraphClientParameterValidation:
         }
 
         result = rest_client.create_node(
-            node_id=node_id,
-            labels=["TestTypes"],
-            properties=properties
+            node_id=node_id, labels=["TestTypes"], properties=properties
         )
 
         assert result is not None
@@ -182,7 +174,7 @@ class TestGraphTraversal:
             rest_client.create_node(
                 node_id=f"{graph_name}_{node}",
                 labels=["Person"],
-                properties={"name": node.capitalize()}
+                properties={"name": node.capitalize()},
             )
 
         # Create edges: alice -> bob -> charlie -> diana
@@ -190,7 +182,7 @@ class TestGraphTraversal:
             ("alice", "bob", "KNOWS"),
             ("bob", "charlie", "KNOWS"),
             ("charlie", "diana", "KNOWS"),
-            ("alice", "charlie", "FRIENDS_WITH")  # Direct connection
+            ("alice", "charlie", "FRIENDS_WITH"),  # Direct connection
         ]
 
         for from_node, to_node, edge_type in edges:
@@ -198,7 +190,7 @@ class TestGraphTraversal:
                 edge_id=f"{graph_name}_{from_node}_{to_node}",
                 from_node_id=f"{graph_name}_{from_node}",
                 to_node_id=f"{graph_name}_{to_node}",
-                edge_type=edge_type
+                edge_type=edge_type,
             )
 
         return graph_name
@@ -207,10 +199,7 @@ class TestGraphTraversal:
         """Test basic graph traversal"""
         start_node = f"{populated_graph}_alice"
 
-        result = rest_client.graph_traverse(
-            start_node_id=start_node,
-            max_depth=2
-        )
+        result = rest_client.graph_traverse(start_node_id=start_node, max_depth=2)
 
         assert result is not None
 
@@ -219,9 +208,7 @@ class TestGraphTraversal:
         start_node = f"{populated_graph}_alice"
 
         result = rest_client.graph_traverse(
-            start_node_id=start_node,
-            max_depth=3,
-            edge_types=["KNOWS"]
+            start_node_id=start_node, max_depth=3, edge_types=["KNOWS"]
         )
 
         assert result is not None
@@ -245,7 +232,7 @@ class TestGraphShortestPath:
             rest_client.create_node(
                 node_id=f"{graph_name}_node{i}",
                 labels=["Waypoint"],
-                properties={"index": i}
+                properties={"index": i},
             )
 
         # Create edges: 0 -> 1 -> 2 -> 3 -> 4
@@ -255,7 +242,7 @@ class TestGraphShortestPath:
                 from_node_id=f"{graph_name}_node{i}",
                 to_node_id=f"{graph_name}_node{i+1}",
                 edge_type="NEXT",
-                weight=1.0
+                weight=1.0,
             )
 
         # Add shortcut: 0 -> 2 (weight 3)
@@ -264,7 +251,7 @@ class TestGraphShortestPath:
             from_node_id=f"{graph_name}_node0",
             to_node_id=f"{graph_name}_node2",
             edge_type="SHORTCUT",
-            weight=3.0
+            weight=3.0,
         )
 
         return graph_name
@@ -275,8 +262,7 @@ class TestGraphShortestPath:
         end_node = f"{path_graph}_node4"
 
         result = rest_client.graph_shortest_path(
-            start_node_id=start_node,
-            target_node_id=end_node
+            start_node_id=start_node, target_node_id=end_node
         )
 
         assert result is not None
@@ -287,10 +273,7 @@ class TestGraphClientConfiguration:
 
     def test_client_with_rest_protocol(self):
         """Test creating client with REST protocol"""
-        client = ProximaDBClient(
-            url="http://localhost:5678",
-            protocol="rest"
-        )
+        client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
 
         assert client is not None
         assert client.active_protocol == "rest"
@@ -298,10 +281,7 @@ class TestGraphClientConfiguration:
 
     def test_client_with_grpc_protocol(self):
         """Test creating client with gRPC protocol"""
-        client = ProximaDBClient(
-            url="grpc://localhost:5679",
-            protocol="grpc"
-        )
+        client = ProximaDBClient(url="grpc://localhost:5679", protocol="grpc")
 
         assert client is not None
         assert client.active_protocol == "grpc"
@@ -309,10 +289,7 @@ class TestGraphClientConfiguration:
 
     def test_client_with_auto_protocol(self):
         """Test creating client with auto protocol selection"""
-        client = ProximaDBClient(
-            url="http://localhost:5678",
-            protocol="auto"
-        )
+        client = ProximaDBClient(url="http://localhost:5678", protocol="auto")
 
         assert client is not None
         # Protocol should be determined automatically
@@ -326,49 +303,49 @@ class TestGraphClientMethods:
     def test_client_has_create_node_method(self):
         """Verify create_node method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'create_node')
+        assert hasattr(client, "create_node")
         assert callable(client.create_node)
         client.close()
 
     def test_client_has_create_edge_method(self):
         """Verify create_edge method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'create_edge')
+        assert hasattr(client, "create_edge")
         assert callable(client.create_edge)
         client.close()
 
     def test_client_has_graph_traverse_method(self):
         """Verify graph_traverse method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'graph_traverse')
+        assert hasattr(client, "graph_traverse")
         assert callable(client.graph_traverse)
         client.close()
 
     def test_client_has_graph_shortest_path_method(self):
         """Verify graph_shortest_path method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'graph_shortest_path')
+        assert hasattr(client, "graph_shortest_path")
         assert callable(client.graph_shortest_path)
         client.close()
 
     def test_client_has_create_graph_method(self):
         """Verify create_graph method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'create_graph')
+        assert hasattr(client, "create_graph")
         assert callable(client.create_graph)
         client.close()
 
     def test_client_has_get_graph_method(self):
         """Verify get_graph method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'get_graph')
+        assert hasattr(client, "get_graph")
         assert callable(client.get_graph)
         client.close()
 
     def test_client_has_delete_graph_method(self):
         """Verify delete_graph method exists"""
         client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
-        assert hasattr(client, 'delete_graph')
+        assert hasattr(client, "delete_graph")
         assert callable(client.delete_graph)
         client.close()
 

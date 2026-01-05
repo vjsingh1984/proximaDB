@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loader import code_module, RESOURCES_DIR
 
 # Get pipeline module from sys.modules
-pipeline_module = sys.modules['proximadb.chunking_strategies.pipeline']
+pipeline_module = sys.modules["proximadb.chunking_strategies.pipeline"]
 
 # Get references
 ProcessingMode = pipeline_module.ProcessingMode
@@ -51,7 +51,7 @@ pipeline_context = pipeline_module.pipeline_context
 async_pipeline_context = pipeline_module.async_pipeline_context
 
 # Get base classes
-base_module = sys.modules['proximadb.chunking_strategies.base']
+base_module = sys.modules["proximadb.chunking_strategies.base"]
 ChunkingStrategy = base_module.ChunkingStrategy
 TextChunk = base_module.TextChunk
 ChunkingConfig = base_module.ChunkingConfig
@@ -97,7 +97,7 @@ class TestPipelineConfig:
             chunking_strategy=ChunkingStrategy.CODE,
             embedding_batch_size=64,
             max_concurrent_tasks=8,
-            error_handling=ErrorHandling.FAIL_FAST
+            error_handling=ErrorHandling.FAIL_FAST,
         )
         assert config.chunking_strategy == ChunkingStrategy.CODE
         assert config.embedding_batch_size == 64
@@ -138,10 +138,7 @@ class TestPipelineResult:
 
     def test_to_dict(self):
         """Test converting result to dict."""
-        result = PipelineResult(
-            success=True,
-            metrics={"processing_time_sec": 1.5}
-        )
+        result = PipelineResult(success=True, metrics={"processing_time_sec": 1.5})
         d = result.to_dict()
         assert "success" in d
         assert "chunk_count" in d
@@ -225,14 +222,13 @@ class TestValidationStage:
 
     def test_truncate_long_text(self):
         """Test truncating long text."""
-        config = PipelineConfig(
-            max_text_length=10,
-            truncate_long_texts=True
-        )
+        config = PipelineConfig(max_text_length=10, truncate_long_texts=True)
         stage = ValidationStage(config)
         chunk = TextChunk(
             text="This is a very long text that should be truncated",
-            start_pos=0, end_pos=50, chunk_id="c1"
+            start_pos=0,
+            end_pos=50,
+            chunk_id="c1",
         )
         result = stage.process(chunk)
         assert len(result.text) == 10
@@ -328,9 +324,11 @@ class TestFilterStage:
         stage.add_predicate(lambda c: "x" not in c.text)
 
         chunks = [
-            TextChunk(text="ab", start_pos=0, end_pos=2, chunk_id="c1"),      # Too short
-            TextChunk(text="abcd", start_pos=0, end_pos=4, chunk_id="c2"),    # Pass
-            TextChunk(text="abcdx", start_pos=0, end_pos=5, chunk_id="c3"),   # Contains x
+            TextChunk(text="ab", start_pos=0, end_pos=2, chunk_id="c1"),  # Too short
+            TextChunk(text="abcd", start_pos=0, end_pos=4, chunk_id="c2"),  # Pass
+            TextChunk(
+                text="abcdx", start_pos=0, end_pos=5, chunk_id="c3"
+            ),  # Contains x
         ]
         result = stage.process(chunks)
         assert len(result) == 1
@@ -351,10 +349,9 @@ class TestBatchEmbedder:
     def test_embed_batch(self):
         """Test batch embedding."""
         mock_provider = Mock()
-        mock_provider.embed_texts = Mock(side_effect=[
-            [[0.1, 0.2], [0.3, 0.4]],
-            [[0.5, 0.6]]
-        ])
+        mock_provider.embed_texts = Mock(
+            side_effect=[[[0.1, 0.2], [0.3, 0.4]], [[0.5, 0.6]]]
+        )
 
         embedder = BatchEmbedder(mock_provider, batch_size=2)
         texts = ["text1", "text2", "text3"]
@@ -366,16 +363,12 @@ class TestBatchEmbedder:
     def test_embed_with_retry(self):
         """Test embedding with retry on failure."""
         mock_provider = Mock()
-        mock_provider.embed_texts = Mock(side_effect=[
-            Exception("Temporary error"),
-            [[0.1, 0.2]]
-        ])
+        mock_provider.embed_texts = Mock(
+            side_effect=[Exception("Temporary error"), [[0.1, 0.2]]]
+        )
 
         embedder = BatchEmbedder(
-            mock_provider,
-            batch_size=2,
-            max_retries=3,
-            retry_delay=0.01
+            mock_provider, batch_size=2, max_retries=3, retry_delay=0.01
         )
         embeddings = embedder.embed_batch(["text1"])
 
@@ -406,8 +399,7 @@ class TestChunkingPipeline:
     def test_pipeline_with_config(self):
         """Test pipeline with custom config."""
         config = PipelineConfig(
-            chunking_strategy=ChunkingStrategy.CODE,
-            embedding_batch_size=64
+            chunking_strategy=ChunkingStrategy.CODE, embedding_batch_size=64
         )
         pipeline = ChunkingPipeline(config=config)
         assert pipeline.config.embedding_batch_size == 64
@@ -420,7 +412,7 @@ class TestChunkingPipeline:
         result = pipeline.process_text(
             "This is a test document. It has multiple sentences. Each sentence should be processed. "
             "We need enough content here. To ensure proper chunking. At least several sentences work well.",
-            source_id="test_doc"
+            source_id="test_doc",
         )
         assert result.success is True
         assert result.chunk_count > 0
@@ -429,9 +421,7 @@ class TestChunkingPipeline:
         """Test processing text with metadata."""
         pipeline = ChunkingPipeline()
         result = pipeline.process_text(
-            "Hello, World!",
-            source_id="test_doc",
-            metadata={"author": "test"}
+            "Hello, World!", source_id="test_doc", metadata={"author": "test"}
         )
         assert result.success is True
 
@@ -449,8 +439,10 @@ class TestChunkingPipeline:
         """Test streaming processing."""
         config = PipelineConfig(chunking_strategy=ChunkingStrategy.SENTENCE)
         pipeline = ChunkingPipeline(config=config)
-        text = "This is a test sentence. It has multiple sentences. We want to stream them. " \
-               "Here is more content. And even more content. Streaming should work well."
+        text = (
+            "This is a test sentence. It has multiple sentences. We want to stream them. "
+            "Here is more content. And even more content. Streaming should work well."
+        )
 
         chunks = list(pipeline.process_stream(text, "test_doc"))
         assert len(chunks) > 0
@@ -486,8 +478,7 @@ class TestChunkingPipeline:
     def test_error_handling_skip(self):
         """Test skip errors mode."""
         config = PipelineConfig(
-            error_handling=ErrorHandling.SKIP_ERRORS,
-            validate_chunks=True
+            error_handling=ErrorHandling.SKIP_ERRORS, validate_chunks=True
         )
         pipeline = ChunkingPipeline(config=config)
 
@@ -516,7 +507,7 @@ class TestChunkingPipelineAsync:
         result = await pipeline.process_text_async(
             "This is a test document for async processing. It has multiple sentences. "
             "Each sentence will be processed. We need enough content here. Async works well.",
-            source_id="test_doc"
+            source_id="test_doc",
         )
         assert result.success is True
         assert result.chunk_count > 0
@@ -540,8 +531,10 @@ class TestChunkingPipelineAsync:
         """Test async streaming."""
         config = PipelineConfig(chunking_strategy=ChunkingStrategy.SENTENCE)
         pipeline = ChunkingPipeline(config=config)
-        text = "This is async streaming. It should work properly. Here is more content. " \
-               "And even more content here. We need multiple sentences. For streaming to work."
+        text = (
+            "This is async streaming. It should work properly. Here is more content. "
+            "And even more content here. We need multiple sentences. For streaming to work."
+        )
 
         chunks = []
         async for chunk in pipeline.process_stream_async(text, "test"):
@@ -559,10 +552,12 @@ class TestPipelineFileProcessing:
         pipeline = ChunkingPipeline(config=config)
 
         # Create temp file with enough content
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write("This is test file content for chunking pipeline. It has multiple sentences. "
-                    "Each sentence should be processed. We need enough content here. "
-                    "File processing should work well. Here is more content for chunking.")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(
+                "This is test file content for chunking pipeline. It has multiple sentences. "
+                "Each sentence should be processed. We need enough content here. "
+                "File processing should work well. Here is more content for chunking."
+            )
             f.flush()
 
             result = pipeline.process_file(f.name)
@@ -584,7 +579,7 @@ class TestPipelineFileProcessing:
         """Test async file processing."""
         pipeline = ChunkingPipeline()
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("Async file processing test content.")
             f.flush()
 
@@ -640,7 +635,7 @@ class TestFactoryFunctions:
         pipeline = create_pipeline(
             strategy=ChunkingStrategy.SEMANTIC,
             embedding_batch_size=64,
-            max_concurrent_tasks=8
+            max_concurrent_tasks=8,
         )
         assert pipeline.config.embedding_batch_size == 64
         assert pipeline.config.max_concurrent_tasks == 8
@@ -650,7 +645,7 @@ class TestFactoryFunctions:
         pipeline = create_code_pipeline()
         assert pipeline.config.chunking_strategy == ChunkingStrategy.CODE
         assert pipeline.config.embedding_batch_size == 16  # Smaller for code
-        assert pipeline.config.max_text_length == 16384    # Larger for code
+        assert pipeline.config.max_text_length == 16384  # Larger for code
 
     def test_create_document_pipeline(self):
         """Test create_document_pipeline factory."""
@@ -699,7 +694,9 @@ class TestPipelineWithEmbedding:
         mock_provider.embed_texts = Mock(return_value=[[0.1] * 128])
 
         pipeline = ChunkingPipeline(embedding_provider=mock_provider)
-        result = await pipeline.process_text_async("Async test with embeddings.", "test")
+        result = await pipeline.process_text_async(
+            "Async test with embeddings.", "test"
+        )
 
         assert result.success is True
 
@@ -713,8 +710,7 @@ class TestPipelineErrorHandling:
         mock_provider.embed_texts = Mock(side_effect=Exception("Embedding failed"))
 
         config = PipelineConfig(
-            error_handling=ErrorHandling.COLLECT_ERRORS,
-            max_retries=1
+            error_handling=ErrorHandling.COLLECT_ERRORS, max_retries=1
         )
         pipeline = ChunkingPipeline(config=config, embedding_provider=mock_provider)
         result = pipeline.process_text("Test content.", "test")
@@ -728,10 +724,7 @@ class TestPipelineErrorHandling:
         mock_provider = Mock()
         mock_provider.embed_texts = Mock(side_effect=Exception("Immediate failure"))
 
-        config = PipelineConfig(
-            error_handling=ErrorHandling.FAIL_FAST,
-            max_retries=1
-        )
+        config = PipelineConfig(error_handling=ErrorHandling.FAIL_FAST, max_retries=1)
         pipeline = ChunkingPipeline(config=config, embedding_provider=mock_provider)
         result = pipeline.process_text("Test content.", "test")
 

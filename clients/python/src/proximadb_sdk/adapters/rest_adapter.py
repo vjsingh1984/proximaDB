@@ -41,7 +41,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         url: str = "http://localhost:5678",
         api_key: Optional[str] = None,
         timeout: float = 30.0,
-        **kwargs
+        **kwargs,
     ):
         """Initialize REST protocol adapter.
 
@@ -88,10 +88,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return HealthStatus(
-                status="unhealthy",
-                healthy=False,
-                timestamp_ms=0,
-                services={}
+                status="unhealthy", healthy=False, timestamp_ms=0, services={}
             )
 
     # ==========================================================================
@@ -99,10 +96,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self,
-        name: str,
-        config: Optional[CollectionConfig] = None,
-        **kwargs
+        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         result = self._client.create_collection(name=name, config=config, **kwargs)
@@ -116,11 +110,13 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             return Collection(**result)
 
         # Handle wrapper objects
-        if hasattr(result, 'name') and hasattr(result, 'id'):
+        if hasattr(result, "name") and hasattr(result, "id"):
             return Collection(
-                id=getattr(result, 'id', ''),
-                name=getattr(result, 'name', name),
-                dimension=getattr(result, 'dimension', config.dimension if config else 0),
+                id=getattr(result, "id", ""),
+                name=getattr(result, "name", name),
+                dimension=getattr(
+                    result, "dimension", config.dimension if config else 0
+                ),
             )
 
         return result
@@ -140,11 +136,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 return Collection(**result)
 
             # Handle wrapper objects
-            if hasattr(result, 'name'):
+            if hasattr(result, "name"):
                 return Collection(
-                    id=getattr(result, 'id', collection_id),
-                    name=getattr(result, 'name', ''),
-                    dimension=getattr(result, 'dimension', 0),
+                    id=getattr(result, "id", collection_id),
+                    name=getattr(result, "name", ""),
+                    dimension=getattr(result, "dimension", 0),
                 )
 
             return result
@@ -162,12 +158,14 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 collections.append(item)
             elif isinstance(item, dict):
                 collections.append(Collection(**item))
-            elif hasattr(item, 'name'):
-                collections.append(Collection(
-                    id=getattr(item, 'id', ''),
-                    name=getattr(item, 'name', ''),
-                    dimension=getattr(item, 'dimension', 0),
-                ))
+            elif hasattr(item, "name"):
+                collections.append(
+                    Collection(
+                        id=getattr(item, "id", ""),
+                        name=getattr(item, "name", ""),
+                        dimension=getattr(item, "dimension", 0),
+                    )
+                )
 
         return collections
 
@@ -177,7 +175,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             result = self._client.delete_collection(collection_id)
             if isinstance(result, bool):
                 return result
-            if hasattr(result, 'success'):
+            if hasattr(result, "success"):
                 return result.success
             return True
         except Exception as e:
@@ -192,7 +190,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         self,
         collection_id: str,
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Insert vectors into a collection."""
         # Convert VectorRecord objects to dicts if needed
@@ -200,7 +198,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         for v in vectors:
             if isinstance(v, dict):
                 vector_dicts.append(v)
-            elif hasattr(v, 'model_dump'):
+            elif hasattr(v, "model_dump"):
                 vector_dicts.append(v.model_dump(exclude_none=True))
             else:
                 vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
@@ -213,31 +211,31 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         # Convert dict or other response to VectorOperationResponse
         if isinstance(result, dict):
             return VectorOperationResponse(
-                success=result.get('success', True),
-                operation='INSERT',
+                success=result.get("success", True),
+                operation="INSERT",
                 metrics=OperationMetrics(
-                    successful_count=result.get('successful_count', len(vectors)),
-                    failed_count=result.get('failed_count', 0),
+                    successful_count=result.get("successful_count", len(vectors)),
+                    failed_count=result.get("failed_count", 0),
                     total_count=len(vectors),
-                )
+                ),
             )
 
         # Handle wrapper objects
         return VectorOperationResponse(
-            success=getattr(result, 'success', True),
-            operation='INSERT',
+            success=getattr(result, "success", True),
+            operation="INSERT",
             metrics=OperationMetrics(
                 successful_count=len(vectors),
                 failed_count=0,
                 total_count=len(vectors),
-            )
+            ),
         )
 
     def upsert_vectors(
         self,
         collection_id: str,
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Upsert (insert or update) vectors in a collection."""
         # Convert VectorRecord objects to dicts if needed
@@ -245,28 +243,32 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         for v in vectors:
             if isinstance(v, dict):
                 vector_dicts.append(v)
-            elif hasattr(v, 'model_dump'):
+            elif hasattr(v, "model_dump"):
                 vector_dicts.append(v.model_dump(exclude_none=True))
             else:
                 vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
 
         # Use upsert method if available, otherwise insert with upsert flag
-        if hasattr(self._client, 'upsert_vectors'):
+        if hasattr(self._client, "upsert_vectors"):
             result = self._client.upsert_vectors(collection_id, vector_dicts, **kwargs)
         else:
-            result = self._client.insert_vectors(collection_id, vector_dicts, upsert=True, **kwargs)
+            result = self._client.insert_vectors(
+                collection_id, vector_dicts, upsert=True, **kwargs
+            )
 
         if isinstance(result, VectorOperationResponse):
             return result
 
         return VectorOperationResponse(
-            success=getattr(result, 'success', True) if hasattr(result, 'success') else True,
-            operation='UPSERT',
+            success=(
+                getattr(result, "success", True) if hasattr(result, "success") else True
+            ),
+            operation="UPSERT",
             metrics=OperationMetrics(
                 successful_count=len(vectors),
                 failed_count=0,
                 total_count=len(vectors),
-            )
+            ),
         )
 
     def get_vectors(
@@ -274,15 +276,12 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         collection_id: str,
         vector_ids: List[str],
         include_vectors: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[VectorRecord]:
         """Get vectors by IDs."""
-        if hasattr(self._client, 'get_vectors'):
+        if hasattr(self._client, "get_vectors"):
             results = self._client.get_vectors(
-                collection_id,
-                vector_ids,
-                include_vectors=include_vectors,
-                **kwargs
+                collection_id, vector_ids, include_vectors=include_vectors, **kwargs
             )
         else:
             # Fallback: fetch one by one if batch get not available
@@ -302,20 +301,19 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 records.append(r)
             elif isinstance(r, dict):
                 records.append(VectorRecord(**r))
-            elif hasattr(r, 'id'):
-                records.append(VectorRecord(
-                    id=getattr(r, 'id', ''),
-                    vector=list(getattr(r, 'vector', [])),
-                    metadata=getattr(r, 'metadata', {}),
-                ))
+            elif hasattr(r, "id"):
+                records.append(
+                    VectorRecord(
+                        id=getattr(r, "id", ""),
+                        vector=list(getattr(r, "vector", [])),
+                        metadata=getattr(r, "metadata", {}),
+                    )
+                )
 
         return records
 
     def delete_vectors(
-        self,
-        collection_id: str,
-        vector_ids: List[str],
-        **kwargs
+        self, collection_id: str, vector_ids: List[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         result = self._client.delete_vectors(collection_id, vector_ids, **kwargs)
@@ -324,28 +322,26 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             return result
 
         return VectorOperationResponse(
-            success=getattr(result, 'success', True) if hasattr(result, 'success') else True,
-            operation='DELETE',
+            success=(
+                getattr(result, "success", True) if hasattr(result, "success") else True
+            ),
+            operation="DELETE",
             metrics=OperationMetrics(
                 successful_count=len(vector_ids),
                 failed_count=0,
                 total_count=len(vector_ids),
-            )
+            ),
         )
 
     def update_vector_metadata(
-        self,
-        collection_id: str,
-        vector_id: str,
-        metadata: MetadataDict,
-        **kwargs
+        self, collection_id: str, vector_id: str, metadata: MetadataDict, **kwargs
     ) -> VectorOperationResponse:
         """Update metadata for a specific vector."""
-        if hasattr(self._client, 'update_vector_metadata'):
+        if hasattr(self._client, "update_vector_metadata"):
             result = self._client.update_vector_metadata(
                 collection_id, vector_id, metadata, **kwargs
             )
-        elif hasattr(self._client, 'update_metadata'):
+        elif hasattr(self._client, "update_metadata"):
             result = self._client.update_metadata(
                 collection_id, vector_id, metadata, **kwargs
             )
@@ -357,12 +353,16 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 updated_meta = {**v.metadata, **metadata} if v.metadata else metadata
                 return self.upsert_vectors(
                     collection_id,
-                    [VectorRecord(id=vector_id, vector=v.vector, metadata=updated_meta)]
+                    [
+                        VectorRecord(
+                            id=vector_id, vector=v.vector, metadata=updated_meta
+                        )
+                    ],
                 )
             return VectorOperationResponse(
                 success=False,
-                operation='UPDATE',
-                error_message=f"Vector {vector_id} not found"
+                operation="UPDATE",
+                error_message=f"Vector {vector_id} not found",
             )
 
         if isinstance(result, VectorOperationResponse):
@@ -370,8 +370,8 @@ class RestProtocolAdapter(BaseProtocolAdapter):
 
         return VectorOperationResponse(
             success=True,
-            operation='UPDATE',
-            metrics=OperationMetrics(successful_count=1, total_count=1)
+            operation="UPDATE",
+            metrics=OperationMetrics(successful_count=1, total_count=1),
         )
 
     # ==========================================================================
@@ -386,11 +386,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[SearchResult]:
         """Search for similar vectors."""
         # Normalize query vector
-        if hasattr(query_vector, 'tolist'):
+        if hasattr(query_vector, "tolist"):
             query_vector = query_vector.tolist()
 
         results = self._client.search(
@@ -400,28 +400,36 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             metadata_filters=filter,
             include_vectors=include_vectors,
             include_metadata=include_metadata,
-            **kwargs
+            **kwargs,
         )
 
         # Convert to SearchResult list
         search_results = []
-        for r in (results or []):
+        for r in results or []:
             if isinstance(r, SearchResult):
                 search_results.append(r)
             elif isinstance(r, dict):
-                search_results.append(SearchResult(
-                    id=r.get('id', r.get('vector_id', '')),
-                    score=r.get('score', r.get('distance', 0.0)),
-                    vector=r.get('vector', []) if include_vectors else None,
-                    metadata=r.get('metadata', {}) if include_metadata else None,
-                ))
-            elif hasattr(r, 'id'):
-                search_results.append(SearchResult(
-                    id=getattr(r, 'id', ''),
-                    score=getattr(r, 'score', getattr(r, 'distance', 0.0)),
-                    vector=list(getattr(r, 'vector', [])) if include_vectors else None,
-                    metadata=getattr(r, 'metadata', {}) if include_metadata else None,
-                ))
+                search_results.append(
+                    SearchResult(
+                        id=r.get("id", r.get("vector_id", "")),
+                        score=r.get("score", r.get("distance", 0.0)),
+                        vector=r.get("vector", []) if include_vectors else None,
+                        metadata=r.get("metadata", {}) if include_metadata else None,
+                    )
+                )
+            elif hasattr(r, "id"):
+                search_results.append(
+                    SearchResult(
+                        id=getattr(r, "id", ""),
+                        score=getattr(r, "score", getattr(r, "distance", 0.0)),
+                        vector=(
+                            list(getattr(r, "vector", [])) if include_vectors else None
+                        ),
+                        metadata=(
+                            getattr(r, "metadata", {}) if include_metadata else None
+                        ),
+                    )
+                )
 
         return search_results
 
@@ -433,18 +441,18 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[List[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
         for qv in query_vectors:
-            if hasattr(qv, 'tolist'):
+            if hasattr(qv, "tolist"):
                 normalized_queries.append(qv.tolist())
             else:
                 normalized_queries.append(list(qv))
 
-        if hasattr(self._client, 'batch_search'):
+        if hasattr(self._client, "batch_search"):
             results = self._client.batch_search(
                 collection_id=collection_id,
                 query_vectors=normalized_queries,
@@ -452,33 +460,40 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 metadata_filters=filter,
                 include_vectors=include_vectors,
                 include_metadata=include_metadata,
-                **kwargs
+                **kwargs,
             )
         else:
             # Fallback: execute individual searches
             results = []
             for qv in normalized_queries:
                 r = self.search(
-                    collection_id, qv, top_k, filter,
-                    include_vectors, include_metadata, **kwargs
+                    collection_id,
+                    qv,
+                    top_k,
+                    filter,
+                    include_vectors,
+                    include_metadata,
+                    **kwargs,
                 )
                 results.append(r)
             return results
 
         # Convert results
         batch_results = []
-        for query_results in (results or []):
+        for query_results in results or []:
             search_results = []
-            for r in (query_results or []):
+            for r in query_results or []:
                 if isinstance(r, SearchResult):
                     search_results.append(r)
                 elif isinstance(r, dict):
-                    search_results.append(SearchResult(
-                        id=r.get('id', ''),
-                        score=r.get('score', 0.0),
-                        vector=r.get('vector') if include_vectors else None,
-                        metadata=r.get('metadata') if include_metadata else None,
-                    ))
+                    search_results.append(
+                        SearchResult(
+                            id=r.get("id", ""),
+                            score=r.get("score", 0.0),
+                            vector=r.get("vector") if include_vectors else None,
+                            metadata=r.get("metadata") if include_metadata else None,
+                        )
+                    )
             batch_results.append(search_results)
 
         return batch_results
@@ -489,6 +504,6 @@ class RestProtocolAdapter(BaseProtocolAdapter):
 
     def close(self) -> None:
         """Close the REST client connection."""
-        if hasattr(self._client, 'close'):
+        if hasattr(self._client, "close"):
             self._client.close()
         self._connected = False

@@ -86,6 +86,6 @@ def assert_proximadb_error(exc_info, expected_message_fragment: str | None = Non
     assert exc_info.type is not None, "Expected an exception to be raised"
 
     if expected_message_fragment:
-        assert expected_message_fragment.lower() in str(exc_info.value).lower(), (
-            f"Expected '{expected_message_fragment}' in error message: {exc_info.value}"
-        )
+        assert (
+            expected_message_fragment.lower() in str(exc_info.value).lower()
+        ), f"Expected '{expected_message_fragment}' in error message: {exc_info.value}"

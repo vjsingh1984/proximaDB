@@ -22,7 +22,7 @@ SIMULATED_MODELS = {
         max_length=512,
         provider_type="simulated",
         description="Fast hash-based embeddings for testing",
-        use_case="Testing, development, CI/CD pipelines"
+        use_case="Testing, development, CI/CD pipelines",
     )
 }
 
@@ -31,7 +31,7 @@ SIMULATED_MODELS = {
     name="simulated",
     models=SIMULATED_MODELS,
     aliases=["test", "mock"],
-    description="Fast deterministic embeddings for testing (no model download required)"
+    description="Fast deterministic embeddings for testing (no model download required)",
 )
 class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     """
@@ -79,8 +79,8 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
             normalize=True,
             extra={
                 "seed": 42,
-                "method": "hash"  # Options: "hash", "random", "gaussian"
-            }
+                "method": "hash",  # Options: "hash", "random", "gaussian"
+            },
         )
 
     def _load_model(self):
@@ -131,7 +131,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     def _hash_based_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding using hash function"""
         # Create deterministic hash from text + seed
-        hash_input = f"{text}_{seed}".encode('utf-8')
+        hash_input = f"{text}_{seed}".encode("utf-8")
         hash_obj = hashlib.sha256(hash_input)
 
         # Generate dimension values from hash
@@ -141,13 +141,15 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
         for i in range(dimension):
             # Use different parts of hash + rehash as needed
             if i * 4 >= len(hash_bytes):
-                hash_input = f"{text}_{seed}_{i}".encode('utf-8')
+                hash_input = f"{text}_{seed}_{i}".encode("utf-8")
                 hash_obj = hashlib.sha256(hash_input)
                 hash_bytes = hash_obj.digest()
 
             # Convert bytes to float in [-1, 1]
             byte_idx = (i * 4) % len(hash_bytes)
-            val = int.from_bytes(hash_bytes[byte_idx:byte_idx+4], 'big', signed=False)
+            val = int.from_bytes(
+                hash_bytes[byte_idx : byte_idx + 4], "big", signed=False
+            )
             normalized_val = (val / (2**32 - 1)) * 2 - 1
             embedding.append(normalized_val)
 
@@ -156,8 +158,8 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     def _random_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding using random values (deterministic via seed)"""
         # Hash text to get deterministic seed
-        hash_obj = hashlib.sha256(f"{text}_{seed}".encode('utf-8'))
-        text_seed = int.from_bytes(hash_obj.digest()[:4], 'big')
+        hash_obj = hashlib.sha256(f"{text}_{seed}".encode("utf-8"))
+        text_seed = int.from_bytes(hash_obj.digest()[:4], "big")
 
         # Generate random embedding
         rng = np.random.RandomState(text_seed)
@@ -166,8 +168,8 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     def _gaussian_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding from Gaussian distribution"""
         # Similar to random but with specific distribution
-        hash_obj = hashlib.sha256(f"{text}_{seed}".encode('utf-8'))
-        text_seed = int.from_bytes(hash_obj.digest()[:4], 'big')
+        hash_obj = hashlib.sha256(f"{text}_{seed}".encode("utf-8"))
+        text_seed = int.from_bytes(hash_obj.digest()[:4], "big")
 
         rng = np.random.RandomState(text_seed)
         return rng.normal(loc=0.0, scale=0.5, size=dimension).astype(np.float32)
@@ -177,8 +179,9 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
 @ProviderRegistry.register(
     name="simulated-v2",
     models=SIMULATED_MODELS,
-    description="Simulated embeddings (v2 architecture)"
+    description="Simulated embeddings (v2 architecture)",
 )
 class SimulatedEmbeddingProviderV2(SimulatedEmbeddingProvider):
     """Alias for versioning"""
+
     pass

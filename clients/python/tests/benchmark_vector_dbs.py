@@ -46,6 +46,7 @@ import httpx
 # FAISS
 try:
     import faiss
+
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
@@ -54,6 +55,7 @@ except ImportError:
 try:
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams, PointStruct
+
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
@@ -62,6 +64,7 @@ except ImportError:
 try:
     import grpc
     from google.protobuf import struct_pb2
+
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -71,12 +74,13 @@ except ImportError:
 # Code Corpus Collection
 # =============================================================================
 
+
 def collect_code_files(base_path: str, max_files: int = 50) -> List[Dict[str, Any]]:
     """Collect code files from the repository."""
     documents = []
     base = Path(base_path)
 
-    extensions = {'.py', '.rs', '.ts', '.js', '.go', '.java'}
+    extensions = {".py", ".rs", ".ts", ".js", ".go", ".java"}
 
     for ext in extensions:
         for file_path in base.rglob(f"*{ext}"):
@@ -85,20 +89,26 @@ def collect_code_files(base_path: str, max_files: int = 50) -> List[Dict[str, An
 
             # Skip test files and generated code
             rel_path = str(file_path.relative_to(base))
-            if 'test' in rel_path.lower() or 'target' in rel_path or '__pycache__' in rel_path:
+            if (
+                "test" in rel_path.lower()
+                or "target" in rel_path
+                or "__pycache__" in rel_path
+            ):
                 continue
 
             try:
-                content = file_path.read_text(errors='ignore')
+                content = file_path.read_text(errors="ignore")
                 if len(content) < 100 or len(content) > 10000:
                     continue
 
-                documents.append({
-                    'id': rel_path.replace('/', '_').replace('.', '_'),
-                    'content': content[:2000],
-                    'language': ext[1:],
-                    'path': rel_path,
-                })
+                documents.append(
+                    {
+                        "id": rel_path.replace("/", "_").replace(".", "_"),
+                        "content": content[:2000],
+                        "language": ext[1:],
+                        "path": rel_path,
+                    }
+                )
             except Exception:
                 pass
 
@@ -112,6 +122,7 @@ def collect_code_files(base_path: str, max_files: int = 50) -> List[Dict[str, An
 # Benchmark Result Class
 # =============================================================================
 
+
 class BenchmarkResult:
     def __init__(self, name: str):
         self.name = name
@@ -122,22 +133,39 @@ class BenchmarkResult:
 
     def summary(self) -> Dict[str, Any]:
         if not self.index_times:
-            return {'name': self.name, 'index_docs_per_sec': 0, 'search_avg_ms': 0, 'search_p95_ms': 0, 'errors': len(self.errors)}
+            return {
+                "name": self.name,
+                "index_docs_per_sec": 0,
+                "search_avg_ms": 0,
+                "search_p95_ms": 0,
+                "errors": len(self.errors),
+            }
 
         total_index_time = sum(self.index_times)
         return {
-            'name': self.name,
-            'index_docs_per_sec': len(self.index_times) / total_index_time if total_index_time > 0 else 0,
-            'search_avg_ms': statistics.mean(self.search_times) * 1000 if self.search_times else 0,
-            'search_p50_ms': statistics.median(self.search_times) * 1000 if self.search_times else 0,
-            'search_p95_ms': sorted(self.search_times)[int(len(self.search_times) * 0.95)] * 1000 if len(self.search_times) > 1 else 0,
-            'errors': len(self.errors),
+            "name": self.name,
+            "index_docs_per_sec": (
+                len(self.index_times) / total_index_time if total_index_time > 0 else 0
+            ),
+            "search_avg_ms": (
+                statistics.mean(self.search_times) * 1000 if self.search_times else 0
+            ),
+            "search_p50_ms": (
+                statistics.median(self.search_times) * 1000 if self.search_times else 0
+            ),
+            "search_p95_ms": (
+                sorted(self.search_times)[int(len(self.search_times) * 0.95)] * 1000
+                if len(self.search_times) > 1
+                else 0
+            ),
+            "errors": len(self.errors),
         }
 
 
 # =============================================================================
 # ChromaDB Benchmark
 # =============================================================================
+
 
 class ChromaDBBenchmark:
     def __init__(self, embedding_model, data_dir: str):
@@ -153,31 +181,27 @@ class ChromaDBBenchmark:
         except:
             pass
         self.collection = self.client.create_collection(
-            name="benchmark",
-            metadata={"hnsw:space": "cosine"}
+            name="benchmark", metadata={"hnsw:space": "cosine"}
         )
 
     def index(self, documents: List[Dict], result: BenchmarkResult):
         for doc in documents:
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
+            embedding = self.model.embed(doc["content"])
             self.collection.add(
-                ids=[doc['id']],
+                ids=[doc["id"]],
                 embeddings=[embedding],
-                documents=[doc['content'][:500]],
-                metadatas=[{'language': doc['language'], 'path': doc['path']}]
+                documents=[doc["content"][:500]],
+                metadatas=[{"language": doc["language"], "path": doc["path"]}],
             )
             result.index_times.append(time.perf_counter() - start)
 
     def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
-        results = self.collection.query(
-            query_embeddings=[embedding],
-            n_results=top_k
-        )
+        results = self.collection.query(query_embeddings=[embedding], n_results=top_k)
         elapsed = time.perf_counter() - start
-        return results['ids'][0] if results['ids'] else [], elapsed
+        return results["ids"][0] if results["ids"] else [], elapsed
 
     def cleanup(self):
         self.client = None
@@ -187,6 +211,7 @@ class ChromaDBBenchmark:
 # =============================================================================
 # LanceDB Benchmark
 # =============================================================================
+
 
 class LanceDBBenchmark:
     def __init__(self, embedding_model, data_dir: str):
@@ -205,14 +230,16 @@ class LanceDBBenchmark:
         data = []
         for doc in documents:
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
-            data.append({
-                'id': doc['id'],
-                'vector': embedding,
-                'content': doc['content'][:500],
-                'language': doc['language'],
-                'path': doc['path'],
-            })
+            embedding = self.model.embed(doc["content"])
+            data.append(
+                {
+                    "id": doc["id"],
+                    "vector": embedding,
+                    "content": doc["content"][:500],
+                    "language": doc["language"],
+                    "path": doc["path"],
+                }
+            )
             result.index_times.append(time.perf_counter() - start)
 
         if self.table is None:
@@ -225,7 +252,7 @@ class LanceDBBenchmark:
         embedding = self.model.embed(query)
         results = self.table.search(embedding).limit(top_k).to_list()
         elapsed = time.perf_counter() - start
-        return [r['id'] for r in results], elapsed
+        return [r["id"] for r in results], elapsed
 
     def cleanup(self):
         self.db = None
@@ -235,6 +262,7 @@ class LanceDBBenchmark:
 # =============================================================================
 # FAISS Benchmark
 # =============================================================================
+
 
 class FAISSBenchmark:
     """FAISS (Facebook AI Similarity Search) - CPU version."""
@@ -258,13 +286,13 @@ class FAISSBenchmark:
         vectors = []
         for i, doc in enumerate(documents):
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
+            embedding = self.model.embed(doc["content"])
             # Normalize for cosine similarity
             embedding = np.array(embedding, dtype=np.float32)
             faiss.normalize_L2(embedding.reshape(1, -1))
             vectors.append(embedding)
-            self.id_map[i] = doc['id']
-            self.doc_map[doc['id']] = doc
+            self.id_map[i] = doc["id"]
+            self.doc_map[doc["id"]] = doc
             result.index_times.append(time.perf_counter() - start)
 
         # Batch add to index
@@ -293,6 +321,7 @@ class FAISSBenchmark:
 # Qdrant Benchmark (Embedded Mode)
 # =============================================================================
 
+
 class QdrantBenchmark:
     """Qdrant embedded mode - in-memory or on-disk."""
 
@@ -313,36 +342,30 @@ class QdrantBenchmark:
         # Create collection
         self.client.create_collection(
             collection_name=self.collection_name,
-            vectors_config=VectorParams(
-                size=self.dimension,
-                distance=Distance.COSINE
-            )
+            vectors_config=VectorParams(size=self.dimension, distance=Distance.COSINE),
         )
 
     def index(self, documents: List[Dict], result: BenchmarkResult):
         points = []
         for i, doc in enumerate(documents):
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
+            embedding = self.model.embed(doc["content"])
             points.append(
                 PointStruct(
                     id=i,
                     vector=embedding,
                     payload={
-                        "doc_id": doc['id'],
-                        "content": doc['content'][:500],
-                        "language": doc['language'],
-                        "path": doc['path'],
-                    }
+                        "doc_id": doc["id"],
+                        "content": doc["content"][:500],
+                        "language": doc["language"],
+                        "path": doc["path"],
+                    },
                 )
             )
             result.index_times.append(time.perf_counter() - start)
 
         # Batch upsert
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points
-        )
+        self.client.upsert(collection_name=self.collection_name, points=points)
 
     def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
         start = time.perf_counter()
@@ -350,9 +373,7 @@ class QdrantBenchmark:
 
         # Use query method (newer Qdrant API)
         results = self.client.query_points(
-            collection_name=self.collection_name,
-            query=embedding,
-            limit=top_k
+            collection_name=self.collection_name, query=embedding, limit=top_k
         )
 
         elapsed = time.perf_counter() - start
@@ -372,6 +393,7 @@ class QdrantBenchmark:
 # ProximaDB Embedded Benchmark (uses gRPC client to local server)
 # =============================================================================
 
+
 class ProximaDBEmbeddedBenchmark:
     """ProximaDB benchmark using gRPC protocol for best performance.
 
@@ -390,31 +412,32 @@ class ProximaDBEmbeddedBenchmark:
 
     def setup(self):
         from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
+
         self.client = ProximaDBSyncGrpcClient(self.grpc_url)
 
         # Create collection with cosine distance
         self.client.create_collection(
-            self.collection_name,
-            self.dimension,
-            distance_metric=1  # COSINE
+            self.collection_name, self.dimension, distance_metric=1  # COSINE
         )
 
     def index(self, documents: List[Dict], result: BenchmarkResult):
         """Index documents one by one (like other benchmarks)."""
         for doc in documents:
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
+            embedding = self.model.embed(doc["content"])
 
             # ProximaDB expects metadata in SqlValue format
-            vectors = [{
-                'id': doc['id'],
-                'vector': embedding,
-                'metadata': {
-                    'language': doc['language'],
-                    'path': doc['path'],
-                    'content': doc['content'][:500],
+            vectors = [
+                {
+                    "id": doc["id"],
+                    "vector": embedding,
+                    "metadata": {
+                        "language": doc["language"],
+                        "path": doc["path"],
+                        "content": doc["content"][:500],
+                    },
                 }
-            }]
+            ]
             self.client.insert_vectors(self.collection_name, vectors)
             result.index_times.append(time.perf_counter() - start)
 
@@ -423,26 +446,24 @@ class ProximaDBEmbeddedBenchmark:
         embedding = self.model.embed(query)
 
         results = self.client.search_vectors(
-            self.collection_name,
-            query_vector=embedding,
-            top_k=top_k
+            self.collection_name, query_vector=embedding, top_k=top_k
         )
 
         elapsed = time.perf_counter() - start
 
         # Extract IDs from results
         ids = []
-        if hasattr(results, 'results'):
+        if hasattr(results, "results"):
             for r in results.results:
-                if hasattr(r, 'id'):
+                if hasattr(r, "id"):
                     ids.append(r.id)
-                elif hasattr(r, 'vector_id'):
+                elif hasattr(r, "vector_id"):
                     ids.append(r.vector_id)
         elif isinstance(results, list):
             for r in results:
                 if isinstance(r, dict):
-                    ids.append(r.get('id', r.get('vector_id', '')))
-                elif hasattr(r, 'id'):
+                    ids.append(r.get("id", r.get("vector_id", "")))
+                elif hasattr(r, "id"):
                     ids.append(r.id)
 
         return ids, elapsed
@@ -459,6 +480,7 @@ class ProximaDBEmbeddedBenchmark:
 # ProximaDB REST Benchmark
 # =============================================================================
 
+
 class ProximaDBRestBenchmark:
     def __init__(self, embedding_model, server_url: str = "http://localhost:5678"):
         self.model = embedding_model
@@ -468,7 +490,10 @@ class ProximaDBRestBenchmark:
 
     def setup(self):
         try:
-            httpx.delete(f"{self.server_url}/api/v1/collections/{self.collection_name}", timeout=10)
+            httpx.delete(
+                f"{self.server_url}/api/v1/collections/{self.collection_name}",
+                timeout=10,
+            )
         except:
             pass
 
@@ -481,9 +506,9 @@ class ProximaDBRestBenchmark:
                     "name": self.collection_name,
                     "dimension": self.dimension,
                     "distance_metric": 1,
-                }
+                },
             },
-            timeout=30
+            timeout=30,
         )
 
     def _to_sql_value(self, value):
@@ -498,23 +523,25 @@ class ProximaDBRestBenchmark:
     def index(self, documents: List[Dict], result: BenchmarkResult):
         for doc in documents:
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
+            embedding = self.model.embed(doc["content"])
 
             httpx.post(
                 f"{self.server_url}/api/v1/vectors/batch",
                 json={
                     "collection_id": self.collection_name,
-                    "vectors": [{
-                        "id": doc['id'],
-                        "vector": embedding,
-                        "metadata": {
-                            "content": self._to_sql_value(doc['content'][:500]),
-                            "language": self._to_sql_value(doc['language']),
-                            "path": self._to_sql_value(doc['path']),
+                    "vectors": [
+                        {
+                            "id": doc["id"],
+                            "vector": embedding,
+                            "metadata": {
+                                "content": self._to_sql_value(doc["content"][:500]),
+                                "language": self._to_sql_value(doc["language"]),
+                                "path": self._to_sql_value(doc["path"]),
+                            },
                         }
-                    }]
+                    ],
                 },
-                timeout=30
+                timeout=30,
             )
             result.index_times.append(time.perf_counter() - start)
 
@@ -529,7 +556,7 @@ class ProximaDBRestBenchmark:
                 "queries": [{"vector": embedding}],
                 "top_k": top_k,
             },
-            timeout=30
+            timeout=30,
         )
 
         elapsed = time.perf_counter() - start
@@ -539,7 +566,7 @@ class ProximaDBRestBenchmark:
         if data.get("success") and data.get("results"):
             inner = data["results"]
             if isinstance(inner, dict) and "results" in inner:
-                for r in (inner["results"] or []):
+                for r in inner["results"] or []:
                     if "id" in r:
                         ids.append(r["id"])
 
@@ -547,7 +574,10 @@ class ProximaDBRestBenchmark:
 
     def cleanup(self):
         try:
-            httpx.delete(f"{self.server_url}/api/v1/collections/{self.collection_name}", timeout=10)
+            httpx.delete(
+                f"{self.server_url}/api/v1/collections/{self.collection_name}",
+                timeout=10,
+            )
         except:
             pass
 
@@ -555,6 +585,7 @@ class ProximaDBRestBenchmark:
 # =============================================================================
 # ProximaDB gRPC Benchmark
 # =============================================================================
+
 
 class ProximaDBGrpcBenchmark:
     def __init__(self, embedding_model, server_url: str = "localhost:5679"):
@@ -569,7 +600,9 @@ class ProximaDBGrpcBenchmark:
         # For gRPC, we'll use REST API to create collection (simpler)
         rest_url = "http://localhost:5678"
         try:
-            httpx.delete(f"{rest_url}/api/v1/collections/{self.collection_name}", timeout=10)
+            httpx.delete(
+                f"{rest_url}/api/v1/collections/{self.collection_name}", timeout=10
+            )
         except:
             pass
 
@@ -582,9 +615,9 @@ class ProximaDBGrpcBenchmark:
                     "name": self.collection_name,
                     "dimension": self.dimension,
                     "distance_metric": 1,
-                }
+                },
             },
-            timeout=30
+            timeout=30,
         )
 
         # Setup gRPC channel
@@ -603,23 +636,25 @@ class ProximaDBGrpcBenchmark:
         rest_url = "http://localhost:5678"
         for doc in documents:
             start = time.perf_counter()
-            embedding = self.model.embed(doc['content'])
+            embedding = self.model.embed(doc["content"])
 
             httpx.post(
                 f"{rest_url}/api/v1/vectors/batch",
                 json={
                     "collection_id": self.collection_name,
-                    "vectors": [{
-                        "id": doc['id'],
-                        "vector": embedding,
-                        "metadata": {
-                            "content": self._to_sql_value(doc['content'][:500]),
-                            "language": self._to_sql_value(doc['language']),
-                            "path": self._to_sql_value(doc['path']),
+                    "vectors": [
+                        {
+                            "id": doc["id"],
+                            "vector": embedding,
+                            "metadata": {
+                                "content": self._to_sql_value(doc["content"][:500]),
+                                "language": self._to_sql_value(doc["language"]),
+                                "path": self._to_sql_value(doc["path"]),
+                            },
                         }
-                    }]
+                    ],
                 },
-                timeout=30
+                timeout=30,
             )
             result.index_times.append(time.perf_counter() - start)
 
@@ -636,7 +671,7 @@ class ProximaDBGrpcBenchmark:
                 "queries": [{"vector": embedding}],
                 "top_k": top_k,
             },
-            timeout=30
+            timeout=30,
         )
 
         elapsed = time.perf_counter() - start
@@ -646,7 +681,7 @@ class ProximaDBGrpcBenchmark:
         if data.get("success") and data.get("results"):
             inner = data["results"]
             if isinstance(inner, dict) and "results" in inner:
-                for r in (inner["results"] or []):
+                for r in inner["results"] or []:
                     if "id" in r:
                         ids.append(r["id"])
 
@@ -656,7 +691,10 @@ class ProximaDBGrpcBenchmark:
         if self.channel:
             self.channel.close()
         try:
-            httpx.delete(f"http://localhost:5678/api/v1/collections/{self.collection_name}", timeout=10)
+            httpx.delete(
+                f"http://localhost:5678/api/v1/collections/{self.collection_name}",
+                timeout=10,
+            )
         except:
             pass
 
@@ -664,6 +702,7 @@ class ProximaDBGrpcBenchmark:
 # =============================================================================
 # ProximaDB SQL Benchmark
 # =============================================================================
+
 
 class ProximaDBSqlBenchmark:
     """Uses SQL-like query interface via REST API."""
@@ -676,7 +715,10 @@ class ProximaDBSqlBenchmark:
 
     def setup(self):
         try:
-            httpx.delete(f"{self.server_url}/api/v1/collections/{self.collection_name}", timeout=10)
+            httpx.delete(
+                f"{self.server_url}/api/v1/collections/{self.collection_name}",
+                timeout=10,
+            )
         except:
             pass
 
@@ -689,9 +731,9 @@ class ProximaDBSqlBenchmark:
                     "name": self.collection_name,
                     "dimension": self.dimension,
                     "distance_metric": 1,
-                }
+                },
             },
-            timeout=30
+            timeout=30,
         )
 
     def _to_sql_value(self, value):
@@ -705,21 +747,23 @@ class ProximaDBSqlBenchmark:
         # Batch insert for SQL-style
         batch_size = 10
         for i in range(0, len(documents), batch_size):
-            batch = documents[i:i+batch_size]
+            batch = documents[i : i + batch_size]
             start = time.perf_counter()
 
             vectors = []
             for doc in batch:
-                embedding = self.model.embed(doc['content'])
-                vectors.append({
-                    "id": doc['id'],
-                    "vector": embedding,
-                    "metadata": {
-                        "content": self._to_sql_value(doc['content'][:500]),
-                        "language": self._to_sql_value(doc['language']),
-                        "path": self._to_sql_value(doc['path']),
+                embedding = self.model.embed(doc["content"])
+                vectors.append(
+                    {
+                        "id": doc["id"],
+                        "vector": embedding,
+                        "metadata": {
+                            "content": self._to_sql_value(doc["content"][:500]),
+                            "language": self._to_sql_value(doc["language"]),
+                            "path": self._to_sql_value(doc["path"]),
+                        },
                     }
-                })
+                )
 
             httpx.post(
                 f"{self.server_url}/api/v1/vectors/batch",
@@ -727,7 +771,7 @@ class ProximaDBSqlBenchmark:
                     "collection_id": self.collection_name,
                     "vectors": vectors,
                 },
-                timeout=60
+                timeout=60,
             )
 
             elapsed = time.perf_counter() - start
@@ -746,7 +790,7 @@ class ProximaDBSqlBenchmark:
                 "queries": [{"vector": embedding}],
                 "top_k": top_k,
             },
-            timeout=30
+            timeout=30,
         )
 
         elapsed = time.perf_counter() - start
@@ -756,7 +800,7 @@ class ProximaDBSqlBenchmark:
         if data.get("success") and data.get("results"):
             inner = data["results"]
             if isinstance(inner, dict) and "results" in inner:
-                for r in (inner["results"] or []):
+                for r in inner["results"] or []:
                     if "id" in r:
                         ids.append(r["id"])
 
@@ -764,7 +808,10 @@ class ProximaDBSqlBenchmark:
 
     def cleanup(self):
         try:
-            httpx.delete(f"{self.server_url}/api/v1/collections/{self.collection_name}", timeout=10)
+            httpx.delete(
+                f"{self.server_url}/api/v1/collections/{self.collection_name}",
+                timeout=10,
+            )
         except:
             pass
 
@@ -773,13 +820,14 @@ class ProximaDBSqlBenchmark:
 # Benchmark Runner
 # =============================================================================
 
+
 def run_benchmark(
     name: str,
     benchmark_class,
     embedding_model,
     documents: List[Dict],
     queries: List[str],
-    **kwargs
+    **kwargs,
 ) -> BenchmarkResult:
     result = BenchmarkResult(name)
 
@@ -805,7 +853,9 @@ def run_benchmark(
     return result
 
 
-def run_batch_benchmark(embedding_model, temp_dir: str, num_docs: int = 100) -> Dict[str, Dict]:
+def run_batch_benchmark(
+    embedding_model, temp_dir: str, num_docs: int = 100
+) -> Dict[str, Dict]:
     """Run batch insert benchmark to show batch vs single insert performance."""
     import random
 
@@ -814,17 +864,23 @@ def run_batch_benchmark(embedding_model, temp_dir: str, num_docs: int = 100) -> 
 
     # Pre-generate embeddings (to isolate DB performance)
     print("    Pre-generating embeddings...")
-    texts = [f"Sample document {i} with some content for embedding test" for i in range(num_docs)]
+    texts = [
+        f"Sample document {i} with some content for embedding test"
+        for i in range(num_docs)
+    ]
     embeddings = embedding_model.embed_batch(texts)
 
     # Create test data
-    documents = [{
-        'id': f'doc_{i}',
-        'content': texts[i],
-        'vector': embeddings[i],
-        'language': 'test',
-        'path': f'test/doc_{i}.txt'
-    } for i in range(num_docs)]
+    documents = [
+        {
+            "id": f"doc_{i}",
+            "content": texts[i],
+            "vector": embeddings[i],
+            "language": "test",
+            "path": f"test/doc_{i}.txt",
+        }
+        for i in range(num_docs)
+    ]
 
     # ChromaDB batch
     print("    ChromaDB batch insert...")
@@ -834,27 +890,36 @@ def run_batch_benchmark(embedding_model, temp_dir: str, num_docs: int = 100) -> 
 
         start = time.perf_counter()
         chroma_coll.add(
-            ids=[d['id'] for d in documents],
-            embeddings=[d['vector'] for d in documents],
-            documents=[d['content'] for d in documents]
+            ids=[d["id"] for d in documents],
+            embeddings=[d["vector"] for d in documents],
+            documents=[d["content"] for d in documents],
         )
         chroma_time = time.perf_counter() - start
-        results['ChromaDB'] = {'batch_time_ms': chroma_time * 1000, 'docs_per_sec': num_docs / chroma_time}
+        results["ChromaDB"] = {
+            "batch_time_ms": chroma_time * 1000,
+            "docs_per_sec": num_docs / chroma_time,
+        }
     except Exception as e:
-        results['ChromaDB'] = {'error': str(e)}
+        results["ChromaDB"] = {"error": str(e)}
 
     # LanceDB batch
     print("    LanceDB batch insert...")
     try:
         lance_db = lancedb.connect(os.path.join(temp_dir, "lance_batch"))
-        lance_data = [{'id': d['id'], 'vector': d['vector'], 'content': d['content']} for d in documents]
+        lance_data = [
+            {"id": d["id"], "vector": d["vector"], "content": d["content"]}
+            for d in documents
+        ]
 
         start = time.perf_counter()
         lance_db.create_table("batch_test", lance_data)
         lance_time = time.perf_counter() - start
-        results['LanceDB'] = {'batch_time_ms': lance_time * 1000, 'docs_per_sec': num_docs / lance_time}
+        results["LanceDB"] = {
+            "batch_time_ms": lance_time * 1000,
+            "docs_per_sec": num_docs / lance_time,
+        }
     except Exception as e:
-        results['LanceDB'] = {'error': str(e)}
+        results["LanceDB"] = {"error": str(e)}
 
     # FAISS batch
     print("    FAISS batch insert...")
@@ -868,9 +933,12 @@ def run_batch_benchmark(embedding_model, temp_dir: str, num_docs: int = 100) -> 
             start = time.perf_counter()
             faiss_idx.add(vectors)
             faiss_time = time.perf_counter() - start
-            results['FAISS'] = {'batch_time_ms': faiss_time * 1000, 'docs_per_sec': num_docs / faiss_time}
+            results["FAISS"] = {
+                "batch_time_ms": faiss_time * 1000,
+                "docs_per_sec": num_docs / faiss_time,
+            }
         except Exception as e:
-            results['FAISS'] = {'error': str(e)}
+            results["FAISS"] = {"error": str(e)}
 
     # Qdrant batch
     print("    Qdrant batch insert...")
@@ -879,25 +947,34 @@ def run_batch_benchmark(embedding_model, temp_dir: str, num_docs: int = 100) -> 
             qdrant_client = QdrantClient(":memory:")
             qdrant_client.create_collection(
                 "batch_test",
-                vectors_config=VectorParams(size=len(embeddings[0]), distance=Distance.COSINE)
+                vectors_config=VectorParams(
+                    size=len(embeddings[0]), distance=Distance.COSINE
+                ),
             )
 
             points = [
-                PointStruct(id=i, vector=d['vector'], payload={'content': d['content']})
+                PointStruct(id=i, vector=d["vector"], payload={"content": d["content"]})
                 for i, d in enumerate(documents)
             ]
 
             start = time.perf_counter()
             qdrant_client.upsert("batch_test", points=points)
             qdrant_time = time.perf_counter() - start
-            results['Qdrant'] = {'batch_time_ms': qdrant_time * 1000, 'docs_per_sec': num_docs / qdrant_time}
+            results["Qdrant"] = {
+                "batch_time_ms": qdrant_time * 1000,
+                "docs_per_sec": num_docs / qdrant_time,
+            }
         except Exception as e:
-            results['Qdrant'] = {'error': str(e)}
+            results["Qdrant"] = {"error": str(e)}
 
     return results
 
 
-def calculate_semantic_accuracy(results: Dict[str, BenchmarkResult], queries: List[str], expected: Dict[str, List[str]]) -> Dict[str, float]:
+def calculate_semantic_accuracy(
+    results: Dict[str, BenchmarkResult],
+    queries: List[str],
+    expected: Dict[str, List[str]],
+) -> Dict[str, float]:
     accuracy = {}
 
     for name, result in results.items():
@@ -927,12 +1004,13 @@ def calculate_semantic_accuracy(results: Dict[str, BenchmarkResult], queries: Li
 # Main
 # =============================================================================
 
+
 def main():
-    print("="*80)
+    print("=" * 80)
     print("EMBEDDED VECTOR DATABASE BENCHMARK FOR VICTOR CLI")
     print("Comparing: ChromaDB vs LanceDB vs FAISS vs Qdrant vs ProximaDB")
     print("Embedding: Sentence-Transformers (BAAI/bge-small-en-v1.5)")
-    print("="*80)
+    print("=" * 80)
     print("\nPurpose: Evaluate best vector DB for Victor CLI distribution")
     print("Note: ProximaDB uses gRPC, others are truly embedded.\n")
 
@@ -970,8 +1048,8 @@ def main():
 
     try:
         print("  Loading BAAI/bge-small-en-v1.5 (Sentence-Transformers)...")
-        models['ST-BGE'] = SentenceTransformerModel('BAAI/bge-small-en-v1.5')
-        _ = models['ST-BGE'].get_dimension()
+        models["ST-BGE"] = SentenceTransformerModel("BAAI/bge-small-en-v1.5")
+        _ = models["ST-BGE"].get_dimension()
         print(f"    Ready: dim={models['ST-BGE'].get_dimension()}")
     except Exception as e:
         print(f"    ERROR: {e}")
@@ -991,10 +1069,26 @@ def main():
     # Note: ProximaDB PyO3 bindings are implemented in Rust but wheel not yet built
     # See src/embedded/mod.rs and src/embedded/python.rs for the implementation
     benchmarks = [
-        ("ChromaDB", ChromaDBBenchmark, lambda m, t: {"data_dir": os.path.join(t, f"chroma_{m}")}),
-        ("LanceDB", LanceDBBenchmark, lambda m, t: {"data_dir": os.path.join(t, f"lance_{m}")}),
-        ("FAISS", FAISSBenchmark, lambda m, t: {"data_dir": os.path.join(t, f"faiss_{m}")}),
-        ("Qdrant", QdrantBenchmark, lambda m, t: {"data_dir": os.path.join(t, f"qdrant_{m}")}),
+        (
+            "ChromaDB",
+            ChromaDBBenchmark,
+            lambda m, t: {"data_dir": os.path.join(t, f"chroma_{m}")},
+        ),
+        (
+            "LanceDB",
+            LanceDBBenchmark,
+            lambda m, t: {"data_dir": os.path.join(t, f"lance_{m}")},
+        ),
+        (
+            "FAISS",
+            FAISSBenchmark,
+            lambda m, t: {"data_dir": os.path.join(t, f"faiss_{m}")},
+        ),
+        (
+            "Qdrant",
+            QdrantBenchmark,
+            lambda m, t: {"data_dir": os.path.join(t, f"qdrant_{m}")},
+        ),
         # ProximaDB embedded bindings ready in Rust, wheel build needed for Python
         # ("ProximaDB", ProximaDBEmbeddedBenchmark, lambda m, t: {"grpc_url": "localhost:5679"}),
     ]
@@ -1004,25 +1098,29 @@ def main():
 
         for db_name, db_class, kwargs_fn in benchmarks:
             kwargs = kwargs_fn(model_name, temp_base)
-            if 'data_dir' in kwargs:
-                os.makedirs(kwargs['data_dir'], exist_ok=True)
+            if "data_dir" in kwargs:
+                os.makedirs(kwargs["data_dir"], exist_ok=True)
 
             key = f"{db_name}+{model_name}"
             print(f"\n  {key}:")
-            results[key] = run_benchmark(key, db_class, model, documents, queries, **kwargs)
+            results[key] = run_benchmark(
+                key, db_class, model, documents, queries, **kwargs
+            )
             gc.collect()
 
     # Run batch insert benchmark (DB performance only, no embedding overhead)
-    if 'ST-BGE' in models:
-        batch_results = run_batch_benchmark(models['ST-BGE'], temp_base, num_docs=500)
+    if "ST-BGE" in models:
+        batch_results = run_batch_benchmark(models["ST-BGE"], temp_base, num_docs=500)
 
         print("\n  ═══ BATCH INSERT RESULTS (500 docs, pre-embedded) ═══")
         print("  ┌──────────────┬───────────────┬──────────────────┐")
         print("  │ Database     │ Batch Time    │ Throughput       │")
         print("  ├──────────────┼───────────────┼──────────────────┤")
         for db_name, stats in sorted(batch_results.items()):
-            if 'error' not in stats:
-                print(f"  │ {db_name:<12} │ {stats['batch_time_ms']:>10.2f}ms │ {stats['docs_per_sec']:>12.0f} docs/s │")
+            if "error" not in stats:
+                print(
+                    f"  │ {db_name:<12} │ {stats['batch_time_ms']:>10.2f}ms │ {stats['docs_per_sec']:>12.0f} docs/s │"
+                )
             else:
                 print(f"  │ {db_name:<12} │ ERROR: {stats['error'][:30]} │")
         print("  └──────────────┴───────────────┴──────────────────┘")
@@ -1031,72 +1129,115 @@ def main():
     accuracy = calculate_semantic_accuracy(results, queries, expected_matches)
 
     # Print results table
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("[4/4] BENCHMARK RESULTS")
-    print("="*80)
+    print("=" * 80)
 
-    print("\n┌───────────────────────────────┬───────────┬───────────┬───────────┬──────────┐")
-    print("│ Database + Embedding          │ Index     │ Search    │ Search    │ Semantic │")
-    print("│                               │ (docs/s)  │ Avg (ms)  │ P95 (ms)  │ Accuracy │")
-    print("├───────────────────────────────┼───────────┼───────────┼───────────┼──────────┤")
+    print(
+        "\n┌───────────────────────────────┬───────────┬───────────┬───────────┬──────────┐"
+    )
+    print(
+        "│ Database + Embedding          │ Index     │ Search    │ Search    │ Semantic │"
+    )
+    print(
+        "│                               │ (docs/s)  │ Avg (ms)  │ P95 (ms)  │ Accuracy │"
+    )
+    print(
+        "├───────────────────────────────┼───────────┼───────────┼───────────┼──────────┤"
+    )
 
     for name in sorted(results.keys()):
         result = results[name]
         summary = result.summary()
         acc = accuracy.get(name, 0)
-        err = " ERR" if summary['errors'] > 0 else ""
-        print(f"│ {name:<29} │ {summary['index_docs_per_sec']:>9.1f} │ {summary['search_avg_ms']:>9.2f} │ {summary['search_p95_ms']:>9.2f} │ {acc:>6.1f}%{err} │")
+        err = " ERR" if summary["errors"] > 0 else ""
+        print(
+            f"│ {name:<29} │ {summary['index_docs_per_sec']:>9.1f} │ {summary['search_avg_ms']:>9.2f} │ {summary['search_p95_ms']:>9.2f} │ {acc:>6.1f}%{err} │"
+        )
 
-    print("└───────────────────────────────┴───────────┴───────────┴───────────┴──────────┘")
+    print(
+        "└───────────────────────────────┴───────────┴───────────┴───────────┴──────────┘"
+    )
 
     # Summary by Database
-    print("\n" + "─"*80)
+    print("\n" + "─" * 80)
     print("SUMMARY BY DATABASE (Embedded Mode)")
-    print("─"*80)
+    print("─" * 80)
 
     for db in ["ChromaDB", "LanceDB", "FAISS", "Qdrant", "ProximaDB"]:
         db_results = {k: v for k, v in results.items() if k.startswith(db)}
         if db_results:
-            valid_results = [r for r in db_results.values() if r.summary()['search_avg_ms'] > 0]
+            valid_results = [
+                r for r in db_results.values() if r.summary()["search_avg_ms"] > 0
+            ]
             if valid_results:
-                avg_index = statistics.mean(r.summary()['index_docs_per_sec'] for r in valid_results)
-                avg_search = statistics.mean(r.summary()['search_avg_ms'] for r in valid_results)
+                avg_index = statistics.mean(
+                    r.summary()["index_docs_per_sec"] for r in valid_results
+                )
+                avg_search = statistics.mean(
+                    r.summary()["search_avg_ms"] for r in valid_results
+                )
                 avg_acc = statistics.mean(accuracy.get(k, 0) for k in db_results.keys())
-                print(f"  {db:<18}: Index={avg_index:>6.1f} docs/s | Search={avg_search:>6.2f}ms | Acc={avg_acc:>5.1f}%")
+                print(
+                    f"  {db:<18}: Index={avg_index:>6.1f} docs/s | Search={avg_search:>6.2f}ms | Acc={avg_acc:>5.1f}%"
+                )
 
     # Summary by Embedding
-    print("\n" + "─"*80)
+    print("\n" + "─" * 80)
     print("SUMMARY BY EMBEDDING MODEL")
-    print("─"*80)
+    print("─" * 80)
 
     for emb in models.keys():
         emb_results = {k: v for k, v in results.items() if emb in k}
         if emb_results:
-            valid_results = [r for r in emb_results.values() if r.summary()['search_avg_ms'] > 0]
+            valid_results = [
+                r for r in emb_results.values() if r.summary()["search_avg_ms"] > 0
+            ]
             if valid_results:
-                avg_index = statistics.mean(r.summary()['index_docs_per_sec'] for r in valid_results)
-                avg_search = statistics.mean(r.summary()['search_avg_ms'] for r in valid_results)
-                avg_acc = statistics.mean(accuracy.get(k, 0) for k in emb_results.keys())
-                print(f"  {emb:<18}: Index={avg_index:>6.1f} docs/s | Search={avg_search:>6.2f}ms | Acc={avg_acc:>5.1f}%")
+                avg_index = statistics.mean(
+                    r.summary()["index_docs_per_sec"] for r in valid_results
+                )
+                avg_search = statistics.mean(
+                    r.summary()["search_avg_ms"] for r in valid_results
+                )
+                avg_acc = statistics.mean(
+                    accuracy.get(k, 0) for k in emb_results.keys()
+                )
+                print(
+                    f"  {emb:<18}: Index={avg_index:>6.1f} docs/s | Search={avg_search:>6.2f}ms | Acc={avg_acc:>5.1f}%"
+                )
 
     # Strengths & Weaknesses
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("STRENGTHS & WEAKNESSES")
-    print("="*80)
+    print("=" * 80)
 
-    valid_results = {k: v for k, v in results.items() if v.summary()['search_avg_ms'] > 0}
+    valid_results = {
+        k: v for k, v in results.items() if v.summary()["search_avg_ms"] > 0
+    }
     if valid_results:
-        best_index = max(valid_results.items(), key=lambda x: x[1].summary()['index_docs_per_sec'])
-        best_search = min(valid_results.items(), key=lambda x: x[1].summary()['search_avg_ms'])
+        best_index = max(
+            valid_results.items(), key=lambda x: x[1].summary()["index_docs_per_sec"]
+        )
+        best_search = min(
+            valid_results.items(), key=lambda x: x[1].summary()["search_avg_ms"]
+        )
         best_accuracy = max(accuracy.items(), key=lambda x: x[1])
 
-        print(f"\n  FASTEST INDEXING:  {best_index[0]} ({best_index[1].summary()['index_docs_per_sec']:.1f} docs/s)")
-        print(f"  FASTEST SEARCH:    {best_search[0]} ({best_search[1].summary()['search_avg_ms']:.2f} ms)")
+        print(
+            f"\n  FASTEST INDEXING:  {best_index[0]} ({best_index[1].summary()['index_docs_per_sec']:.1f} docs/s)"
+        )
+        print(
+            f"  FASTEST SEARCH:    {best_search[0]} ({best_search[1].summary()['search_avg_ms']:.2f} ms)"
+        )
         print(f"  BEST ACCURACY:     {best_accuracy[0]} ({best_accuracy[1]:.1f}%)")
 
     print("\n  EMBEDDED DATABASE ANALYSIS FOR VICTOR CLI:")
-    print("  ─────────────────────────────────────────────────────────────────────────────")
-    print("""
+    print(
+        "  ─────────────────────────────────────────────────────────────────────────────"
+    )
+    print(
+        """
   ChromaDB:
     ✅ Simple API, Python-native
     ✅ Built-in persistence (SQLite + HNSW)
@@ -1158,11 +1299,15 @@ def main():
   3. FAISS + metadata store - Fastest search, but needs extra work
   4. ChromaDB - Simplest to integrate, slower at scale
   5. Qdrant - Best filtering, but heavier
-""")
+"""
+    )
 
     print("  EMBEDDING MODEL ANALYSIS:")
-    print("  ─────────────────────────────────────────────────────────────────────────────")
-    print("""
+    print(
+        "  ─────────────────────────────────────────────────────────────────────────────"
+    )
+    print(
+        """
   Sentence-Transformers (BGE):
     + Fast local inference (~5-10ms)
     + No API costs
@@ -1176,7 +1321,8 @@ def main():
     + Larger context (8K tokens)
     - Slower (~50-100ms per embed)
     - Requires Ollama running
-""")
+"""
+    )
 
     # Cleanup
     try:
@@ -1184,9 +1330,9 @@ def main():
     except:
         pass
 
-    print("="*80)
+    print("=" * 80)
     print("BENCHMARK COMPLETE")
-    print("="*80)
+    print("=" * 80)
 
 
 if __name__ == "__main__":

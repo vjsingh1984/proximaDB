@@ -18,6 +18,7 @@ DEFAULT_TIMEOUT = 30.0
 @dataclass
 class User:
     """Represents a user in the system."""
+
     id: str
     name: str
     email: Optional[str] = None

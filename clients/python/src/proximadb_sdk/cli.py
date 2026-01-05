@@ -260,7 +260,9 @@ def vectors() -> None:
 
 @vectors.command("insert")
 @click.option("--collection", "-c", required=True, help="Collection name")
-@click.option("--file", "-f", type=click.Path(exists=True), help="JSON file with vectors")
+@click.option(
+    "--file", "-f", type=click.Path(exists=True), help="JSON file with vectors"
+)
 @click.option("--vector", "-v", help="Single vector as JSON array")
 @click.option("--id", "vector_id", help="Vector ID (for single vector)")
 @click.option("--metadata", "-m", help="Metadata as JSON object")
@@ -300,7 +302,9 @@ def insert_vectors(
         elif vector:
             vec = json.loads(vector)
             meta = json.loads(metadata) if metadata else {}
-            vectors_data = [{"id": vector_id or "auto", "vector": vec, "metadata": meta}]
+            vectors_data = [
+                {"id": vector_id or "auto", "vector": vec, "metadata": meta}
+            ]
         else:
             console.print("[red]Either --file or --vector is required.[/red]")
             sys.exit(1)
@@ -339,7 +343,12 @@ def get_vector(ctx: click.Context, collection: str, vector_id: str) -> None:
         if ctx.obj["json_output"]:
             click.echo(json.dumps(result, indent=2))
         else:
-            console.print(Panel(Syntax(json.dumps(result, indent=2), "json"), title=f"Vector: {vector_id}"))
+            console.print(
+                Panel(
+                    Syntax(json.dumps(result, indent=2), "json"),
+                    title=f"Vector: {vector_id}",
+                )
+            )
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
@@ -362,7 +371,9 @@ def delete_vectors(
         sys.exit(1)
 
     if not force:
-        if not click.confirm(f"Delete {len(vector_ids)} vector(s) from '{collection}'?"):
+        if not click.confirm(
+            f"Delete {len(vector_ids)} vector(s) from '{collection}'?"
+        ):
             console.print("[yellow]Aborted.[/yellow]")
             return
 
@@ -380,7 +391,9 @@ def delete_vectors(
         if ctx.obj["json_output"]:
             click.echo(json.dumps(result, indent=2))
         else:
-            console.print(f"[green]Deleted {len(vector_ids)} vector(s) from '{collection}'[/green]")
+            console.print(
+                f"[green]Deleted {len(vector_ids)} vector(s) from '{collection}'[/green]"
+            )
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
@@ -483,12 +496,21 @@ def health_check(ctx: click.Context) -> None:
 
         if response.status_code == 200:
             if ctx.obj["json_output"]:
-                click.echo(json.dumps({"status": "healthy", "details": response.json()}))
+                click.echo(
+                    json.dumps({"status": "healthy", "details": response.json()})
+                )
             else:
                 console.print("[green]Server is healthy![/green]")
-                console.print(Panel(Syntax(json.dumps(response.json(), indent=2), "json"), title="Health Details"))
+                console.print(
+                    Panel(
+                        Syntax(json.dumps(response.json(), indent=2), "json"),
+                        title="Health Details",
+                    )
+                )
         else:
-            console.print(f"[yellow]Server returned status {response.status_code}[/yellow]")
+            console.print(
+                f"[yellow]Server returned status {response.status_code}[/yellow]"
+            )
     except Exception as e:
         console.print(f"[red]Server unreachable: {e}[/red]")
         sys.exit(1)
@@ -563,11 +585,13 @@ def benchmark(
         console.print(f"  Inserting {count} vectors...")
         vectors = []
         for i in range(count):
-            vectors.append({
-                "id": f"bench_{i}",
-                "vector": np.random.randn(dimension).tolist(),
-                "metadata": {"index": i},
-            })
+            vectors.append(
+                {
+                    "id": f"bench_{i}",
+                    "vector": np.random.randn(dimension).tolist(),
+                    "metadata": {"index": i},
+                }
+            )
 
         start = time.time()
         client.insert_vectors(collection, vectors)

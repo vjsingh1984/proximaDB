@@ -150,7 +150,9 @@ class SemanticCache:
                 cached_at_str = metadata.get("cached_at", "")
                 if cached_at_str:
                     cached_at = datetime.fromisoformat(cached_at_str)
-                    age_hours = (datetime.now(timezone.utc) - cached_at).total_seconds() / 3600
+                    age_hours = (
+                        datetime.now(timezone.utc) - cached_at
+                    ).total_seconds() / 3600
                     if age_hours > self.config.ttl_hours:
                         # Expired
                         self._stats["misses"] += 1
@@ -161,13 +163,15 @@ class SemanticCache:
 
                 sources = []
                 for src in metadata.get("sources", []):
-                    sources.append(Source(
-                        id=src.get("id", ""),
-                        title=src.get("title", ""),
-                        url=src.get("url", ""),
-                        relevance=src.get("relevance", 0.0),
-                        snippet=src.get("snippet", ""),
-                    ))
+                    sources.append(
+                        Source(
+                            id=src.get("id", ""),
+                            title=src.get("title", ""),
+                            url=src.get("url", ""),
+                            relevance=src.get("relevance", 0.0),
+                            snippet=src.get("snippet", ""),
+                        )
+                    )
 
                 response = RAGResponse(
                     answer=metadata.get("answer", ""),
@@ -185,7 +189,9 @@ class SemanticCache:
                     collection=collection,
                     response=response,
                     embedding=result.get("vector", []),
-                    cached_at=cached_at if cached_at_str else datetime.now(timezone.utc),
+                    cached_at=(
+                        cached_at if cached_at_str else datetime.now(timezone.utc)
+                    ),
                     hit_count=metadata.get("hit_count", 0) + 1,
                 )
 
@@ -226,35 +232,39 @@ class SemanticCache:
             # Serialize sources
             sources_data = []
             for src in response.sources:
-                sources_data.append({
-                    "id": src.id,
-                    "title": src.title,
-                    "url": src.url,
-                    "relevance": src.relevance,
-                    "snippet": src.snippet,
-                })
+                sources_data.append(
+                    {
+                        "id": src.id,
+                        "title": src.title,
+                        "url": src.url,
+                        "relevance": src.relevance,
+                        "snippet": src.snippet,
+                    }
+                )
 
             # Store in cache collection
             await self.client.insert_vectors_async(
                 collection=self.config.collection_name,
-                vectors=[{
-                    "id": cache_key,
-                    "vector": embedding,
-                    "metadata": {
-                        "cache_key": cache_key,
-                        "question": question,
-                        "collection": collection,
-                        "answer": response.answer,
-                        "sources": sources_data,
-                        "confidence": response.confidence,
-                        "latency_ms": response.latency_ms,
-                        "retrieval_latency_ms": response.retrieval_latency_ms,
-                        "generation_latency_ms": response.generation_latency_ms,
-                        "tokens_used": response.tokens_used,
-                        "cached_at": now.isoformat(),
-                        "hit_count": 0,
-                    },
-                }],
+                vectors=[
+                    {
+                        "id": cache_key,
+                        "vector": embedding,
+                        "metadata": {
+                            "cache_key": cache_key,
+                            "question": question,
+                            "collection": collection,
+                            "answer": response.answer,
+                            "sources": sources_data,
+                            "confidence": response.confidence,
+                            "latency_ms": response.latency_ms,
+                            "retrieval_latency_ms": response.retrieval_latency_ms,
+                            "generation_latency_ms": response.generation_latency_ms,
+                            "tokens_used": response.tokens_used,
+                            "cached_at": now.isoformat(),
+                            "hit_count": 0,
+                        },
+                    }
+                ],
             )
 
             self._stats["stores"] += 1

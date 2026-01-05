@@ -33,7 +33,7 @@ GTE_QWEN_MODELS = {
         mteb_score=71.0,
         languages="100+",
         description="Top MTEB performer, #1 English & Chinese, 7B parameters",
-        use_case="Maximum accuracy, multilingual, enterprise applications"
+        use_case="Maximum accuracy, multilingual, enterprise applications",
     ),
     "Alibaba-NLP/gte-Qwen2-1.5B-instruct": ModelMetadata(
         name="Alibaba-NLP/gte-Qwen2-1.5B-instruct",
@@ -45,7 +45,7 @@ GTE_QWEN_MODELS = {
         mteb_score=68.0,
         languages="100+",
         description="Smaller variant, excellent quality, 1.5B parameters",
-        use_case="Balanced accuracy and speed, multilingual"
+        use_case="Balanced accuracy and speed, multilingual",
     ),
     "Alibaba-NLP/gte-Qwen1.5-7B-instruct": ModelMetadata(
         name="Alibaba-NLP/gte-Qwen1.5-7B-instruct",
@@ -57,8 +57,8 @@ GTE_QWEN_MODELS = {
         mteb_score=70.0,
         languages="100+",
         description="Earlier 7B model, still excellent performance",
-        use_case="Alternative to Qwen2-7B"
-    )
+        use_case="Alternative to Qwen2-7B",
+    ),
 }
 
 
@@ -66,12 +66,12 @@ GTE_QWEN_MODELS = {
     name="gte-qwen-v2",
     models=GTE_QWEN_MODELS,
     aliases=["alibaba-v2", "qwen-v2", "gte-v2"],
-    description="Alibaba's state-of-the-art multilingual embeddings (#1 MTEB)"
+    description="Alibaba's state-of-the-art multilingual embeddings (#1 MTEB)",
 )
 class GTEQwenProvider(
-    InstructionMixin,              # Provides embed_query(), embed_passages()
-    SentenceTransformerMixin,      # Provides _load_model(), embed()
-    BaseEmbeddingProvider          # Provides lifecycle, config
+    InstructionMixin,  # Provides embed_query(), embed_passages()
+    SentenceTransformerMixin,  # Provides _load_model(), embed()
+    BaseEmbeddingProvider,  # Provides lifecycle, config
 ):
     """
     Optimized gte-Qwen Provider (v2)
@@ -136,9 +136,7 @@ class GTEQwenProvider(
             batch_size=16,  # Smaller batch for large model
             normalize=True,
             trust_remote_code=False,  # Use standard implementation for compatibility
-            extra={
-                "use_query_instruction": True
-            }
+            extra={"use_query_instruction": True},
         )
 
 
@@ -148,8 +146,9 @@ class GTEQwenProvider(
     name="gte-qwen",
     models=GTE_QWEN_MODELS,
     aliases=["alibaba", "qwen", "gte"],
-    description="Alibaba's state-of-the-art multilingual embeddings (#1 MTEB)"
+    description="Alibaba's state-of-the-art multilingual embeddings (#1 MTEB)",
 )
 class GTEQwenProvider(GTEQwenProvider):
     """Alias for GTEQwenProvider (for backward compatibility)"""
+
     pass

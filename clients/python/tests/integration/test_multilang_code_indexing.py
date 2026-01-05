@@ -42,8 +42,7 @@ def is_server_available() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not is_server_available(),
-    reason="ProximaDB server not available at localhost:5678"
+    not is_server_available(), reason="ProximaDB server not available at localhost:5678"
 )
 
 
@@ -87,7 +86,7 @@ async def fetch_data(url: str, timeout: int = 30) -> dict:
                 if attempt == 2:
                     raise ConnectionError(f"Failed to fetch {url}") from e
                 await asyncio.sleep(2 ** attempt)
-'''
+''',
             },
             {
                 "id": "py_cache_decorator",
@@ -128,7 +127,7 @@ def memoize(ttl_seconds: int = 300):
             return result
         return wrapper
     return decorator
-'''
+''',
             },
             {
                 "id": "py_db_repository",
@@ -165,11 +164,10 @@ class UserRepository:
             )
             user.id = result.lastrowid
             return user
-'''
+''',
             },
-        ]
+        ],
     },
-
     "javascript": {
         "extension": ".js",
         "samples": [
@@ -178,7 +176,7 @@ class UserRepository:
                 "name": "PromiseQueue",
                 "type": "class",
                 "description": "Promise-based task queue with concurrency control",
-                "code": '''
+                "code": """
 class PromiseQueue {
     /**
      * Queue for managing concurrent promise execution.
@@ -218,14 +216,14 @@ class PromiseQueue {
         }
     }
 }
-'''
+""",
             },
             {
                 "id": "js_event_emitter",
                 "name": "EventEmitter",
                 "type": "class",
                 "description": "Custom event emitter with once and wildcard support",
-                "code": '''
+                "code": """
 class EventEmitter {
     /**
      * Lightweight event emitter implementation.
@@ -261,11 +259,10 @@ class EventEmitter {
         wildcards.forEach(fn => fn(event, ...args));
     }
 }
-'''
+""",
             },
-        ]
+        ],
     },
-
     "rust": {
         "extension": ".rs",
         "samples": [
@@ -274,7 +271,7 @@ class EventEmitter {
                 "name": "ResultExt",
                 "type": "trait",
                 "description": "Extension trait for Result with additional error handling methods",
-                "code": '''
+                "code": """
 /// Extension trait providing additional methods for Result types.
 ///
 /// Adds context, retry, and logging capabilities to standard Results.
@@ -311,14 +308,14 @@ impl<T, E: std::error::Error> ResultExt<T, E> for Result<T, E> {
         self
     }
 }
-'''
+""",
             },
             {
                 "id": "rs_async_pool",
                 "name": "ConnectionPool",
                 "type": "struct",
                 "description": "Async connection pool with health checking and automatic reconnection",
-                "code": '''
+                "code": """
 /// Async connection pool for database connections.
 ///
 /// Features:
@@ -357,11 +354,10 @@ impl<C: Connection + Send + 'static> ConnectionPool<C> {
         tokio::time::timeout(timeout, self.acquire_inner()).await?
     }
 }
-'''
+""",
             },
-        ]
+        ],
     },
-
     "go": {
         "extension": ".go",
         "samples": [
@@ -370,7 +366,7 @@ impl<C: Connection + Send + 'static> ConnectionPool<C> {
                 "name": "WorkerPool",
                 "type": "struct",
                 "description": "Concurrent worker pool with graceful shutdown",
-                "code": '''
+                "code": """
 // WorkerPool manages a pool of goroutines for concurrent task processing.
 //
 // Features:
@@ -426,14 +422,14 @@ func (p *WorkerPool) worker(id int) {
         }
     }
 }
-'''
+""",
             },
             {
                 "id": "go_middleware",
                 "name": "LoggingMiddleware",
                 "type": "function",
                 "description": "HTTP middleware for request logging with structured logging",
-                "code": '''
+                "code": """
 // LoggingMiddleware creates middleware that logs HTTP requests.
 //
 // Logs: method, path, status code, duration, request ID.
@@ -466,11 +462,10 @@ func LoggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
         })
     }
 }
-'''
+""",
             },
-        ]
+        ],
     },
-
     "java": {
         "extension": ".java",
         "samples": [
@@ -479,7 +474,7 @@ func LoggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
                 "name": "CircuitBreaker",
                 "type": "class",
                 "description": "Circuit breaker pattern for resilient service calls",
-                "code": '''
+                "code": """
 /**
  * Circuit breaker implementation for protecting service calls.
  *
@@ -536,11 +531,10 @@ public class CircuitBreaker<T> {
         }
     }
 }
-'''
+""",
             },
-        ]
+        ],
     },
-
     "cpp": {
         "extension": ".cpp",
         "samples": [
@@ -549,7 +543,7 @@ public class CircuitBreaker<T> {
                 "name": "ThreadPool",
                 "type": "class",
                 "description": "Thread pool with work stealing for efficient task scheduling",
-                "code": '''
+                "code": """
 /**
  * @brief High-performance thread pool with work stealing.
  *
@@ -614,11 +608,10 @@ private:
     std::atomic<bool> stop_;
     std::atomic<size_t> activeWorkers_;
 };
-'''
+""",
             },
-        ]
+        ],
     },
-
     "ruby": {
         "extension": ".rb",
         "samples": [
@@ -627,7 +620,7 @@ private:
                 "name": "User",
                 "type": "class",
                 "description": "ActiveRecord model with validations and callbacks",
-                "code": '''
+                "code": """
 # User model with full validation, associations, and callbacks.
 #
 # Implements soft deletes, password hashing, and audit logging.
@@ -674,11 +667,10 @@ class User < ApplicationRecord
     self.auth_token = SecureRandom.urlsafe_base64(32)
   end
 end
-'''
+""",
             },
-        ]
+        ],
     },
-
     "sql": {
         "extension": ".sql",
         "samples": [
@@ -687,7 +679,7 @@ end
                 "name": "monthly_revenue_report",
                 "type": "query",
                 "description": "Complex analytics query for monthly revenue with window functions",
-                "code": '''
+                "code": """
 -- Monthly revenue analytics with year-over-year comparison
 -- Uses window functions for running totals and growth calculations
 WITH monthly_revenue AS (
@@ -723,11 +715,10 @@ SELECT
     category_rank
 FROM with_growth
 ORDER BY month DESC, revenue DESC;
-'''
+""",
             },
-        ]
+        ],
     },
-
     "bash": {
         "extension": ".sh",
         "samples": [
@@ -736,7 +727,7 @@ ORDER BY month DESC, revenue DESC;
                 "name": "deploy.sh",
                 "type": "script",
                 "description": "Deployment script with health checks and rollback",
-                "code": '''
+                "code": """
 #!/usr/bin/env bash
 # Deploy script with zero-downtime deployment and automatic rollback
 #
@@ -806,11 +797,10 @@ deploy() {
 }
 
 deploy
-'''
+""",
             },
-        ]
+        ],
     },
-
     "kotlin": {
         "extension": ".kt",
         "samples": [
@@ -819,7 +809,7 @@ deploy
                 "name": "DataFetcher",
                 "type": "class",
                 "description": "Coroutine-based data fetcher with retry and caching",
-                "code": '''
+                "code": """
 /**
  * Data fetcher using Kotlin coroutines for async operations.
  *
@@ -879,11 +869,10 @@ class DataFetcher(
         throw lastException ?: IllegalStateException("Retry failed")
     }
 }
-'''
+""",
             },
-        ]
+        ],
     },
-
     "swift": {
         "extension": ".swift",
         "samples": [
@@ -892,7 +881,7 @@ class DataFetcher(
                 "name": "NetworkManager",
                 "type": "class",
                 "description": "Async/await network manager with Combine support",
-                "code": '''
+                "code": """
 /// Network manager using modern Swift concurrency.
 ///
 /// Features:
@@ -942,9 +931,9 @@ actor NetworkManager {
         interceptors.append(interceptor)
     }
 }
-'''
+""",
             },
-        ]
+        ],
     },
 }
 
@@ -957,52 +946,52 @@ SEMANTIC_SEARCH_QUERIES = [
     {
         "query": "async HTTP request with retry and timeout",
         "expected_matches": ["py_async_http", "kt_coroutine", "swift_network"],
-        "category": "async_operations"
+        "category": "async_operations",
     },
     {
         "query": "caching function results with expiration",
         "expected_matches": ["py_cache_decorator", "kt_coroutine"],
-        "category": "caching"
+        "category": "caching",
     },
     {
         "query": "database connection pooling",
         "expected_matches": ["py_db_repository", "rs_async_pool"],
-        "category": "database"
+        "category": "database",
     },
     {
         "query": "concurrent task queue with worker threads",
         "expected_matches": ["js_promise_queue", "go_worker_pool", "cpp_thread_pool"],
-        "category": "concurrency"
+        "category": "concurrency",
     },
     {
         "query": "event handling and callbacks",
         "expected_matches": ["js_event_emitter"],
-        "category": "events"
+        "category": "events",
     },
     {
         "query": "error handling with context and retry",
         "expected_matches": ["rs_result_ext", "java_circuit_breaker"],
-        "category": "error_handling"
+        "category": "error_handling",
     },
     {
         "query": "HTTP middleware for logging requests",
         "expected_matches": ["go_middleware"],
-        "category": "middleware"
+        "category": "middleware",
     },
     {
         "query": "graceful shutdown with cleanup",
         "expected_matches": ["go_worker_pool", "cpp_thread_pool", "bash_deploy"],
-        "category": "lifecycle"
+        "category": "lifecycle",
     },
     {
         "query": "data validation and sanitization",
         "expected_matches": ["rb_active_record"],
-        "category": "validation"
+        "category": "validation",
     },
     {
         "query": "analytics query with aggregation",
         "expected_matches": ["sql_analytics"],
-        "category": "analytics"
+        "category": "analytics",
     },
 ]
 
@@ -1010,6 +999,7 @@ SEMANTIC_SEARCH_QUERIES = [
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 def generate_embedding(text: str, dimension: int = 384) -> List[float]:
     """Generate deterministic pseudo-embedding from text."""
@@ -1060,8 +1050,8 @@ def create_collection(name: str, dimension: int = 384) -> Dict[str, Any]:
                 "name": name,
                 "dimension": dimension,
                 "distance_metric": 1,
-            }
-        }
+            },
+        },
     )
     return response.json()
 
@@ -1075,7 +1065,9 @@ def delete_collection(name: str) -> bool:
         return False
 
 
-def insert_vectors(collection_name: str, vectors: List[Dict[str, Any]]) -> Dict[str, Any]:
+def insert_vectors(
+    collection_name: str, vectors: List[Dict[str, Any]]
+) -> Dict[str, Any]:
     """Insert vectors with metadata."""
     formatted_vectors = []
     for v in vectors:
@@ -1086,12 +1078,14 @@ def insert_vectors(collection_name: str, vectors: List[Dict[str, Any]]) -> Dict[
 
     response = requests.post(
         f"{SERVER_URL}/api/v1/vectors/batch",
-        json={"collection_id": collection_name, "vectors": formatted_vectors}
+        json={"collection_id": collection_name, "vectors": formatted_vectors},
     )
     return response.json()
 
 
-def search_vectors(collection_name: str, query_vector: List[float], top_k: int = 10) -> List[Dict[str, Any]]:
+def search_vectors(
+    collection_name: str, query_vector: List[float], top_k: int = 10
+) -> List[Dict[str, Any]]:
     """Search for similar vectors. Returns list of results."""
     response = requests.post(
         f"{SERVER_URL}/api/v1/search",
@@ -1099,7 +1093,7 @@ def search_vectors(collection_name: str, query_vector: List[float], top_k: int =
             "collection_id": collection_name,
             "queries": [{"vector": query_vector}],
             "top_k": top_k,
-        }
+        },
     )
     data = response.json()
 
@@ -1127,9 +1121,11 @@ def assert_success(result: Dict[str, Any], message: str = "API call failed"):
 # Test Classes
 # =============================================================================
 
+
 @dataclass
 class SearchResult:
     """Semantic search test result."""
+
     query: str
     expected_ids: List[str]
     found_ids: List[str]
@@ -1155,17 +1151,21 @@ class TestMultiLanguageIndexing:
         for lang, lang_data in LANGUAGE_SAMPLES.items():
             for sample in lang_data["samples"]:
                 # Create embedding from description + code
-                embedding_text = f"{sample['name']} {sample['description']} {sample['code'][:500]}"
-                vectors.append({
-                    "id": sample["id"],
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "language": lang,
-                        "name": sample["name"],
-                        "type": sample["type"],
-                        "description": sample["description"],
+                embedding_text = (
+                    f"{sample['name']} {sample['description']} {sample['code'][:500]}"
+                )
+                vectors.append(
+                    {
+                        "id": sample["id"],
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "language": lang,
+                            "name": sample["name"],
+                            "type": sample["type"],
+                            "description": sample["description"],
+                        },
                     }
-                })
+                )
 
         result = insert_vectors(collection_name, vectors)
         assert_success(result, "Failed to insert vectors")
@@ -1206,7 +1206,9 @@ class TestMultiLanguageIndexing:
             print(f"  Expected langs: {expected_langs}")
             print(f"  Found {len(results)} results")
             for r in results[:3]:
-                print(f"    - {r.get('id', 'unknown')} (score: {r.get('score', 0):.4f})")
+                print(
+                    f"    - {r.get('id', 'unknown')} (score: {r.get('score', 0):.4f})"
+                )
 
 
 class TestSemanticSearchEffectiveness:
@@ -1224,17 +1226,21 @@ class TestSemanticSearchEffectiveness:
         vectors = []
         for lang, lang_data in LANGUAGE_SAMPLES.items():
             for sample in lang_data["samples"]:
-                embedding_text = f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
-                vectors.append({
-                    "id": sample["id"],
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "language": lang,
-                        "name": sample["name"],
-                        "type": sample["type"],
-                        "description": sample["description"],
+                embedding_text = (
+                    f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
+                )
+                vectors.append(
+                    {
+                        "id": sample["id"],
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "language": lang,
+                            "name": sample["name"],
+                            "type": sample["type"],
+                            "description": sample["description"],
+                        },
                     }
-                })
+                )
 
         result = insert_vectors(collection_name, vectors)
         assert_success(result, "Failed to insert vectors")
@@ -1281,7 +1287,7 @@ class TestSemanticSearchEffectiveness:
                 found_ids=found_ids,
                 top_k_accuracy=top_k_accuracy,
                 mrr=mrr,
-                recall=recall
+                recall=recall,
             )
             results.append(search_result)
 
@@ -1326,17 +1332,21 @@ class TestCrossLanguagePatterns:
         vectors = []
         for lang, lang_data in LANGUAGE_SAMPLES.items():
             for sample in lang_data["samples"]:
-                embedding_text = f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
-                vectors.append({
-                    "id": sample["id"],
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "language": lang,
-                        "name": sample["name"],
-                        "type": sample["type"],
-                        "description": sample["description"],
+                embedding_text = (
+                    f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
+                )
+                vectors.append(
+                    {
+                        "id": sample["id"],
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "language": lang,
+                            "name": sample["name"],
+                            "type": sample["type"],
+                            "description": sample["description"],
+                        },
                     }
-                })
+                )
 
         result = insert_vectors(collection_name, vectors)
         assert_success(result, "Failed to insert vectors")
@@ -1346,7 +1356,9 @@ class TestCrossLanguagePatterns:
 
     def test_find_async_patterns(self, pattern_collection):
         """Find async/await patterns across languages."""
-        query = generate_embedding("asynchronous programming async await promise future")
+        query = generate_embedding(
+            "asynchronous programming async await promise future"
+        )
         results = search_vectors(pattern_collection, query, top_k=10)
 
         print("\n=== ASYNC PATTERNS ACROSS LANGUAGES ===")
@@ -1386,17 +1398,21 @@ class TestRealWorldCodeSearch:
         vectors = []
         for lang, lang_data in LANGUAGE_SAMPLES.items():
             for sample in lang_data["samples"]:
-                embedding_text = f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
-                vectors.append({
-                    "id": sample["id"],
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "language": lang,
-                        "name": sample["name"],
-                        "type": sample["type"],
-                        "description": sample["description"],
+                embedding_text = (
+                    f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
+                )
+                vectors.append(
+                    {
+                        "id": sample["id"],
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "language": lang,
+                            "name": sample["name"],
+                            "type": sample["type"],
+                            "description": sample["description"],
+                        },
                     }
-                })
+                )
 
         result = insert_vectors(collection_name, vectors)
         assert_success(result, "Failed to insert vectors")
@@ -1417,15 +1433,15 @@ class TestRealWorldCodeSearch:
             "Event pub-sub implementation",
         ]
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("REAL-WORLD DEVELOPER QUERY RESULTS")
-        print("="*70)
+        print("=" * 70)
 
         for query_text in developer_queries:
             query = generate_embedding(query_text)
             results = search_vectors(code_collection, query, top_k=3)
 
-            print(f"\nQuery: \"{query_text}\"")
+            print(f'\nQuery: "{query_text}"')
             print("-" * 50)
 
             for i, r in enumerate(results[:3], 1):
@@ -1449,16 +1465,20 @@ class TestSearchPerformance:
         vectors = []
         for lang, lang_data in LANGUAGE_SAMPLES.items():
             for sample in lang_data["samples"]:
-                embedding_text = f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
-                vectors.append({
-                    "id": sample["id"],
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "language": lang,
-                        "name": sample["name"],
-                        "type": sample["type"],
+                embedding_text = (
+                    f"{sample['name']} {sample['description']} {sample['code'][:1000]}"
+                )
+                vectors.append(
+                    {
+                        "id": sample["id"],
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "language": lang,
+                            "name": sample["name"],
+                            "type": sample["type"],
+                        },
                     }
-                })
+                )
 
         result = insert_vectors(collection_name, vectors)
         assert_success(result, "Failed to insert vectors")

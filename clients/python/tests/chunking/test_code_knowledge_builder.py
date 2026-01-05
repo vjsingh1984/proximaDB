@@ -55,7 +55,7 @@ class TestCodeIndexConfig:
             vector_dimension=768,
             graph_name="my_graph",
             include_private=False,
-            include_tests=False
+            include_tests=False,
         )
         assert config.vector_collection_name == "my_collection"
         assert config.vector_dimension == 768
@@ -73,9 +73,7 @@ class TestCodeIndexConfig:
 
     def test_config_with_include_patterns(self):
         """Test configuration with include patterns."""
-        config = CodeIndexConfig(
-            include_patterns=["*.py", "*.rs", "*.go"]
-        )
+        config = CodeIndexConfig(include_patterns=["*.py", "*.rs", "*.go"])
         assert "*.py" in config.include_patterns
         assert "*.rs" in config.include_patterns
 
@@ -100,7 +98,7 @@ class TestIndexingResult:
             files_skipped=2,
             files_failed=1,
             symbols_indexed=100,
-            relations_created=50
+            relations_created=50,
         )
         assert result.files_processed == 10
         assert result.files_skipped == 2
@@ -115,8 +113,8 @@ class TestIndexingResult:
             symbols_indexed=80,
             errors=[
                 {"file": "file1.py", "error": "parse error"},
-                {"file": "file2.py", "error": "encoding error"}
-            ]
+                {"file": "file2.py", "error": "encoding error"},
+            ],
         )
         assert len(result.errors) == 2
         assert result.errors[0]["file"] == "file1.py"
@@ -125,10 +123,7 @@ class TestIndexingResult:
         """Test IndexingResult with file hashes."""
         result = IndexingResult(
             files_processed=5,
-            file_hashes={
-                "/path/to/file1.py": "abc123",
-                "/path/to/file2.py": "def456"
-            }
+            file_hashes={"/path/to/file1.py": "abc123", "/path/to/file2.py": "def456"},
         )
         assert len(result.file_hashes) == 2
         assert result.file_hashes["/path/to/file1.py"] == "abc123"
@@ -160,7 +155,7 @@ class TestCodeSearchResult:
             start_line=42,
             end_line=45,
             language="python",
-            score=0.95
+            score=0.95,
         )
         assert result.symbol_id == "abc123"
         assert result.symbol_type == "FUNCTION"
@@ -181,7 +176,7 @@ class TestCodeSearchResult:
             end_line=2,
             language="python",
             score=0.9,
-            documentation="This function does something."
+            documentation="This function does something.",
         )
         assert result.documentation == "This function does something."
 
@@ -198,7 +193,7 @@ class TestCodeSearchResult:
             end_line=2,
             language="python",
             score=0.9,
-            signature="my_function(x: int) -> str"
+            signature="my_function(x: int) -> str",
         )
         assert result.signature == "my_function(x: int) -> str"
 
@@ -217,7 +212,7 @@ class TestCodeSearchResult:
             score=0.9,
             callers=["caller1", "caller2"],
             callees=["callee1"],
-            parent_symbols=["MyClass"]
+            parent_symbols=["MyClass"],
         )
         assert result.callers == ["caller1", "caller2"]
         assert result.callees == ["callee1"]
@@ -233,27 +228,28 @@ class TestCodeKnowledgeBuilder:
         client = Mock()
         client.list_collections = AsyncMock(return_value=[])
         client.create_collection = AsyncMock(return_value=Mock())
-        client.get_collection = AsyncMock(return_value=Mock(
-            insert=AsyncMock(),
-            search=AsyncMock(return_value=[]),
-            delete=AsyncMock()
-        ))
+        client.get_collection = AsyncMock(
+            return_value=Mock(
+                insert=AsyncMock(),
+                search=AsyncMock(return_value=[]),
+                delete=AsyncMock(),
+            )
+        )
         client.list_graphs = AsyncMock(return_value=[])
         client.create_graph = AsyncMock(return_value=Mock())
-        client.get_graph = AsyncMock(return_value=Mock(
-            insert_node=AsyncMock(),
-            insert_edge=AsyncMock(),
-            traverse=AsyncMock(return_value=[])
-        ))
+        client.get_graph = AsyncMock(
+            return_value=Mock(
+                insert_node=AsyncMock(),
+                insert_edge=AsyncMock(),
+                traverse=AsyncMock(return_value=[]),
+            )
+        )
         return client
 
     @pytest.fixture
     def builder(self, mock_client):
         """Create a CodeKnowledgeBuilder with mocked dependencies."""
-        return CodeKnowledgeBuilder(
-            client=mock_client,
-            config=CodeIndexConfig()
-        )
+        return CodeKnowledgeBuilder(client=mock_client, config=CodeIndexConfig())
 
     @pytest.mark.asyncio
     async def test_builder_creation(self, builder):
@@ -288,10 +284,7 @@ def my_function():
     """A test function."""
     return 42
 '''
-        result = await builder.index_file(
-            file_path="/virtual/test.py",
-            content=content
-        )
+        result = await builder.index_file(file_path="/virtual/test.py", content=content)
         assert isinstance(result, IndexingResult)
         # May have symbols or may not depending on parser
         assert result.files_processed >= 0 or result.files_skipped >= 0
@@ -330,9 +323,7 @@ def my_function():
 
         # Second index with force
         result2 = await builder.index_file(
-            "/virtual/test.py",
-            content=content,
-            force=True
+            "/virtual/test.py", content=content, force=True
         )
 
         assert isinstance(result1, IndexingResult)
@@ -343,7 +334,7 @@ def my_function():
         """Test indexing a directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create test files
-            with open(os.path.join(tmpdir, "test.py"), 'w') as f:
+            with open(os.path.join(tmpdir, "test.py"), "w") as f:
                 f.write("def func(): pass")
 
             result = await builder.index_directory(tmpdir, recursive=True)
@@ -361,9 +352,9 @@ def my_function():
             os.makedirs(subdir)
 
             # Create files in both directories
-            with open(os.path.join(tmpdir, "file1.py"), 'w') as f:
+            with open(os.path.join(tmpdir, "file1.py"), "w") as f:
                 f.write("def func1(): pass")
-            with open(os.path.join(subdir, "file2.py"), 'w') as f:
+            with open(os.path.join(subdir, "file2.py"), "w") as f:
                 f.write("def func2(): pass")
 
             result = await builder.index_directory(tmpdir, recursive=True)
@@ -387,8 +378,8 @@ def my_function():
                     "start_line": 10,
                     "end_line": 15,
                     "language": "python",
-                    "source_code": "def test_function(): pass"
-                }
+                    "source_code": "def test_function(): pass",
+                },
             }
         ]
 
@@ -401,11 +392,7 @@ def my_function():
         mock_collection = mock_client.get_collection.return_value
         mock_collection.search.return_value = []
 
-        results = await builder.search_code(
-            "test",
-            top_k=5,
-            filter_language="python"
-        )
+        results = await builder.search_code("test", top_k=5, filter_language="python")
         assert isinstance(results, list)
 
     @pytest.mark.asyncio
@@ -415,9 +402,7 @@ def my_function():
         mock_collection.search.return_value = []
 
         results = await builder.search_code(
-            "test",
-            top_k=5,
-            filter_symbol_types=["FUNCTION", "CLASS"]
+            "test", top_k=5, filter_symbol_types=["FUNCTION", "CLASS"]
         )
         assert isinstance(results, list)
 
@@ -443,8 +428,8 @@ def my_function():
                     "start_line": 1,
                     "end_line": 5,
                     "language": "python",
-                    "source_code": "def my_function(): pass"
-                }
+                    "source_code": "def my_function(): pass",
+                },
             }
         ]
 
@@ -470,8 +455,8 @@ def my_function():
                     "start_line": 1,
                     "end_line": 5,
                     "language": "python",
-                    "source_code": "def my_function(): pass"
-                }
+                    "source_code": "def my_function(): pass",
+                },
             }
         ]
 
@@ -497,8 +482,8 @@ def my_function():
                     "start_line": 1,
                     "end_line": 1,
                     "language": "python",
-                    "source_code": "my_variable = 42"
-                }
+                    "source_code": "my_variable = 42",
+                },
             }
         ]
 
@@ -524,8 +509,8 @@ def my_function():
                     "start_line": 1,
                     "end_line": 5,
                     "language": "python",
-                    "source_code": "def my_function(): pass"
-                }
+                    "source_code": "def my_function(): pass",
+                },
             }
         ]
 
@@ -569,17 +554,18 @@ class TestCreateCodeKnowledgeStore:
         client = Mock()
         client.list_collections = AsyncMock(return_value=[])
         client.create_collection = AsyncMock(return_value=Mock())
-        client.get_collection = AsyncMock(return_value=Mock(
-            insert=AsyncMock(),
-            search=AsyncMock(return_value=[])
-        ))
+        client.get_collection = AsyncMock(
+            return_value=Mock(insert=AsyncMock(), search=AsyncMock(return_value=[]))
+        )
         client.list_graphs = AsyncMock(return_value=[])
         client.create_graph = AsyncMock(return_value=Mock())
-        client.get_graph = AsyncMock(return_value=Mock(
-            insert_node=AsyncMock(),
-            insert_edge=AsyncMock(),
-            traverse=AsyncMock(return_value=[])
-        ))
+        client.get_graph = AsyncMock(
+            return_value=Mock(
+                insert_node=AsyncMock(),
+                insert_edge=AsyncMock(),
+                traverse=AsyncMock(return_value=[]),
+            )
+        )
         return client
 
     @pytest.mark.asyncio
@@ -587,12 +573,11 @@ class TestCreateCodeKnowledgeStore:
         """Test creating store with default settings."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a test file
-            with open(os.path.join(tmpdir, "test.py"), 'w') as f:
+            with open(os.path.join(tmpdir, "test.py"), "w") as f:
                 f.write("def func(): pass")
 
             builder, result = await create_code_knowledge_store(
-                client=mock_client,
-                directory=tmpdir
+                client=mock_client, directory=tmpdir
             )
             assert isinstance(builder, CodeKnowledgeBuilder)
             assert isinstance(result, IndexingResult)
@@ -601,15 +586,12 @@ class TestCreateCodeKnowledgeStore:
     async def test_create_with_custom_config(self, mock_client):
         """Test creating store with custom config."""
         config = CodeIndexConfig(
-            vector_collection_name="custom_collection",
-            vector_dimension=768
+            vector_collection_name="custom_collection", vector_dimension=768
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             builder, result = await create_code_knowledge_store(
-                client=mock_client,
-                directory=tmpdir,
-                config=config
+                client=mock_client, directory=tmpdir, config=config
             )
             assert builder.config.vector_collection_name == "custom_collection"
             assert builder.config.vector_dimension == 768
@@ -623,24 +605,19 @@ class TestLanguageSupport:
         client = Mock()
         client.list_collections = AsyncMock(return_value=[])
         client.create_collection = AsyncMock(return_value=Mock())
-        client.get_collection = AsyncMock(return_value=Mock(
-            insert=AsyncMock(),
-            search=AsyncMock(return_value=[])
-        ))
+        client.get_collection = AsyncMock(
+            return_value=Mock(insert=AsyncMock(), search=AsyncMock(return_value=[]))
+        )
         client.list_graphs = AsyncMock(return_value=[])
         client.create_graph = AsyncMock(return_value=Mock())
-        client.get_graph = AsyncMock(return_value=Mock(
-            insert_node=AsyncMock(),
-            insert_edge=AsyncMock()
-        ))
+        client.get_graph = AsyncMock(
+            return_value=Mock(insert_node=AsyncMock(), insert_edge=AsyncMock())
+        )
         return client
 
     @pytest.fixture
     def builder(self, mock_client):
-        return CodeKnowledgeBuilder(
-            client=mock_client,
-            config=CodeIndexConfig()
-        )
+        return CodeKnowledgeBuilder(client=mock_client, config=CodeIndexConfig())
 
     @pytest.mark.asyncio
     async def test_index_python(self, builder):
@@ -699,24 +676,19 @@ class TestErrorHandling:
         client = Mock()
         client.list_collections = AsyncMock(return_value=[])
         client.create_collection = AsyncMock(return_value=Mock())
-        client.get_collection = AsyncMock(return_value=Mock(
-            insert=AsyncMock(),
-            search=AsyncMock(return_value=[])
-        ))
+        client.get_collection = AsyncMock(
+            return_value=Mock(insert=AsyncMock(), search=AsyncMock(return_value=[]))
+        )
         client.list_graphs = AsyncMock(return_value=[])
         client.create_graph = AsyncMock(return_value=Mock())
-        client.get_graph = AsyncMock(return_value=Mock(
-            insert_node=AsyncMock(),
-            insert_edge=AsyncMock()
-        ))
+        client.get_graph = AsyncMock(
+            return_value=Mock(insert_node=AsyncMock(), insert_edge=AsyncMock())
+        )
         return client
 
     @pytest.fixture
     def builder(self, mock_client):
-        return CodeKnowledgeBuilder(
-            client=mock_client,
-            config=CodeIndexConfig()
-        )
+        return CodeKnowledgeBuilder(client=mock_client, config=CodeIndexConfig())
 
     @pytest.mark.asyncio
     async def test_index_invalid_syntax(self, builder):
@@ -756,16 +728,14 @@ class TestHashComputation:
         client = Mock()
         client.list_collections = AsyncMock(return_value=[])
         client.create_collection = AsyncMock(return_value=Mock())
-        client.get_collection = AsyncMock(return_value=Mock(
-            insert=AsyncMock(),
-            search=AsyncMock(return_value=[])
-        ))
+        client.get_collection = AsyncMock(
+            return_value=Mock(insert=AsyncMock(), search=AsyncMock(return_value=[]))
+        )
         client.list_graphs = AsyncMock(return_value=[])
         client.create_graph = AsyncMock(return_value=Mock())
-        client.get_graph = AsyncMock(return_value=Mock(
-            insert_node=AsyncMock(),
-            insert_edge=AsyncMock()
-        ))
+        client.get_graph = AsyncMock(
+            return_value=Mock(insert_node=AsyncMock(), insert_edge=AsyncMock())
+        )
         return client
 
     def test_sha256_hash(self, mock_client):
@@ -801,16 +771,14 @@ class TestEmbeddingGeneration:
         client = Mock()
         client.list_collections = AsyncMock(return_value=[])
         client.create_collection = AsyncMock(return_value=Mock())
-        client.get_collection = AsyncMock(return_value=Mock(
-            insert=AsyncMock(),
-            search=AsyncMock(return_value=[])
-        ))
+        client.get_collection = AsyncMock(
+            return_value=Mock(insert=AsyncMock(), search=AsyncMock(return_value=[]))
+        )
         client.list_graphs = AsyncMock(return_value=[])
         client.create_graph = AsyncMock(return_value=Mock())
-        client.get_graph = AsyncMock(return_value=Mock(
-            insert_node=AsyncMock(),
-            insert_edge=AsyncMock()
-        ))
+        client.get_graph = AsyncMock(
+            return_value=Mock(insert_node=AsyncMock(), insert_edge=AsyncMock())
+        )
         return client
 
     def test_placeholder_embedding_dimension(self, mock_client):

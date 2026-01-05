@@ -128,13 +128,16 @@ class BaseEmbeddingProvider(ABC):
         if not self._initialized:
             # Thread-safe initialization
             import threading
+
             if self._init_lock is None:
                 self._init_lock = threading.Lock()
 
             with self._init_lock:
                 if not self._initialized:  # Double-check locking
-                    logger.info(f"Initializing {self.__class__.__name__} "
-                               f"with model: {self.config.model.name}")
+                    logger.info(
+                        f"Initializing {self.__class__.__name__} "
+                        f"with model: {self.config.model.name}"
+                    )
                     self._model = self._load_model()
                     self._initialized = True
                     logger.info(f"Initialization complete: {self.config.model.name}")

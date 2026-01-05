@@ -20,6 +20,7 @@ import pytest
 try:
     import pyarrow as pa
     import pyarrow.parquet as pq
+
     PYARROW_AVAILABLE = True
 except ImportError:
     PYARROW_AVAILABLE = False
@@ -27,6 +28,7 @@ except ImportError:
 # Check if numpy is available
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
@@ -61,7 +63,10 @@ FIELD_Q_PQ8 = "q_pq8"
 # Helper Functions
 # =============================================================================
 
-def create_proximadb_parquet_schema(dimension: int, include_quantization: bool = False) -> pa.Schema:
+
+def create_proximadb_parquet_schema(
+    dimension: int, include_quantization: bool = False
+) -> pa.Schema:
     """Create an Arrow schema matching ProximaDB's columnar format.
 
     This matches the schema defined in:
@@ -109,7 +114,7 @@ def create_nova_parquet_file(
     num_vectors: int = 100,
     dimension: int = 64,
     include_quantization: bool = False,
-    compression: str = "zstd"
+    compression: str = "zstd",
 ) -> tuple:
     """Create a test Parquet file matching NOVA engine format.
 
@@ -126,16 +131,20 @@ def create_nova_parquet_file(
 
     # Generate test data
     ids = [f"nova_vec_{i:05d}" for i in range(num_vectors)]
-    timestamps = [1700000000000 + i * 1000 for i in range(num_vectors)]  # Millisecond timestamps
+    timestamps = [
+        1700000000000 + i * 1000 for i in range(num_vectors)
+    ]  # Millisecond timestamps
     row_group_offsets = [0] * num_vectors  # All in first row group for simplicity
     row_indices = list(range(num_vectors))
     categories = ["tech", "science", "health", "finance", "education"]
     metadata = [
-        json.dumps({
-            "category": categories[i % len(categories)],
-            "importance": (i % 10) + 1,
-            "source": "nova_test"
-        })
+        json.dumps(
+            {
+                "category": categories[i % len(categories)],
+                "importance": (i % 10) + 1,
+                "source": "nova_test",
+            }
+        )
         for i in range(num_vectors)
     ]
     versions = [1] * num_vectors
@@ -147,8 +156,7 @@ def create_nova_parquet_file(
         pa.array(row_group_offsets, type=pa.uint32()),
         pa.array(row_indices, type=pa.uint32()),
         pa.FixedSizeListArray.from_arrays(
-            pa.array(vectors.flatten(), type=pa.float32()),
-            list_size=dimension
+            pa.array(vectors.flatten(), type=pa.float32()), list_size=dimension
         ),
         pa.array(timestamps, type=pa.int64()),
         pa.array([None] * num_vectors, type=pa.int64()),  # updated_at
@@ -169,7 +177,9 @@ def create_nova_parquet_file(
         vec_max = vectors.max(axis=1)
         vec_scale = (vec_max - vec_min) / 255.0
         vec_scale = np.where(vec_scale == 0, 1.0, vec_scale)  # Avoid division by zero
-        int8_vectors = ((vectors - vec_min[:, np.newaxis]) / vec_scale[:, np.newaxis]).astype(np.uint8)
+        int8_vectors = (
+            (vectors - vec_min[:, np.newaxis]) / vec_scale[:, np.newaxis]
+        ).astype(np.uint8)
         arrays.append(pa.array([bytes(v) for v in int8_vectors], type=pa.binary()))
         arrays.append(pa.array(vec_scale, type=pa.float32()))
         arrays.append(pa.array(vec_min, type=pa.float32()))
@@ -193,7 +203,7 @@ def create_viper_parquet_file(
     num_vectors: int = 100,
     dimension: int = 64,
     include_quantization: bool = True,  # VIPER typically uses quantization
-    compression: str = "zstd"
+    compression: str = "zstd",
 ) -> tuple:
     """Create a test Parquet file matching VIPER engine format.
 
@@ -206,7 +216,7 @@ def create_viper_parquet_file(
         num_vectors=num_vectors,
         dimension=dimension,
         include_quantization=include_quantization,
-        compression=compression
+        compression=compression,
     )
 
 
@@ -214,13 +224,14 @@ def create_viper_parquet_file(
 # PyArrow Tests
 # =============================================================================
 
+
 @pytest.mark.skipif(not PYARROW_AVAILABLE, reason="PyArrow not available")
 class TestPyArrowInterop:
     """Test suite for PyArrow reading ProximaDB Parquet files."""
 
     def test_pyarrow_read_nova_parquet(self):
         """Verify PyArrow can read NOVA Parquet files."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -240,7 +251,7 @@ class TestPyArrowInterop:
 
     def test_pyarrow_read_viper_parquet(self):
         """Verify PyArrow can read VIPER Parquet files."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -262,11 +273,13 @@ class TestPyArrowInterop:
 
     def test_pyarrow_parquet_file_api(self):
         """Verify PyArrow ParquetFile API works correctly."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
-            num_vectors, dimension, _ = create_nova_parquet_file(parquet_path, num_vectors=500)
+            num_vectors, dimension, _ = create_nova_parquet_file(
+                parquet_path, num_vectors=500
+            )
 
             # Use ParquetFile for metadata inspection
             pf = pq.ParquetFile(parquet_path)
@@ -291,7 +304,7 @@ class TestPyArrowInterop:
 
     def test_pyarrow_row_group_iteration(self):
         """Verify row groups can be read individually."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -312,7 +325,7 @@ class TestPyArrowInterop:
 
     def test_pyarrow_schema_field_types(self):
         """Verify schema field types match expected types."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -345,13 +358,16 @@ class TestPyArrowInterop:
 # Vector Extraction Tests
 # =============================================================================
 
-@pytest.mark.skipif(not PYARROW_AVAILABLE or not NUMPY_AVAILABLE, reason="PyArrow and NumPy required")
+
+@pytest.mark.skipif(
+    not PYARROW_AVAILABLE or not NUMPY_AVAILABLE, reason="PyArrow and NumPy required"
+)
 class TestVectorExtraction:
     """Test vector extraction from Parquet files."""
 
     def test_extract_vectors_to_numpy(self):
         """Verify vectors can be extracted as NumPy arrays."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -380,7 +396,7 @@ class TestVectorExtraction:
 
     def test_extract_binary_quantized_vectors(self):
         """Verify binary quantized vectors can be extracted."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -394,7 +410,9 @@ class TestVectorExtraction:
             q_binary_column = table.column(FIELD_Q_BINARY)
 
             # Convert to numpy
-            binary_packed = np.array([np.frombuffer(v.as_py(), dtype=np.uint8) for v in q_binary_column])
+            binary_packed = np.array(
+                [np.frombuffer(v.as_py(), dtype=np.uint8) for v in q_binary_column]
+            )
 
             # Expected packed size
             packed_size = (dimension + 7) // 8
@@ -411,7 +429,7 @@ class TestVectorExtraction:
 
     def test_extract_int8_quantized_vectors(self):
         """Verify INT8 quantized vectors can be extracted and dequantized."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -427,13 +445,18 @@ class TestVectorExtraction:
             mins = table.column(FIELD_QP_INT8_MIN).to_numpy()
 
             # Convert INT8 to numpy
-            int8_vectors = np.array([np.frombuffer(v.as_py(), dtype=np.uint8) for v in q_int8])
+            int8_vectors = np.array(
+                [np.frombuffer(v.as_py(), dtype=np.uint8) for v in q_int8]
+            )
 
             assert int8_vectors.shape == (num_vectors, dimension)
             assert int8_vectors.dtype == np.uint8
 
             # Dequantize
-            dequantized = int8_vectors.astype(np.float32) * scales[:, np.newaxis] + mins[:, np.newaxis]
+            dequantized = (
+                int8_vectors.astype(np.float32) * scales[:, np.newaxis]
+                + mins[:, np.newaxis]
+            )
 
             # Should be similar to original FP32 vectors (with quantization error)
             fp32_column = table.column(FIELD_VECTOR_FP32)
@@ -448,7 +471,7 @@ class TestVectorExtraction:
 
     def test_vector_distance_computation(self):
         """Verify we can compute distances using extracted vectors."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -460,8 +483,7 @@ class TestVectorExtraction:
 
             # Extract vectors
             vectors = np.array(
-                [v.as_py() for v in table.column(FIELD_VECTOR_FP32)],
-                dtype=np.float32
+                [v.as_py() for v in table.column(FIELD_VECTOR_FP32)], dtype=np.float32
             )
 
             # Compute L2 distances from first vector
@@ -476,7 +498,9 @@ class TestVectorExtraction:
             vectors_norm = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
             cosine_similarities = np.dot(vectors_norm, query_norm)
 
-            assert cosine_similarities[0] == pytest.approx(1.0, abs=1e-5)  # Self similarity
+            assert cosine_similarities[0] == pytest.approx(
+                1.0, abs=1e-5
+            )  # Self similarity
             # Allow small floating point tolerance (values might be slightly outside [-1, 1])
             assert all(-1.001 <= s <= 1.001 for s in cosine_similarities)
 
@@ -489,6 +513,7 @@ class TestVectorExtraction:
 # DuckDB Tests
 # =============================================================================
 
+
 class TestDuckDBInterop:
     """Test DuckDB interoperability with ProximaDB Parquet files."""
 
@@ -496,7 +521,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can read NOVA Parquet files."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -516,7 +541,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can read VIPER Parquet files with quantization columns."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -528,7 +553,9 @@ class TestDuckDBInterop:
             assert len(result) == num_vectors
 
             # Check columns
-            columns = conn.execute(f"DESCRIBE SELECT * FROM '{parquet_path}'").fetchall()
+            columns = conn.execute(
+                f"DESCRIBE SELECT * FROM '{parquet_path}'"
+            ).fetchall()
             column_names = [col[0] for col in columns]
 
             assert FIELD_ID in column_names
@@ -544,7 +571,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can filter Parquet data with WHERE clause."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -553,11 +580,13 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Filter by timestamp
-            result = conn.execute(f"""
+            result = conn.execute(
+                f"""
                 SELECT id, timestamp
                 FROM '{parquet_path}'
                 WHERE timestamp >= 1700000050000
-            """).fetchall()
+            """
+            ).fetchall()
 
             assert len(result) == 50  # Last 50 vectors
             assert all(row[1] >= 1700000050000 for row in result)
@@ -570,7 +599,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can sort Parquet data with ORDER BY."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -579,12 +608,14 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Sort by timestamp descending
-            result = conn.execute(f"""
+            result = conn.execute(
+                f"""
                 SELECT id, timestamp
                 FROM '{parquet_path}'
                 ORDER BY timestamp DESC
                 LIMIT 10
-            """).fetchall()
+            """
+            ).fetchall()
 
             assert len(result) == 10
             assert result[0][0] == "nova_vec_00049"  # Highest timestamp
@@ -602,7 +633,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can perform aggregations on Parquet data."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -611,14 +642,16 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Test aggregation functions
-            result = conn.execute(f"""
+            result = conn.execute(
+                f"""
                 SELECT
                     COUNT(*) as count,
                     MIN(timestamp) as min_ts,
                     MAX(timestamp) as max_ts,
                     AVG(timestamp) as avg_ts
                 FROM '{parquet_path}'
-            """).fetchone()
+            """
+            ).fetchone()
 
             assert result[0] == 100  # COUNT
             assert result[1] == 1700000000000  # MIN timestamp
@@ -632,7 +665,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can extract data from JSON metadata column."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -641,20 +674,28 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Extract JSON fields
-            result = conn.execute(f"""
+            result = conn.execute(
+                f"""
                 SELECT
                     json_extract_string(extra_meta, '$.category') as category,
                     COUNT(*) as count
                 FROM '{parquet_path}'
                 GROUP BY json_extract_string(extra_meta, '$.category')
                 ORDER BY category
-            """).fetchall()
+            """
+            ).fetchall()
 
             # 5 categories, 100 vectors -> 20 per category
             assert len(result) == 5
             categories = [row[0] for row in result]
             counts = [row[1] for row in result]
-            assert set(categories) == {"tech", "science", "health", "finance", "education"}
+            assert set(categories) == {
+                "tech",
+                "science",
+                "health",
+                "finance",
+                "education",
+            }
             assert all(count == 20 for count in counts)
 
         finally:
@@ -666,6 +707,7 @@ class TestDuckDBInterop:
 # Polars Tests
 # =============================================================================
 
+
 class TestPolarsInterop:
     """Test Polars interoperability with ProximaDB Parquet files."""
 
@@ -673,7 +715,7 @@ class TestPolarsInterop:
         """Verify Polars can read NOVA Parquet files."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -695,7 +737,7 @@ class TestPolarsInterop:
         """Verify Polars can read VIPER Parquet files."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -715,7 +757,7 @@ class TestPolarsInterop:
         """Verify Polars lazy scan works for efficient query planning."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -726,8 +768,7 @@ class TestPolarsInterop:
 
             # Build and execute lazy query
             result = (
-                lazy_df
-                .filter(pl.col(FIELD_TIMESTAMP) >= 1700000250000)
+                lazy_df.filter(pl.col(FIELD_TIMESTAMP) >= 1700000250000)
                 .select([FIELD_ID, FIELD_TIMESTAMP])
                 .collect()
             )
@@ -743,7 +784,7 @@ class TestPolarsInterop:
         """Verify Polars can sort and limit data."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -752,12 +793,7 @@ class TestPolarsInterop:
             lazy_df = pl.scan_parquet(parquet_path)
 
             # Sort by timestamp descending and take top 10
-            result = (
-                lazy_df
-                .sort(FIELD_TIMESTAMP, descending=True)
-                .head(10)
-                .collect()
-            )
+            result = lazy_df.sort(FIELD_TIMESTAMP, descending=True).head(10).collect()
 
             assert len(result) == 10
             ids = result[FIELD_ID].to_list()
@@ -772,7 +808,7 @@ class TestPolarsInterop:
         """Verify Polars can perform aggregations."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -781,12 +817,14 @@ class TestPolarsInterop:
             df = pl.read_parquet(parquet_path)
 
             # Basic statistics
-            stats = df.select([
-                pl.col(FIELD_TIMESTAMP).count().alias("count"),
-                pl.col(FIELD_TIMESTAMP).min().alias("min_ts"),
-                pl.col(FIELD_TIMESTAMP).max().alias("max_ts"),
-                pl.col(FIELD_TIMESTAMP).mean().alias("avg_ts"),
-            ])
+            stats = df.select(
+                [
+                    pl.col(FIELD_TIMESTAMP).count().alias("count"),
+                    pl.col(FIELD_TIMESTAMP).min().alias("min_ts"),
+                    pl.col(FIELD_TIMESTAMP).max().alias("max_ts"),
+                    pl.col(FIELD_TIMESTAMP).mean().alias("avg_ts"),
+                ]
+            )
 
             assert stats["count"][0] == 100
             assert stats["min_ts"][0] == 1700000000000
@@ -802,7 +840,7 @@ class TestPolarsInterop:
         if not NUMPY_AVAILABLE:
             pytest.skip("NumPy required for this test")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -830,7 +868,7 @@ class TestPolarsInterop:
         """Verify Polars can parse JSON metadata."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -840,9 +878,10 @@ class TestPolarsInterop:
 
             # Parse JSON and group by category
             result = (
-                df
-                .with_columns(
-                    pl.col(FIELD_EXTRA_META).str.json_path_match("$.category").alias("category")
+                df.with_columns(
+                    pl.col(FIELD_EXTRA_META)
+                    .str.json_path_match("$.category")
+                    .alias("category")
                 )
                 .group_by("category")
                 .agg(pl.len())
@@ -851,7 +890,13 @@ class TestPolarsInterop:
 
             assert len(result) == 5  # 5 categories
             categories = result["category"].to_list()
-            assert set(categories) == {"tech", "science", "health", "finance", "education"}
+            assert set(categories) == {
+                "tech",
+                "science",
+                "health",
+                "finance",
+                "education",
+            }
             # Each category should have 10 vectors (50 / 5)
             assert all(count == 10 for count in result["len"].to_list())
 
@@ -864,6 +909,7 @@ class TestPolarsInterop:
 # Cross-Tool Consistency Tests
 # =============================================================================
 
+
 @pytest.mark.skipif(not PYARROW_AVAILABLE, reason="PyArrow required")
 class TestCrossToolConsistency:
     """Verify data consistency across PyArrow, DuckDB, and Polars."""
@@ -873,7 +919,7 @@ class TestCrossToolConsistency:
         duckdb = pytest.importorskip("duckdb")
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -885,7 +931,9 @@ class TestCrossToolConsistency:
 
             # DuckDB
             conn = duckdb.connect()
-            duck_count = conn.execute(f"SELECT COUNT(*) FROM '{parquet_path}'").fetchone()[0]
+            duck_count = conn.execute(
+                f"SELECT COUNT(*) FROM '{parquet_path}'"
+            ).fetchone()[0]
 
             # Polars
             polars_df = pl.read_parquet(parquet_path)
@@ -902,7 +950,7 @@ class TestCrossToolConsistency:
         duckdb = pytest.importorskip("duckdb")
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -914,7 +962,9 @@ class TestCrossToolConsistency:
 
             # DuckDB
             conn = duckdb.connect()
-            duck_desc = conn.execute(f"DESCRIBE SELECT * FROM '{parquet_path}'").fetchall()
+            duck_desc = conn.execute(
+                f"DESCRIBE SELECT * FROM '{parquet_path}'"
+            ).fetchall()
             duck_columns = set(col[0] for col in duck_desc)
 
             # Polars
@@ -932,7 +982,7 @@ class TestCrossToolConsistency:
         duckdb = pytest.importorskip("duckdb")
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
@@ -944,8 +994,10 @@ class TestCrossToolConsistency:
             # DuckDB
             conn = duckdb.connect()
             duck_ids = set(
-                row[0] for row in
-                conn.execute(f"SELECT {FIELD_ID} FROM '{parquet_path}'").fetchall()
+                row[0]
+                for row in conn.execute(
+                    f"SELECT {FIELD_ID} FROM '{parquet_path}'"
+                ).fetchall()
             )
 
             # Polars
@@ -963,6 +1015,7 @@ class TestCrossToolConsistency:
 # Compression Tests
 # =============================================================================
 
+
 @pytest.mark.skipif(not PYARROW_AVAILABLE, reason="PyArrow required")
 class TestCompressionFormats:
     """Test different compression formats used by NOVA/VIPER."""
@@ -970,14 +1023,14 @@ class TestCompressionFormats:
     @pytest.mark.parametrize("compression", ["zstd", "snappy", "gzip", "none"])
     def test_compression_readable(self, compression):
         """Verify Parquet files with different compressions are readable."""
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
 
         try:
             num_vectors, _, _ = create_nova_parquet_file(
                 parquet_path,
                 num_vectors=50,
-                compression=compression if compression != "none" else None
+                compression=compression if compression != "none" else None,
             )
 
             # PyArrow should read any compression
@@ -995,15 +1048,17 @@ class TestCompressionFormats:
         with structure, so we use a modest threshold. Real ProximaDB workloads
         with quantization columns and metadata typically achieve 2-5x compression.
         """
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
             parquet_path = f.name
-        with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f2:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f2:
             uncompressed_path = f2.name
 
         try:
             # Create compressed and uncompressed versions
             create_nova_parquet_file(parquet_path, num_vectors=1000, compression="zstd")
-            create_nova_parquet_file(uncompressed_path, num_vectors=1000, compression=None)
+            create_nova_parquet_file(
+                uncompressed_path, num_vectors=1000, compression=None
+            )
 
             compressed_size = os.path.getsize(parquet_path)
             uncompressed_size = os.path.getsize(uncompressed_path)
@@ -1011,7 +1066,9 @@ class TestCompressionFormats:
             # ZSTD should provide some compression even on random data
             # Random float32 data doesn't compress well, so we use a low threshold
             compression_ratio = uncompressed_size / compressed_size
-            assert compression_ratio > 1.0, f"Expected compression ratio > 1.0, got {compression_ratio}"
+            assert (
+                compression_ratio > 1.0
+            ), f"Expected compression ratio > 1.0, got {compression_ratio}"
 
             # Verify both files are readable
             pq.read_table(parquet_path)

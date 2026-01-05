@@ -17,7 +17,7 @@ from .code import CodeChunkingStrategy, CodeChunkingConfig
 
 class ChunkingStrategyFactory:
     """Factory for creating chunking strategy instances"""
-    
+
     # Registry of available strategies
     _strategies: Dict[ChunkingStrategy, Type[ChunkingStrategyInterface]] = {
         ChunkingStrategy.SLIDING_WINDOW: SlidingWindowStrategy,
@@ -28,23 +28,21 @@ class ChunkingStrategyFactory:
         ChunkingStrategy.FIXED_SIZE: FixedSizeStrategy,
         ChunkingStrategy.CODE: CodeChunkingStrategy,
     }
-    
+
     @classmethod
     def create_strategy(
-        cls,
-        strategy: ChunkingStrategy,
-        config: Optional[ChunkingConfig] = None
+        cls, strategy: ChunkingStrategy, config: Optional[ChunkingConfig] = None
     ) -> ChunkingStrategyInterface:
         """
         Create a chunking strategy instance
-        
+
         Args:
             strategy: The strategy type to create
             config: Optional configuration (uses defaults if not provided)
-            
+
         Returns:
             Instance of the requested chunking strategy
-            
+
         Raises:
             ValueError: If strategy type is not supported
         """
@@ -65,7 +63,9 @@ class ChunkingStrategyFactory:
             # Ensure config has the correct strategy
             config.strategy = strategy
             # For CODE strategy, convert to CodeChunkingConfig if needed
-            if strategy == ChunkingStrategy.CODE and not isinstance(config, CodeChunkingConfig):
+            if strategy == ChunkingStrategy.CODE and not isinstance(
+                config, CodeChunkingConfig
+            ):
                 # Create CodeChunkingConfig with base config values
                 config = CodeChunkingConfig(
                     strategy=strategy,
@@ -78,22 +78,20 @@ class ChunkingStrategyFactory:
         # Create and return strategy instance
         strategy_class = cls._strategies[strategy]
         return strategy_class(config)
-    
+
     @classmethod
     def register_strategy(
-        cls,
-        strategy: ChunkingStrategy,
-        strategy_class: Type[ChunkingStrategyInterface]
+        cls, strategy: ChunkingStrategy, strategy_class: Type[ChunkingStrategyInterface]
     ) -> None:
         """
         Register a custom chunking strategy
-        
+
         Args:
             strategy: The strategy enum value
             strategy_class: The strategy implementation class
         """
         cls._strategies[strategy] = strategy_class
-    
+
     @classmethod
     def list_strategies(cls) -> List[str]:
         """List all available chunking strategies"""
@@ -101,19 +99,18 @@ class ChunkingStrategyFactory:
 
 
 def get_chunking_strategy(
-    strategy: Union[str, ChunkingStrategy] = ChunkingStrategy.SLIDING_WINDOW,
-    **kwargs
+    strategy: Union[str, ChunkingStrategy] = ChunkingStrategy.SLIDING_WINDOW, **kwargs
 ) -> ChunkingStrategyInterface:
     """
     Convenience function to get a chunking strategy
-    
+
     Args:
         strategy: Strategy name or enum value
         **kwargs: Configuration parameters for ChunkingConfig
-        
+
     Returns:
         Configured chunking strategy instance
-        
+
     Example:
         chunker = get_chunking_strategy(
             "semantic",
@@ -125,9 +122,9 @@ def get_chunking_strategy(
     # Convert string to enum if needed
     if isinstance(strategy, str):
         strategy = ChunkingStrategy(strategy)
-    
+
     # Create config from kwargs
     config = ChunkingConfig(strategy=strategy, **kwargs)
-    
+
     # Create and return strategy
     return ChunkingStrategyFactory.create_strategy(strategy, config)

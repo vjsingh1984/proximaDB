@@ -9,6 +9,7 @@ This root conftest.py provides:
 Tests rely on the editable install (pip install -e .) rather than
 sys.path manipulation for consistent imports.
 """
+
 import asyncio
 import os
 import tempfile
@@ -22,8 +23,8 @@ import pytest
 # Configure logging for tests
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,11 @@ def _warm_embeddings_once():
     if warm_cache is None:
         yield
         return
-    enabled = os.getenv("PROXIMADB_TEST_EMBED_WARMUP", "1").lower() not in {"0", "false", "no"}
+    enabled = os.getenv("PROXIMADB_TEST_EMBED_WARMUP", "1").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
     if not enabled:
         yield
         return
@@ -72,6 +77,7 @@ def _warm_embeddings_once():
 # Embedded Database Fixtures
 # =============================================================================
 
+
 @pytest.fixture(scope="session")
 def embedded_db_config():
     """Configuration for embedded database tests.
@@ -80,10 +86,13 @@ def embedded_db_config():
     """
     return {
         "data_dir": os.getenv("PROXIMADB_TEST_DATA_DIR", None),  # None = temp dir
-        "rest_port": int(os.getenv("PROXIMADB_TEST_REST_PORT", "15678")),  # Non-standard port for testing
+        "rest_port": int(
+            os.getenv("PROXIMADB_TEST_REST_PORT", "15678")
+        ),  # Non-standard port for testing
         "grpc_port": int(os.getenv("PROXIMADB_TEST_GRPC_PORT", "15679")),
         "startup_timeout": float(os.getenv("PROXIMADB_TEST_STARTUP_TIMEOUT", "30")),
-        "cleanup_on_exit": os.getenv("PROXIMADB_TEST_CLEANUP", "1").lower() in {"1", "true", "yes"},
+        "cleanup_on_exit": os.getenv("PROXIMADB_TEST_CLEANUP", "1").lower()
+        in {"1", "true", "yes"},
     }
 
 
@@ -130,7 +139,9 @@ def embedded_db(embedded_db_config):
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(db.start())
-            logger.info(f"Embedded database started at REST:{config.rest_port}, gRPC:{config.grpc_port}")
+            logger.info(
+                f"Embedded database started at REST:{config.rest_port}, gRPC:{config.grpc_port}"
+            )
         except Exception as e:
             logger.warning(f"Failed to start embedded database: {e}")
             pytest.skip(f"Could not start embedded database: {e}")
@@ -151,6 +162,7 @@ def embedded_db(embedded_db_config):
         # Cleanup temp directory
         if temp_dir and embedded_db_config["cleanup_on_exit"]:
             import shutil
+
             try:
                 shutil.rmtree(temp_dir)
                 logger.debug(f"Cleaned up temp directory: {temp_dir}")
@@ -194,6 +206,7 @@ def embedded_grpc_client(embedded_db, embedded_db_config):
 # Test Markers and Configuration
 # =============================================================================
 
+
 def pytest_configure(config):
     """Configure custom pytest markers."""
     config.addinivalue_line(
@@ -205,21 +218,15 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "embedded_required: marks tests requiring embedded database"
     )
-    config.addinivalue_line(
-        "markers", "unit: marks pure unit tests (no server needed)"
-    )
+    config.addinivalue_line("markers", "unit: marks pure unit tests (no server needed)")
     config.addinivalue_line(
         "markers", "storage: marks tests related to storage functionality"
     )
     config.addinivalue_line(
         "markers", "search: marks tests related to search operations"
     )
-    config.addinivalue_line(
-        "markers", "graph: marks tests related to graph operations"
-    )
-    config.addinivalue_line(
-        "markers", "performance: marks performance/benchmark tests"
-    )
+    config.addinivalue_line("markers", "graph: marks tests related to graph operations")
+    config.addinivalue_line("markers", "performance: marks performance/benchmark tests")
     config.addinivalue_line(
         "markers", "requires_models: marks tests requiring embedding models"
     )
@@ -229,11 +236,14 @@ def pytest_configure(config):
 # Test Utilities
 # =============================================================================
 
+
 @pytest.fixture
 def unique_collection_name():
     """Generate unique collection name for each test."""
     timestamp = int(time.time() * 1000)
-    test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
+    test_name = (
+        os.environ.get("PYTEST_CURRENT_TEST", "unknown").split("::")[-1].split("[")[0]
+    )
     return f"pytest_{test_name}_{timestamp}"
 
 

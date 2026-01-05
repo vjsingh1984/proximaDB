@@ -11,6 +11,7 @@ from typing import Tuple, Optional
 
 class ExtractionMethod(IntEnum):
     """Content extraction methods (1 byte storage)."""
+
     UNSPECIFIED = 0
     DIRECT_TEXT = 1
     OCR = 2
@@ -26,6 +27,7 @@ class ExtractionMethod(IntEnum):
 
 class ProcessingStatus(IntEnum):
     """Content processing status (1 byte storage)."""
+
     UNSPECIFIED = 0
     RAW = 1
     PROCESSING = 2
@@ -38,6 +40,7 @@ class ProcessingStatus(IntEnum):
 
 class QualityLevel(IntEnum):
     """Content quality level (1 byte storage)."""
+
     UNSPECIFIED = 0
     HIGH = 1
     MEDIUM = 2
@@ -47,6 +50,7 @@ class QualityLevel(IntEnum):
 
 class DataSource(IntEnum):
     """Data source for provenance tracking (1 byte storage)."""
+
     UNSPECIFIED = 0
     USER_UPLOAD = 1
     API_INGESTION = 2
@@ -62,6 +66,7 @@ class DataSource(IntEnum):
 
 class ContentCategory(IntEnum):
     """Content category classification (1 byte storage)."""
+
     UNSPECIFIED = 0
     DOCUMENT = 1
     IMAGE = 2
@@ -82,6 +87,7 @@ class ContentCategory(IntEnum):
 
 class LanguageCode(IntEnum):
     """Language codes (1 byte storage)."""
+
     UNSPECIFIED = 0
     ENGLISH = 1
     SPANISH = 2
@@ -122,22 +128,22 @@ def pack_processing_enums(
 ) -> int:
     """
     Pack 4 processing enums into single uint32 (75% storage savings).
-    
+
     Bit layout:
     - Bits 0-7:   ExtractionMethod (1-10)
     - Bits 8-15:  ProcessingStatus (1-7)
     - Bits 16-23: QualityLevel (1-4)
     - Bits 24-31: DataSource (1-10)
-    
+
     Args:
         extraction: Content extraction method
         status: Processing status
         quality: Content quality level
         source: Data source
-        
+
     Returns:
         Packed uint32 value
-        
+
     Example:
         >>> packed = pack_processing_enums(
         ...     ExtractionMethod.PDF_PARSING,
@@ -156,19 +162,21 @@ def pack_processing_enums(
     )
 
 
-def unpack_processing_enums(packed: int) -> Tuple[ExtractionMethod, ProcessingStatus, QualityLevel, DataSource]:
+def unpack_processing_enums(
+    packed: int,
+) -> Tuple[ExtractionMethod, ProcessingStatus, QualityLevel, DataSource]:
     """
     Unpack processing enums from uint32.
-    
+
     Args:
         packed: Packed uint32 value
-        
+
     Returns:
         Tuple of (extraction, status, quality, source)
-        
+
     Raises:
         ValueError: If any enum value is invalid
-        
+
     Example:
         >>> extraction, status, quality, source = unpack_processing_enums(33620484)
         >>> print(f"Extraction: {extraction}")
@@ -180,7 +188,7 @@ def unpack_processing_enums(packed: int) -> Tuple[ExtractionMethod, ProcessingSt
     status_val = (packed >> 8) & 0xFF
     quality_val = (packed >> 16) & 0xFF
     source_val = (packed >> 24) & 0xFF
-    
+
     try:
         return (
             ExtractionMethod(extraction_val),
@@ -198,19 +206,19 @@ def pack_source_attributes(
 ) -> int:
     """
     Pack 2 source content attributes into uint32.
-    
+
     Bit layout:
     - Bits 0-7:   ContentCategory (1-15)
     - Bits 8-15:  QualityLevel (1-4)
     - Bits 16-31: Reserved for future attributes
-    
+
     Args:
         category: Content category
         quality: Quality level
-        
+
     Returns:
         Packed uint32 value
-        
+
     Example:
         >>> packed = pack_source_attributes(
         ...     ContentCategory.SCIENTIFIC,
@@ -225,16 +233,16 @@ def pack_source_attributes(
 def unpack_source_attributes(packed: int) -> Tuple[ContentCategory, QualityLevel]:
     """
     Unpack source content attributes from uint32.
-    
+
     Args:
         packed: Packed uint32 value
-        
+
     Returns:
         Tuple of (category, quality)
-        
+
     Raises:
         ValueError: If any enum value is invalid
-        
+
     Example:
         >>> category, quality = unpack_source_attributes(268)
         >>> print(f"Category: {category}")
@@ -244,7 +252,7 @@ def unpack_source_attributes(packed: int) -> Tuple[ContentCategory, QualityLevel
     """
     category_val = packed & 0xFF
     quality_val = (packed >> 8) & 0xFF
-    
+
     try:
         return (
             ContentCategory(category_val),
@@ -257,17 +265,17 @@ def unpack_source_attributes(packed: int) -> Tuple[ContentCategory, QualityLevel
 def pack_language_code(language: LanguageCode) -> int:
     """
     Pack language code into uint32.
-    
+
     Bit layout:
     - Bits 0-7:   LanguageCode (1-28, 255 for custom)
     - Bits 8-31:  Reserved for future language attributes
-    
+
     Args:
         language: Language code
-        
+
     Returns:
         Packed uint32 value
-        
+
     Example:
         >>> packed = pack_language_code(LanguageCode.JAPANESE)
         >>> print(f"Packed: {packed}")
@@ -279,23 +287,23 @@ def pack_language_code(language: LanguageCode) -> int:
 def unpack_language_code(packed: int) -> LanguageCode:
     """
     Unpack language code from uint32.
-    
+
     Args:
         packed: Packed uint32 value
-        
+
     Returns:
         Language code
-        
+
     Raises:
         ValueError: If language code is invalid
-        
+
     Example:
         >>> language = unpack_language_code(9)
         >>> print(f"Language: {language}")
         Language: LanguageCode.JAPANESE
     """
     language_val = packed & 0xFF
-    
+
     try:
         return LanguageCode(language_val)
     except ValueError as e:
@@ -314,7 +322,7 @@ def create_processing_info(
 ) -> dict:
     """
     Create ProcessingInfo dictionary with packed enums.
-    
+
     Args:
         model_id: Reference to embedding model registry
         extraction: Content extraction method
@@ -323,10 +331,10 @@ def create_processing_info(
         source: Data source
         processing_time_ms: Processing time in milliseconds
         processor_version: Processor version
-        
+
     Returns:
         ProcessingInfo dictionary for protobuf
-        
+
     Example:
         >>> info = create_processing_info(
         ...     model_id="openai-ada-002",
@@ -339,16 +347,16 @@ def create_processing_info(
         33620484
     """
     result = {
-        'packed_enums': pack_processing_enums(extraction, status, quality, source)
+        "packed_enums": pack_processing_enums(extraction, status, quality, source)
     }
-    
+
     if model_id is not None:
-        result['model_id'] = model_id
+        result["model_id"] = model_id
     if processing_time_ms is not None:
-        result['processing_time_ms'] = processing_time_ms
+        result["processing_time_ms"] = processing_time_ms
     if processor_version is not None:
-        result['processor_version'] = processor_version
-        
+        result["processor_version"] = processor_version
+
     return result
 
 
@@ -364,7 +372,7 @@ def create_source_content(
 ) -> dict:
     """
     Create SourceContent dictionary with packed attributes.
-    
+
     Args:
         data_oneof: One of text, binary, external, structured data
         category: Content category
@@ -374,10 +382,10 @@ def create_source_content(
         compressed_size: Compressed size (if applicable)
         checksum: CRC32 checksum
         processing_info: Processing information
-        
+
     Returns:
         SourceContent dictionary for protobuf
-        
+
     Example:
         >>> content = create_source_content(
         ...     data_oneof={'text': {'content': 'Hello world', 'language_code': 1}},
@@ -391,18 +399,18 @@ def create_source_content(
     """
     result = {
         **data_oneof,
-        'packed_attributes': pack_source_attributes(category, quality),
-        'mime_type': mime_type,
-        'size_bytes': size_bytes,
+        "packed_attributes": pack_source_attributes(category, quality),
+        "mime_type": mime_type,
+        "size_bytes": size_bytes,
     }
-    
+
     if compressed_size is not None:
-        result['compressed_size'] = compressed_size
+        result["compressed_size"] = compressed_size
     if checksum is not None:
-        result['checksum'] = checksum
+        result["checksum"] = checksum
     if processing_info is not None:
-        result['processing'] = processing_info
-        
+        result["processing"] = processing_info
+
     return result
 
 
@@ -414,16 +422,16 @@ def create_text_content(
 ) -> dict:
     """
     Create TextContent dictionary with packed language.
-    
+
     Args:
         content: The actual text
         language: Language code (enum)
         custom_language: Custom language for CUSTOM enum value
         chunk_context: RAG chunking information
-        
+
     Returns:
         TextContent dictionary for protobuf
-        
+
     Example:
         >>> text = create_text_content(
         ...     content="This is a research paper on AI.",
@@ -433,15 +441,15 @@ def create_text_content(
         1
     """
     result = {
-        'content': content,
-        'language_code': pack_language_code(language),
+        "content": content,
+        "language_code": pack_language_code(language),
     }
-    
+
     if custom_language is not None:
-        result['custom_language'] = custom_language
+        result["custom_language"] = custom_language
     if chunk_context is not None:
-        result['chunk'] = chunk_context
-        
+        result["chunk"] = chunk_context
+
     return result
 
 
@@ -449,33 +457,37 @@ def create_text_content(
 def storage_efficiency_analysis():
     """
     Analyze storage efficiency gains from packed enum optimization.
-    
+
     Returns:
         Dictionary with efficiency metrics
     """
     # Old approach: 4 bytes per enum
     old_processing_info_size = 4 * 4  # 4 enums × 4 bytes each = 16 bytes
-    old_source_content_size = 4 * 2   # 2 enums × 4 bytes each = 8 bytes
-    old_text_content_size = 4 * 1     # 1 enum × 4 bytes = 4 bytes
-    old_total = old_processing_info_size + old_source_content_size + old_text_content_size
-    
+    old_source_content_size = 4 * 2  # 2 enums × 4 bytes each = 8 bytes
+    old_text_content_size = 4 * 1  # 1 enum × 4 bytes = 4 bytes
+    old_total = (
+        old_processing_info_size + old_source_content_size + old_text_content_size
+    )
+
     # New approach: packed enums
-    new_processing_info_size = 4      # 1 uint32 for 4 enums = 4 bytes
-    new_source_content_size = 4       # 1 uint32 for 2 enums = 4 bytes
-    new_text_content_size = 4         # 1 uint32 for 1 enum = 4 bytes
-    new_total = new_processing_info_size + new_source_content_size + new_text_content_size
-    
+    new_processing_info_size = 4  # 1 uint32 for 4 enums = 4 bytes
+    new_source_content_size = 4  # 1 uint32 for 2 enums = 4 bytes
+    new_text_content_size = 4  # 1 uint32 for 1 enum = 4 bytes
+    new_total = (
+        new_processing_info_size + new_source_content_size + new_text_content_size
+    )
+
     savings_bytes = old_total - new_total
     savings_percent = (savings_bytes / old_total) * 100
-    
+
     return {
-        'old_total_bytes': old_total,
-        'new_total_bytes': new_total,
-        'savings_bytes': savings_bytes,
-        'savings_percent': savings_percent,
-        'efficiency_ratio': old_total / new_total,
-        'per_vector_savings': savings_bytes,
-        'per_million_vectors_savings_mb': (savings_bytes * 1_000_000) / (1024 * 1024),
+        "old_total_bytes": old_total,
+        "new_total_bytes": new_total,
+        "savings_bytes": savings_bytes,
+        "savings_percent": savings_percent,
+        "efficiency_ratio": old_total / new_total,
+        "per_vector_savings": savings_bytes,
+        "per_million_vectors_savings_mb": (savings_bytes * 1_000_000) / (1024 * 1024),
     }
 
 
@@ -485,13 +497,17 @@ if __name__ == "__main__":
     print("🚀 Ultra-Efficient Enum Packing Analysis:")
     print(f"📊 Old storage: {analysis['old_total_bytes']} bytes per vector")
     print(f"📊 New storage: {analysis['new_total_bytes']} bytes per vector")
-    print(f"💾 Savings: {analysis['savings_bytes']} bytes ({analysis['savings_percent']:.1f}%)")
+    print(
+        f"💾 Savings: {analysis['savings_bytes']} bytes ({analysis['savings_percent']:.1f}%)"
+    )
     print(f"⚡ Efficiency: {analysis['efficiency_ratio']:.1f}x improvement")
-    print(f"🎯 Per million vectors: {analysis['per_million_vectors_savings_mb']:.1f} MB saved")
-    
+    print(
+        f"🎯 Per million vectors: {analysis['per_million_vectors_savings_mb']:.1f} MB saved"
+    )
+
     # Demonstrate usage
     print("\n🔧 Example Usage:")
-    
+
     # Create processing info
     processing = create_processing_info(
         model_id="openai-ada-002",
@@ -499,28 +515,32 @@ if __name__ == "__main__":
         status=ProcessingStatus.PROCESSED,
         quality=QualityLevel.HIGH,
         source=DataSource.API_INGESTION,
-        processing_time_ms=250
+        processing_time_ms=250,
     )
     print(f"📝 Processing info packed: {processing['packed_enums']}")
-    
+
     # Create text content
     text = create_text_content(
         content="This paper presents novel approaches to vector databases.",
-        language=LanguageCode.ENGLISH
+        language=LanguageCode.ENGLISH,
     )
     print(f"📝 Text language packed: {text['language_code']}")
-    
+
     # Create source content
     source = create_source_content(
-        data_oneof={'text': text},
+        data_oneof={"text": text},
         category=ContentCategory.SCIENTIFIC,
         quality=QualityLevel.HIGH,
-        mime_type='text/plain',
-        size_bytes=len(text['content']),
-        processing_info=processing
+        mime_type="text/plain",
+        size_bytes=len(text["content"]),
+        processing_info=processing,
     )
     print(f"📝 Source attributes packed: {source['packed_attributes']}")
-    
+
     # Demonstrate unpacking
-    extraction, status, quality, data_source = unpack_processing_enums(processing['packed_enums'])
-    print(f"🔓 Unpacked: {extraction.name}, {status.name}, {quality.name}, {data_source.name}")
+    extraction, status, quality, data_source = unpack_processing_enums(
+        processing["packed_enums"]
+    )
+    print(
+        f"🔓 Unpacked: {extraction.name}, {status.name}, {quality.name}, {data_source.name}"
+    )

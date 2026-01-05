@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from .protocols.grpc_async import ProximaDBClient as GrpcAsyncClient  # type: ignore
+
     GRPC_OK = True
 except Exception:
     GRPC_OK = False
@@ -40,9 +41,13 @@ class ProximaDBAsyncUnified:
         self._rest = None
 
     async def astart(self):
-        if self.protocol == Protocol.GRPC or (self.protocol == Protocol.AUTO and GRPC_OK):
+        if self.protocol == Protocol.GRPC or (
+            self.protocol == Protocol.AUTO and GRPC_OK
+        ):
             try:
-                self._grpc = GrpcAsyncClient(endpoint=self.grpc_endpoint, timeout=self.timeout)
+                self._grpc = GrpcAsyncClient(
+                    endpoint=self.grpc_endpoint, timeout=self.timeout
+                )
                 logger.info("Using async gRPC client")
             except Exception as e:
                 logger.warning(f"gRPC async init failed: {e}; falling back to REST")
@@ -67,7 +72,7 @@ class ProximaDBAsyncUnified:
         enable_prefetch: Optional[bool] = None,
         prefetch_budget: Optional[int] = None,
     ):
-        if self._grpc and hasattr(self._grpc, 'shortest_path'):
+        if self._grpc and hasattr(self._grpc, "shortest_path"):
             return self._grpc.shortest_path(
                 start_node_id,
                 target_node_id,
@@ -117,4 +122,3 @@ class ProximaDBAsyncUnified:
                 prefetch_budget,
             )
         raise RuntimeError("Client not started; call astart() first")
-

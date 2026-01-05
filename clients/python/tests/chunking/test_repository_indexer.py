@@ -26,73 +26,100 @@ sys.path.insert(0, str(src_path))
 # First, load repository_manager module
 repo_spec = importlib.util.spec_from_file_location(
     "proximadb.repository_manager",
-    str(src_path / "proximadb_sdk" / "repository_manager.py")
+    str(src_path / "proximadb_sdk" / "repository_manager.py"),
 )
 repo_module = importlib.util.module_from_spec(repo_spec)
-sys.modules['proximadb.repository_manager'] = repo_module
+sys.modules["proximadb.repository_manager"] = repo_module
 repo_spec.loader.exec_module(repo_module)
 
 # Create mock proximadb package with proper __path__ for relative imports
-if 'proximadb' not in sys.modules:
-    proximadb = types.ModuleType('proximadb')
-    proximadb.__path__ = [str(src_path / 'proximadb_sdk')]
-    proximadb.__package__ = 'proximadb'
-    sys.modules['proximadb'] = proximadb
+if "proximadb" not in sys.modules:
+    proximadb = types.ModuleType("proximadb")
+    proximadb.__path__ = [str(src_path / "proximadb_sdk")]
+    proximadb.__package__ = "proximadb"
+    sys.modules["proximadb"] = proximadb
 else:
-    proximadb = sys.modules['proximadb']
+    proximadb = sys.modules["proximadb"]
     # Ensure __path__ is set even if module was created elsewhere
-    if not hasattr(proximadb, '__path__') or proximadb.__path__ is None:
-        proximadb.__path__ = [str(src_path / 'proximadb_sdk')]
-        proximadb.__package__ = 'proximadb'
+    if not hasattr(proximadb, "__path__") or proximadb.__path__ is None:
+        proximadb.__path__ = [str(src_path / "proximadb_sdk")]
+        proximadb.__package__ = "proximadb"
 
 proximadb.repository_manager = repo_module
 
 # Create mock code_knowledge module
 mock_builder_class = MagicMock()
-mock_index_result_class = type('IndexingResult', (), {
-    'files_processed': 0,
-    'files_skipped': 0,
-    'files_failed': 0,
-    'symbols_indexed': 0,
-    'relations_created': 0,
-    'errors': [],
-    'file_hashes': {},
-})
+mock_index_result_class = type(
+    "IndexingResult",
+    (),
+    {
+        "files_processed": 0,
+        "files_skipped": 0,
+        "files_failed": 0,
+        "symbols_indexed": 0,
+        "relations_created": 0,
+        "errors": [],
+        "file_hashes": {},
+    },
+)
 
-code_knowledge_module = types.ModuleType('proximadb.code_knowledge')
+code_knowledge_module = types.ModuleType("proximadb.code_knowledge")
 code_knowledge_module.CodeKnowledgeBuilder = mock_builder_class
-code_knowledge_module.CodeIndexConfig = type('CodeIndexConfig', (), {
-    'vector_collection_name': 'code_symbols',
-    'vector_dimension': 1536,
-    'graph_name': 'code_graph',
-    'include_private': True,
-    'include_tests': True,
-    'include_documentation': True,
-    'include_patterns': ['*'],
-    'exclude_patterns': [
-        '*.pyc', '__pycache__/*', '.git/*', 'node_modules/*',
-        'vendor/*', 'target/*', 'build/*', 'dist/*',
-    ],
-    'embedding_batch_size': 32,
-    'max_content_length': 8000,
-    'enable_incremental': True,
-    'hash_algorithm': 'sha256',
-})
+code_knowledge_module.CodeIndexConfig = type(
+    "CodeIndexConfig",
+    (),
+    {
+        "vector_collection_name": "code_symbols",
+        "vector_dimension": 1536,
+        "graph_name": "code_graph",
+        "include_private": True,
+        "include_tests": True,
+        "include_documentation": True,
+        "include_patterns": ["*"],
+        "exclude_patterns": [
+            "*.pyc",
+            "__pycache__/*",
+            ".git/*",
+            "node_modules/*",
+            "vendor/*",
+            "target/*",
+            "build/*",
+            "dist/*",
+        ],
+        "embedding_batch_size": 32,
+        "max_content_length": 8000,
+        "enable_incremental": True,
+        "hash_algorithm": "sha256",
+    },
+)
 code_knowledge_module.IndexingResult = mock_index_result_class
-code_knowledge_module.CodeSearchResult = type('CodeSearchResult', (), {})
-sys.modules['proximadb.code_knowledge'] = code_knowledge_module
+code_knowledge_module.CodeSearchResult = type("CodeSearchResult", (), {})
+sys.modules["proximadb.code_knowledge"] = code_knowledge_module
 
 # Create mock chunking_strategies.code module only if not already loaded with real module
 # (loader.py may have already set up the real module)
-_saved_code_module = sys.modules.get('proximadb.chunking_strategies.code')
-if _saved_code_module is None or not hasattr(_saved_code_module, '__file__') or _saved_code_module.__file__ is None:
-    chunking_code_module = types.ModuleType('proximadb.chunking_strategies.code')
+_saved_code_module = sys.modules.get("proximadb.chunking_strategies.code")
+if (
+    _saved_code_module is None
+    or not hasattr(_saved_code_module, "__file__")
+    or _saved_code_module.__file__ is None
+):
+    chunking_code_module = types.ModuleType("proximadb.chunking_strategies.code")
     chunking_code_module.EXTENSION_TO_LANGUAGE = {
-        '.py': 'python', '.rs': 'rust', '.js': 'javascript',
-        '.go': 'go', '.java': 'java',
+        ".py": "python",
+        ".rs": "rust",
+        ".js": "javascript",
+        ".go": "go",
+        ".java": "java",
     }
-    chunking_code_module.get_supported_extensions = lambda: ['.py', '.rs', '.js', '.go', '.java']
-    sys.modules['proximadb.chunking_strategies.code'] = chunking_code_module
+    chunking_code_module.get_supported_extensions = lambda: [
+        ".py",
+        ".rs",
+        ".js",
+        ".go",
+        ".java",
+    ]
+    sys.modules["proximadb.chunking_strategies.code"] = chunking_code_module
 else:
     # Use the real module - it has what we need
     chunking_code_module = _saved_code_module
@@ -100,22 +127,26 @@ else:
 # Now load repository_indexer module
 indexer_spec = importlib.util.spec_from_file_location(
     "proximadb.repository_indexer",
-    str(src_path / "proximadb_sdk" / "repository_indexer.py")
+    str(src_path / "proximadb_sdk" / "repository_indexer.py"),
 )
 indexer_module = importlib.util.module_from_spec(indexer_spec)
-sys.modules['proximadb.repository_indexer'] = indexer_module
+sys.modules["proximadb.repository_indexer"] = indexer_module
 indexer_spec.loader.exec_module(indexer_module)
 
 # Track modules we added so we can clean up
 # Note: Only clean up modules we actually created (not ones that already existed)
 _added_modules = [
-    'proximadb.repository_manager',
-    'proximadb.code_knowledge',
-    'proximadb.repository_indexer',
+    "proximadb.repository_manager",
+    "proximadb.code_knowledge",
+    "proximadb.repository_indexer",
 ]
 # Only add chunking_strategies.code to cleanup if we created it
-if _saved_code_module is None or not hasattr(_saved_code_module, '__file__') or _saved_code_module.__file__ is None:
-    _added_modules.append('proximadb.chunking_strategies.code')
+if (
+    _saved_code_module is None
+    or not hasattr(_saved_code_module, "__file__")
+    or _saved_code_module.__file__ is None
+):
+    _added_modules.append("proximadb.chunking_strategies.code")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -252,11 +283,11 @@ class TestRepositoryIndexer:
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
         subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=repo_path, capture_output=True
+            ["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True
         )
 
         # Create initial files
@@ -265,8 +296,7 @@ class TestRepositoryIndexer:
 
         subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=repo_path, capture_output=True
+            ["git", "commit", "-m", "Initial"], cwd=repo_path, capture_output=True
         )
 
         yield repo_path
@@ -325,15 +355,17 @@ class TestRepositoryIndexer:
 
         # Mock the builder's index_file
         indexer = RepositoryIndexer(mock_client)
-        indexer._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=3,
-            relations_created=1,
-            errors=[],
-            file_hashes={"main.py": "hash123"},
-        ))
+        indexer._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=3,
+                relations_created=1,
+                errors=[],
+                file_hashes={"main.py": "hash123"},
+            )
+        )
 
         result = await indexer.index_repository(tmp_path, mode=IndexMode.FULL)
 
@@ -344,15 +376,17 @@ class TestRepositoryIndexer:
     async def test_index_repository_with_git(self, mock_client, temp_git_repo):
         """Test indexing a git repository."""
         indexer = RepositoryIndexer(mock_client)
-        indexer._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=2,
-            relations_created=1,
-            errors=[],
-            file_hashes={},
-        ))
+        indexer._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=2,
+                relations_created=1,
+                errors=[],
+                file_hashes={},
+            )
+        )
 
         result = await indexer.index_repository(temp_git_repo)
 
@@ -364,15 +398,17 @@ class TestRepositoryIndexer:
     async def test_update_repository(self, mock_client, temp_git_repo):
         """Test incremental update."""
         indexer = RepositoryIndexer(mock_client)
-        indexer._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=1,
-            relations_created=0,
-            errors=[],
-            file_hashes={},
-        ))
+        indexer._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=1,
+                relations_created=0,
+                errors=[],
+                file_hashes={},
+            )
+        )
 
         # First index
         await indexer.index_repository(temp_git_repo)
@@ -381,8 +417,7 @@ class TestRepositoryIndexer:
         (temp_git_repo / "new.py").write_text("def new(): pass")
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Add new"],
-            cwd=temp_git_repo, capture_output=True
+            ["git", "commit", "-m", "Add new"], cwd=temp_git_repo, capture_output=True
         )
 
         # Update
@@ -461,15 +496,17 @@ class TestProgressCallback:
         mock_client = MagicMock()
         indexer = RepositoryIndexer(mock_client)
         indexer.config.parallel_file_processing = False
-        indexer._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=1,
-            relations_created=0,
-            errors=[],
-            file_hashes={},
-        ))
+        indexer._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=1,
+                relations_created=0,
+                errors=[],
+                file_hashes={},
+            )
+        )
 
         progress_calls = []
 
@@ -497,18 +534,17 @@ class TestStatePersistence:
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
         subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=repo_path, capture_output=True
+            ["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True
         )
 
         (repo_path / "test.py").write_text("pass")
         subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Init"],
-            cwd=repo_path, capture_output=True
+            ["git", "commit", "-m", "Init"], cwd=repo_path, capture_output=True
         )
 
         yield repo_path
@@ -519,15 +555,17 @@ class TestStatePersistence:
         """Test that state is saved after indexing."""
         mock_client = MagicMock()
         indexer = RepositoryIndexer(mock_client)
-        indexer._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=1,
-            relations_created=0,
-            errors=[],
-            file_hashes={},
-        ))
+        indexer._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=1,
+                relations_created=0,
+                errors=[],
+                file_hashes={},
+            )
+        )
 
         await indexer.index_repository(temp_git_repo)
 
@@ -541,28 +579,32 @@ class TestStatePersistence:
 
         # First indexer - creates state
         indexer1 = RepositoryIndexer(mock_client)
-        indexer1._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=1,
-            relations_created=0,
-            errors=[],
-            file_hashes={},
-        ))
+        indexer1._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=1,
+                relations_created=0,
+                errors=[],
+                file_hashes={},
+            )
+        )
         await indexer1.index_repository(temp_git_repo)
 
         # Second indexer - loads state
         indexer2 = RepositoryIndexer(mock_client)
-        indexer2._builder.index_file = AsyncMock(return_value=MagicMock(
-            files_processed=1,
-            files_skipped=0,
-            files_failed=0,
-            symbols_indexed=1,
-            relations_created=0,
-            errors=[],
-            file_hashes={},
-        ))
+        indexer2._builder.index_file = AsyncMock(
+            return_value=MagicMock(
+                files_processed=1,
+                files_skipped=0,
+                files_failed=0,
+                symbols_indexed=1,
+                relations_created=0,
+                errors=[],
+                file_hashes={},
+            )
+        )
 
         # This should load the state from the file
         repo_manager = indexer2._get_repo_manager(temp_git_repo)

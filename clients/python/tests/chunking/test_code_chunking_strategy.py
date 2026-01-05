@@ -30,7 +30,7 @@ EXTENSION_TO_LANGUAGE = code_module.EXTENSION_TO_LANGUAGE
 PythonParser = code_module.PythonParser
 
 # Get TextChunk from base
-base_module = sys.modules.get('proximadb.chunking_strategies.base')
+base_module = sys.modules.get("proximadb.chunking_strategies.base")
 if base_module:
     TextChunk = base_module.TextChunk
 else:
@@ -49,9 +49,7 @@ class TestCodeChunkingConfig:
     def test_custom_config(self):
         """Test custom configuration values."""
         config = CodeChunkingConfig(
-            chunk_size=1000,
-            chunk_overlap=100,
-            languages=["python", "rust"]
+            chunk_size=1000, chunk_overlap=100, languages=["python", "rust"]
         )
         assert config.chunk_size == 1000
         assert config.chunk_overlap == 100
@@ -86,7 +84,7 @@ class TestCodeChunkingStrategy:
 
     def test_strategy_has_parsers(self, strategy):
         """Test strategy initializes parsers."""
-        assert hasattr(strategy, '_parsers')
+        assert hasattr(strategy, "_parsers")
         assert isinstance(strategy._parsers, dict)
         assert len(strategy._parsers) > 0
 
@@ -179,16 +177,16 @@ def function_two():
 '''
         chunks = strategy.chunk(code, "test.py")
         for chunk in chunks:
-            assert hasattr(chunk, 'text')
-            assert hasattr(chunk, 'metadata')
+            assert hasattr(chunk, "text")
+            assert hasattr(chunk, "metadata")
 
     def test_chunk_metadata_has_symbol_info(self, strategy):
         """Test chunk metadata contains symbol information."""
-        code = '''
+        code = """
 class MyClass:
     def my_method(self):
         pass
-'''
+"""
         chunks = strategy.chunk(code, "test.py")
         # If chunks are produced, check metadata
         for chunk in chunks:
@@ -223,10 +221,7 @@ class TestCreateCodeChunker:
 
     def test_create_chunker_with_config_kwargs(self):
         """Test creating a code chunker with config kwargs."""
-        chunker = create_code_chunker(
-            chunk_size=500,
-            chunk_overlap=50
-        )
+        chunker = create_code_chunker(chunk_size=500, chunk_overlap=50)
         assert chunker.config.chunk_size == 500
         assert chunker.config.chunk_overlap == 50
 
@@ -350,33 +345,35 @@ def greet(name: str, greeting: str = "Hello") -> str:
 
     def test_parse_class_with_inheritance(self, parser):
         """Test parsing a class with inheritance."""
-        code = '''
+        code = """
 class Parent:
     pass
 
 class Child(Parent):
     def method(self):
         pass
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
         assert len(class_symbols) >= 2
 
     def test_parse_decorated_class(self, parser):
         """Test parsing a decorated class."""
-        code = '''
+        code = """
 @dataclass
 class User:
     name: str
     age: int
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_static_method(self, parser):
         """Test parsing static methods."""
-        code = '''
+        code = """
 class MyClass:
     @staticmethod
     def static_method():
@@ -385,13 +382,13 @@ class MyClass:
     @classmethod
     def class_method(cls):
         pass
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_property(self, parser):
         """Test parsing properties."""
-        code = '''
+        code = """
 class Person:
     def __init__(self, name):
         self._name = name
@@ -403,13 +400,13 @@ class Person:
     @name.setter
     def name(self, value):
         self._name = value
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_nested_class(self, parser):
         """Test parsing nested classes."""
-        code = '''
+        code = """
 class Outer:
     class Inner:
         def inner_method(self):
@@ -417,69 +414,69 @@ class Outer:
 
     def outer_method(self):
         pass
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_async_function(self, parser):
         """Test parsing async functions."""
-        code = '''
+        code = """
 async def fetch_data(url: str):
     async with aiohttp.ClientSession() as session:
         async for chunk in response.content:
             yield chunk
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_lambda(self, parser):
         """Test parsing lambda expressions."""
-        code = '''
+        code = """
 square = lambda x: x ** 2
 add = lambda a, b: a + b
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_comprehensions(self, parser):
         """Test parsing list/dict/set comprehensions."""
-        code = '''
+        code = """
 def process():
     squares = [x**2 for x in range(10)]
     even_squares = {x: x**2 for x in range(10) if x % 2 == 0}
     unique = {x for x in items}
     gen = (x for x in range(100))
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_imports(self, parser):
         """Test parsing various import statements."""
-        code = '''
+        code = """
 import os
 import sys as system
 from typing import List, Dict, Optional
 from pathlib import Path
 from . import local_module
 from ..parent import something
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
         assert len(result.imports) > 0
 
     def test_parse_global_variables(self, parser):
         """Test parsing global variables."""
-        code = '''
+        code = """
 MAX_SIZE = 100
 DEFAULT_NAME = "Unknown"
 CONFIG = {"debug": True, "timeout": 30}
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
     def test_parse_type_hints(self, parser):
         """Test parsing type hints."""
-        code = '''
+        code = """
 from typing import List, Dict, Optional, Union, Callable
 
 def process(
@@ -488,7 +485,7 @@ def process(
     callback: Optional[Callable[[int], bool]] = None
 ) -> Union[str, int]:
     pass
-'''
+"""
         result = parser.parse(code, "test.py")
         assert isinstance(result, ParsedCode)
 
@@ -538,11 +535,11 @@ class TestEdgeCasesDetailed:
 
     def test_only_comments(self, strategy):
         """Test chunking file with only comments."""
-        code = '''
+        code = """
 # This is a comment
 # Another comment
 # More comments
-'''
+"""
         chunks = strategy.chunk(code, "comments.py")
         assert isinstance(chunks, list)
 
@@ -559,39 +556,39 @@ It has multiple lines.
 
     def test_syntax_error(self, strategy):
         """Test chunking file with syntax error."""
-        code = '''
+        code = """
 def broken(
     # Missing closing paren
-'''
+"""
         # Should not crash
         chunks = strategy.chunk(code, "broken.py")
         assert isinstance(chunks, list)
 
     def test_unicode_identifiers(self, strategy):
         """Test chunking with unicode identifiers."""
-        code = '''
+        code = """
 def 你好():
     return "Hello"
 
 class Ελληνικά:
     pass
-'''
+"""
         chunks = strategy.chunk(code, "unicode.py")
         assert isinstance(chunks, list)
 
     def test_very_long_lines(self, strategy):
         """Test chunking with very long lines."""
-        code = f'''
+        code = f"""
 def long_string():
     s = "{'a' * 10000}"
     return s
-'''
+"""
         chunks = strategy.chunk(code, "long.py")
         assert isinstance(chunks, list)
 
     def test_deeply_nested(self, strategy):
         """Test chunking deeply nested code."""
-        code = '''
+        code = """
 class A:
     class B:
         class C:
@@ -600,7 +597,7 @@ class A:
                     def inner():
                         def deeper():
                             pass
-'''
+"""
         chunks = strategy.chunk(code, "nested.py")
         assert isinstance(chunks, list)
 
@@ -780,7 +777,7 @@ class TestParserLanguageMethods:
     def test_typescript_parser_language(self):
         """Test TypeScript uses JavaScript parser."""
         # TypeScript is handled by JavaScript parser in the registry
-        if hasattr(code_module, 'TypeScriptParser'):
+        if hasattr(code_module, "TypeScriptParser"):
             parser = code_module.TypeScriptParser()
             assert parser.language == "typescript"
         else:
@@ -795,7 +792,7 @@ class TestParserLanguageMethods:
     def test_c_parser_language(self):
         """Test C parser language."""
         # C is handled by CppParser in the registry
-        if hasattr(code_module, 'CParser'):
+        if hasattr(code_module, "CParser"):
             parser = code_module.CParser()
             assert parser.language == "c"
         else:
@@ -864,13 +861,13 @@ class TestRegistryFunctions:
 
     def test_get_parser_for_language(self):
         """Test getting parser for a language."""
-        if hasattr(code_module, 'get_parser_for_language'):
+        if hasattr(code_module, "get_parser_for_language"):
             parser = code_module.get_parser_for_language("python")
             assert parser is not None
 
     def test_get_parser_for_extension(self):
         """Test getting parser for an extension."""
-        if hasattr(code_module, 'get_parser_for_extension'):
+        if hasattr(code_module, "get_parser_for_extension"):
             parser = code_module.get_parser_for_extension(".py")
             assert parser is not None
 
@@ -885,7 +882,7 @@ class TestDataModelCreation:
             start_line=1,
             end_line=10,
             start_column=0,
-            end_column=50
+            end_column=50,
         )
         assert loc.file_path == "test.py"
         assert loc.start_line == 1
@@ -899,7 +896,7 @@ class TestDataModelCreation:
             file_path="test.py",
             repository="github.com/test/repo",
             branch="main",
-            commit_hash="abc123"
+            commit_hash="abc123",
         )
         assert loc.repository == "github.com/test/repo"
         assert loc.branch == "main"
@@ -908,7 +905,9 @@ class TestDataModelCreation:
     def test_code_symbol_documentation_property(self):
         """Test CodeSymbol documentation property."""
         # Test that CodeSymbol has documentation attribute
-        assert hasattr(CodeSymbol, '__dataclass_fields__') or hasattr(CodeSymbol, 'documentation')
+        assert hasattr(CodeSymbol, "__dataclass_fields__") or hasattr(
+            CodeSymbol, "documentation"
+        )
 
     def test_parsed_code_with_fields(self):
         """Test ParsedCode with required fields."""
@@ -918,7 +917,7 @@ class TestDataModelCreation:
             symbols=[],
             relations=[],
             imports=["os", "sys"],
-            content_hash="abc123"
+            content_hash="abc123",
         )
         assert parsed.language == "python"
         assert parsed.file_path == "test.py"
@@ -985,7 +984,7 @@ class TestMoreParserTests:
     def test_rust_parser_with_complex_code(self):
         """Test Rust parser with complex code."""
         parser = code_module.RustParser()
-        code = '''
+        code = """
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -1012,7 +1011,7 @@ enum Status {
     Inactive,
     Pending(String),
 }
-'''
+"""
         result = parser.parse(code, "test.rs")
         assert isinstance(result, ParsedCode)
         assert result.language == "rust"
@@ -1020,7 +1019,7 @@ enum Status {
     def test_go_parser_with_complex_code(self):
         """Test Go parser with complex code."""
         parser = code_module.GoParser()
-        code = '''
+        code = """
 package main
 
 import (
@@ -1046,7 +1045,7 @@ func (s *Server) Connect() {
 type Handler interface {
     Handle(data []byte) error
 }
-'''
+"""
         result = parser.parse(code, "test.go")
         assert isinstance(result, ParsedCode)
         assert result.language == "go"
@@ -1054,7 +1053,7 @@ type Handler interface {
     def test_java_parser_with_complex_code(self):
         """Test Java parser with complex code."""
         parser = code_module.JavaParser()
-        code = '''
+        code = """
 package com.example;
 
 import java.util.List;
@@ -1084,7 +1083,7 @@ interface IUserService {
 enum UserStatus {
     ACTIVE, INACTIVE, PENDING
 }
-'''
+"""
         result = parser.parse(code, "Test.java")
         assert isinstance(result, ParsedCode)
         assert result.language == "java"

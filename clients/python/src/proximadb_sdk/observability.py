@@ -18,11 +18,12 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 from functools import wraps
 
 # Type variable for decorator
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class MetricType(str, Enum):
     """Types of metrics"""
+
     COUNTER = "counter"
     GAUGE = "gauge"
     HISTOGRAM = "histogram"
@@ -31,6 +32,7 @@ class MetricType(str, Enum):
 
 class LogLevel(str, Enum):
     """Log levels"""
+
     DEBUG = "debug"
     INFO = "info"
     WARNING = "warning"
@@ -41,6 +43,7 @@ class LogLevel(str, Enum):
 @dataclass
 class MetricDefinition:
     """Definition for a metric"""
+
     name: str
     metric_type: MetricType
     description: str
@@ -51,6 +54,7 @@ class MetricDefinition:
 @dataclass
 class SpanContext:
     """Distributed tracing span context"""
+
     trace_id: str
     span_id: str
     parent_span_id: Optional[str] = None
@@ -94,6 +98,7 @@ class SpanContext:
 @dataclass
 class Span:
     """Represents a trace span"""
+
     name: str
     context: SpanContext
     start_time_ns: int
@@ -108,11 +113,13 @@ class Span:
 
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
         """Add an event to the span"""
-        self.events.append({
-            "name": name,
-            "timestamp_ns": time.time_ns(),
-            "attributes": attributes or {},
-        })
+        self.events.append(
+            {
+                "name": name,
+                "timestamp_ns": time.time_ns(),
+                "attributes": attributes or {},
+            }
+        )
 
     def set_status(self, status: str, message: Optional[str] = None) -> None:
         """Set span status"""
@@ -150,49 +157,76 @@ class MetricsCollector:
 
     def _register_default_metrics(self) -> None:
         """Register default ProximaDB SDK metrics"""
-        self.register(MetricDefinition(
-            name="requests_total",
-            metric_type=MetricType.COUNTER,
-            description="Total number of requests",
-            labels=["method", "status"],
-        ))
-        self.register(MetricDefinition(
-            name="request_duration_seconds",
-            metric_type=MetricType.HISTOGRAM,
-            description="Request duration in seconds",
-            labels=["method"],
-            buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
-        ))
-        self.register(MetricDefinition(
-            name="vectors_inserted_total",
-            metric_type=MetricType.COUNTER,
-            description="Total vectors inserted",
-            labels=["collection"],
-        ))
-        self.register(MetricDefinition(
-            name="search_results_total",
-            metric_type=MetricType.COUNTER,
-            description="Total search results returned",
-            labels=["collection"],
-        ))
-        self.register(MetricDefinition(
-            name="active_connections",
-            metric_type=MetricType.GAUGE,
-            description="Number of active connections",
-            labels=["protocol"],
-        ))
-        self.register(MetricDefinition(
-            name="cache_hits_total",
-            metric_type=MetricType.COUNTER,
-            description="Total cache hits",
-            labels=["cache_type"],
-        ))
-        self.register(MetricDefinition(
-            name="cache_misses_total",
-            metric_type=MetricType.COUNTER,
-            description="Total cache misses",
-            labels=["cache_type"],
-        ))
+        self.register(
+            MetricDefinition(
+                name="requests_total",
+                metric_type=MetricType.COUNTER,
+                description="Total number of requests",
+                labels=["method", "status"],
+            )
+        )
+        self.register(
+            MetricDefinition(
+                name="request_duration_seconds",
+                metric_type=MetricType.HISTOGRAM,
+                description="Request duration in seconds",
+                labels=["method"],
+                buckets=[
+                    0.001,
+                    0.005,
+                    0.01,
+                    0.025,
+                    0.05,
+                    0.1,
+                    0.25,
+                    0.5,
+                    1.0,
+                    2.5,
+                    5.0,
+                    10.0,
+                ],
+            )
+        )
+        self.register(
+            MetricDefinition(
+                name="vectors_inserted_total",
+                metric_type=MetricType.COUNTER,
+                description="Total vectors inserted",
+                labels=["collection"],
+            )
+        )
+        self.register(
+            MetricDefinition(
+                name="search_results_total",
+                metric_type=MetricType.COUNTER,
+                description="Total search results returned",
+                labels=["collection"],
+            )
+        )
+        self.register(
+            MetricDefinition(
+                name="active_connections",
+                metric_type=MetricType.GAUGE,
+                description="Number of active connections",
+                labels=["protocol"],
+            )
+        )
+        self.register(
+            MetricDefinition(
+                name="cache_hits_total",
+                metric_type=MetricType.COUNTER,
+                description="Total cache hits",
+                labels=["cache_type"],
+            )
+        )
+        self.register(
+            MetricDefinition(
+                name="cache_misses_total",
+                metric_type=MetricType.COUNTER,
+                description="Total cache misses",
+                labels=["cache_type"],
+            )
+        )
 
     def register(self, metric: MetricDefinition) -> None:
         """Register a metric definition"""
@@ -200,7 +234,9 @@ class MetricsCollector:
         self._metrics[full_name] = metric
         self._values[full_name] = {}
 
-    def inc(self, name: str, value: float = 1, labels: Optional[Dict[str, str]] = None) -> None:
+    def inc(
+        self, name: str, value: float = 1, labels: Optional[Dict[str, str]] = None
+    ) -> None:
         """Increment a counter"""
         full_name = f"{self._prefix}_{name}"
         if full_name not in self._metrics:
@@ -212,7 +248,9 @@ class MetricsCollector:
                 self._values[full_name][label_key] = 0
             self._values[full_name][label_key] += value
 
-    def set(self, name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
+    def set(
+        self, name: str, value: float, labels: Optional[Dict[str, str]] = None
+    ) -> None:
         """Set a gauge value"""
         full_name = f"{self._prefix}_{name}"
         if full_name not in self._metrics:
@@ -222,7 +260,9 @@ class MetricsCollector:
         with self._lock:
             self._values[full_name][label_key] = value
 
-    def observe(self, name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
+    def observe(
+        self, name: str, value: float, labels: Optional[Dict[str, str]] = None
+    ) -> None:
         """Observe a histogram value"""
         full_name = f"{self._prefix}_{name}"
         if full_name not in self._metrics:
@@ -269,10 +309,18 @@ class MetricsCollector:
                     if metric.metric_type == MetricType.HISTOGRAM:
                         # Export histogram buckets
                         for bucket, count in value.get("buckets", {}).items():
-                            lines.append(f'{full_name}_bucket{{le="{bucket}"{", " + label_key if label_key else ""}}} {count}')
-                        lines.append(f'{full_name}_bucket{{le="+Inf"{", " + label_key if label_key else ""}}} {value.get("count", 0)}')
-                        lines.append(f'{full_name}_sum{labels_str} {value.get("sum", 0)}')
-                        lines.append(f'{full_name}_count{labels_str} {value.get("count", 0)}')
+                            lines.append(
+                                f'{full_name}_bucket{{le="{bucket}"{", " + label_key if label_key else ""}}} {count}'
+                            )
+                        lines.append(
+                            f'{full_name}_bucket{{le="+Inf"{", " + label_key if label_key else ""}}} {value.get("count", 0)}'
+                        )
+                        lines.append(
+                            f'{full_name}_sum{labels_str} {value.get("sum", 0)}'
+                        )
+                        lines.append(
+                            f'{full_name}_count{labels_str} {value.get("count", 0)}'
+                        )
                     else:
                         lines.append(f"{full_name}{labels_str} {value}")
 
@@ -281,9 +329,7 @@ class MetricsCollector:
     def get_metrics(self) -> Dict[str, Any]:
         """Get all metrics as dictionary"""
         with self._lock:
-            return {
-                name: dict(values) for name, values in self._values.items()
-            }
+            return {name: dict(values) for name, values in self._values.items()}
 
 
 class Tracer:
@@ -582,6 +628,7 @@ class Observability:
 
     def _wrap_method(self, method: Callable, operation: str) -> Callable:
         """Wrap a method with observability"""
+
         @wraps(method)
         def wrapper(*args, **kwargs):
             start_time = time.time()
@@ -601,8 +648,15 @@ class Observability:
                 # Record metrics on success
                 if self.metrics:
                     duration = time.time() - start_time
-                    self.metrics.inc("requests_total", labels={"method": operation, "status": "success"})
-                    self.metrics.observe("request_duration_seconds", duration, labels={"method": operation})
+                    self.metrics.inc(
+                        "requests_total",
+                        labels={"method": operation, "status": "success"},
+                    )
+                    self.metrics.observe(
+                        "request_duration_seconds",
+                        duration,
+                        labels={"method": operation},
+                    )
 
                 return result
 
@@ -612,7 +666,10 @@ class Observability:
                     span.set_status("error", str(e))
 
                 if self.metrics:
-                    self.metrics.inc("requests_total", labels={"method": operation, "status": "error"})
+                    self.metrics.inc(
+                        "requests_total",
+                        labels={"method": operation, "status": "error"},
+                    )
 
                 if self.logger:
                     self.logger.error(
@@ -668,8 +725,14 @@ class Observability:
     ) -> None:
         """Record search operation metrics"""
         if self.metrics:
-            self.metrics.inc("search_results_total", result_count, labels={"collection": collection})
-            self.metrics.observe("request_duration_seconds", duration_ms / 1000, labels={"method": "search"})
+            self.metrics.inc(
+                "search_results_total", result_count, labels={"collection": collection}
+            )
+            self.metrics.observe(
+                "request_duration_seconds",
+                duration_ms / 1000,
+                labels={"method": "search"},
+            )
 
     def record_insert(
         self,
@@ -679,8 +742,16 @@ class Observability:
     ) -> None:
         """Record insert operation metrics"""
         if self.metrics:
-            self.metrics.inc("vectors_inserted_total", vector_count, labels={"collection": collection})
-            self.metrics.observe("request_duration_seconds", duration_ms / 1000, labels={"method": "insert"})
+            self.metrics.inc(
+                "vectors_inserted_total",
+                vector_count,
+                labels={"collection": collection},
+            )
+            self.metrics.observe(
+                "request_duration_seconds",
+                duration_ms / 1000,
+                labels={"method": "insert"},
+            )
 
     def record_cache_hit(self, cache_type: str = "query") -> None:
         """Record a cache hit"""
@@ -714,6 +785,7 @@ def traced(operation: str):
         ... def my_function():
         ...     pass
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -731,6 +803,7 @@ def traced(operation: str):
                 return func(*args, **kwargs)
 
         return wrapper  # type: ignore
+
     return decorator
 
 
@@ -743,6 +816,7 @@ def metered(operation: str):
         ... def my_function():
         ...     pass
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -760,11 +834,19 @@ def metered(operation: str):
                 for arg in args:
                     if isinstance(arg, Observability) and arg.metrics:
                         duration = time.time() - start
-                        arg.metrics.inc("requests_total", labels={"method": operation, "status": status})
-                        arg.metrics.observe("request_duration_seconds", duration, labels={"method": operation})
+                        arg.metrics.inc(
+                            "requests_total",
+                            labels={"method": operation, "status": status},
+                        )
+                        arg.metrics.observe(
+                            "request_duration_seconds",
+                            duration,
+                            labels={"method": operation},
+                        )
                         break
 
         return wrapper  # type: ignore
+
     return decorator
 
 
@@ -774,16 +856,13 @@ __all__ = [
     "MetricsCollector",
     "Tracer",
     "StructuredLogger",
-
     # Data classes
     "MetricDefinition",
     "SpanContext",
     "Span",
-
     # Enums
     "MetricType",
     "LogLevel",
-
     # Decorators
     "traced",
     "metered",

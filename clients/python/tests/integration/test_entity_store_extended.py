@@ -25,6 +25,7 @@ from proximadb_sdk import ProximaDBClient, VectorRecord
 def _server_available(url: str) -> bool:
     """Check if ProximaDB server is available"""
     import httpx
+
     try:
         r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return r.status_code < 500
@@ -85,11 +86,11 @@ def test_collection_get_stats(client):
         for i in range(10):
             vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
-            records.append(VectorRecord(
-                id=f"vec_{i}",
-                vector=vector.tolist(),
-                metadata={"index": i}
-            ))
+            records.append(
+                VectorRecord(
+                    id=f"vec_{i}", vector=vector.tolist(), metadata={"index": i}
+                )
+            )
 
         client.insert_vectors(collection_id, records=records)
 
@@ -138,11 +139,13 @@ def test_vector_operations_with_ids(client):
         for entity_id in test_ids:
             vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
-            records.append(VectorRecord(
-                id=entity_id,
-                vector=vector.tolist(),
-                metadata={"custom": True, "id": entity_id}
-            ))
+            records.append(
+                VectorRecord(
+                    id=entity_id,
+                    vector=vector.tolist(),
+                    metadata={"custom": True, "id": entity_id},
+                )
+            )
 
         result = client.insert_vectors(collection_id, records=records)
         assert result.success
@@ -155,17 +158,20 @@ def test_vector_operations_with_ids(client):
             collection_id=collection_id,
             vector=query_vector.tolist(),
             top_k=5,
-            include_metadata=True
+            include_metadata=True,
         )
 
         assert len(results) >= 1
         # Verify at least one of our custom IDs is in results
         result_ids = [r.id for r in results]
-        assert any(rid in test_ids for rid in result_ids), \
-            "Should find at least one custom ID in results"
+        assert any(
+            rid in test_ids for rid in result_ids
+        ), "Should find at least one custom ID in results"
 
         print(f"\n✓ Vector operations with custom IDs successful")
-        print(f"  Found {len([r for r in results if r.id in test_ids])} custom IDs in top-{len(results)}")
+        print(
+            f"  Found {len([r for r in results if r.id in test_ids])} custom IDs in top-{len(results)}"
+        )
 
     finally:
         try:
@@ -189,14 +195,13 @@ def test_vector_search_with_filter(client):
         for i in range(30):
             vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
-            records.append(VectorRecord(
-                id=f"item_{i}",
-                vector=vector.tolist(),
-                metadata={
-                    "category": categories[i % 3],
-                    "value": i
-                }
-            ))
+            records.append(
+                VectorRecord(
+                    id=f"item_{i}",
+                    vector=vector.tolist(),
+                    metadata={"category": categories[i % 3], "value": i},
+                )
+            )
 
         client.insert_vectors(collection_id, records=records)
 
@@ -208,7 +213,7 @@ def test_vector_search_with_filter(client):
             collection_id=collection_id,
             vector=query_vector.tolist(),
             top_k=10,
-            include_metadata=True
+            include_metadata=True,
         )
 
         assert len(results) >= 1
@@ -241,9 +246,7 @@ def test_empty_collection_search(client):
         query_vector = query_vector / np.linalg.norm(query_vector)
 
         results = client.search(
-            collection_id=collection_id,
-            vector=query_vector.tolist(),
-            top_k=5
+            collection_id=collection_id, vector=query_vector.tolist(), top_k=5
         )
 
         # Empty collection should return empty results
@@ -269,12 +272,9 @@ def test_vector_dimension_mismatch(client):
 
         # Try to insert vector with wrong dimension
         from ..embedding_utils import embed_seed
+
         wrong_vector = embed_seed(0, 64)  # Wrong dim
-        record = VectorRecord(
-            id="wrong_dim",
-            vector=wrong_vector,
-            metadata={}
-        )
+        record = VectorRecord(id="wrong_dim", vector=wrong_vector, metadata={})
 
         error_raised = False
         try:
@@ -285,8 +285,11 @@ def test_vector_dimension_mismatch(client):
         except Exception as e:
             # Expected: dimension mismatch error
             error_raised = True
-            assert "dimension" in str(e).lower() or "invalid" in str(e).lower() or "error" in str(e).lower(), \
-                f"Error should mention dimension/invalid: {str(e)[:80]}"
+            assert (
+                "dimension" in str(e).lower()
+                or "invalid" in str(e).lower()
+                or "error" in str(e).lower()
+            ), f"Error should mention dimension/invalid: {str(e)[:80]}"
             print(f"\n✓ Dimension mismatch correctly rejected: {str(e)[:80]}")
 
         # At least one outcome should occur (either graceful handling or error)
@@ -314,11 +317,13 @@ def test_large_batch_insert(client):
         for i in range(batch_size):
             vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
-            records.append(VectorRecord(
-                id=f"item_{i}",
-                vector=vector.tolist(),
-                metadata={"batch": "large", "index": i}
-            ))
+            records.append(
+                VectorRecord(
+                    id=f"item_{i}",
+                    vector=vector.tolist(),
+                    metadata={"batch": "large", "index": i},
+                )
+            )
 
         start_time = time.time()
         result = client.insert_vectors(collection_id, records=records)
@@ -354,11 +359,11 @@ def test_search_with_different_top_k(client):
         for i in range(50):
             vector = np.array(embed_seed(i, dimension), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
-            records.append(VectorRecord(
-                id=f"vec_{i}",
-                vector=vector.tolist(),
-                metadata={"index": i}
-            ))
+            records.append(
+                VectorRecord(
+                    id=f"vec_{i}", vector=vector.tolist(), metadata={"index": i}
+                )
+            )
 
         client.insert_vectors(collection_id, records=records)
 
@@ -368,9 +373,7 @@ def test_search_with_different_top_k(client):
 
         for k in [1, 5, 10, 20]:
             results = client.search(
-                collection_id=collection_id,
-                vector=query_vector.tolist(),
-                top_k=k
+                collection_id=collection_id, vector=query_vector.tolist(), top_k=k
             )
 
             assert len(results) <= k, f"Should return at most {k} results"
@@ -402,9 +405,10 @@ def test_collection_with_different_dimensions(client):
             vector = np.array(embed_seed(i, dim), dtype=np.float32)
             vector = vector / np.linalg.norm(vector)
 
-            result = client.insert_vectors(collection_id, records=[
-                VectorRecord(id="vec_0", vector=vector.tolist(), metadata={})
-            ])
+            result = client.insert_vectors(
+                collection_id,
+                records=[VectorRecord(id="vec_0", vector=vector.tolist(), metadata={})],
+            )
 
             assert result.success
 

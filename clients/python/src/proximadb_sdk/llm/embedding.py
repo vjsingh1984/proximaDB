@@ -72,8 +72,7 @@ class EmbeddingService:
                 ) from e
             elif "openai" in str(e):
                 raise ImportError(
-                    "openai not installed. "
-                    "Install with: pip install openai"
+                    "openai not installed. " "Install with: pip install openai"
                 ) from e
             raise
 
@@ -81,7 +80,9 @@ class EmbeddingService:
         """Initialize sentence-transformers model."""
         try:
             # Try to use Victor's shared EmbeddingService
-            from victor.embeddings.service import EmbeddingService as VictorEmbeddingService
+            from victor.embeddings.service import (
+                EmbeddingService as VictorEmbeddingService,
+            )
 
             self._model = VictorEmbeddingService.get_instance(
                 model_name=self.config.model_name
@@ -99,7 +100,10 @@ class EmbeddingService:
     async def _init_openai(self) -> None:
         """Initialize OpenAI embedding client."""
         try:
-            from victor.vector_stores.models import OpenAIEmbeddingModel, EmbeddingModelConfig
+            from victor.vector_stores.models import (
+                OpenAIEmbeddingModel,
+                EmbeddingModelConfig,
+            )
 
             config = EmbeddingModelConfig(
                 model_type="openai",
@@ -117,6 +121,7 @@ class EmbeddingService:
 
             if not self.config.api_key:
                 import os
+
                 self.config.api_key = os.environ.get("OPENAI_API_KEY")
 
             self._model = AsyncOpenAI(api_key=self.config.api_key)
@@ -125,7 +130,10 @@ class EmbeddingService:
     async def _init_cohere(self) -> None:
         """Initialize Cohere embedding client."""
         try:
-            from victor.vector_stores.models import CohereEmbeddingModel, EmbeddingModelConfig
+            from victor.vector_stores.models import (
+                CohereEmbeddingModel,
+                EmbeddingModelConfig,
+            )
 
             config = EmbeddingModelConfig(
                 model_type="cohere",
@@ -142,6 +150,7 @@ class EmbeddingService:
 
             if not self.config.api_key:
                 import os
+
                 self.config.api_key = os.environ.get("COHERE_API_KEY")
 
             self._model = cohere.AsyncClient(api_key=self.config.api_key)
@@ -150,7 +159,10 @@ class EmbeddingService:
     async def _init_ollama(self) -> None:
         """Initialize Ollama embedding client."""
         try:
-            from victor.vector_stores.models import OllamaEmbeddingModel, EmbeddingModelConfig
+            from victor.vector_stores.models import (
+                OllamaEmbeddingModel,
+                EmbeddingModelConfig,
+            )
 
             config = EmbeddingModelConfig(
                 model_type="ollama",

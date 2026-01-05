@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loader import code_module, RESOURCES_DIR
 
 # Get document parsers from sys.modules (loader has already set it up)
-doc_parsers = sys.modules['proximadb.chunking_strategies.document_parsers']
+doc_parsers = sys.modules["proximadb.chunking_strategies.document_parsers"]
 
 # Get references
 BinaryType = doc_parsers.BinaryType
@@ -77,11 +77,7 @@ class TestBinarySymbol:
 
     def test_symbol_creation(self):
         """Test creating a binary symbol."""
-        sym = BinarySymbol(
-            name="main",
-            address="0x401000",
-            symbol_type="function"
-        )
+        sym = BinarySymbol(name="main", address="0x401000", symbol_type="function")
         assert sym.name == "main"
         assert sym.address == "0x401000"
         assert sym.symbol_type == "function"
@@ -96,7 +92,7 @@ class TestBinarySymbol:
             section=".text",
             decompiled_code="int process_data() { return 0; }",
             disassembly="push rbp; mov rbp, rsp",
-            metadata={"calls": ["malloc", "free"]}
+            metadata={"calls": ["malloc", "free"]},
         )
         assert sym.size == 256
         assert sym.section == ".text"
@@ -118,7 +114,7 @@ class TestBinaryAnalysis:
             imports=["kernel32.dll!CreateFileA"],
             exports=["DllMain"],
             strings=["Hello, World!"],
-            sections=[{"name": ".text", "size": "0x1000"}]
+            sections=[{"name": ".text", "size": "0x1000"}],
         )
         assert analysis.file_path == "/path/to/file.exe"
         assert analysis.binary_type == BinaryType.PE_EXE
@@ -135,7 +131,7 @@ class TestOCRResult:
             file_path="/path/to/document.pdf",
             document_type=DocumentType.PDF,
             text="Hello, World!",
-            pages=[{"page": 1, "text": "Hello, World!", "confidence": 95.5}]
+            pages=[{"page": 1, "text": "Hello, World!", "confidence": 95.5}],
         )
         assert result.file_path == "/path/to/document.pdf"
         assert result.document_type == DocumentType.PDF
@@ -150,7 +146,7 @@ class TestOCRResult:
             text="Sample text",
             pages=[],
             confidence=92.5,
-            language="eng"
+            language="eng",
         )
         assert result.confidence == 92.5
         assert result.language == "eng"
@@ -174,7 +170,7 @@ class TestBinaryParserConfig:
             min_string_length=8,
             max_strings=500,
             decompile_functions=False,
-            use_wine=False
+            use_wine=False,
         )
         assert config.preferred_tools == ["objdump"]
         assert config.min_string_length == 8
@@ -197,7 +193,7 @@ class TestOCRConfig:
             language="deu",
             pdf_dpi=150,
             preprocess_images=False,
-            page_segmentation_mode=6
+            page_segmentation_mode=6,
         )
         assert config.language == "deu"
         assert config.pdf_dpi == 150
@@ -283,15 +279,15 @@ class TestDetectBinaryType:
 
     def test_detect_elf_format(self):
         """Test detecting ELF format."""
-        with tempfile.NamedTemporaryFile(suffix='.so', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".so", delete=False) as f:
             # Write ELF magic header (for shared object)
-            f.write(b'\x7fELF')  # Magic
-            f.write(b'\x02')  # 64-bit
-            f.write(b'\x01')  # Little endian
-            f.write(b'\x01')  # ELF version
-            f.write(b'\x00' * 9)  # Padding
-            f.write(b'\x03\x00')  # e_type = ET_DYN (shared object)
-            f.write(b'\x00' * 100)  # Padding
+            f.write(b"\x7fELF")  # Magic
+            f.write(b"\x02")  # 64-bit
+            f.write(b"\x01")  # Little endian
+            f.write(b"\x01")  # ELF version
+            f.write(b"\x00" * 9)  # Padding
+            f.write(b"\x03\x00")  # e_type = ET_DYN (shared object)
+            f.write(b"\x00" * 100)  # Padding
             f.flush()
 
             result = detect_binary_type(f.name)
@@ -301,23 +297,25 @@ class TestDetectBinaryType:
 
     def test_detect_pe_format(self):
         """Test detecting PE format."""
-        with tempfile.NamedTemporaryFile(suffix='.exe', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             # Build a proper minimal PE header
             # DOS header needs PE offset at 0x3C (byte 60)
             dos_header = bytearray(64)
-            dos_header[0:2] = b'MZ'  # DOS magic at offset 0
-            dos_header[0x3C:0x40] = b'\x40\x00\x00\x00'  # PE offset = 0x40 (64) at offset 0x3C
+            dos_header[0:2] = b"MZ"  # DOS magic at offset 0
+            dos_header[0x3C:0x40] = (
+                b"\x40\x00\x00\x00"  # PE offset = 0x40 (64) at offset 0x3C
+            )
             f.write(bytes(dos_header))
 
             # PE signature at offset 0x40 (64)
-            f.write(b'PE\x00\x00')  # PE signature (4 bytes)
+            f.write(b"PE\x00\x00")  # PE signature (4 bytes)
 
             # COFF header (20 bytes): characteristics at offset PE+22 = 64+22 = 86
             # We need 18 bytes to get to characteristics
-            f.write(b'\x00' * 18)  # COFF header up to characteristics
-            f.write(b'\x00\x00')  # Characteristics = 0 (EXE, not DLL)
+            f.write(b"\x00" * 18)  # COFF header up to characteristics
+            f.write(b"\x00\x00")  # Characteristics = 0 (EXE, not DLL)
 
-            f.write(b'\x00' * 100)  # Padding
+            f.write(b"\x00" * 100)  # Padding
             f.flush()
 
             result = detect_binary_type(f.name)
@@ -339,10 +337,7 @@ class TestBinaryParser:
 
     def test_parser_with_config(self):
         """Test parser with custom config."""
-        config = BinaryParserConfig(
-            preferred_tools=["objdump"],
-            max_strings=100
-        )
+        config = BinaryParserConfig(preferred_tools=["objdump"], max_strings=100)
         parser = BinaryParser(config=config)
         assert parser.config.max_strings == 100
 
@@ -422,14 +417,11 @@ class TestFactoryFunctions:
 class TestMockedBinaryParsing:
     """Test binary parsing with mocked subprocess."""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_radare2_analysis_mocked(self, mock_run):
         """Test radare2 analysis with mocked subprocess."""
         # Mock subprocess to simulate radare2 output
-        mock_run.return_value = MagicMock(
-            stdout="arch x86_64\n",
-            returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout="arch x86_64\n", returncode=0)
 
         # Test would require more complete mocking of the adapter
         # For now, just verify the mock is called correctly
@@ -440,12 +432,11 @@ class TestMockedBinaryParsing:
 class TestMockedOCR:
     """Test OCR with mocked subprocess."""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_tesseract_ocr_mocked(self, mock_run):
         """Test tesseract OCR with mocked subprocess."""
         mock_run.return_value = MagicMock(
-            stdout="Hello, World!\nThis is OCR text.",
-            returncode=0
+            stdout="Hello, World!\nThis is OCR text.", returncode=0
         )
 
         parser = DocumentParser()

@@ -44,6 +44,7 @@ import re
 # COLUMN DATA TYPES
 # ============================================================================
 
+
 class ColumnDataType(str, Enum):
     """Supported column data types for ProximaRecord.
 
@@ -55,6 +56,7 @@ class ColumnDataType(str, Enum):
         schema.add_column("name", ColumnDataType.TEXT)
         schema.add_column("price", ColumnDataType.FLOAT)
     """
+
     TEXT = "text"
     TEXT_LARGE = "text_large"
     INTEGER = "integer"
@@ -79,6 +81,7 @@ class ColumnDataType(str, Enum):
 # TEXT STORAGE
 # ============================================================================
 
+
 class TextStorageStrategy(str, Enum):
     """Storage strategy for TEXT columns.
 
@@ -95,9 +98,10 @@ class TextStorageStrategy(str, Enum):
             storage_hint=TextStorageStrategy.CHUNKED
         )
     """
-    INLINE = "inline"      # < 4KB, store in main column
-    CHUNKED = "chunked"    # 4KB - 1MB, split into chunks with embeddings
-    SIDECAR = "sidecar"    # > 1MB, separate sidecar file
+
+    INLINE = "inline"  # < 4KB, store in main column
+    CHUNKED = "chunked"  # 4KB - 1MB, split into chunks with embeddings
+    SIDECAR = "sidecar"  # > 1MB, separate sidecar file
     ADAPTIVE = "adaptive"  # Auto-select based on size
 
 
@@ -119,16 +123,16 @@ class TextField(BaseModel):
             storage_hint=TextStorageStrategy.ADAPTIVE
         )
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(..., min_length=1, description="Field name")
     content: str = Field(..., description="Text content")
     storage_hint: TextStorageStrategy = Field(
-        default=TextStorageStrategy.ADAPTIVE,
-        description="Storage strategy hint"
+        default=TextStorageStrategy.ADAPTIVE, description="Storage strategy hint"
     )
 
-    @field_validator('content')
+    @field_validator("content")
     @classmethod
     def validate_content(cls, v: str) -> str:
         """Validate text content size (max 10MB)."""
@@ -136,7 +140,7 @@ class TextField(BaseModel):
             raise ValueError("Text content exceeds 10MB limit")
         return v
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Validate field name is not empty."""
@@ -203,64 +207,56 @@ class TextColumnConfig(BaseModel):
             enable_full_text_search=True
         )
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
     column_name: str = Field(
-        ...,
-        min_length=1,
-        max_length=256,
-        description="Name of the TEXT column"
+        ..., min_length=1, max_length=256, description="Name of the TEXT column"
     )
     strategy: TextStorageStrategy = Field(
         default=TextStorageStrategy.ADAPTIVE,
-        description="Storage strategy for text content"
+        description="Storage strategy for text content",
     )
     chunk_size: int = Field(
         default=512,
         ge=64,
         le=8192,
-        description="Target chunk size in tokens (for CHUNKED strategy)"
+        description="Target chunk size in tokens (for CHUNKED strategy)",
     )
     chunk_overlap: int = Field(
         default=50,
         ge=0,
         le=1024,
-        description="Overlap between chunks in tokens (for CHUNKED strategy)"
+        description="Overlap between chunks in tokens (for CHUNKED strategy)",
     )
     enable_ngram_bloom: bool = Field(
         default=False,
-        description="Enable n-gram bloom filter for fast substring search"
+        description="Enable n-gram bloom filter for fast substring search",
     )
     ngram_size: int = Field(
-        default=3,
-        ge=2,
-        le=8,
-        description="N-gram size for bloom filter"
+        default=3, ge=2, le=8, description="N-gram size for bloom filter"
     )
     enable_full_text_search: bool = Field(
-        default=False,
-        description="Enable full-text search indexing"
+        default=False, description="Enable full-text search indexing"
     )
     embedding_model: Optional[str] = Field(
         default=None,
-        description="Embedding model name for CHUNKED strategy (e.g., 'text-embedding-3-small')"
+        description="Embedding model name for CHUNKED strategy (e.g., 'text-embedding-3-small')",
     )
     max_content_size_bytes: int = Field(
         default=10 * 1024 * 1024,  # 10MB
         ge=1024,
         le=100 * 1024 * 1024,  # 100MB max
-        description="Maximum allowed content size in bytes"
+        description="Maximum allowed content size in bytes",
     )
     compression_enabled: bool = Field(
-        default=False,
-        description="Enable compression for stored text"
+        default=False, description="Enable compression for stored text"
     )
     language: Optional[str] = Field(
-        default=None,
-        description="Language hint for text processing (ISO 639-1 code)"
+        default=None, description="Language hint for text processing (ISO 639-1 code)"
     )
 
-    @field_validator('column_name')
+    @field_validator("column_name")
     @classmethod
     def validate_column_name(cls, v: str) -> str:
         """Validate column name format."""
@@ -268,21 +264,25 @@ class TextColumnConfig(BaseModel):
             raise ValueError("Column name cannot be empty")
         v = v.strip()
         # Validate column name format (alphanumeric, underscores, no leading digits)
-        if not v[0].isalpha() and v[0] != '_':
+        if not v[0].isalpha() and v[0] != "_":
             raise ValueError("Column name must start with a letter or underscore")
-        if not all(c.isalnum() or c == '_' for c in v):
-            raise ValueError("Column name can only contain letters, numbers, and underscores")
+        if not all(c.isalnum() or c == "_" for c in v):
+            raise ValueError(
+                "Column name can only contain letters, numbers, and underscores"
+            )
         return v
 
-    @field_validator('chunk_overlap')
+    @field_validator("chunk_overlap")
     @classmethod
     def validate_chunk_overlap(cls, v: int, info) -> int:
         """Validate chunk overlap is less than chunk size."""
         # Access chunk_size from the data being validated
-        if hasattr(info, 'data') and 'chunk_size' in info.data:
-            chunk_size = info.data['chunk_size']
+        if hasattr(info, "data") and "chunk_size" in info.data:
+            chunk_size = info.data["chunk_size"]
             if v >= chunk_size:
-                raise ValueError(f"Chunk overlap ({v}) must be less than chunk size ({chunk_size})")
+                raise ValueError(
+                    f"Chunk overlap ({v}) must be less than chunk size ({chunk_size})"
+                )
         return v
 
     def to_dict(self) -> dict:
@@ -300,7 +300,7 @@ class TextColumnConfig(BaseModel):
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         embedding_model: Optional[str] = None,
-        enable_ngram_bloom: bool = True
+        enable_ngram_bloom: bool = True,
     ) -> "TextColumnConfig":
         """Create a TEXT column configuration optimized for RAG workloads.
 
@@ -331,14 +331,12 @@ class TextColumnConfig(BaseModel):
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             enable_ngram_bloom=enable_ngram_bloom,
-            embedding_model=embedding_model
+            embedding_model=embedding_model,
         )
 
     @classmethod
     def for_short_text(
-        cls,
-        column_name: str,
-        enable_full_text_search: bool = False
+        cls, column_name: str, enable_full_text_search: bool = False
     ) -> "TextColumnConfig":
         """Create a TEXT column configuration for short text content.
 
@@ -363,7 +361,7 @@ class TextColumnConfig(BaseModel):
         return cls(
             column_name=column_name,
             strategy=TextStorageStrategy.INLINE,
-            enable_full_text_search=enable_full_text_search
+            enable_full_text_search=enable_full_text_search,
         )
 
     @classmethod
@@ -371,7 +369,7 @@ class TextColumnConfig(BaseModel):
         cls,
         column_name: str,
         compression_enabled: bool = True,
-        language: Optional[str] = None
+        language: Optional[str] = None,
     ) -> "TextColumnConfig":
         """Create a TEXT column configuration for large documents.
 
@@ -398,15 +396,12 @@ class TextColumnConfig(BaseModel):
             strategy=TextStorageStrategy.SIDECAR,
             compression_enabled=compression_enabled,
             language=language,
-            max_content_size_bytes=100 * 1024 * 1024  # 100MB for large docs
+            max_content_size_bytes=100 * 1024 * 1024,  # 100MB for large docs
         )
 
     @classmethod
     def for_hybrid_search(
-        cls,
-        column_name: str,
-        chunk_size: int = 512,
-        ngram_size: int = 3
+        cls, column_name: str, chunk_size: int = 512, ngram_size: int = 3
     ) -> "TextColumnConfig":
         """Create a TEXT column configuration for hybrid search.
 
@@ -435,13 +430,14 @@ class TextColumnConfig(BaseModel):
             chunk_size=chunk_size,
             enable_ngram_bloom=True,
             ngram_size=ngram_size,
-            enable_full_text_search=True
+            enable_full_text_search=True,
         )
 
 
 # ============================================================================
 # SCHEMA ENFORCEMENT
 # ============================================================================
+
 
 class SchemaEnforcement(str, Enum):
     """Schema enforcement mode for collections.
@@ -457,14 +453,16 @@ class SchemaEnforcement(str, Enum):
             allow_additional_fields=True
         )
     """
-    STRICT = "strict"      # All columns must match schema
+
+    STRICT = "strict"  # All columns must match schema
     FLEXIBLE = "flexible"  # Schema on read
-    HYBRID = "hybrid"      # Core columns enforced, extras allowed
+    HYBRID = "hybrid"  # Core columns enforced, extras allowed
 
 
 # ============================================================================
 # TYPED VALUES
 # ============================================================================
+
 
 class TypedValue(BaseModel):
     """Union type for typed field values.
@@ -484,6 +482,7 @@ class TypedValue(BaseModel):
         # Using constructor directly
         value = TypedValue(value_type=ColumnDataType.TEXT, value="hello")
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
     value_type: ColumnDataType = Field(..., description="The data type of the value")
@@ -593,7 +592,7 @@ class TypedValue(BaseModel):
         Example:
             id = TypedValue.uuid("550e8400-e29b-41d4-a716-446655440000")
         """
-        uuid_pattern = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        uuid_pattern = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
         if not re.match(uuid_pattern, value):
             raise ValueError(f"Invalid UUID format: {value}")
         return cls(value_type=ColumnDataType.UUID, value=value)
@@ -619,7 +618,9 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.TIMESTAMP, value=value)
 
     @classmethod
-    def timestamp_tz(cls, value: Union[datetime, int], timezone: Optional[str] = None) -> "TypedValue":
+    def timestamp_tz(
+        cls, value: Union[datetime, int], timezone: Optional[str] = None
+    ) -> "TypedValue":
         """Create a TIMESTAMP_TZ typed value with timezone.
 
         Args:
@@ -631,7 +632,10 @@ class TypedValue(BaseModel):
         """
         if isinstance(value, datetime):
             value = int(value.timestamp() * 1000)
-        return cls(value_type=ColumnDataType.TIMESTAMP_TZ, value={"timestamp": value, "timezone": timezone})
+        return cls(
+            value_type=ColumnDataType.TIMESTAMP_TZ,
+            value={"timestamp": value, "timezone": timezone},
+        )
 
     @classmethod
     def date(cls, value: Union[datetime, str]) -> "TypedValue":
@@ -672,7 +676,8 @@ class TypedValue(BaseModel):
             TypedValue with BINARY type (base64 encoded for serialization)
         """
         import base64
-        encoded = base64.b64encode(value).decode('ascii')
+
+        encoded = base64.b64encode(value).decode("ascii")
         return cls(value_type=ColumnDataType.BINARY, value=encoded)
 
     @classmethod
@@ -761,6 +766,7 @@ class TypedValue(BaseModel):
 # PROXIMA RECORD
 # ============================================================================
 
+
 class ProximaRecord(BaseModel):
     """ProximaRecord - the new unified record type for ProximaDB v2.
 
@@ -805,49 +811,47 @@ class ProximaRecord(BaseModel):
             .set_typed("category", TypedValue.text("science"))
             .add_text("abstract", "Research paper abstract..."))
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
-    id: Optional[str] = Field(default=None, description="Record ID (auto-generated if not provided)")
+    id: Optional[str] = Field(
+        default=None, description="Record ID (auto-generated if not provided)"
+    )
     vector: List[float] = Field(..., description="Embedding vector (required)")
-    vector_dimension: Optional[int] = Field(default=None, description="Vector dimension hint")
+    vector_dimension: Optional[int] = Field(
+        default=None, description="Vector dimension hint"
+    )
     typed_fields: Dict[str, TypedValue] = Field(
-        default_factory=dict,
-        description="Strongly-typed field values"
+        default_factory=dict, description="Strongly-typed field values"
     )
     flexible_fields: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Untyped field values (for HYBRID schema mode)"
+        description="Untyped field values (for HYBRID schema mode)",
     )
     text_fields: List[TextField] = Field(
-        default_factory=list,
-        description="Text fields with storage hints"
+        default_factory=list, description="Text fields with storage hints"
     )
     timestamp_ms: int = Field(
         default_factory=lambda: int(time.time() * 1000),
-        description="Creation timestamp in milliseconds"
+        description="Creation timestamp in milliseconds",
     )
     updated_at_ms: Optional[int] = Field(
-        default=None,
-        description="Last update timestamp in milliseconds"
+        default=None, description="Last update timestamp in milliseconds"
     )
     expires_at_ms: Optional[int] = Field(
-        default=None,
-        description="TTL expiration timestamp in milliseconds"
+        default=None, description="TTL expiration timestamp in milliseconds"
     )
     version: Optional[int] = Field(
-        default=None,
-        description="Version number for optimistic concurrency"
+        default=None, description="Version number for optimistic concurrency"
     )
     source: Optional[str] = Field(
-        default=None,
-        description="Original content that generated this vector"
+        default=None, description="Original content that generated this vector"
     )
     schema_id: Optional[str] = Field(
-        default=None,
-        description="Schema ID for validation"
+        default=None, description="Schema ID for validation"
     )
 
-    @field_validator('vector')
+    @field_validator("vector")
     @classmethod
     def validate_vector(cls, v: List[float]) -> List[float]:
         """Validate that vector is non-empty."""
@@ -859,7 +863,7 @@ class ProximaRecord(BaseModel):
         self,
         name: str,
         content: str,
-        storage_hint: TextStorageStrategy = TextStorageStrategy.ADAPTIVE
+        storage_hint: TextStorageStrategy = TextStorageStrategy.ADAPTIVE,
     ) -> "ProximaRecord":
         """Add a text field to the record.
 
@@ -874,11 +878,9 @@ class ProximaRecord(BaseModel):
         Example:
             record.add_text("description", "Product description text")
         """
-        self.text_fields.append(TextField(
-            name=name,
-            content=content,
-            storage_hint=storage_hint
-        ))
+        self.text_fields.append(
+            TextField(name=name, content=content, storage_hint=storage_hint)
+        )
         return self
 
     def set_typed(self, name: str, value: TypedValue) -> "ProximaRecord":
@@ -973,6 +975,7 @@ class ProximaRecord(BaseModel):
 # SCHEMA DEFINITION
 # ============================================================================
 
+
 class ColumnDefinition(BaseModel):
     """Column definition for schema.
 
@@ -999,6 +1002,7 @@ class ColumnDefinition(BaseModel):
             min_value=0.0
         )
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(..., min_length=1, description="Column name")
@@ -1007,9 +1011,15 @@ class ColumnDefinition(BaseModel):
     indexed: bool = Field(default=False, description="Whether column is indexed")
     filterable: bool = Field(default=True, description="Whether filtering is supported")
     max_length: Optional[int] = Field(default=None, description="Max length for TEXT")
-    min_value: Optional[float] = Field(default=None, description="Min value for numerics")
-    max_value: Optional[float] = Field(default=None, description="Max value for numerics")
-    regex_pattern: Optional[str] = Field(default=None, description="Regex for TEXT validation")
+    min_value: Optional[float] = Field(
+        default=None, description="Min value for numerics"
+    )
+    max_value: Optional[float] = Field(
+        default=None, description="Max value for numerics"
+    )
+    regex_pattern: Optional[str] = Field(
+        default=None, description="Regex for TEXT validation"
+    )
     default_value: Optional[Any] = Field(default=None, description="Default value")
 
 
@@ -1034,32 +1044,29 @@ class RecordSchema(BaseModel):
             .add_column("price", ColumnDataType.FLOAT, nullable=False)
             .add_text_column_config(TextColumnConfig.for_rag("content")))
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_id: Optional[str] = Field(default=None, description="Unique schema identifier")
+    schema_id: Optional[str] = Field(
+        default=None, description="Unique schema identifier"
+    )
     schema_version: str = Field(default="1.0", description="Schema version")
     columns: List[ColumnDefinition] = Field(
-        default_factory=list,
-        description="Column definitions"
+        default_factory=list, description="Column definitions"
     )
     text_columns: List["TextColumnConfig"] = Field(
         default_factory=list,
-        description="TEXT column configurations with storage strategies"
+        description="TEXT column configurations with storage strategies",
     )
     enforcement: SchemaEnforcement = Field(
-        default=SchemaEnforcement.HYBRID,
-        description="Schema enforcement mode"
+        default=SchemaEnforcement.HYBRID, description="Schema enforcement mode"
     )
     allow_additional_fields: bool = Field(
-        default=True,
-        description="Allow fields not in schema (HYBRID mode)"
+        default=True, description="Allow fields not in schema (HYBRID mode)"
     )
 
     def add_column(
-        self,
-        name: str,
-        data_type: ColumnDataType,
-        **kwargs: Any
+        self, name: str, data_type: ColumnDataType, **kwargs: Any
     ) -> "RecordSchema":
         """Add a column to the schema.
 
@@ -1078,10 +1085,7 @@ class RecordSchema(BaseModel):
         return self
 
     def add_text_column(
-        self,
-        name: str,
-        max_length: int = 65536,
-        **kwargs: Any
+        self, name: str, max_length: int = 65536, **kwargs: Any
     ) -> "RecordSchema":
         """Add a TEXT column with default settings.
 
@@ -1094,10 +1098,7 @@ class RecordSchema(BaseModel):
             Self for method chaining
         """
         return self.add_column(
-            name,
-            ColumnDataType.TEXT,
-            max_length=max_length,
-            **kwargs
+            name, ColumnDataType.TEXT, max_length=max_length, **kwargs
         )
 
     def add_integer_column(self, name: str, **kwargs: Any) -> "RecordSchema":
@@ -1172,10 +1173,7 @@ class RecordSchema(BaseModel):
         """
         return self.add_column(name, ColumnDataType.UUID, **kwargs)
 
-    def add_text_column_config(
-        self,
-        config: "TextColumnConfig"
-    ) -> "RecordSchema":
+    def add_text_column_config(self, config: "TextColumnConfig") -> "RecordSchema":
         """Add a TEXT column with advanced storage configuration.
 
         This method adds a TEXT column using a TextColumnConfig object
@@ -1202,12 +1200,18 @@ class RecordSchema(BaseModel):
             )
         """
         # Also add to columns list for schema validation
-        self.columns.append(ColumnDefinition(
-            name=config.column_name,
-            data_type=ColumnDataType.TEXT_LARGE if config.strategy != TextStorageStrategy.INLINE else ColumnDataType.TEXT,
-            nullable=True,
-            filterable=config.enable_full_text_search
-        ))
+        self.columns.append(
+            ColumnDefinition(
+                name=config.column_name,
+                data_type=(
+                    ColumnDataType.TEXT_LARGE
+                    if config.strategy != TextStorageStrategy.INLINE
+                    else ColumnDataType.TEXT
+                ),
+                nullable=True,
+                filterable=config.enable_full_text_search,
+            )
+        )
         # Store the full configuration
         self.text_columns.append(config)
         return self
@@ -1218,7 +1222,7 @@ class RecordSchema(BaseModel):
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         embedding_model: Optional[str] = None,
-        enable_ngram_bloom: bool = True
+        enable_ngram_bloom: bool = True,
     ) -> "RecordSchema":
         """Add a TEXT column optimized for RAG (Retrieval-Augmented Generation).
 
@@ -1245,7 +1249,7 @@ class RecordSchema(BaseModel):
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             embedding_model=embedding_model,
-            enable_ngram_bloom=enable_ngram_bloom
+            enable_ngram_bloom=enable_ngram_bloom,
         )
         return self.add_text_column_config(config)
 
@@ -1253,7 +1257,7 @@ class RecordSchema(BaseModel):
         self,
         name: str,
         compression_enabled: bool = True,
-        language: Optional[str] = None
+        language: Optional[str] = None,
     ) -> "RecordSchema":
         """Add a TEXT column for large documents (SIDECAR storage).
 
@@ -1274,9 +1278,7 @@ class RecordSchema(BaseModel):
                 .add_text_column("filename", max_length=256))
         """
         config = TextColumnConfig.for_large_documents(
-            column_name=name,
-            compression_enabled=compression_enabled,
-            language=language
+            column_name=name, compression_enabled=compression_enabled, language=language
         )
         return self.add_text_column_config(config)
 
@@ -1354,6 +1356,7 @@ class RecordSchema(BaseModel):
 # FILTER DSL
 # ============================================================================
 
+
 class FilterOperator(str, Enum):
     """Filter comparison operators for v2 typed filters.
 
@@ -1364,6 +1367,7 @@ class FilterOperator(str, Enum):
             value=10.0
         )
     """
+
     EQ = "eq"
     NE = "ne"
     GT = "gt"
@@ -1406,12 +1410,15 @@ class TypedFilterCondition(BaseModel):
             value_upper=100.0
         )
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
     field_name: str = Field(..., description="Field name to filter on")
     operator: FilterOperator = Field(..., description="Comparison operator")
     value: Any = Field(..., description="Value to compare against")
-    value_upper: Optional[Any] = Field(default=None, description="Upper bound for BETWEEN")
+    value_upper: Optional[Any] = Field(
+        default=None, description="Upper bound for BETWEEN"
+    )
 
 
 class FilterBuilderV2:
@@ -1458,11 +1465,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.EQ,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.EQ, value=value
+            )
+        )
         return self
 
     def ne(self, value: Any) -> "FilterBuilderV2":
@@ -1474,11 +1481,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.NE,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.NE, value=value
+            )
+        )
         return self
 
     def gt(self, value: Any) -> "FilterBuilderV2":
@@ -1490,11 +1497,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.GT,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.GT, value=value
+            )
+        )
         return self
 
     def gte(self, value: Any) -> "FilterBuilderV2":
@@ -1506,11 +1513,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.GTE,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.GTE, value=value
+            )
+        )
         return self
 
     def lt(self, value: Any) -> "FilterBuilderV2":
@@ -1522,11 +1529,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.LT,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.LT, value=value
+            )
+        )
         return self
 
     def lte(self, value: Any) -> "FilterBuilderV2":
@@ -1538,11 +1545,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.LTE,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.LTE, value=value
+            )
+        )
         return self
 
     def contains(self, value: str) -> "FilterBuilderV2":
@@ -1554,11 +1561,13 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.CONTAINS,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field,
+                operator=FilterOperator.CONTAINS,
+                value=value,
+            )
+        )
         return self
 
     def starts_with(self, value: str) -> "FilterBuilderV2":
@@ -1570,11 +1579,13 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.STARTS_WITH,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field,
+                operator=FilterOperator.STARTS_WITH,
+                value=value,
+            )
+        )
         return self
 
     def ends_with(self, value: str) -> "FilterBuilderV2":
@@ -1586,11 +1597,13 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.ENDS_WITH,
-            value=value
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field,
+                operator=FilterOperator.ENDS_WITH,
+                value=value,
+            )
+        )
         return self
 
     def between(self, lower: Any, upper: Any) -> "FilterBuilderV2":
@@ -1603,12 +1616,14 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.BETWEEN,
-            value=lower,
-            value_upper=upper
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field,
+                operator=FilterOperator.BETWEEN,
+                value=lower,
+                value_upper=upper,
+            )
+        )
         return self
 
     def in_(self, values: List[Any]) -> "FilterBuilderV2":
@@ -1620,11 +1635,11 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.IN,
-            value=values
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field, operator=FilterOperator.IN, value=values
+            )
+        )
         return self
 
     def is_null(self) -> "FilterBuilderV2":
@@ -1633,11 +1648,13 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.IS_NULL,
-            value=None
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field,
+                operator=FilterOperator.IS_NULL,
+                value=None,
+            )
+        )
         return self
 
     def is_not_null(self) -> "FilterBuilderV2":
@@ -1646,11 +1663,13 @@ class FilterBuilderV2:
         Returns:
             Self for method chaining
         """
-        self._conditions.append(TypedFilterCondition(
-            field_name=self._current_field,
-            operator=FilterOperator.IS_NOT_NULL,
-            value=None
-        ))
+        self._conditions.append(
+            TypedFilterCondition(
+                field_name=self._current_field,
+                operator=FilterOperator.IS_NOT_NULL,
+                value=None,
+            )
+        )
         return self
 
     def and_(self, field_name: str) -> "FilterBuilderV2":
@@ -1686,6 +1705,7 @@ class FilterBuilderV2:
 # SEARCH REQUEST
 # ============================================================================
 
+
 class SearchRequestV2(BaseModel):
     """Search request for v2 API with typed filters.
 
@@ -1709,26 +1729,22 @@ class SearchRequestV2(BaseModel):
             .with_filter(FilterBuilderV2("category").eq("electronics"))
             .with_text())
     """
+
     model_config = ConfigDict(populate_by_name=True)
 
     vector: List[float] = Field(..., description="Query vector")
     top_k: int = Field(default=10, ge=1, description="Number of results to return")
     filters: List[TypedFilterCondition] = Field(
-        default_factory=list,
-        description="Typed filter conditions"
+        default_factory=list, description="Typed filter conditions"
     )
     include_text: bool = Field(
-        default=False,
-        description="Include text fields in results"
+        default=False, description="Include text fields in results"
     )
     include_vectors: bool = Field(
-        default=False,
-        description="Include vectors in results"
+        default=False, description="Include vectors in results"
     )
     ef_search: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="HNSW ef_search parameter"
+        default=None, ge=1, description="HNSW ef_search parameter"
     )
 
     @classmethod
@@ -1809,10 +1825,11 @@ FilterBuilder = FilterBuilderV2
 # CONVENIENCE FUNCTIONS FOR TEXT COLUMNS
 # ============================================================================
 
+
 def create_text_column_schema(
     text_columns: List[TextColumnConfig],
     additional_columns: Optional[List[ColumnDefinition]] = None,
-    enforcement: SchemaEnforcement = SchemaEnforcement.HYBRID
+    enforcement: SchemaEnforcement = SchemaEnforcement.HYBRID,
 ) -> RecordSchema:
     """Create a RecordSchema with TEXT column configurations.
 
@@ -1863,9 +1880,7 @@ def create_text_column_schema(
 
 
 def text_column(
-    name: str,
-    strategy: TextStorageStrategy = TextStorageStrategy.ADAPTIVE,
-    **kwargs
+    name: str, strategy: TextStorageStrategy = TextStorageStrategy.ADAPTIVE, **kwargs
 ) -> TextColumnConfig:
     """Create a TEXT column configuration with a simple function call.
 

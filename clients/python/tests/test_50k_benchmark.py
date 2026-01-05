@@ -25,6 +25,7 @@ from typing import List, Set, Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import proximadb
+
 proximadb.init_logging("warn")
 from proximadb import ProximaDB as EmbeddedProximaDB
 
@@ -41,6 +42,7 @@ NUM_QUERIES = 10
 @dataclass
 class BenchmarkResult:
     """Result container for benchmark runs."""
+
     engine: str
     vector_count: int
     insert_time_secs: float
@@ -62,9 +64,7 @@ def generate_vectors(count: int, dimension: int, seed: int = 42) -> np.ndarray:
 
 
 def compute_exact_neighbors(
-    vectors: np.ndarray,
-    query_vectors: np.ndarray,
-    top_k: int
+    vectors: np.ndarray, query_vectors: np.ndarray, top_k: int
 ) -> List[Set[str]]:
     """Compute ground truth nearest neighbors using brute force."""
     exact_neighbors = []
@@ -76,9 +76,7 @@ def compute_exact_neighbors(
 
 
 def run_engine_benchmark(
-    engine: str,
-    vector_count: int,
-    temp_dir: str
+    engine: str, vector_count: int, temp_dir: str
 ) -> BenchmarkResult:
     """Run benchmark for a single engine."""
     collection_name = f"bench_{engine}_{vector_count}"
@@ -133,11 +131,16 @@ def run_engine_benchmark(
             recalls.append(recall)
 
         avg_latency = sum(latencies) / len(latencies)
-        p99_latency = sorted(latencies)[int(len(latencies) * 0.99)] if len(latencies) >= 10 else max(latencies)
+        p99_latency = (
+            sorted(latencies)[int(len(latencies) * 0.99)]
+            if len(latencies) >= 10
+            else max(latencies)
+        )
         avg_recall = sum(recalls) / len(recalls)
 
         # Calculate rating
         import math
+
         expected_latency = 1.0 + 5.0 * math.log10(vector_count)
         latency_ratio = avg_latency / expected_latency
 
@@ -161,7 +164,7 @@ def run_engine_benchmark(
             avg_search_latency_ms=avg_latency,
             p99_search_latency_ms=p99_latency,
             avg_recall=avg_recall,
-            rating=rating
+            rating=rating,
         )
 
     except Exception as e:
@@ -175,13 +178,14 @@ def run_engine_benchmark(
             p99_search_latency_ms=0,
             avg_recall=0,
             rating="ERROR",
-            error=str(e)[:100]
+            error=str(e)[:100],
         )
 
 
 # ============================================================================
 # PYTEST FIXTURES AND TEST CLASSES
 # ============================================================================
+
 
 @pytest.fixture
 def temp_data_dir():
@@ -217,7 +221,7 @@ class TestAllEnginesQuickSmoke:
 
         # Assertions
         assert len(results) > 0, f"{engine} returned no results"
-        assert all(hasattr(r, 'id') for r in results), f"{engine} results missing id"
+        assert all(hasattr(r, "id") for r in results), f"{engine} results missing id"
 
         db.close()
 
@@ -254,8 +258,12 @@ class TestAllEngines50kBenchmark:
 
         # Assertions
         assert result.error is None, f"{engine} had error: {result.error}"
-        assert result.avg_recall >= 0.5, f"{engine} recall too low: {result.avg_recall*100:.1f}%"
-        assert result.avg_search_latency_ms < 5000, f"{engine} latency too high: {result.avg_search_latency_ms:.1f}ms"
+        assert (
+            result.avg_recall >= 0.5
+        ), f"{engine} recall too low: {result.avg_recall*100:.1f}%"
+        assert (
+            result.avg_search_latency_ms < 5000
+        ), f"{engine} latency too high: {result.avg_search_latency_ms:.1f}ms"
 
     def test_all_engines_comparison_report(self, temp_data_dir: str):
         """Run all engines and generate comparison report."""
@@ -271,18 +279,26 @@ class TestAllEngines50kBenchmark:
         print(f"{'50K VECTOR BENCHMARK SUMMARY':^80}")
         print(f"{'='*80}")
 
-        print(f"\n{'Engine':<10} {'Recall@10':>10} {'Avg Latency':>12} {'Insert QPS':>12} {'Rating':<12}")
-        print("-"*60)
+        print(
+            f"\n{'Engine':<10} {'Recall@10':>10} {'Avg Latency':>12} {'Insert QPS':>12} {'Rating':<12}"
+        )
+        print("-" * 60)
 
         for r in results:
             if r.error:
-                print(f"{r.engine.upper():<10} {'ERROR':>10} {'-':>12} {'-':>12} {r.error[:20]:<12}")
+                print(
+                    f"{r.engine.upper():<10} {'ERROR':>10} {'-':>12} {'-':>12} {r.error[:20]:<12}"
+                )
             else:
-                print(f"{r.engine.upper():<10} {r.avg_recall*100:>9.1f}% {r.avg_search_latency_ms:>10.2f}ms {r.insert_qps:>11.0f}/s {r.rating:<12}")
+                print(
+                    f"{r.engine.upper():<10} {r.avg_recall*100:>9.1f}% {r.avg_search_latency_ms:>10.2f}ms {r.insert_qps:>11.0f}/s {r.rating:<12}"
+                )
 
         # Assert overall success
         successful = [r for r in results if r.error is None]
-        assert len(successful) >= 4, f"Expected at least 4 engines to succeed, got {len(successful)}"
+        assert (
+            len(successful) >= 4
+        ), f"Expected at least 4 engines to succeed, got {len(successful)}"
 
 
 class TestRecallAccuracy:
@@ -299,26 +315,28 @@ class TestRecallAccuracy:
 
         # At smaller scales, expect higher recall
         min_recall = 0.7 if vector_count <= 5000 else 0.5
-        assert result.avg_recall >= min_recall, \
-            f"{engine} at {vector_count} vectors: recall {result.avg_recall*100:.1f}% < {min_recall*100:.1f}%"
+        assert (
+            result.avg_recall >= min_recall
+        ), f"{engine} at {vector_count} vectors: recall {result.avg_recall*100:.1f}% < {min_recall*100:.1f}%"
 
 
 # ============================================================================
 # STANDALONE EXECUTION
 # ============================================================================
 
+
 def main():
     """Run benchmark directly (not through pytest)."""
-    print("="*80)
+    print("=" * 80)
     print("  50K Vector Benchmark - All 6 Engines")
-    print("="*80)
+    print("=" * 80)
 
     results = []
 
     for engine in ENGINES:
         print(f"\n{'='*60}")
         print(f"  ENGINE: {engine.upper()}")
-        print("="*60)
+        print("=" * 60)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             result = run_engine_benchmark(engine, FULL_VECTOR_COUNT, temp_dir)
@@ -335,16 +353,20 @@ def main():
     # Summary
     print(f"\n{'='*80}")
     print(f"  FINAL SUMMARY")
-    print("="*80)
+    print("=" * 80)
 
-    print(f"\n{'Engine':<10} {'Recall':>10} {'Latency':>12} {'Insert QPS':>12} {'Rating':<12}")
-    print("-"*60)
+    print(
+        f"\n{'Engine':<10} {'Recall':>10} {'Latency':>12} {'Insert QPS':>12} {'Rating':<12}"
+    )
+    print("-" * 60)
 
     for r in results:
         if r.error:
             print(f"{r.engine.upper():<10} {'ERROR':>10}")
         else:
-            print(f"{r.engine.upper():<10} {r.avg_recall*100:>9.1f}% {r.avg_search_latency_ms:>10.2f}ms {r.insert_qps:>11.0f}/s {r.rating:<12}")
+            print(
+                f"{r.engine.upper():<10} {r.avg_recall*100:>9.1f}% {r.avg_search_latency_ms:>10.2f}ms {r.insert_qps:>11.0f}/s {r.rating:<12}"
+            )
 
 
 if __name__ == "__main__":

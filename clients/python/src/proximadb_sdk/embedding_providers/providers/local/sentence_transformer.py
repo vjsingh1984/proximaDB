@@ -21,7 +21,7 @@ SENTENCE_TRANSFORMER_MODELS = {
         mteb_score=63.3,
         languages="en",
         description="Excellent general-purpose model",
-        use_case="General semantic similarity and search"
+        use_case="General semantic similarity and search",
     ),
     "all-MiniLM-L6-v2": ModelMetadata(
         name="all-MiniLM-L6-v2",
@@ -31,7 +31,7 @@ SENTENCE_TRANSFORMER_MODELS = {
         mteb_score=58.8,
         languages="en",
         description="Fast and compact",
-        use_case="High-throughput, resource-constrained environments"
+        use_case="High-throughput, resource-constrained environments",
     ),
     "all-MiniLM-L12-v2": ModelMetadata(
         name="all-MiniLM-L12-v2",
@@ -41,7 +41,7 @@ SENTENCE_TRANSFORMER_MODELS = {
         mteb_score=59.8,
         languages="en",
         description="Better than L6, still fast",
-        use_case="Balance of speed and quality"
+        use_case="Balance of speed and quality",
     ),
     "paraphrase-MiniLM-L6-v2": ModelMetadata(
         name="paraphrase-MiniLM-L6-v2",
@@ -50,8 +50,8 @@ SENTENCE_TRANSFORMER_MODELS = {
         provider_type="sentence-transformer",
         languages="en",
         description="Optimized for paraphrase detection",
-        use_case="Paraphrase identification, duplicate detection"
-    )
+        use_case="Paraphrase identification, duplicate detection",
+    ),
 }
 
 
@@ -59,12 +59,9 @@ SENTENCE_TRANSFORMER_MODELS = {
     name="sentence-transformer",
     models=SENTENCE_TRANSFORMER_MODELS,
     aliases=["st", "sbert"],
-    description="Generic wrapper for any sentence-transformers model"
+    description="Generic wrapper for any sentence-transformers model",
 )
-class SentenceTransformerProvider(
-    SentenceTransformerMixin,
-    BaseEmbeddingProvider
-):
+class SentenceTransformerProvider(SentenceTransformerMixin, BaseEmbeddingProvider):
     """
     Generic SentenceTransformer provider
 
@@ -106,5 +103,5 @@ class SentenceTransformerProvider(
         return ProviderConfig(
             model=SENTENCE_TRANSFORMER_MODELS["all-mpnet-base-v2"],
             batch_size=32,
-            normalize=True
+            normalize=True,
         )

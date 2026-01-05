@@ -23,6 +23,7 @@ from dataclasses import dataclass
 try:
     import pyarrow as pa
     import pyarrow.flight as flight
+
     ARROW_AVAILABLE = True
 except ImportError:
     ARROW_AVAILABLE = False
@@ -33,13 +34,15 @@ except ImportError:
 @dataclass
 class WriteMode:
     """Write mode for Arrow Flight operations."""
-    WAL = "wal"       # WAL-backed writes (30-50K vectors/sec)
-    DIRECT = "direct" # Direct engine writes (100-200K vectors/sec)
+
+    WAL = "wal"  # WAL-backed writes (30-50K vectors/sec)
+    DIRECT = "direct"  # Direct engine writes (100-200K vectors/sec)
 
 
 @dataclass
 class FlightPutResult:
     """Result from a DoPut operation."""
+
     success: bool
     vectors_inserted: int
     message: str
@@ -49,6 +52,7 @@ class FlightPutResult:
 @dataclass
 class FlightSearchResult:
     """Result from a DoGet search operation."""
+
     id: str
     vector: List[float]
     score: float
@@ -128,11 +132,15 @@ class ArrowFlightClient:
         if url.startswith("grpc://"):
             url = url[7:]
         elif url.startswith("grpc+tls://"):
-            return flight.Location.for_grpc_tls(url[11:].split(":")[0], int(url.split(":")[-1]))
+            return flight.Location.for_grpc_tls(
+                url[11:].split(":")[0], int(url.split(":")[-1])
+            )
         elif url.startswith("http://"):
             url = url[7:]
         elif url.startswith("https://"):
-            return flight.Location.for_grpc_tls(url[8:].split(":")[0], int(url.split(":")[-1]))
+            return flight.Location.for_grpc_tls(
+                url[8:].split(":")[0], int(url.split(":")[-1])
+            )
 
         # Default to grpc://
         if ":" in url:
@@ -188,24 +196,28 @@ class ArrowFlightClient:
         - timestamp: int64 (optional)
         - score: float32 (for search results, optional)
         """
-        return pa.schema([
-            pa.field("id", pa.utf8(), nullable=False),
-            pa.field(
-                "vector",
-                pa.list_(pa.float32(), dimension),
-                nullable=False,
-            ),
-            pa.field(
-                "metadata",
-                pa.struct([
-                    pa.field("key", pa.utf8()),
-                    pa.field("value", pa.utf8()),
-                ]),
-                nullable=True,
-            ),
-            pa.field("timestamp", pa.int64(), nullable=True),
-            pa.field("score", pa.float32(), nullable=True),
-        ])
+        return pa.schema(
+            [
+                pa.field("id", pa.utf8(), nullable=False),
+                pa.field(
+                    "vector",
+                    pa.list_(pa.float32(), dimension),
+                    nullable=False,
+                ),
+                pa.field(
+                    "metadata",
+                    pa.struct(
+                        [
+                            pa.field("key", pa.utf8()),
+                            pa.field("value", pa.utf8()),
+                        ]
+                    ),
+                    nullable=True,
+                ),
+                pa.field("timestamp", pa.int64(), nullable=True),
+                pa.field("score", pa.float32(), nullable=True),
+            ]
+        )
 
     def bulk_insert(
         self,
@@ -238,21 +250,25 @@ class ArrowFlightClient:
         client = self._get_client()
 
         # Create FlightDescriptor with collection ID and options
-        cmd = json.dumps({
-            "write_mode": write_mode,
-            "trigger_compaction": trigger_compaction,
-        }).encode()
+        cmd = json.dumps(
+            {
+                "write_mode": write_mode,
+                "trigger_compaction": trigger_compaction,
+            }
+        ).encode()
 
         descriptor = flight.FlightDescriptor.for_path(collection_id)
         # Note: descriptor.cmd is read-only in pyarrow, we need to use a different approach
 
         # Create a new descriptor with cmd
         descriptor = flight.FlightDescriptor.for_command(
-            json.dumps({
-                "collection_id": collection_id,
-                "write_mode": write_mode,
-                "trigger_compaction": trigger_compaction,
-            }).encode()
+            json.dumps(
+                {
+                    "collection_id": collection_id,
+                    "write_mode": write_mode,
+                    "trigger_compaction": trigger_compaction,
+                }
+            ).encode()
         )
 
         # Stream data in batches
@@ -321,11 +337,13 @@ class ArrowFlightClient:
         client = self._get_client()
 
         descriptor = flight.FlightDescriptor.for_command(
-            json.dumps({
-                "collection_id": collection_id,
-                "write_mode": write_mode,
-                "trigger_compaction": trigger_compaction,
-            }).encode()
+            json.dumps(
+                {
+                    "collection_id": collection_id,
+                    "write_mode": write_mode,
+                    "trigger_compaction": trigger_compaction,
+                }
+            ).encode()
         )
 
         total_rows = 0
@@ -384,13 +402,15 @@ class ArrowFlightClient:
         client = self._get_client()
 
         # Create search request as Ticket
-        ticket_data = json.dumps({
-            "collection_id": collection_id,
-            "query": query_vector,
-            "top_k": top_k,
-            "filter": filter_metadata,
-            "include_vectors": include_vectors,
-        }).encode()
+        ticket_data = json.dumps(
+            {
+                "collection_id": collection_id,
+                "query": query_vector,
+                "top_k": top_k,
+                "filter": filter_metadata,
+                "include_vectors": include_vectors,
+            }
+        ).encode()
 
         ticket = flight.Ticket(ticket_data)
 
@@ -405,7 +425,11 @@ class ArrowFlightClient:
                 result = FlightSearchResult(
                     id=batch.column("id")[i].as_py(),
                     vector=batch.column("vector")[i].as_py() if include_vectors else [],
-                    score=batch.column("score")[i].as_py() if "score" in batch.schema.names else 0.0,
+                    score=(
+                        batch.column("score")[i].as_py()
+                        if "score" in batch.schema.names
+                        else 0.0
+                    ),
                     metadata={},
                 )
                 results.append(result)
@@ -433,10 +457,7 @@ class ArrowFlightClient:
         """
         # TODO: Implement batch search protocol
         # For now, fall back to sequential searches
-        return [
-            self.search(collection_id, qv, top_k)
-            for qv in query_vectors
-        ]
+        return [self.search(collection_id, qv, top_k) for qv in query_vectors]
 
     def flush_collection(self, collection_id: str) -> bool:
         """
@@ -518,7 +539,9 @@ class ArrowFlightClient:
         descriptor = flight.FlightDescriptor.for_path(collection_id)
 
         try:
-            schema_result = client.get_schema(descriptor, options=self._get_call_options())
+            schema_result = client.get_schema(
+                descriptor, options=self._get_call_options()
+            )
             return schema_result.schema
         except Exception as e:
             print(f"Failed to get schema: {e}")
@@ -558,7 +581,9 @@ def vectors_to_arrow_table(
         )
     """
     if not ARROW_AVAILABLE:
-        raise ImportError("PyArrow is required. Install with: pip install pyarrow>=14.0.0")
+        raise ImportError(
+            "PyArrow is required. Install with: pip install pyarrow>=14.0.0"
+        )
 
     if len(ids) != len(vectors):
         raise ValueError("ids and vectors must have same length")
@@ -589,15 +614,25 @@ def vectors_to_arrow_table(
                 meta_arrays.append({"key": key, "value": value})
             else:
                 meta_arrays.append(None)
-        metadata_array = pa.array(meta_arrays, type=pa.struct([
-            pa.field("key", pa.utf8()),
-            pa.field("value", pa.utf8()),
-        ]))
+        metadata_array = pa.array(
+            meta_arrays,
+            type=pa.struct(
+                [
+                    pa.field("key", pa.utf8()),
+                    pa.field("value", pa.utf8()),
+                ]
+            ),
+        )
     else:
-        metadata_array = pa.nulls(len(ids), type=pa.struct([
-            pa.field("key", pa.utf8()),
-            pa.field("value", pa.utf8()),
-        ]))
+        metadata_array = pa.nulls(
+            len(ids),
+            type=pa.struct(
+                [
+                    pa.field("key", pa.utf8()),
+                    pa.field("value", pa.utf8()),
+                ]
+            ),
+        )
 
     # Timestamp array (optional)
     if timestamps:
@@ -608,13 +643,15 @@ def vectors_to_arrow_table(
     # Score array (null for inserts)
     score_array = pa.nulls(len(ids), type=pa.float32())
 
-    return pa.table({
-        "id": id_array,
-        "vector": vector_array,
-        "metadata": metadata_array,
-        "timestamp": timestamp_array,
-        "score": score_array,
-    })
+    return pa.table(
+        {
+            "id": id_array,
+            "vector": vector_array,
+            "metadata": metadata_array,
+            "timestamp": timestamp_array,
+            "score": score_array,
+        }
+    )
 
 
 def arrow_table_to_vectors(
@@ -630,7 +667,9 @@ def arrow_table_to_vectors(
         Tuple of (ids, vectors, metadata)
     """
     if not ARROW_AVAILABLE:
-        raise ImportError("PyArrow is required. Install with: pip install pyarrow>=14.0.0")
+        raise ImportError(
+            "PyArrow is required. Install with: pip install pyarrow>=14.0.0"
+        )
 
     ids = table.column("id").to_pylist()
     vectors = [list(v) for v in table.column("vector").to_pylist()]

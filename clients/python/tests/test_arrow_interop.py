@@ -14,6 +14,7 @@ import pytest
 try:
     import pyarrow as pa
     import pyarrow.ipc as ipc
+
     PYARROW_AVAILABLE = True
 except ImportError:
     PYARROW_AVAILABLE = False
@@ -21,6 +22,7 @@ except ImportError:
 # Check if numpy is available
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
@@ -33,31 +35,39 @@ def create_test_arrow_file(path: str, num_vectors: int = 10, dimension: int = 64
 
     # Generate test data
     ids = [f"vec_{i}" for i in range(num_vectors)]
-    vectors = [np.random.randn(dimension).astype(np.float32).tolist() for i in range(num_vectors)]
+    vectors = [
+        np.random.randn(dimension).astype(np.float32).tolist()
+        for i in range(num_vectors)
+    ]
     metadata = [json.dumps({"category": f"cat_{i % 5}"}) for i in range(num_vectors)]
     timestamps = list(range(num_vectors))
     versions = [1] * num_vectors
 
     # Create Arrow schema matching ProximaDB's format
-    schema = pa.schema([
-        ("id", pa.utf8()),
-        ("vector", pa.list_(pa.float32(), dimension)),
-        ("metadata", pa.utf8()),
-        ("timestamp", pa.int64()),
-        ("version", pa.int64()),
-    ])
+    schema = pa.schema(
+        [
+            ("id", pa.utf8()),
+            ("vector", pa.list_(pa.float32(), dimension)),
+            ("metadata", pa.utf8()),
+            ("timestamp", pa.int64()),
+            ("version", pa.int64()),
+        ]
+    )
 
     # Create record batch
-    batch = pa.record_batch([
-        pa.array(ids),
-        pa.array(vectors, type=pa.list_(pa.float32(), dimension)),
-        pa.array(metadata),
-        pa.array(timestamps),
-        pa.array(versions),
-    ], schema=schema)
+    batch = pa.record_batch(
+        [
+            pa.array(ids),
+            pa.array(vectors, type=pa.list_(pa.float32(), dimension)),
+            pa.array(metadata),
+            pa.array(timestamps),
+            pa.array(versions),
+        ],
+        schema=schema,
+    )
 
     # Write as Arrow IPC file
-    with pa.OSFile(path, 'wb') as sink:
+    with pa.OSFile(path, "wb") as sink:
         with ipc.new_file(sink, schema) as writer:
             writer.write_batch(batch)
 
@@ -70,14 +80,14 @@ class TestArrowInterop:
 
     def test_pyarrow_can_read_arrow_file(self):
         """Verify PyArrow can read Arrow IPC files in ProximaDB format."""
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             num_vectors, dimension = create_test_arrow_file(arrow_path)
 
             # Read with PyArrow
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
 
                 # Verify schema
@@ -106,13 +116,13 @@ class TestArrowInterop:
 
     def test_arrow_file_schema_fields(self):
         """Verify Arrow file schema has expected field types."""
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             create_test_arrow_file(arrow_path, dimension=128)
 
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
                 schema = reader.schema
 
@@ -134,13 +144,13 @@ class TestArrowInterop:
 
     def test_arrow_file_metadata_parsing(self):
         """Verify metadata JSON can be parsed from Arrow file."""
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             create_test_arrow_file(arrow_path)
 
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
                 table = reader.read_all()
 
@@ -159,13 +169,13 @@ class TestArrowInterop:
         """Verify Arrow file can be converted to Pandas DataFrame."""
         pytest.importorskip("pandas")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             num_vectors, _ = create_test_arrow_file(arrow_path)
 
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
                 table = reader.read_all()
 
@@ -186,13 +196,13 @@ class TestArrowInterop:
         if not NUMPY_AVAILABLE:
             pytest.skip("NumPy required for this test")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             num_vectors, dimension = create_test_arrow_file(arrow_path)
 
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
                 table = reader.read_all()
 
@@ -222,13 +232,13 @@ class TestArrowStreamingRead:
 
     def test_batch_iteration(self):
         """Verify batches can be read incrementally."""
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             create_test_arrow_file(arrow_path, num_vectors=100)
 
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
 
                 total_rows = 0
@@ -244,13 +254,13 @@ class TestArrowStreamingRead:
 
     def test_column_selection(self):
         """Verify specific columns can be read without loading all data."""
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
             create_test_arrow_file(arrow_path)
 
-            with pa.memory_map(arrow_path, 'r') as source:
+            with pa.memory_map(arrow_path, "r") as source:
                 reader = ipc.open_file(source)
 
                 # Read only id and timestamp columns
@@ -274,7 +284,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can read Arrow IPC files."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -297,7 +307,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can execute SELECT queries on Arrow data."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -326,7 +336,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can filter Arrow data with WHERE clause."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -352,7 +362,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can sort Arrow data with ORDER BY."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -379,7 +389,7 @@ class TestDuckDBInterop:
         """Verify DuckDB can perform aggregations on Arrow data."""
         duckdb = pytest.importorskip("duckdb")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -395,9 +405,9 @@ class TestDuckDBInterop:
             ).fetchone()
 
             assert result[0] == 100  # COUNT
-            assert result[1] == 0    # MIN timestamp
-            assert result[2] == 99   # MAX timestamp
-            assert result[3] == 49.5 # AVG timestamp
+            assert result[1] == 0  # MIN timestamp
+            assert result[2] == 99  # MAX timestamp
+            assert result[3] == 49.5  # AVG timestamp
 
         finally:
             if os.path.exists(arrow_path):
@@ -411,7 +421,7 @@ class TestPolarsInterop:
         """Verify Polars can read Arrow IPC files."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -433,7 +443,7 @@ class TestPolarsInterop:
         """Verify Polars can perform lazy operations on Arrow data."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -444,8 +454,7 @@ class TestPolarsInterop:
 
             # Build lazy query
             result = (
-                lazy_df
-                .filter(pl.col("timestamp") >= 25)
+                lazy_df.filter(pl.col("timestamp") >= 25)
                 .select(["id", "timestamp"])
                 .collect()
             )
@@ -461,7 +470,7 @@ class TestPolarsInterop:
         """Verify Polars can sort and limit Arrow data."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -470,15 +479,16 @@ class TestPolarsInterop:
             lazy_df = pl.scan_ipc(arrow_path)
 
             # Sort by timestamp descending and take top 5
-            result = (
-                lazy_df
-                .sort("timestamp", descending=True)
-                .head(5)
-                .collect()
-            )
+            result = lazy_df.sort("timestamp", descending=True).head(5).collect()
 
             assert len(result) == 5
-            assert result["id"].to_list() == ["vec_19", "vec_18", "vec_17", "vec_16", "vec_15"]
+            assert result["id"].to_list() == [
+                "vec_19",
+                "vec_18",
+                "vec_17",
+                "vec_16",
+                "vec_15",
+            ]
 
         finally:
             if os.path.exists(arrow_path):
@@ -490,11 +500,13 @@ class TestPolarsInterop:
         if not NUMPY_AVAILABLE:
             pytest.skip("NumPy required for this test")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
-            num_vectors, dimension = create_test_arrow_file(arrow_path, num_vectors=10, dimension=32)
+            num_vectors, dimension = create_test_arrow_file(
+                arrow_path, num_vectors=10, dimension=32
+            )
 
             df = pl.read_ipc(arrow_path)
 
@@ -516,7 +528,7 @@ class TestPolarsInterop:
         """Verify Polars can perform basic analytics on Arrow data."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -525,12 +537,14 @@ class TestPolarsInterop:
             df = pl.read_ipc(arrow_path)
 
             # Basic statistics on timestamp column
-            stats = df.select([
-                pl.col("timestamp").count().alias("count"),
-                pl.col("timestamp").min().alias("min"),
-                pl.col("timestamp").max().alias("max"),
-                pl.col("timestamp").mean().alias("mean"),
-            ])
+            stats = df.select(
+                [
+                    pl.col("timestamp").count().alias("count"),
+                    pl.col("timestamp").min().alias("min"),
+                    pl.col("timestamp").max().alias("max"),
+                    pl.col("timestamp").mean().alias("mean"),
+                ]
+            )
 
             assert stats["count"][0] == 100
             assert stats["min"][0] == 0
@@ -545,7 +559,7 @@ class TestPolarsInterop:
         """Verify Polars can group by parsed metadata categories."""
         pl = pytest.importorskip("polars")
 
-        with tempfile.NamedTemporaryFile(suffix='.arrow', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".arrow", delete=False) as f:
             arrow_path = f.name
 
         try:
@@ -556,9 +570,10 @@ class TestPolarsInterop:
 
             # Parse metadata JSON and group by category
             result = (
-                df
-                .with_columns(
-                    pl.col("metadata").str.json_path_match("$.category").alias("category")
+                df.with_columns(
+                    pl.col("metadata")
+                    .str.json_path_match("$.category")
+                    .alias("category")
                 )
                 .group_by("category")
                 .agg(pl.len())

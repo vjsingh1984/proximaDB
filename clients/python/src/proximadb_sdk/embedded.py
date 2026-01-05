@@ -61,7 +61,16 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, Protocol, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Union,
+    Protocol,
+    runtime_checkable,
+)
 import os
 import signal
 
@@ -70,6 +79,7 @@ import signal
 # Embedding Model Abstraction
 # =============================================================================
 
+
 @runtime_checkable
 class EmbeddingFunction(Protocol):
     """Protocol for embedding functions.
@@ -77,6 +87,7 @@ class EmbeddingFunction(Protocol):
     Any callable that takes a string and returns a list of floats can be used.
     This allows integration with any embedding provider.
     """
+
     def __call__(self, text: str) -> List[float]:
         """Generate embedding for text."""
         ...
@@ -85,6 +96,7 @@ class EmbeddingFunction(Protocol):
 @runtime_checkable
 class AsyncEmbeddingFunction(Protocol):
     """Protocol for async embedding functions."""
+
     async def __call__(self, text: str) -> List[float]:
         """Generate embedding for text asynchronously."""
         ...
@@ -93,6 +105,7 @@ class AsyncEmbeddingFunction(Protocol):
 @runtime_checkable
 class BatchEmbeddingFunction(Protocol):
     """Protocol for batch embedding functions."""
+
     def __call__(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts."""
         ...
@@ -143,7 +156,9 @@ class SentenceTransformerModel(BaseEmbeddingModel):
     - all-mpnet-base-v2: High quality, 768-dim (420MB)
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None):
+    def __init__(
+        self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None
+    ):
         """Initialize sentence-transformer model.
 
         Args:
@@ -163,7 +178,10 @@ class SentenceTransformerModel(BaseEmbeddingModel):
                 if self._model is None:
                     try:
                         from sentence_transformers import SentenceTransformer
-                        self._model = SentenceTransformer(self.model_name, device=self.device)
+
+                        self._model = SentenceTransformer(
+                            self.model_name, device=self.device
+                        )
                         self._dimension = self._model.get_sentence_embedding_dimension()
                     except ImportError:
                         raise ImportError(
@@ -174,13 +192,17 @@ class SentenceTransformerModel(BaseEmbeddingModel):
     def embed(self, text: str) -> List[float]:
         """Generate embedding for text."""
         self._ensure_loaded()
-        embedding = self._model.encode(text, convert_to_numpy=True, show_progress_bar=False)
+        embedding = self._model.encode(
+            text, convert_to_numpy=True, show_progress_bar=False
+        )
         return embedding.tolist()
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts."""
         self._ensure_loaded()
-        embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        embeddings = self._model.encode(
+            texts, convert_to_numpy=True, show_progress_bar=False
+        )
         return embeddings.tolist()
 
     def get_dimension(self) -> int:
@@ -431,13 +453,16 @@ def create_embedding_model(
             api_key=kwargs.get("api_key"),
         )
     else:
-        raise ValueError(f"Unknown model type: {model_type}. "
-                        f"Available: sentence-transformers, ollama, openai")
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Available: sentence-transformers, ollama, openai"
+        )
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
+
 
 @dataclass
 class EmbeddedConfig:
@@ -671,8 +696,14 @@ class EmbeddedProximaDB:
             # Installed via pip (future)
             Path(sys.prefix) / "bin" / "proximadb-server",
             # Development build
-            Path(__file__).parent.parent.parent.parent.parent / "target" / "release" / "proximadb-server",
-            Path(__file__).parent.parent.parent.parent.parent / "target" / "debug" / "proximadb-server",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "target"
+            / "release"
+            / "proximadb-server",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "target"
+            / "debug"
+            / "proximadb-server",
             # System PATH
             "proximadb-server",
         ]
@@ -684,6 +715,7 @@ class EmbeddedProximaDB:
             else:
                 # Check PATH
                 import shutil
+
                 if shutil.which(path):
                     return path
 
@@ -767,7 +799,7 @@ prefetch_budget = 4
                 [binary, "--config", config_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=os.setsid if hasattr(os, 'setsid') else None,
+                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
             )
 
             # Wait for server to be ready
@@ -775,6 +807,7 @@ prefetch_budget = 4
             while time.time() - start_time < timeout:
                 try:
                     import httpx
+
                     response = httpx.get(f"{self.rest_url}/health", timeout=1.0)
                     if response.status_code == 200:
                         self._started = True
@@ -794,13 +827,13 @@ prefetch_budget = 4
         """Kill the server process."""
         if self._process:
             try:
-                if hasattr(os, 'killpg'):
+                if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
                 else:
                     self._process.terminate()
                 self._process.wait(timeout=5)
             except Exception:
-                if hasattr(os, 'killpg'):
+                if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
                 else:
                     self._process.kill()
@@ -891,7 +924,7 @@ prefetch_budget = 4
                         "name": name,
                         "dimension": dimension,
                         "distance_metric": metric_value,
-                    }
+                    },
                 },
                 timeout=30.0,
             )
@@ -900,7 +933,9 @@ prefetch_budget = 4
             if not result.get("success") and "already exists" not in str(result):
                 raise RuntimeError(f"Failed to create collection: {result}")
 
-        collection = EmbeddedCollection(name, dimension, self, embedding_model=model_instance)
+        collection = EmbeddedCollection(
+            name, dimension, self, embedding_model=model_instance
+        )
         self._collections[name] = collection
         return collection
 
@@ -1111,6 +1146,7 @@ prefetch_budget = 4
 
         try:
             import httpx
+
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.rest_url}/health",
@@ -1220,8 +1256,7 @@ prefetch_budget = 4
 
 # Convenience function
 async def connect_embedded(
-    data_dir: Optional[str] = None,
-    **kwargs
+    data_dir: Optional[str] = None, **kwargs
 ) -> EmbeddedProximaDB:
     """Create and start an embedded ProximaDB instance.
 
@@ -1232,7 +1267,9 @@ async def connect_embedded(
     Returns:
         Started EmbeddedProximaDB instance
     """
-    config = EmbeddedConfig(data_dir=data_dir or str(Path.home() / ".proximadb"), **kwargs)
+    config = EmbeddedConfig(
+        data_dir=data_dir or str(Path.home() / ".proximadb"), **kwargs
+    )
     db = EmbeddedProximaDB(config=config)
     await db.start()
     return db
@@ -1290,7 +1327,9 @@ class EmbeddedMultiModalQueryExecutor:
                 if component.get("_from_previous") and component_results:
                     prev_results = component_results[-1]
                     id_field = component.get("_id_field", "id")
-                    start_nodes = [r.get(id_field) for r in prev_results if r.get(id_field)]
+                    start_nodes = [
+                        r.get(id_field) for r in prev_results if r.get(id_field)
+                    ]
                     component["start_nodes"] = start_nodes
                 results = await self._execute_graph(component)
             elif comp_type == "document":
@@ -1327,7 +1366,7 @@ class EmbeddedMultiModalQueryExecutor:
             fused.sort(key=lambda x: x.get("_custom_score", 0), reverse=True)
 
         # Apply limit and offset
-        fused = fused[query.offset:query.offset + query.limit]
+        fused = fused[query.offset : query.offset + query.limit]
 
         total_time = (time.time() - start_time) * 1000
 
@@ -1434,14 +1473,16 @@ class EmbeddedMultiModalQueryExecutor:
 
                     if response.status_code == 200:
                         node_data = response.json().get("node", {})
-                        results.append({
-                            "id": node_id,
-                            "node": node_data,
-                            "depth": depth,
-                            "labels": node_data.get("labels", []),
-                            "properties": node_data.get("properties", {}),
-                            "_source_type": "graph",
-                        })
+                        results.append(
+                            {
+                                "id": node_id,
+                                "node": node_data,
+                                "depth": depth,
+                                "labels": node_data.get("labels", []),
+                                "properties": node_data.get("properties", {}),
+                                "_source_type": "graph",
+                            }
+                        )
 
                         # Get outgoing edges for further traversal
                         if depth < max_depth:
@@ -1464,7 +1505,9 @@ class EmbeddedMultiModalQueryExecutor:
         except Exception as e:
             return []
 
-    async def _execute_document(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _execute_document(
+        self, component: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         """Execute document query component against embedded database."""
         try:
             import httpx
@@ -1761,7 +1804,7 @@ class EmbeddedMultiModalQueryExecutor:
                 age_ns = 0
 
             # Get function type (handle both enum and string)
-            func_name = func.value if hasattr(func, 'value') else str(func)
+            func_name = func.value if hasattr(func, "value") else str(func)
 
             if func_name == "linear":
                 decay = max(0, 1 - (age_ns / (halflife_ns * 2)))

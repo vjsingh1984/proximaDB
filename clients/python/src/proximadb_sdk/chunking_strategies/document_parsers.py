@@ -46,19 +46,22 @@ logger = logging.getLogger(__name__)
 # Data Structures
 # =============================================================================
 
+
 class BinaryType(Enum):
     """Types of binary files"""
-    PE_EXE = auto()      # Windows executable
-    PE_DLL = auto()      # Windows dynamic library
-    ELF_EXEC = auto()    # Linux executable
-    ELF_SO = auto()      # Linux shared object
+
+    PE_EXE = auto()  # Windows executable
+    PE_DLL = auto()  # Windows dynamic library
+    ELF_EXEC = auto()  # Linux executable
+    ELF_SO = auto()  # Linux shared object
     MACHO_EXEC = auto()  # macOS executable
-    MACHO_DYLIB = auto() # macOS dynamic library
+    MACHO_DYLIB = auto()  # macOS dynamic library
     UNKNOWN = auto()
 
 
 class DocumentType(Enum):
     """Types of document files"""
+
     PDF = auto()
     TIFF = auto()
     PNG = auto()
@@ -71,6 +74,7 @@ class DocumentType(Enum):
 @dataclass
 class BinarySymbol:
     """Represents a symbol extracted from binary"""
+
     name: str
     address: str
     symbol_type: str  # function, data, import, export
@@ -84,6 +88,7 @@ class BinarySymbol:
 @dataclass
 class BinaryAnalysis:
     """Result of binary file analysis"""
+
     file_path: str
     binary_type: BinaryType
     architecture: str
@@ -100,6 +105,7 @@ class BinaryAnalysis:
 @dataclass
 class OCRResult:
     """Result of OCR extraction"""
+
     file_path: str
     document_type: DocumentType
     text: str
@@ -113,6 +119,7 @@ class OCRResult:
 @dataclass
 class BinaryParserConfig:
     """Configuration for binary parser"""
+
     # Tool preferences (in order of preference)
     preferred_tools: List[str] = field(
         default_factory=lambda: ["radare2", "ghidra", "objdump"]
@@ -131,6 +138,7 @@ class BinaryParserConfig:
 @dataclass
 class OCRConfig:
     """Configuration for OCR parser"""
+
     # Tesseract options
     language: str = "eng"  # OCR language
     tesseract_cmd: Optional[str] = None  # Path to tesseract
@@ -146,6 +154,7 @@ class OCRConfig:
 # =============================================================================
 # Tool Detection
 # =============================================================================
+
 
 class ToolDetector:
     """Detects available reverse engineering and OCR tools"""
@@ -171,7 +180,14 @@ class ToolDetector:
     def get_available_re_tools(cls) -> List[str]:
         """Get list of available RE tools"""
         tools = []
-        for tool in ["r2", "radare2", "ghidra-analyzeHeadless", "objdump", "nm", "strings"]:
+        for tool in [
+            "r2",
+            "radare2",
+            "ghidra-analyzeHeadless",
+            "objdump",
+            "nm",
+            "strings",
+        ]:
             if cls.is_available(tool):
                 tools.append(tool)
         return tools
@@ -198,7 +214,7 @@ class ToolDetector:
             "machine": platform.machine(),
             "re_tools": cls.get_available_re_tools(),
             "ocr_tools": cls.get_available_ocr_tools(),
-            "has_wine": cls.has_wine()
+            "has_wine": cls.has_wine(),
         }
 
 
@@ -206,44 +222,49 @@ class ToolDetector:
 # Binary Detection
 # =============================================================================
 
+
 def detect_binary_type(file_path: str) -> BinaryType:
     """Detect the type of binary file"""
     try:
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             magic = f.read(4)
 
         # PE (Windows)
-        if magic[:2] == b'MZ':
+        if magic[:2] == b"MZ":
             # Check for PE header
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 f.seek(0x3C)
-                pe_offset = int.from_bytes(f.read(4), 'little')
+                pe_offset = int.from_bytes(f.read(4), "little")
                 f.seek(pe_offset)
                 pe_sig = f.read(4)
-                if pe_sig == b'PE\x00\x00':
+                if pe_sig == b"PE\x00\x00":
                     # Check characteristics to determine EXE vs DLL
                     f.seek(pe_offset + 22)
-                    characteristics = int.from_bytes(f.read(2), 'little')
+                    characteristics = int.from_bytes(f.read(2), "little")
                     if characteristics & 0x2000:  # IMAGE_FILE_DLL
                         return BinaryType.PE_DLL
                     return BinaryType.PE_EXE
 
         # ELF (Linux)
-        if magic[:4] == b'\x7fELF':
-            with open(file_path, 'rb') as f:
+        if magic[:4] == b"\x7fELF":
+            with open(file_path, "rb") as f:
                 f.seek(16)  # e_type offset
-                e_type = int.from_bytes(f.read(2), 'little')
+                e_type = int.from_bytes(f.read(2), "little")
                 if e_type == 2:  # ET_EXEC
                     return BinaryType.ELF_EXEC
                 elif e_type == 3:  # ET_DYN
                     return BinaryType.ELF_SO
 
         # Mach-O (macOS)
-        if magic[:4] in (b'\xfe\xed\xfa\xce', b'\xfe\xed\xfa\xcf',
-                         b'\xce\xfa\xed\xfe', b'\xcf\xfa\xed\xfe'):
+        if magic[:4] in (
+            b"\xfe\xed\xfa\xce",
+            b"\xfe\xed\xfa\xcf",
+            b"\xce\xfa\xed\xfe",
+            b"\xcf\xfa\xed\xfe",
+        ):
             # Simplified detection - check file extension for lib vs exec
             ext = Path(file_path).suffix.lower()
-            if ext == '.dylib':
+            if ext == ".dylib":
                 return BinaryType.MACHO_DYLIB
             return BinaryType.MACHO_EXEC
 
@@ -257,14 +278,14 @@ def detect_document_type(file_path: str) -> DocumentType:
     """Detect the type of document file"""
     ext = Path(file_path).suffix.lower()
     mapping = {
-        '.pdf': DocumentType.PDF,
-        '.tiff': DocumentType.TIFF,
-        '.tif': DocumentType.TIFF,
-        '.png': DocumentType.PNG,
-        '.jpg': DocumentType.JPEG,
-        '.jpeg': DocumentType.JPEG,
-        '.bmp': DocumentType.BMP,
-        '.webp': DocumentType.WEBP,
+        ".pdf": DocumentType.PDF,
+        ".tiff": DocumentType.TIFF,
+        ".tif": DocumentType.TIFF,
+        ".png": DocumentType.PNG,
+        ".jpg": DocumentType.JPEG,
+        ".jpeg": DocumentType.JPEG,
+        ".bmp": DocumentType.BMP,
+        ".webp": DocumentType.WEBP,
     }
     return mapping.get(ext, DocumentType.UNKNOWN)
 
@@ -272,6 +293,7 @@ def detect_document_type(file_path: str) -> DocumentType:
 # =============================================================================
 # Reverse Engineering Adapters
 # =============================================================================
+
 
 class REToolAdapter(ABC):
     """Abstract adapter for reverse engineering tools"""
@@ -288,11 +310,7 @@ class REToolAdapter(ABC):
         pass
 
     @abstractmethod
-    def analyze(
-        self,
-        file_path: str,
-        config: BinaryParserConfig
-    ) -> BinaryAnalysis:
+    def analyze(self, file_path: str, config: BinaryParserConfig) -> BinaryAnalysis:
         """Analyze binary file"""
         pass
 
@@ -310,11 +328,7 @@ class Radare2Adapter(REToolAdapter):
     def _get_r2_path(self) -> str:
         return ToolDetector.find_tool("r2") or ToolDetector.find_tool("radare2")
 
-    def analyze(
-        self,
-        file_path: str,
-        config: BinaryParserConfig
-    ) -> BinaryAnalysis:
+    def analyze(self, file_path: str, config: BinaryParserConfig) -> BinaryAnalysis:
         """Analyze binary using radare2"""
         r2_path = self._get_r2_path()
         if not r2_path:
@@ -333,11 +347,11 @@ class Radare2Adapter(REToolAdapter):
                 [r2_path, "-q", "-c", "iI", file_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
             arch = "unknown"
-            for line in result.stdout.split('\n'):
-                if 'arch' in line.lower():
+            for line in result.stdout.split("\n"):
+                if "arch" in line.lower():
                     parts = line.split()
                     if len(parts) >= 2:
                         arch = parts[-1]
@@ -348,12 +362,12 @@ class Radare2Adapter(REToolAdapter):
                 [r2_path, "-q", "-c", "ie", file_path],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
             entry_point = None
-            for line in result.stdout.split('\n'):
-                if 'entry' in line.lower():
-                    match = re.search(r'0x[0-9a-fA-F]+', line)
+            for line in result.stdout.split("\n"):
+                if "entry" in line.lower():
+                    match = re.search(r"0x[0-9a-fA-F]+", line)
                     if match:
                         entry_point = match.group()
                         break
@@ -363,28 +377,30 @@ class Radare2Adapter(REToolAdapter):
                 [r2_path, "-q", "-c", "is", file_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            for line in result.stdout.split('\n'):
-                if line.strip() and not line.startswith('['):
+            for line in result.stdout.split("\n"):
+                if line.strip() and not line.startswith("["):
                     parts = line.split()
                     if len(parts) >= 5:
-                        symbols.append(BinarySymbol(
-                            name=parts[-1] if parts else "unknown",
-                            address=parts[0] if parts else "0x0",
-                            symbol_type=parts[3] if len(parts) > 3 else "unknown",
-                            section=parts[4] if len(parts) > 4 else None
-                        ))
+                        symbols.append(
+                            BinarySymbol(
+                                name=parts[-1] if parts else "unknown",
+                                address=parts[0] if parts else "0x0",
+                                symbol_type=parts[3] if len(parts) > 3 else "unknown",
+                                section=parts[4] if len(parts) > 4 else None,
+                            )
+                        )
 
             # Get imports
             result = subprocess.run(
                 [r2_path, "-q", "-c", "ii", file_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            for line in result.stdout.split('\n'):
-                if line.strip() and not line.startswith('['):
+            for line in result.stdout.split("\n"):
+                if line.strip() and not line.startswith("["):
                     parts = line.split()
                     if parts:
                         imports.append(parts[-1])
@@ -394,10 +410,10 @@ class Radare2Adapter(REToolAdapter):
                 [r2_path, "-q", "-c", "iE", file_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            for line in result.stdout.split('\n'):
-                if line.strip() and not line.startswith('['):
+            for line in result.stdout.split("\n"):
+                if line.strip() and not line.startswith("["):
                     parts = line.split()
                     if parts:
                         exports.append(parts[-1])
@@ -407,9 +423,9 @@ class Radare2Adapter(REToolAdapter):
                 [r2_path, "-q", "-c", f"iz~[2:]", file_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
-            for line in result.stdout.split('\n')[:config.max_strings]:
+            for line in result.stdout.split("\n")[: config.max_strings]:
                 if line.strip() and len(line) >= config.min_string_length:
                     strings.append(line.strip())
 
@@ -418,20 +434,22 @@ class Radare2Adapter(REToolAdapter):
                 [r2_path, "-q", "-c", "iS", file_path],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
-            for line in result.stdout.split('\n'):
-                if line.strip() and not line.startswith('['):
+            for line in result.stdout.split("\n"):
+                if line.strip() and not line.startswith("["):
                     parts = line.split()
                     if len(parts) >= 3:
-                        sections.append({
-                            'name': parts[-1] if parts else "unknown",
-                            'address': parts[0] if parts else "0x0",
-                            'size': parts[1] if len(parts) > 1 else "0"
-                        })
+                        sections.append(
+                            {
+                                "name": parts[-1] if parts else "unknown",
+                                "address": parts[0] if parts else "0x0",
+                                "size": parts[1] if len(parts) > 1 else "0",
+                            }
+                        )
 
             # Compute hash
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content_hash = hashlib.sha256(f.read()).hexdigest()
 
             return BinaryAnalysis(
@@ -445,7 +463,7 @@ class Radare2Adapter(REToolAdapter):
                 sections=sections,
                 entry_point=entry_point,
                 content_hash=content_hash,
-                metadata={"tool": "radare2"}
+                metadata={"tool": "radare2"},
             )
 
         except subprocess.TimeoutExpired:
@@ -464,11 +482,7 @@ class ObjdumpAdapter(REToolAdapter):
     def is_available(self) -> bool:
         return ToolDetector.is_available("objdump")
 
-    def analyze(
-        self,
-        file_path: str,
-        config: BinaryParserConfig
-    ) -> BinaryAnalysis:
+    def analyze(self, file_path: str, config: BinaryParserConfig) -> BinaryAnalysis:
         """Analyze binary using objdump"""
         binary_type = detect_binary_type(file_path)
         symbols = []
@@ -479,67 +493,59 @@ class ObjdumpAdapter(REToolAdapter):
         try:
             # Get file format and architecture
             result = subprocess.run(
-                ["objdump", "-f", file_path],
-                capture_output=True,
-                text=True,
-                timeout=30
+                ["objdump", "-f", file_path], capture_output=True, text=True, timeout=30
             )
             arch = "unknown"
-            for line in result.stdout.split('\n'):
-                if 'architecture:' in line.lower():
-                    match = re.search(r'architecture:\s*(\S+)', line.lower())
+            for line in result.stdout.split("\n"):
+                if "architecture:" in line.lower():
+                    match = re.search(r"architecture:\s*(\S+)", line.lower())
                     if match:
                         arch = match.group(1)
                         break
 
             # Get symbols
             result = subprocess.run(
-                ["objdump", "-t", file_path],
-                capture_output=True,
-                text=True,
-                timeout=60
+                ["objdump", "-t", file_path], capture_output=True, text=True, timeout=60
             )
-            for line in result.stdout.split('\n'):
+            for line in result.stdout.split("\n"):
                 parts = line.split()
-                if len(parts) >= 5 and parts[0].startswith('0'):
-                    symbols.append(BinarySymbol(
-                        name=parts[-1],
-                        address=parts[0],
-                        symbol_type=parts[2] if len(parts) > 2 else "unknown",
-                        section=parts[3] if len(parts) > 3 else None
-                    ))
+                if len(parts) >= 5 and parts[0].startswith("0"):
+                    symbols.append(
+                        BinarySymbol(
+                            name=parts[-1],
+                            address=parts[0],
+                            symbol_type=parts[2] if len(parts) > 2 else "unknown",
+                            section=parts[3] if len(parts) > 3 else None,
+                        )
+                    )
 
             # Get dynamic symbols (imports/exports)
             result = subprocess.run(
-                ["objdump", "-T", file_path],
-                capture_output=True,
-                text=True,
-                timeout=60
+                ["objdump", "-T", file_path], capture_output=True, text=True, timeout=60
             )
-            for line in result.stdout.split('\n'):
+            for line in result.stdout.split("\n"):
                 parts = line.split()
                 if len(parts) >= 5:
                     name = parts[-1]
-                    if '*UND*' in line:
+                    if "*UND*" in line:
                         imports.append(name)
                     else:
                         exports.append(name)
 
             # Get sections
             result = subprocess.run(
-                ["objdump", "-h", file_path],
-                capture_output=True,
-                text=True,
-                timeout=30
+                ["objdump", "-h", file_path], capture_output=True, text=True, timeout=30
             )
-            for line in result.stdout.split('\n'):
+            for line in result.stdout.split("\n"):
                 parts = line.split()
                 if len(parts) >= 3 and parts[0].isdigit():
-                    sections.append({
-                        'name': parts[1],
-                        'size': parts[2],
-                        'address': parts[3] if len(parts) > 3 else "0"
-                    })
+                    sections.append(
+                        {
+                            "name": parts[1],
+                            "size": parts[2],
+                            "address": parts[3] if len(parts) > 3 else "0",
+                        }
+                    )
 
             # Get strings using strings command
             strings = []
@@ -548,12 +554,12 @@ class ObjdumpAdapter(REToolAdapter):
                     ["strings", "-n", str(config.min_string_length), file_path],
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
                 )
-                strings = result.stdout.split('\n')[:config.max_strings]
+                strings = result.stdout.split("\n")[: config.max_strings]
 
             # Compute hash
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content_hash = hashlib.sha256(f.read()).hexdigest()
 
             return BinaryAnalysis(
@@ -566,7 +572,7 @@ class ObjdumpAdapter(REToolAdapter):
                 strings=[s for s in strings if s.strip()],
                 sections=sections,
                 content_hash=content_hash,
-                metadata={"tool": "objdump"}
+                metadata={"tool": "objdump"},
             )
 
         except subprocess.TimeoutExpired:
@@ -578,6 +584,7 @@ class ObjdumpAdapter(REToolAdapter):
 # =============================================================================
 # OCR Adapters
 # =============================================================================
+
 
 class OCRAdapter(ABC):
     """Abstract adapter for OCR tools"""
@@ -594,11 +601,7 @@ class OCRAdapter(ABC):
         pass
 
     @abstractmethod
-    def extract_text(
-        self,
-        file_path: str,
-        config: OCRConfig
-    ) -> OCRResult:
+    def extract_text(self, file_path: str, config: OCRConfig) -> OCRResult:
         """Extract text from document"""
         pass
 
@@ -613,18 +616,19 @@ class TesseractAdapter(OCRAdapter):
     def is_available(self) -> bool:
         return ToolDetector.is_available("tesseract")
 
-    def extract_text(
-        self,
-        file_path: str,
-        config: OCRConfig
-    ) -> OCRResult:
+    def extract_text(self, file_path: str, config: OCRConfig) -> OCRResult:
         """Extract text using Tesseract"""
         doc_type = detect_document_type(file_path)
 
         try:
             # For images, directly use Tesseract
-            if doc_type in (DocumentType.PNG, DocumentType.JPEG,
-                           DocumentType.TIFF, DocumentType.BMP, DocumentType.WEBP):
+            if doc_type in (
+                DocumentType.PNG,
+                DocumentType.JPEG,
+                DocumentType.TIFF,
+                DocumentType.BMP,
+                DocumentType.WEBP,
+            ):
                 return self._ocr_image(file_path, config, doc_type)
 
             # For PDF, convert to images first
@@ -632,17 +636,15 @@ class TesseractAdapter(OCRAdapter):
                 return self._ocr_pdf(file_path, config)
 
             else:
-                raise ParseError(f"Unsupported document type: {doc_type}",
-                               file_path=file_path)
+                raise ParseError(
+                    f"Unsupported document type: {doc_type}", file_path=file_path
+                )
 
         except Exception as e:
             raise ParseError(f"OCR failed: {e}", file_path=file_path)
 
     def _ocr_image(
-        self,
-        file_path: str,
-        config: OCRConfig,
-        doc_type: DocumentType
+        self, file_path: str, config: OCRConfig, doc_type: DocumentType
     ) -> OCRResult:
         """OCR a single image file"""
         tesseract_cmd = config.tesseract_cmd or "tesseract"
@@ -651,32 +653,37 @@ class TesseractAdapter(OCRAdapter):
             tesseract_cmd,
             file_path,
             "stdout",
-            "-l", config.language,
-            "--psm", str(config.page_segmentation_mode)
+            "-l",
+            config.language,
+            "--psm",
+            str(config.page_segmentation_mode),
         ]
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         text = result.stdout.strip()
 
         # Try to get confidence
         confidence = 0.0
         conf_result = subprocess.run(
-            [tesseract_cmd, file_path, "stdout", "-l", config.language,
-             "--psm", str(config.page_segmentation_mode), "tsv"],
+            [
+                tesseract_cmd,
+                file_path,
+                "stdout",
+                "-l",
+                config.language,
+                "--psm",
+                str(config.page_segmentation_mode),
+                "tsv",
+            ],
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=120,
         )
         if conf_result.returncode == 0:
             confidences = []
-            for line in conf_result.stdout.split('\n')[1:]:
-                parts = line.split('\t')
+            for line in conf_result.stdout.split("\n")[1:]:
+                parts = line.split("\t")
                 if len(parts) >= 11:
                     try:
                         conf = float(parts[10])
@@ -688,7 +695,7 @@ class TesseractAdapter(OCRAdapter):
                 confidence = sum(confidences) / len(confidences)
 
         # Compute hash
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             content_hash = hashlib.sha256(f.read()).hexdigest()
 
         return OCRResult(
@@ -699,7 +706,7 @@ class TesseractAdapter(OCRAdapter):
             confidence=confidence,
             language=config.language,
             content_hash=content_hash,
-            metadata={"tool": "tesseract"}
+            metadata={"tool": "tesseract"},
         )
 
     def _ocr_pdf(self, file_path: str, config: OCRConfig) -> OCRResult:
@@ -714,24 +721,30 @@ class TesseractAdapter(OCRAdapter):
             if has_pdftoppm:
                 # Convert PDF to images
                 subprocess.run(
-                    ["pdftoppm", "-png", "-r", str(config.pdf_dpi),
-                     file_path, os.path.join(tmpdir, "page")],
+                    [
+                        "pdftoppm",
+                        "-png",
+                        "-r",
+                        str(config.pdf_dpi),
+                        file_path,
+                        os.path.join(tmpdir, "page"),
+                    ],
                     check=True,
-                    timeout=300
+                    timeout=300,
                 )
 
                 # OCR each page
                 page_files = sorted(Path(tmpdir).glob("page-*.png"))
                 for i, page_file in enumerate(page_files):
-                    result = self._ocr_image(
-                        str(page_file), config, DocumentType.PNG
-                    )
+                    result = self._ocr_image(str(page_file), config, DocumentType.PNG)
                     all_text.append(result.text)
-                    pages.append({
-                        "page": i + 1,
-                        "text": result.text,
-                        "confidence": result.confidence
-                    })
+                    pages.append(
+                        {
+                            "page": i + 1,
+                            "text": result.text,
+                            "confidence": result.confidence,
+                        }
+                    )
             else:
                 # Try pdftotext for text-based PDFs
                 if ToolDetector.is_available("pdftotext"):
@@ -739,7 +752,7 @@ class TesseractAdapter(OCRAdapter):
                         ["pdftotext", "-layout", file_path, "-"],
                         capture_output=True,
                         text=True,
-                        timeout=120
+                        timeout=120,
                     )
                     text = result.stdout.strip()
                     all_text.append(text)
@@ -747,15 +760,16 @@ class TesseractAdapter(OCRAdapter):
                 else:
                     raise ParseError(
                         "PDF processing requires pdftoppm or pdftotext",
-                        file_path=file_path
+                        file_path=file_path,
                     )
 
         combined_text = "\n\n".join(all_text)
-        avg_confidence = (sum(p.get('confidence', 0) for p in pages) /
-                         len(pages)) if pages else 0
+        avg_confidence = (
+            (sum(p.get("confidence", 0) for p in pages) / len(pages)) if pages else 0
+        )
 
         # Compute hash
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             content_hash = hashlib.sha256(f.read()).hexdigest()
 
         return OCRResult(
@@ -766,13 +780,14 @@ class TesseractAdapter(OCRAdapter):
             confidence=avg_confidence,
             language=config.language,
             content_hash=content_hash,
-            metadata={"tool": "tesseract", "page_count": len(pages)}
+            metadata={"tool": "tesseract", "page_count": len(pages)},
         )
 
 
 # =============================================================================
 # High-Level Parsers
 # =============================================================================
+
 
 class BinaryParser(BaseLanguageParser):
     """
@@ -857,25 +872,27 @@ class BinaryParser(BaseLanguageParser):
         # Convert to CodeSymbol format
         symbols = []
         for i, sym in enumerate(analysis.symbols[:500]):
-            symbols.append(CodeSymbol(
-                id=f"bin_{hashlib.md5(f'{file_path}:{sym.name}:{sym.address}'.encode()).hexdigest()[:12]}",
-                symbol_type=self._map_symbol_type(sym.symbol_type),
-                fully_qualified_name=f"{Path(file_path).name}::{sym.name}",
-                simple_name=sym.name,
-                location=SourceLocation(
-                    file_path=file_path,
-                    start_line=0,
-                    end_line=0
-                ),
-                source_code=sym.disassembly or sym.decompiled_code or f"[{sym.symbol_type}] {sym.name} @ {sym.address}",
-                language="binary",
-                metadata={
-                    "address": sym.address,
-                    "section": sym.section,
-                    "binary_type": analysis.binary_type.name,
-                    "architecture": analysis.architecture
-                }
-            ))
+            symbols.append(
+                CodeSymbol(
+                    id=f"bin_{hashlib.md5(f'{file_path}:{sym.name}:{sym.address}'.encode()).hexdigest()[:12]}",
+                    symbol_type=self._map_symbol_type(sym.symbol_type),
+                    fully_qualified_name=f"{Path(file_path).name}::{sym.name}",
+                    simple_name=sym.name,
+                    location=SourceLocation(
+                        file_path=file_path, start_line=0, end_line=0
+                    ),
+                    source_code=sym.disassembly
+                    or sym.decompiled_code
+                    or f"[{sym.symbol_type}] {sym.name} @ {sym.address}",
+                    language="binary",
+                    metadata={
+                        "address": sym.address,
+                        "section": sym.section,
+                        "binary_type": analysis.binary_type.name,
+                        "architecture": analysis.architecture,
+                    },
+                )
+            )
 
         return ParsedCode(
             file_path=file_path,
@@ -883,7 +900,7 @@ class BinaryParser(BaseLanguageParser):
             symbols=symbols,
             relations=[],
             imports=analysis.imports[:100],
-            content_hash=analysis.content_hash
+            content_hash=analysis.content_hash,
         )
 
     def _map_symbol_type(self, sym_type: str):
@@ -903,13 +920,14 @@ class BinaryParser(BaseLanguageParser):
     def _fallback_regex_parse(self, content: str, file_path: str):
         """No regex fallback for binary files"""
         from .code import ParsedCode
+
         return ParsedCode(
             file_path=file_path,
             language="binary",
             symbols=[],
             relations=[],
             imports=[],
-            content_hash=hashlib.sha256(content.encode()).hexdigest()
+            content_hash=hashlib.sha256(content.encode()).hexdigest(),
         )
 
     def get_analysis(self, file_path: str) -> BinaryAnalysis:
@@ -983,27 +1001,27 @@ class DocumentParser(BaseLanguageParser):
         # Create a symbol for each page or section
         symbols = []
         for i, page in enumerate(result.pages):
-            page_text = page.get('text', '')
+            page_text = page.get("text", "")
             if page_text.strip():
-                symbols.append(CodeSymbol(
-                    id=f"doc_{hashlib.md5(f'{file_path}:page{i+1}'.encode()).hexdigest()[:12]}",
-                    symbol_type=CodeSymbolType.MODULE,
-                    fully_qualified_name=f"{Path(file_path).name}::page{i+1}",
-                    simple_name=f"Page {i+1}",
-                    location=SourceLocation(
-                        file_path=file_path,
-                        start_line=i + 1,
-                        end_line=i + 1
-                    ),
-                    source_code=page_text[:5000],  # Limit size
-                    language="document",
-                    documentation=f"OCR confidence: {page.get('confidence', 0):.1f}%",
-                    metadata={
-                        "page": i + 1,
-                        "confidence": page.get('confidence', 0),
-                        "document_type": result.document_type.name
-                    }
-                ))
+                symbols.append(
+                    CodeSymbol(
+                        id=f"doc_{hashlib.md5(f'{file_path}:page{i+1}'.encode()).hexdigest()[:12]}",
+                        symbol_type=CodeSymbolType.MODULE,
+                        fully_qualified_name=f"{Path(file_path).name}::page{i+1}",
+                        simple_name=f"Page {i+1}",
+                        location=SourceLocation(
+                            file_path=file_path, start_line=i + 1, end_line=i + 1
+                        ),
+                        source_code=page_text[:5000],  # Limit size
+                        language="document",
+                        documentation=f"OCR confidence: {page.get('confidence', 0):.1f}%",
+                        metadata={
+                            "page": i + 1,
+                            "confidence": page.get("confidence", 0),
+                            "document_type": result.document_type.name,
+                        },
+                    )
+                )
 
         return ParsedCode(
             file_path=file_path,
@@ -1011,19 +1029,20 @@ class DocumentParser(BaseLanguageParser):
             symbols=symbols,
             relations=[],
             imports=[],
-            content_hash=result.content_hash
+            content_hash=result.content_hash,
         )
 
     def _fallback_regex_parse(self, content: str, file_path: str):
         """No regex fallback for documents"""
         from .code import ParsedCode
+
         return ParsedCode(
             file_path=file_path,
             language="document",
             symbols=[],
             relations=[],
             imports=[],
-            content_hash=hashlib.sha256(content.encode()).hexdigest()
+            content_hash=hashlib.sha256(content.encode()).hexdigest(),
         )
 
     def get_ocr_result(self, file_path: str) -> OCRResult:
@@ -1036,6 +1055,7 @@ class DocumentParser(BaseLanguageParser):
 # =============================================================================
 # Factory Functions
 # =============================================================================
+
 
 def create_binary_parser(config: Optional[BinaryParserConfig] = None) -> BinaryParser:
     """Create a binary file parser"""
@@ -1053,7 +1073,7 @@ def get_available_tools() -> Dict[str, List[str]]:
         "re_tools": ToolDetector.get_available_re_tools(),
         "ocr_tools": ToolDetector.get_available_ocr_tools(),
         "has_wine": ToolDetector.has_wine(),
-        "platform": platform.system()
+        "platform": platform.system(),
     }
 
 
@@ -1063,34 +1083,29 @@ def get_available_tools() -> Dict[str, List[str]]:
 
 __all__ = [
     # Enums
-    'BinaryType',
-    'DocumentType',
-
+    "BinaryType",
+    "DocumentType",
     # Data structures
-    'BinarySymbol',
-    'BinaryAnalysis',
-    'OCRResult',
-    'BinaryParserConfig',
-    'OCRConfig',
-
+    "BinarySymbol",
+    "BinaryAnalysis",
+    "OCRResult",
+    "BinaryParserConfig",
+    "OCRConfig",
     # Tool detection
-    'ToolDetector',
-    'detect_binary_type',
-    'detect_document_type',
-
+    "ToolDetector",
+    "detect_binary_type",
+    "detect_document_type",
     # Adapters
-    'REToolAdapter',
-    'Radare2Adapter',
-    'ObjdumpAdapter',
-    'OCRAdapter',
-    'TesseractAdapter',
-
+    "REToolAdapter",
+    "Radare2Adapter",
+    "ObjdumpAdapter",
+    "OCRAdapter",
+    "TesseractAdapter",
     # Parsers
-    'BinaryParser',
-    'DocumentParser',
-
+    "BinaryParser",
+    "DocumentParser",
     # Factory functions
-    'create_binary_parser',
-    'create_document_parser',
-    'get_available_tools',
+    "create_binary_parser",
+    "create_document_parser",
+    "get_available_tools",
 ]

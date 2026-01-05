@@ -23,7 +23,7 @@ BGE_MODELS = {
         mteb_score=64.2,
         languages="en",
         description="Best quality English embeddings, top MTEB performer",
-        use_case="Maximum accuracy, research, when quality > speed"
+        use_case="Maximum accuracy, research, when quality > speed",
     ),
     "BAAI/bge-base-en-v1.5": ModelMetadata(
         name="BAAI/bge-base-en-v1.5",
@@ -35,7 +35,7 @@ BGE_MODELS = {
         mteb_score=63.5,
         languages="en",
         description="Balanced quality and speed",
-        use_case="Production systems requiring good performance"
+        use_case="Production systems requiring good performance",
     ),
     "BAAI/bge-small-en-v1.5": ModelMetadata(
         name="BAAI/bge-small-en-v1.5",
@@ -47,7 +47,7 @@ BGE_MODELS = {
         mteb_score=62.2,
         languages="en",
         description="Fastest variant, still excellent quality",
-        use_case="High-throughput applications, edge devices"
+        use_case="High-throughput applications, edge devices",
     ),
     "BAAI/bge-m3": ModelMetadata(
         name="BAAI/bge-m3",
@@ -59,8 +59,8 @@ BGE_MODELS = {
         mteb_score=66.0,
         languages="100+",
         description="Multilingual model with long context support",
-        use_case="Multilingual applications, long documents"
-    )
+        use_case="Multilingual applications, long documents",
+    ),
 }
 
 
@@ -68,13 +68,9 @@ BGE_MODELS = {
     name="bge",
     models=BGE_MODELS,
     aliases=["baai"],
-    description="BAAI state-of-the-art retrieval-optimized embeddings"
+    description="BAAI state-of-the-art retrieval-optimized embeddings",
 )
-class BGEProvider(
-    InstructionMixin,
-    SentenceTransformerMixin,
-    BaseEmbeddingProvider
-):
+class BGEProvider(InstructionMixin, SentenceTransformerMixin, BaseEmbeddingProvider):
     """
     BGE embedding provider
 
@@ -112,5 +108,5 @@ class BGEProvider(
             model=BGE_MODELS["BAAI/bge-large-en-v1.5"],
             batch_size=32,
             normalize=True,
-            extra={"use_query_instruction": True}
+            extra={"use_query_instruction": True},
         )

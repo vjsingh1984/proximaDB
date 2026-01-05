@@ -28,6 +28,7 @@ import numpy as np
 # Try importing ProximaDB native module
 try:
     import proximadb_sdk
+
     PROXIMADB_AVAILABLE = True
     print(f"ProximaDB v{proximadb.__version__} loaded")
 except ImportError:
@@ -180,7 +181,9 @@ def run_comprehensive_benchmark(batch_sizes: List[int]):
     print("PROXIMADB ENGINE & COMPRESSION COMPREHENSIVE BENCHMARK")
     print("=" * 100)
     print()
-    print("Testing: All 6 storage engines with engine-specific compression configurations")
+    print(
+        "Testing: All 6 storage engines with engine-specific compression configurations"
+    )
     print("Batch sizes:", ", ".join(f"{s:,}" for s in batch_sizes))
     print("Metrics: Insert throughput, search latency, storage size, compression ratio")
     print()
@@ -308,7 +311,8 @@ def run_comprehensive_benchmark(batch_sizes: List[int]):
     print("\n" + "=" * 100)
     print("KEY FINDINGS")
     print("=" * 100)
-    print("""
+    print(
+        """
 1. COMPRESSION IMPACT BY ENGINE:
    - SST: LZ4-1 provides ~2-3x compression with minimal performance impact
    - VIPER: ZSTD-3 achieves ~3-5x compression, best for columnar data
@@ -336,7 +340,8 @@ def run_comprehensive_benchmark(batch_sizes: List[int]):
    - Ultra-low latency: SWIFT with LZ4-1 or no compression
    - High-dimensional data: HELIX (PCA reduction)
    - Adaptive workloads: RAPTOR with ZSTD-3
-""")
+"""
+    )
 
 
 if __name__ == "__main__":

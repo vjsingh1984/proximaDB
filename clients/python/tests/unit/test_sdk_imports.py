@@ -32,10 +32,7 @@ class TestSDKImports:
         assert client_config.url == "http://localhost:5678"
 
         # Test CompressionConfig with actual fields
-        compression_config = CompressionConfig(
-            enabled=False,
-            algorithm="deflate"
-        )
+        compression_config = CompressionConfig(enabled=False, algorithm="deflate")
         assert compression_config.enabled is False
 
     def test_all_config_exports(self):
@@ -43,11 +40,11 @@ class TestSDKImports:
         from proximadb_sdk import config
 
         expected_exports = [
-            'ClientConfig',
-            'CompressionConfig',
-            'Protocol',
-            'LogLevel',
-            'RetryConfig'
+            "ClientConfig",
+            "CompressionConfig",
+            "Protocol",
+            "LogLevel",
+            "RetryConfig",
         ]
 
         for export in expected_exports:
@@ -65,7 +62,7 @@ class TestSDKImports:
                 VectorRecord,
                 QuantizationConfig,
                 QuantizationType,
-                SearchOptimization
+                SearchOptimization,
             )
 
             # All imports should succeed
@@ -105,12 +102,12 @@ class TestSDKImports:
     def test_submodule_imports(self):
         """Test that submodules are importable"""
         submodules = [
-            'proximadb_sdk.config',
-            'proximadb_sdk.models',
-            'proximadb_sdk.exceptions',
-            'proximadb_sdk.chunking',
-            'proximadb_sdk.filters',
-            'proximadb_sdk.unified_client'
+            "proximadb_sdk.config",
+            "proximadb_sdk.models",
+            "proximadb_sdk.exceptions",
+            "proximadb_sdk.chunking",
+            "proximadb_sdk.filters",
+            "proximadb_sdk.unified_client",
         ]
 
         for module_name in submodules:
@@ -128,18 +125,25 @@ class TestSDKImports:
 
         # Core client APIs
         client_apis = [
-            'ProximaDBClient', 'connect', 'connect_rest', 'connect_grpc', 'Protocol'
+            "ProximaDBClient",
+            "connect",
+            "connect_rest",
+            "connect_grpc",
+            "Protocol",
         ]
 
         # Configuration APIs
-        config_apis = [
-            'ClientConfig', 'CompressionConfig'
-        ]
+        config_apis = ["ClientConfig", "CompressionConfig"]
 
         # Model APIs
         model_apis = [
-            'Collection', 'CollectionConfig', 'VectorRecord', 'SearchResult',
-            'DistanceMetric', 'StorageEngine', 'IndexType'
+            "Collection",
+            "CollectionConfig",
+            "VectorRecord",
+            "SearchResult",
+            "DistanceMetric",
+            "StorageEngine",
+            "IndexType",
         ]
 
         # Check all APIs are present

@@ -30,15 +30,17 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 # =============================================================================
 # OAuth2 Token Management
 # =============================================================================
 
+
 class OAuth2GrantType(Enum):
     """OAuth2 grant types."""
+
     AUTHORIZATION_CODE = "authorization_code"
     CLIENT_CREDENTIALS = "client_credentials"
     REFRESH_TOKEN = "refresh_token"
@@ -48,6 +50,7 @@ class OAuth2GrantType(Enum):
 
 class OAuth2Provider(Enum):
     """Supported OAuth2 providers."""
+
     GENERIC = "generic"
     OKTA = "okta"
     AUTH0 = "auth0"
@@ -60,6 +63,7 @@ class OAuth2Provider(Enum):
 @dataclass
 class OAuth2TokenResponse:
     """OAuth2 token response."""
+
     access_token: str
     token_type: str = "Bearer"
     expires_in: Optional[int] = None
@@ -93,6 +97,7 @@ class OAuth2TokenResponse:
 @dataclass
 class OAuth2Config:
     """OAuth2 configuration."""
+
     provider: OAuth2Provider = OAuth2Provider.GENERIC
     client_id: str = ""
     client_secret: Optional[str] = None
@@ -158,7 +163,9 @@ class OAuth2TokenManager:
         """Register callback for token refresh events."""
         self._refresh_callbacks.append(callback)
 
-    def exchange_code(self, code: str, code_verifier: Optional[str] = None) -> OAuth2TokenResponse:
+    def exchange_code(
+        self, code: str, code_verifier: Optional[str] = None
+    ) -> OAuth2TokenResponse:
         """
         Exchange authorization code for tokens.
 
@@ -192,7 +199,9 @@ class OAuth2TokenManager:
         )
 
         if response.status_code != 200:
-            raise OAuth2Error(f"Token exchange failed: {response.status_code} - {response.text}")
+            raise OAuth2Error(
+                f"Token exchange failed: {response.status_code} - {response.text}"
+            )
 
         token_data = response.json()
         self._token = OAuth2TokenResponse(
@@ -238,7 +247,9 @@ class OAuth2TokenManager:
         )
 
         if response.status_code != 200:
-            raise OAuth2Error(f"Client credentials flow failed: {response.status_code} - {response.text}")
+            raise OAuth2Error(
+                f"Client credentials flow failed: {response.status_code} - {response.text}"
+            )
 
         token_data = response.json()
         self._token = OAuth2TokenResponse(
@@ -294,7 +305,9 @@ class OAuth2TokenManager:
                         access_token=token_data["access_token"],
                         token_type=token_data.get("token_type", "Bearer"),
                         expires_in=token_data.get("expires_in"),
-                        refresh_token=token_data.get("refresh_token", self._token.refresh_token),
+                        refresh_token=token_data.get(
+                            "refresh_token", self._token.refresh_token
+                        ),
                         scope=token_data.get("scope"),
                         id_token=token_data.get("id_token"),
                     )
@@ -314,8 +327,10 @@ class OAuth2TokenManager:
 
             except requests.exceptions.RequestException as e:
                 if attempt == self.config.max_refresh_attempts - 1:
-                    raise OAuth2Error(f"Token refresh failed after {attempt + 1} attempts: {e}")
-                time.sleep(2 ** attempt)  # Exponential backoff
+                    raise OAuth2Error(
+                        f"Token refresh failed after {attempt + 1} attempts: {e}"
+                    )
+                time.sleep(2**attempt)  # Exponential backoff
 
         raise OAuth2Error("Token refresh failed: max attempts exceeded")
 
@@ -331,11 +346,15 @@ class OAuth2TokenManager:
 
         # Generate 32-byte random verifier
         verifier_bytes = secrets.token_bytes(32)
-        code_verifier = base64.urlsafe_b64encode(verifier_bytes).rstrip(b'=').decode('ascii')
+        code_verifier = (
+            base64.urlsafe_b64encode(verifier_bytes).rstrip(b"=").decode("ascii")
+        )
 
         # Create SHA256 challenge
-        challenge_bytes = hashlib.sha256(code_verifier.encode('ascii')).digest()
-        code_challenge = base64.urlsafe_b64encode(challenge_bytes).rstrip(b'=').decode('ascii')
+        challenge_bytes = hashlib.sha256(code_verifier.encode("ascii")).digest()
+        code_challenge = (
+            base64.urlsafe_b64encode(challenge_bytes).rstrip(b"=").decode("ascii")
+        )
 
         self._pkce_verifier = code_verifier
         return code_verifier, code_challenge
@@ -343,6 +362,7 @@ class OAuth2TokenManager:
 
 class OAuth2Error(Exception):
     """OAuth2-specific error."""
+
     pass
 
 
@@ -350,8 +370,10 @@ class OAuth2Error(Exception):
 # RBAC Permission Enforcement
 # =============================================================================
 
+
 class Role(Enum):
     """Predefined roles."""
+
     ADMIN = "admin"
     DEVELOPER = "developer"
     ANALYST = "analyst"
@@ -362,6 +384,7 @@ class Role(Enum):
 @dataclass
 class RoleDefinition:
     """Role with associated permissions."""
+
     name: str
     permissions: Set[str]
     description: str = ""
@@ -388,44 +411,63 @@ class RBACManager:
         Role.ADMIN.value: RoleDefinition(
             name="admin",
             permissions={
-                "collection:*", "vector:*", "graph:*", "document:*",
-                "observability:*", "system:*", "user:*", "role:*"
+                "collection:*",
+                "vector:*",
+                "graph:*",
+                "document:*",
+                "observability:*",
+                "system:*",
+                "user:*",
+                "role:*",
             },
-            description="Full system access"
+            description="Full system access",
         ),
         Role.DEVELOPER.value: RoleDefinition(
             name="developer",
             permissions={
-                "collection:create", "collection:read", "collection:update",
-                "vector:*", "graph:*", "document:*", "observability:read"
+                "collection:create",
+                "collection:read",
+                "collection:update",
+                "vector:*",
+                "graph:*",
+                "document:*",
+                "observability:read",
             },
             description="Development access",
-            inherits=["analyst"]
+            inherits=["analyst"],
         ),
         Role.ANALYST.value: RoleDefinition(
             name="analyst",
             permissions={
-                "collection:read", "vector:search", "vector:read",
-                "graph:traverse", "graph:read", "document:read",
-                "observability:read", "observability:query"
+                "collection:read",
+                "vector:search",
+                "vector:read",
+                "graph:traverse",
+                "graph:read",
+                "document:read",
+                "observability:read",
+                "observability:query",
             },
             description="Read and query access",
-            inherits=["viewer"]
+            inherits=["viewer"],
         ),
         Role.VIEWER.value: RoleDefinition(
             name="viewer",
-            permissions={
-                "collection:list", "system:health"
-            },
-            description="View-only access"
+            permissions={"collection:list", "system:health"},
+            description="View-only access",
         ),
         Role.SERVICE.value: RoleDefinition(
             name="service",
             permissions={
-                "vector:insert", "vector:search", "graph:create", "graph:traverse",
-                "document:create", "document:read", "observability:write"
+                "vector:insert",
+                "vector:search",
+                "graph:create",
+                "graph:traverse",
+                "document:create",
+                "document:read",
+                "observability:write",
             },
-            description="Service account access"
+            description="Service account access",
         ),
     }
 
@@ -512,32 +554,38 @@ class RBACManager:
             def search_vectors(self, ...):
                 ...
         """
+
         def decorator(func: F) -> F:
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
                 # Get security context from first argument (usually self)
-                context = getattr(args[0], '_security_context', None) if args else None
+                context = getattr(args[0], "_security_context", None) if args else None
                 if context is None:
-                    context = kwargs.get('security_context')
+                    context = kwargs.get("security_context")
 
                 if context is None:
-                    raise PermissionError(f"No security context for permission check: {permission}")
+                    raise PermissionError(
+                        f"No security context for permission check: {permission}"
+                    )
 
                 if not self.check_permission(context.roles, permission):
                     raise PermissionError(f"Permission denied: {permission}")
 
                 return func(*args, **kwargs)
+
             return wrapper
+
         return decorator
 
     def require_any_permission(self, permissions: List[str]):
         """Decorator requiring any of the listed permissions."""
+
         def decorator(func: F) -> F:
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
-                context = getattr(args[0], '_security_context', None) if args else None
+                context = getattr(args[0], "_security_context", None) if args else None
                 if context is None:
-                    context = kwargs.get('security_context')
+                    context = kwargs.get("security_context")
 
                 if context is None:
                     raise PermissionError("No security context for permission check")
@@ -546,8 +594,12 @@ class RBACManager:
                     if self.check_permission(context.roles, perm):
                         return func(*args, **kwargs)
 
-                raise PermissionError(f"Permission denied: requires one of {permissions}")
+                raise PermissionError(
+                    f"Permission denied: requires one of {permissions}"
+                )
+
             return wrapper
+
         return decorator
 
     def set_audit_callback(self, callback: Callable[[Dict[str, Any]], None]):
@@ -563,18 +615,21 @@ class RBACManager:
     ):
         """Log access decision for audit."""
         if self._audit_callback:
-            self._audit_callback({
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "roles": roles,
-                "permission": permission,
-                "resource": resource,
-                "allowed": allowed,
-            })
+            self._audit_callback(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "roles": roles,
+                    "permission": permission,
+                    "resource": resource,
+                    "allowed": allowed,
+                }
+            )
 
 
 # =============================================================================
 # Security Context
 # =============================================================================
+
 
 @dataclass
 class SecurityContext:
@@ -584,6 +639,7 @@ class SecurityContext:
     Contains authentication and authorization information
     for the current request/session.
     """
+
     user_id: str
     tenant_id: Optional[str] = None
     roles: List[str] = field(default_factory=list)
@@ -592,13 +648,17 @@ class SecurityContext:
     request_id: Optional[str] = None
     client_ip: Optional[str] = None
     user_agent: Optional[str] = None
-    authenticated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    authenticated_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def has_permission(self, permission: str) -> bool:
         """Check if context has a specific permission."""
         resource_type = permission.split(":")[0]
-        return permission in self.permissions or f"{resource_type}:*" in self.permissions
+        return (
+            permission in self.permissions or f"{resource_type}:*" in self.permissions
+        )
 
     def has_role(self, role: str) -> bool:
         """Check if context has a specific role."""
@@ -611,7 +671,7 @@ _security_context_local = threading.local()
 
 def get_current_security_context() -> Optional[SecurityContext]:
     """Get the current security context."""
-    return getattr(_security_context_local, 'context', None)
+    return getattr(_security_context_local, "context", None)
 
 
 def set_security_context(context: SecurityContext):
@@ -621,7 +681,7 @@ def set_security_context(context: SecurityContext):
 
 def clear_security_context():
     """Clear the current security context."""
-    if hasattr(_security_context_local, 'context'):
+    if hasattr(_security_context_local, "context"):
         del _security_context_local.context
 
 
@@ -656,8 +716,10 @@ class security_context:
 # Audit Logging
 # =============================================================================
 
+
 class AuditEventType(Enum):
     """Types of audit events."""
+
     AUTHENTICATION = "authentication"
     AUTHORIZATION = "authorization"
     DATA_ACCESS = "data_access"
@@ -670,6 +732,7 @@ class AuditEventType(Enum):
 @dataclass
 class AuditEvent:
     """Audit event record."""
+
     event_id: str
     event_type: AuditEventType
     timestamp: datetime
@@ -863,7 +926,7 @@ class AuditLogger:
     def _write_to_file(self, event: AuditEvent):
         """Write event to log file."""
         try:
-            with open(self._log_file, 'a') as f:
+            with open(self._log_file, "a") as f:
                 f.write(event.to_json() + "\n")
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
@@ -875,6 +938,7 @@ class AuditLogger:
 
         try:
             import requests
+
             events = [e.to_dict() for e in self._batch]
             response = requests.post(
                 self._remote_endpoint,
@@ -901,9 +965,11 @@ class AuditLogger:
 # mTLS Configuration
 # =============================================================================
 
+
 @dataclass
 class MTLSConfig:
     """mTLS configuration."""
+
     enabled: bool = False
     client_cert_path: Optional[str] = None
     client_key_path: Optional[str] = None
@@ -965,6 +1031,7 @@ class MTLSConfig:
 # =============================================================================
 # Unified Security Manager
 # =============================================================================
+
 
 class SecurityManager:
     """

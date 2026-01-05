@@ -65,6 +65,7 @@ from .chunking_strategies.base import TextChunk
 @dataclass
 class CodeIndexConfig:
     """Configuration for code indexing"""
+
     # Vector collection settings
     vector_collection_name: str = "code_symbols"
     vector_dimension: int = 1536  # OpenAI ada-002 default
@@ -79,12 +80,27 @@ class CodeIndexConfig:
 
     # File filtering
     include_patterns: List[str] = field(default_factory=lambda: ["*"])
-    exclude_patterns: List[str] = field(default_factory=lambda: [
-        "*.pyc", "__pycache__/*", ".git/*", ".hg/*", ".svn/*",
-        "node_modules/*", "vendor/*", "target/*", "build/*", "dist/*",
-        "*.min.js", "*.min.css", "*.map",
-        ".venv/*", "venv/*", ".env/*", "env/*",
-    ])
+    exclude_patterns: List[str] = field(
+        default_factory=lambda: [
+            "*.pyc",
+            "__pycache__/*",
+            ".git/*",
+            ".hg/*",
+            ".svn/*",
+            "node_modules/*",
+            "vendor/*",
+            "target/*",
+            "build/*",
+            "dist/*",
+            "*.min.js",
+            "*.min.css",
+            "*.map",
+            ".venv/*",
+            "venv/*",
+            ".env/*",
+            "env/*",
+        ]
+    )
 
     # Embedding settings
     embedding_batch_size: int = 32
@@ -98,6 +114,7 @@ class CodeIndexConfig:
 @dataclass
 class IndexingResult:
     """Result of indexing operation"""
+
     files_processed: int = 0
     files_skipped: int = 0
     files_failed: int = 0
@@ -110,6 +127,7 @@ class IndexingResult:
 @dataclass
 class CodeSearchResult:
     """Result from code search"""
+
     symbol_id: str
     symbol_type: str
     fully_qualified_name: str
@@ -161,10 +179,12 @@ class CodeKnowledgeBuilder:
         self.embedding_provider = embedding_provider
 
         # Initialize chunker
-        self._chunker = CodeChunkingStrategy(CodeChunkingConfig(
-            include_private=self.config.include_private,
-            include_tests=self.config.include_tests,
-        ))
+        self._chunker = CodeChunkingStrategy(
+            CodeChunkingConfig(
+                include_private=self.config.include_private,
+                include_tests=self.config.include_tests,
+            )
+        )
 
         # Cache for file hashes (for incremental indexing)
         self._file_hashes: Dict[str, str] = {}
@@ -186,7 +206,9 @@ class CodeKnowledgeBuilder:
         try:
             # Check if collection exists
             collections = await self.client.list_collections()
-            collection_names = [c.name if hasattr(c, 'name') else c for c in collections]
+            collection_names = [
+                c.name if hasattr(c, "name") else c for c in collections
+            ]
 
             if self.config.vector_collection_name not in collection_names:
                 # Create collection with code-optimized schema
@@ -197,7 +219,7 @@ class CodeKnowledgeBuilder:
                     metadata={
                         "type": "code_knowledge",
                         "version": "1.0",
-                    }
+                    },
                 )
 
             self._vector_collection_ready = True
@@ -213,7 +235,7 @@ class CodeKnowledgeBuilder:
         try:
             # Check if graph exists
             graphs = await self.client.list_graphs()
-            graph_names = [g.name if hasattr(g, 'name') else g for g in graphs]
+            graph_names = [g.name if hasattr(g, "name") else g for g in graphs]
 
             if self.config.graph_name not in graph_names:
                 # Create graph for code relationships
@@ -222,7 +244,7 @@ class CodeKnowledgeBuilder:
                     metadata={
                         "type": "code_knowledge",
                         "version": "1.0",
-                    }
+                    },
                 )
 
             self._graph_ready = True
@@ -255,13 +277,12 @@ class CodeKnowledgeBuilder:
         # Read content if not provided
         if content is None:
             try:
-                content = file_path.read_text(encoding='utf-8')
+                content = file_path.read_text(encoding="utf-8")
             except Exception as e:
                 result.files_failed = 1
-                result.errors.append({
-                    "file": str(file_path),
-                    "error": f"Failed to read file: {e}"
-                })
+                result.errors.append(
+                    {"file": str(file_path), "error": f"Failed to read file: {e}"}
+                )
                 return result
 
         # Check for changes (incremental indexing)
@@ -283,9 +304,7 @@ class CodeKnowledgeBuilder:
         try:
             # Parse and chunk the file
             chunks = self._chunker.chunk(
-                text=content,
-                source_id=str(file_path),
-                metadata={"language": language}
+                text=content, source_id=str(file_path), metadata={"language": language}
             )
 
             if not chunks:
@@ -310,10 +329,7 @@ class CodeKnowledgeBuilder:
 
         except Exception as e:
             result.files_failed = 1
-            result.errors.append({
-                "file": str(file_path),
-                "error": str(e)
-            })
+            result.errors.append({"file": str(file_path), "error": str(e)})
 
         return result
 
@@ -409,10 +425,7 @@ class CodeKnowledgeBuilder:
         else:
             return hashlib.sha256(content.encode()).hexdigest()
 
-    async def _generate_embeddings(
-        self,
-        chunks: List[TextChunk]
-    ) -> List[List[float]]:
+    async def _generate_embeddings(self, chunks: List[TextChunk]) -> List[List[float]]:
         """Generate embeddings for code chunks."""
         if self.embedding_provider:
             # Use provided embedding provider
@@ -448,7 +461,7 @@ class CodeKnowledgeBuilder:
         # Add the code itself
         code = chunk.text
         if len(code) > self.config.max_content_length:
-            code = code[:self.config.max_content_length] + "..."
+            code = code[: self.config.max_content_length] + "..."
         parts.append(f"Code:\n{code}")
 
         return "\n\n".join(parts)
@@ -459,14 +472,14 @@ class CodeKnowledgeBuilder:
         h = hashlib.sha256(text.encode()).hexdigest()
         embedding = []
         for i in range(0, min(len(h), self.config.vector_dimension * 2), 2):
-            byte_val = int(h[i:i+2], 16)
+            byte_val = int(h[i : i + 2], 16)
             embedding.append((byte_val - 128) / 128.0)  # Normalize to [-1, 1]
 
         # Pad or truncate to correct dimension
         while len(embedding) < self.config.vector_dimension:
             embedding.append(0.0)
 
-        return embedding[:self.config.vector_dimension]
+        return embedding[: self.config.vector_dimension]
 
     async def _insert_vectors(
         self,
@@ -511,15 +524,19 @@ class CodeKnowledgeBuilder:
             if chunk.metadata.get("complexity"):
                 metadata["complexity"] = str(chunk.metadata["complexity"])
 
-            vectors.append({
-                "id": metadata["symbol_id"],
-                "vector": embedding,
-                "metadata": metadata,
-            })
+            vectors.append(
+                {
+                    "id": metadata["symbol_id"],
+                    "vector": embedding,
+                    "metadata": metadata,
+                }
+            )
 
         # Batch insert
         if vectors:
-            collection = await self.client.get_collection(self.config.vector_collection_name)
+            collection = await self.client.get_collection(
+                self.config.vector_collection_name
+            )
             await collection.insert(vectors)
 
     async def _insert_graph_data(
@@ -540,7 +557,9 @@ class CodeKnowledgeBuilder:
 
                 node_properties = {
                     "symbol_type": chunk.metadata.get("symbol_type", "UNKNOWN"),
-                    "fully_qualified_name": chunk.metadata.get("fully_qualified_name", ""),
+                    "fully_qualified_name": chunk.metadata.get(
+                        "fully_qualified_name", ""
+                    ),
                     "simple_name": chunk.metadata.get("simple_name", ""),
                     "file_path": str(file_path),
                     "language": language,
@@ -559,11 +578,13 @@ class CodeKnowledgeBuilder:
                     language.capitalize(),
                 ]
 
-                await graph.insert_node({
-                    "id": node_id,
-                    "labels": labels,
-                    "properties": node_properties,
-                })
+                await graph.insert_node(
+                    {
+                        "id": node_id,
+                        "labels": labels,
+                        "properties": node_properties,
+                    }
+                )
 
             # Insert edges for relationships
             for chunk in chunks:
@@ -576,15 +597,17 @@ class CodeKnowledgeBuilder:
                     confidence = rel.get("confidence", 1.0)
 
                     if to_id:
-                        await graph.insert_edge({
-                            "id": f"{from_id}_{rel_type}_{to_id}",
-                            "from_node_id": from_id,
-                            "to_node_id": to_id,
-                            "edge_type": rel_type,
-                            "properties": {
-                                "confidence": confidence,
-                            },
-                        })
+                        await graph.insert_edge(
+                            {
+                                "id": f"{from_id}_{rel_type}_{to_id}",
+                                "from_node_id": from_id,
+                                "to_node_id": to_id,
+                                "edge_type": rel_type,
+                                "properties": {
+                                    "confidence": confidence,
+                                },
+                            }
+                        )
                         relations_count += 1
 
             # Insert containment relationships (class contains method, etc.)
@@ -597,13 +620,17 @@ class CodeKnowledgeBuilder:
                     # Find parent symbol
                     for other_chunk in chunks:
                         if other_chunk.metadata.get("simple_name") == parent_name:
-                            parent_id = other_chunk.metadata.get("symbol_id", other_chunk.chunk_id)
-                            await graph.insert_edge({
-                                "id": f"{parent_id}_CONTAINS_{child_id}",
-                                "from_node_id": parent_id,
-                                "to_node_id": child_id,
-                                "edge_type": "CONTAINS",
-                            })
+                            parent_id = other_chunk.metadata.get(
+                                "symbol_id", other_chunk.chunk_id
+                            )
+                            await graph.insert_edge(
+                                {
+                                    "id": f"{parent_id}_CONTAINS_{child_id}",
+                                    "from_node_id": parent_id,
+                                    "to_node_id": child_id,
+                                    "edge_type": "CONTAINS",
+                                }
+                            )
                             relations_count += 1
                             break
 
@@ -647,7 +674,9 @@ class CodeKnowledgeBuilder:
             metadata_filter["symbol_type"] = {"$in": filter_symbol_types}
 
         # Search vector store
-        collection = await self.client.get_collection(self.config.vector_collection_name)
+        collection = await self.client.get_collection(
+            self.config.vector_collection_name
+        )
         search_results = await collection.search(
             query_vector=query_embedding,
             top_k=top_k,
@@ -882,7 +911,9 @@ class CodeKnowledgeBuilder:
                 impact["dependent_files"].add(file_path)
 
         impact["dependent_files"] = list(impact["dependent_files"])
-        impact["total_affected"] = len(impact["direct_callers"]) + len(impact["indirect_callers"])
+        impact["total_affected"] = len(impact["direct_callers"]) + len(
+            impact["indirect_callers"]
+        )
 
         return impact
 
@@ -920,7 +951,9 @@ class CodeKnowledgeBuilder:
 
         try:
             # Delete from vector store
-            collection = await self.client.get_collection(self.config.vector_collection_name)
+            collection = await self.client.get_collection(
+                self.config.vector_collection_name
+            )
             await collection.delete(filter={"file_path": file_path})
 
             # Delete from graph
@@ -946,6 +979,7 @@ class CodeKnowledgeBuilder:
 
 
 # Convenience functions
+
 
 async def create_code_knowledge_store(
     client: Any,

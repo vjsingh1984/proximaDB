@@ -34,6 +34,7 @@ from proximadb_sdk import ProximaDBClient, VectorRecord
 def _server_available(url: str) -> bool:
     """Check if ProximaDB server is available"""
     import httpx
+
     try:
         r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return r.status_code < 500
@@ -55,10 +56,11 @@ def client():
     # Ensure default graph exists
     try:
         import httpx
+
         httpx.post(
             f"{base_url}/api/v1/graph/graphs",
             json={"graph_id": "default", "name": "Default Graph"},
-            timeout=5.0
+            timeout=5.0,
         )
     except Exception:
         pass  # Graph might already exist
@@ -84,6 +86,7 @@ def test_collection(client):
 # CRUD Operations Tests
 # ============================================================================
 
+
 @pytest.mark.integration
 def test_entity_create_single(client, test_collection):
     """Test: Create single entity with full metadata"""
@@ -102,8 +105,8 @@ def test_entity_create_single(client, test_collection):
             "category": "test",
             "tags": ["integration", "crud"],
             "created_at": time.time(),
-            "version": 1
-        }
+            "version": 1,
+        },
     )
 
     result = client.insert_vectors(collection, records=[record])
@@ -121,22 +124,20 @@ def test_entity_read_by_id(client, test_collection):
     # Create entity
     entity_id = "entity_read_001"
     from ..embedding_utils import embed_seed
+
     vector = np.array(embed_seed(0, dimension), dtype=np.float32)
 
     record = VectorRecord(
         id=entity_id,
         vector=vector.tolist(),
-        metadata={"title": "Read Test Entity", "index": 1}
+        metadata={"title": "Read Test Entity", "index": 1},
     )
 
     client.insert_vectors(collection, records=[record])
 
     # Read entity via search (entity store lookup)
     results = client.search(
-        collection_id=collection,
-        vector=vector.tolist(),
-        top_k=1,
-        include_metadata=True
+        collection_id=collection, vector=vector.tolist(), top_k=1, include_metadata=True
     )
 
     assert len(results) >= 1, "Entity not found"
@@ -159,23 +160,21 @@ def test_entity_update_metadata(client, test_collection):
 
     entity_id = "entity_update_001"
     from ..embedding_utils import embed_seed
+
     vector = np.array(embed_seed(1, dimension), dtype=np.float32)
 
     # Create entity
     record = VectorRecord(
         id=entity_id,
         vector=vector.tolist(),
-        metadata={"title": "Test Entity", "version": 1}
+        metadata={"title": "Test Entity", "version": 1},
     )
     result = client.insert_vectors(collection, records=[record])
     assert result.success, "Entity insert failed"
 
     # Verify entity exists with metadata
     results = client.search(
-        collection_id=collection,
-        vector=vector.tolist(),
-        top_k=1,
-        include_metadata=True
+        collection_id=collection, vector=vector.tolist(), top_k=1, include_metadata=True
     )
 
     assert len(results) >= 1
@@ -194,12 +193,11 @@ def test_entity_delete(client, test_collection):
     # Create entity
     entity_id = "entity_delete_001"
     from ..embedding_utils import embed_seed
+
     vector = np.array(embed_seed(2, dimension), dtype=np.float32)
 
     record = VectorRecord(
-        id=entity_id,
-        vector=vector.tolist(),
-        metadata={"title": "Delete Test"}
+        id=entity_id, vector=vector.tolist(), metadata={"title": "Delete Test"}
     )
 
     # Insert the entity and verify success
@@ -209,10 +207,7 @@ def test_entity_delete(client, test_collection):
 
     # Verify entity exists by searching
     search_results = client.search(
-        collection_id=collection,
-        vector=vector.tolist(),
-        top_k=1,
-        include_metadata=True
+        collection_id=collection, vector=vector.tolist(), top_k=1, include_metadata=True
     )
     assert len(search_results) >= 1, "Should find the inserted entity"
     assert search_results[0].id == entity_id, "Should retrieve the correct entity"
@@ -227,6 +222,7 @@ def test_entity_delete(client, test_collection):
 # ============================================================================
 # Batch Operations Tests
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_entity_batch_create(client, test_collection):
@@ -245,8 +241,8 @@ def test_entity_batch_create(client, test_collection):
             metadata={
                 "batch_id": "batch_001",
                 "index": i,
-                "category": ["A", "B", "C"][i % 3]
-            }
+                "category": ["A", "B", "C"][i % 3],
+            },
         )
         records.append(record)
 
@@ -272,13 +268,14 @@ def test_entity_batch_read(client, test_collection):
     batch_size = 100
     records = []
     from ..embedding_utils import embed_seed
+
     for i in range(batch_size):
         vector = np.array(embed_seed(i, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"read_batch_{i}",
             vector=vector.tolist(),
-            metadata={"read_test": True, "index": i}
+            metadata={"read_test": True, "index": i},
         )
         records.append(record)
 
@@ -291,7 +288,7 @@ def test_entity_batch_read(client, test_collection):
         collection_id=collection,
         vector=query_vector.tolist(),
         top_k=batch_size,
-        include_metadata=True
+        include_metadata=True,
     )
 
     assert len(results) >= 1, "No entities returned"
@@ -301,6 +298,7 @@ def test_entity_batch_read(client, test_collection):
 # ============================================================================
 # Metadata & Querying Tests
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_entity_metadata_types(client, test_collection):
@@ -321,8 +319,8 @@ def test_entity_metadata_types(client, test_collection):
             "bool_field": True,
             "list_field": [1, 2, 3],
             "nested_key": "value",
-            "nested_number": 123
-        }
+            "nested_number": 123,
+        },
     )
 
     result = client.insert_vectors(collection, records=[record])
@@ -330,10 +328,7 @@ def test_entity_metadata_types(client, test_collection):
 
     # Verify metadata types preserved (metadata is returned in wrapped proto format)
     results = client.search(
-        collection_id=collection,
-        vector=vector.tolist(),
-        top_k=1,
-        include_metadata=True
+        collection_id=collection, vector=vector.tolist(), top_k=1, include_metadata=True
     )
 
     assert len(results) >= 1
@@ -359,11 +354,7 @@ def test_entity_search_with_metadata(client, test_collection):
         record = VectorRecord(
             id=f"search_entity_{i}",
             vector=vector.tolist(),
-            metadata={
-                "category": categories[i % 3],
-                "priority": i % 5,
-                "active": True
-            }
+            metadata={"category": categories[i % 3], "priority": i % 5, "active": True},
         )
         client.insert_vectors(collection, records=[record])
 
@@ -374,7 +365,7 @@ def test_entity_search_with_metadata(client, test_collection):
         collection_id=collection,
         vector=query_vector.tolist(),
         top_k=10,
-        include_metadata=True
+        include_metadata=True,
     )
 
     assert len(results) >= 1
@@ -390,6 +381,7 @@ def test_entity_search_with_metadata(client, test_collection):
 # Graph & Relationship Tests
 # ============================================================================
 
+
 @pytest.mark.integration
 def test_entity_with_relationships(client, test_collection):
     """Test: Create entities with graph relationships"""
@@ -398,22 +390,21 @@ def test_entity_with_relationships(client, test_collection):
     # Create entities
     num_entities = 10
     from ..embedding_utils import embed_seed
+
     for i in range(num_entities):
         vector = np.array(embed_seed(i, dimension), dtype=np.float32)
 
         record = VectorRecord(
             id=f"graph_entity_{i}",
             vector=vector.tolist(),
-            metadata={"type": "graph_node", "index": i}
+            metadata={"type": "graph_node", "index": i},
         )
         client.insert_vectors(collection, records=[record])
 
     # Create graph nodes for entities
     for i in range(num_entities):
         client.create_node(
-            node_id=f"graph_entity_{i}",
-            labels=["Entity"],
-            properties={"index": i}
+            node_id=f"graph_entity_{i}", labels=["Entity"], properties={"index": i}
         )
 
     # Create relationships
@@ -423,7 +414,7 @@ def test_entity_with_relationships(client, test_collection):
             from_node_id=f"graph_entity_{i}",
             to_node_id=f"graph_entity_{i+1}",
             edge_type="NEXT",
-            weight=1.0
+            weight=1.0,
         )
 
     # Traverse relationships
@@ -432,7 +423,7 @@ def test_entity_with_relationships(client, test_collection):
         max_depth=3,
         edge_types=["NEXT"],
         algorithm="BFS",
-        limit=20
+        limit=20,
     )
 
     nodes = traversal.get("nodes", [])
@@ -450,28 +441,26 @@ def test_entity_relationship_types(client, test_collection):
     # Create entities
     entity_ids = ["rel_test_A", "rel_test_B", "rel_test_C"]
     for entity_id in entity_ids:
-        vector = np.array(embed_seed(hash(entity_id) % 1000, dimension), dtype=np.float32)
+        vector = np.array(
+            embed_seed(hash(entity_id) % 1000, dimension), dtype=np.float32
+        )
 
         record = VectorRecord(
-            id=entity_id,
-            vector=vector.tolist(),
-            metadata={"type": "relationship_test"}
+            id=entity_id, vector=vector.tolist(), metadata={"type": "relationship_test"}
         )
         client.insert_vectors(collection, records=[record])
 
     # Create graph nodes
     for entity_id in entity_ids:
         client.create_node(
-            node_id=entity_id,
-            labels=["RelTest"],
-            properties={"id": entity_id}
+            node_id=entity_id, labels=["RelTest"], properties={"id": entity_id}
         )
 
     # Create different relationship types
     rel_types = [
         ("rel_test_A", "rel_test_B", "REFERENCES", 0.9),
         ("rel_test_B", "rel_test_C", "SIMILAR_TO", 0.85),
-        ("rel_test_A", "rel_test_C", "DERIVED_FROM", 0.95)
+        ("rel_test_A", "rel_test_C", "DERIVED_FROM", 0.95),
     ]
 
     for from_id, to_id, rel_type, weight in rel_types:
@@ -480,7 +469,7 @@ def test_entity_relationship_types(client, test_collection):
             from_node_id=from_id,
             to_node_id=to_id,
             edge_type=rel_type,
-            weight=weight
+            weight=weight,
         )
 
     # Query relationships
@@ -489,7 +478,7 @@ def test_entity_relationship_types(client, test_collection):
         max_depth=2,
         edge_types=["REFERENCES", "SIMILAR_TO", "DERIVED_FROM"],
         algorithm="BFS",
-        limit=10
+        limit=10,
     )
 
     edges = traversal.get("edges", [])
@@ -501,6 +490,7 @@ def test_entity_relationship_types(client, test_collection):
 # ============================================================================
 # Performance & Edge Cases Tests
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_entity_large_metadata(client, test_collection):
@@ -514,16 +504,14 @@ def test_entity_large_metadata(client, test_collection):
         "description": "A" * 1000,  # 1KB string
         "tags": [f"tag_{i}" for i in range(100)],  # 100 tags
         "count": 50,  # Property count
-        "version": 1
+        "version": 1,
     }
     # Add individual properties instead of nested dict
     for i in range(20):
         large_metadata[f"prop_{i}"] = i
 
     record = VectorRecord(
-        id="large_metadata_001",
-        vector=vector.tolist(),
-        metadata=large_metadata
+        id="large_metadata_001", vector=vector.tolist(), metadata=large_metadata
     )
 
     result = client.insert_vectors(collection, records=[record])
@@ -541,9 +529,7 @@ def test_entity_high_dimensional_vector(client, test_collection):
     vector = np.array(embed_seed(666, dimension), dtype=np.float32)
 
     record = VectorRecord(
-        id="high_dim_001",
-        vector=vector.tolist(),
-        metadata={"dimension": dimension}
+        id="high_dim_001", vector=vector.tolist(), metadata={"dimension": dimension}
     )
 
     result = client.insert_vectors(collection, records=[record])
@@ -551,10 +537,7 @@ def test_entity_high_dimensional_vector(client, test_collection):
 
     # Verify vector dimension preserved
     results = client.search(
-        collection_id=collection,
-        vector=vector.tolist(),
-        top_k=1,
-        include_vectors=True
+        collection_id=collection, vector=vector.tolist(), top_k=1, include_vectors=True
     )
 
     assert len(results) >= 1
@@ -573,9 +556,7 @@ def test_entity_concurrent_operations(client, test_collection):
         vector = np.array(embed_seed(idx, dimension), dtype=np.float32)
 
         record = VectorRecord(
-            id=f"concurrent_{idx}",
-            vector=vector.tolist(),
-            metadata={"thread": idx}
+            id=f"concurrent_{idx}", vector=vector.tolist(), metadata={"thread": idx}
         )
         result = client.insert_vectors(collection, records=[record])
         return result.success
@@ -597,9 +578,7 @@ def test_entity_empty_metadata(client, test_collection):
     vector = np.array(embed_seed(555, dimension), dtype=np.float32)
 
     record = VectorRecord(
-        id="empty_metadata_001",
-        vector=vector.tolist(),
-        metadata={}  # Empty metadata
+        id="empty_metadata_001", vector=vector.tolist(), metadata={}  # Empty metadata
     )
 
     result = client.insert_vectors(collection, records=[record])
@@ -611,6 +590,7 @@ def test_entity_empty_metadata(client, test_collection):
 # ============================================================================
 # Summary Test
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_entity_store_coverage_summary(client):

@@ -15,7 +15,10 @@ try:
     # Create nodes
     print("Creating 1000 nodes...")
     start = time.perf_counter()
-    nodes = [proximadb.GraphNode(f"n{i}", labels=["P"], properties={"v": str(i)}) for i in range(1000)]
+    nodes = [
+        proximadb.GraphNode(f"n{i}", labels=["P"], properties={"v": str(i)})
+        for i in range(1000)
+    ]
     db.create_nodes(graph_id, nodes)
     node_time = (time.perf_counter() - start) * 1000
     print(f"  Nodes: {node_time:.1f}ms\n")
@@ -32,7 +35,9 @@ try:
         for offset in range(1, 6):
             if count >= 5000:
                 break
-            edges.append(proximadb.GraphEdge(f"n{i}", f"n{(i+offset)%1000}", "L", weight=1.0))
+            edges.append(
+                proximadb.GraphEdge(f"n{i}", f"n{(i+offset)%1000}", "L", weight=1.0)
+            )
             count += 1
     prep_time = (time.perf_counter() - start) * 1000
     print(f"    {prep_time:.1f}ms\n")

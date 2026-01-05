@@ -38,7 +38,7 @@ class TestVectorCRUD:
             name=collection_name,
             dimension=128,
             distance_metric="cosine",
-            description="Vector CRUD test collection"
+            description="Vector CRUD test collection",
         )
         collection = rest_client.create_collection(collection_name, config=config)
         yield collection
@@ -56,15 +56,15 @@ class TestVectorCRUD:
         metadata = {
             "description": "Test vector",
             "category": "test",
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
         # Insert vector
         result = rest_client.insert_vector(
             collection_id=test_collection.name,
             vector_id=vector_id,
-            vector=vector.tolist() if hasattr(vector, 'tolist') else vector,
-            metadata=metadata
+            vector=vector.tolist() if hasattr(vector, "tolist") else vector,
+            metadata=metadata,
         )
         assert result is not None
 
@@ -73,14 +73,18 @@ class TestVectorCRUD:
         updated_metadata = {
             "description": "Updated test vector",
             "category": "updated",
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
         update_result = rest_client.insert_vector(
             collection_id=test_collection.name,
             vector_id=vector_id,
-            vector=updated_vector.tolist() if hasattr(updated_vector, 'tolist') else updated_vector,
-            metadata=updated_metadata
+            vector=(
+                updated_vector.tolist()
+                if hasattr(updated_vector, "tolist")
+                else updated_vector
+            ),
+            metadata=updated_metadata,
         )
         assert update_result is not None
 
@@ -91,15 +95,15 @@ class TestVectorCRUD:
         metadata = {
             "description": "gRPC test vector",
             "category": "grpc_test",
-            "protocol": "grpc"
+            "protocol": "grpc",
         }
 
         # Insert vector
         result = grpc_client.insert_vector(
             collection_id=test_collection.name,
             vector_id=vector_id,
-            vector=vector.tolist() if hasattr(vector, 'tolist') else vector,
-            metadata=metadata
+            vector=vector.tolist() if hasattr(vector, "tolist") else vector,
+            metadata=metadata,
         )
         assert result is not None
 
@@ -117,7 +121,7 @@ class TestBatchVectorOperations:
             dimension=384,
             distance_metric="cosine",
             description="Batch operations test collection",
-            storage_engine=StorageEngine.SST  # Use SST for embedded
+            storage_engine=StorageEngine.SST,  # Use SST for embedded
         )
         collection = rest_client.create_collection(collection_name, config=config)
         yield collection
@@ -137,25 +141,29 @@ class TestBatchVectorOperations:
 
         for i in range(batch_size):
             vector = embed_seed(i, 384)
-            vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+            vectors.append(vector.tolist() if hasattr(vector, "tolist") else vector)
             vector_ids.append(f"batch_rest_{i}")
-            metadatas.append({
-                "index": i,
-                "batch": "rest_batch",
-                "category": f"group_{i % 10}",
-                "timestamp": time.time() + i
-            })
+            metadatas.append(
+                {
+                    "index": i,
+                    "batch": "rest_batch",
+                    "category": f"group_{i % 10}",
+                    "timestamp": time.time() + i,
+                }
+            )
 
         # Insert batch
         result = rest_client.insert_vectors(
             collection_id=batch_collection.name,
             vectors=vectors,
             ids=vector_ids,
-            metadata=metadatas
+            metadata=metadatas,
         )
 
         assert result is not None
-        inserted_count = getattr(result, 'count', getattr(result, 'successful_count', batch_size))
+        inserted_count = getattr(
+            result, "count", getattr(result, "successful_count", batch_size)
+        )
         assert inserted_count >= batch_size * 0.9  # Allow for some failures
 
     def test_batch_insertion_grpc(self, grpc_client, batch_collection):
@@ -167,25 +175,29 @@ class TestBatchVectorOperations:
 
         for i in range(batch_size):
             vector = embed_seed(100 + i, 384)
-            vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+            vectors.append(vector.tolist() if hasattr(vector, "tolist") else vector)
             vector_ids.append(f"batch_grpc_{i}")
-            metadatas.append({
-                "index": i,
-                "batch": "grpc_batch",
-                "category": f"grpc_group_{i % 15}",
-                "protocol": "grpc"
-            })
+            metadatas.append(
+                {
+                    "index": i,
+                    "batch": "grpc_batch",
+                    "category": f"grpc_group_{i % 15}",
+                    "protocol": "grpc",
+                }
+            )
 
         # Insert batch
         result = grpc_client.insert_vectors(
             collection_id=batch_collection.name,
             vectors=vectors,
             ids=vector_ids,
-            metadata=metadatas
+            metadata=metadatas,
         )
 
         assert result is not None
-        inserted_count = getattr(result, 'count', getattr(result, 'successful_count', batch_size))
+        inserted_count = getattr(
+            result, "count", getattr(result, "successful_count", batch_size)
+        )
         assert inserted_count >= batch_size * 0.9
 
 
@@ -202,7 +214,7 @@ class TestLargeScaleOperations:
             dimension=512,
             distance_metric="cosine",
             description="Large-scale operations test",
-            storage_engine=StorageEngine.SST
+            storage_engine=StorageEngine.SST,
         )
         collection = rest_client.create_collection(collection_name, config=config)
         yield collection
@@ -230,21 +242,25 @@ class TestLargeScaleOperations:
 
             for i in range(batch_start, batch_end):
                 vector = embed_seed(i, 512)
-                batch_vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+                batch_vectors.append(
+                    vector.tolist() if hasattr(vector, "tolist") else vector
+                )
                 batch_ids.append(f"large_vector_{i}")
-                batch_metadatas.append({
-                    "index": i,
-                    "batch": f"large_batch_{batch_start//batch_size}",
-                    "category": f"group_{i % 20}",
-                    "operation": "large_scale_uuid"
-                })
+                batch_metadatas.append(
+                    {
+                        "index": i,
+                        "batch": f"large_batch_{batch_start//batch_size}",
+                        "category": f"group_{i % 20}",
+                        "operation": "large_scale_uuid",
+                    }
+                )
 
             # Insert batch
             result = rest_client.insert_vectors(
                 collection_id=collection_id,
                 vectors=batch_vectors,
                 ids=batch_ids,
-                metadata=batch_metadatas
+                metadata=batch_metadatas,
             )
 
             assert result is not None
@@ -266,21 +282,25 @@ class TestLargeScaleOperations:
 
             for i in range(batch_start, batch_end):
                 vector = embed_seed(200 + i, 512)
-                batch_vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+                batch_vectors.append(
+                    vector.tolist() if hasattr(vector, "tolist") else vector
+                )
                 batch_ids.append(f"grpc_large_{i}")
-                batch_metadatas.append({
-                    "index": i,
-                    "batch": f"grpc_batch_{batch_start//batch_size}",
-                    "protocol": "grpc",
-                    "operation": "large_scale"
-                })
+                batch_metadatas.append(
+                    {
+                        "index": i,
+                        "batch": f"grpc_batch_{batch_start//batch_size}",
+                        "protocol": "grpc",
+                        "operation": "large_scale",
+                    }
+                )
 
             # Insert batch
             result = grpc_client.insert_vectors(
                 collection_id=large_scale_collection.name,
                 vectors=batch_vectors,
                 ids=batch_ids,
-                metadata=batch_metadatas
+                metadata=batch_metadatas,
             )
 
             assert result is not None
@@ -296,13 +316,11 @@ class TestLargeScaleOperations:
 
         for i in range(vector_count):
             vector = embed_seed(300 + i, 512)
-            vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+            vectors.append(vector.tolist() if hasattr(vector, "tolist") else vector)
             vector_ids.append(f"stress_{i}")
-            metadatas.append({
-                "index": i,
-                "phase": "initial",
-                "category": f"stress_group_{i % 8}"
-            })
+            metadatas.append(
+                {"index": i, "phase": "initial", "category": f"stress_group_{i % 8}"}
+            )
 
         # Insert in batches
         batch_size = 100
@@ -312,7 +330,7 @@ class TestLargeScaleOperations:
                 collection_id=large_scale_collection.name,
                 vectors=vectors[i:batch_end],
                 ids=vector_ids[i:batch_end],
-                metadata=metadatas[i:batch_end]
+                metadata=metadatas[i:batch_end],
             )
             assert batch_result is not None
 
@@ -323,7 +341,7 @@ class TestLargeScaleOperations:
             updated_metadata = {
                 "index": i,
                 "phase": "updated",
-                "update_timestamp": time.time()
+                "update_timestamp": time.time(),
             }
 
             # Alternate between rest and grpc clients
@@ -332,8 +350,12 @@ class TestLargeScaleOperations:
                 client.insert_vector(
                     collection_id=large_scale_collection.name,
                     vector_id=f"stress_{i}",
-                    vector=updated_vector.tolist() if hasattr(updated_vector, 'tolist') else updated_vector,
-                    metadata=updated_metadata
+                    vector=(
+                        updated_vector.tolist()
+                        if hasattr(updated_vector, "tolist")
+                        else updated_vector
+                    ),
+                    metadata=updated_metadata,
                 )
             except Exception as e:
                 pass
@@ -350,23 +372,22 @@ class TestVectorValidation:
         """Test dimension validation in config creation"""
         # Valid dimensions
         valid_config = CollectionConfig(
-            name="test_collection",
-            dimension=128,
-            distance_metric="cosine")
+            name="test_collection", dimension=128, distance_metric="cosine"
+        )
         assert valid_config.dimension == 128
 
         # Invalid dimensions should raise validation errors
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
-                name="test_collection",
-                dimension=0,
-                distance_metric="cosine")
+                name="test_collection", dimension=0, distance_metric="cosine"
+            )
 
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
                 name="test_collection",
                 dimension=70000,  # Too large
-                distance_metric="cosine")
+                distance_metric="cosine",
+            )
 
 
 class TestStreamingBatchingConcepts:
@@ -381,7 +402,7 @@ class TestStreamingBatchingConcepts:
             name=collection_name,
             dimension=256,
             distance_metric="cosine",
-            description="Streaming operations test collection"
+            description="Streaming operations test collection",
         )
         collection = rest_client.create_collection(collection_name, config=config)
         yield collection
@@ -405,13 +426,11 @@ class TestStreamingBatchingConcepts:
 
             for i in range(start_idx, start_idx + size):
                 vector = embed_seed(i, 256)
-                vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+                vectors.append(vector.tolist() if hasattr(vector, "tolist") else vector)
                 ids.append(f"stream_vec_{i}")
-                metadatas.append({
-                    "index": i,
-                    "chunk": i // chunk_size,
-                    "source": "streaming_test"
-                })
+                metadatas.append(
+                    {"index": i, "chunk": i // chunk_size, "source": "streaming_test"}
+                )
 
             return vectors, ids, metadatas
 
@@ -428,7 +447,7 @@ class TestStreamingBatchingConcepts:
                 collection_id=streaming_collection.name,
                 vectors=chunk_vectors,
                 ids=chunk_ids,
-                metadata=chunk_metadatas
+                metadata=chunk_metadatas,
             )
 
             if result is not None:
@@ -448,7 +467,7 @@ class TestStreamingBatchingConcepts:
 
         for i in range(100):
             vector = embed_seed(i, 256)
-            vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+            vectors.append(vector.tolist() if hasattr(vector, "tolist") else vector)
             ids.append(f"search_stream_{i}")
             metadatas.append({"index": i, "group": f"group_{i % 5}"})
 
@@ -456,20 +475,22 @@ class TestStreamingBatchingConcepts:
             collection_id=streaming_collection.name,
             vectors=vectors,
             ids=ids,
-            metadata=metadatas
+            metadata=metadatas,
         )
 
         time.sleep(0.5)  # Wait for indexing
 
         # Search for similar vectors
         query_vector = embed_seed(999, 256)
-        query_list = query_vector.tolist() if hasattr(query_vector, 'tolist') else query_vector
+        query_list = (
+            query_vector.tolist() if hasattr(query_vector, "tolist") else query_vector
+        )
 
         results = grpc_client.search(
             collection_id=streaming_collection.name,
             vector=query_list,
             top_k=20,
-            include_metadata=True
+            include_metadata=True,
         )
 
         # Verify we got some results
@@ -489,7 +510,7 @@ class TestBatchingOptimization:
             name=collection_name,
             dimension=128,
             distance_metric="euclidean",
-            description="Batching operations test collection"
+            description="Batching operations test collection",
         )
         collection = rest_client.create_collection(collection_name, config=config)
         yield collection
@@ -520,7 +541,9 @@ class TestBatchingOptimization:
 
                 for i in range(batch_start, batch_end):
                     vector = embed_seed(i, 128)
-                    batch_vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+                    batch_vectors.append(
+                        vector.tolist() if hasattr(vector, "tolist") else vector
+                    )
                     batch_ids.append(f"batch_{batch_size}_{i}")
                     batch_metadatas.append({"batch_size": batch_size, "index": i})
 
@@ -529,7 +552,7 @@ class TestBatchingOptimization:
                         collection_id=batching_collection.name,
                         vectors=batch_vectors,
                         ids=batch_ids,
-                        metadata=batch_metadatas
+                        metadata=batch_metadatas,
                     )
                     successful_inserts += len(batch_vectors)
                 except Exception as e:
@@ -542,7 +565,7 @@ class TestBatchingOptimization:
                 "total_vectors": total_vectors,
                 "successful": successful_inserts,
                 "time_seconds": elapsed_time,
-                "throughput_per_sec": throughput
+                "throughput_per_sec": throughput,
             }
 
             logger.info(f"Batch size {batch_size}: {throughput:.1f} vectors/sec")
@@ -573,7 +596,7 @@ class TestBatchingOptimization:
 
             for i in range(start_idx, start_idx + size):
                 vector = embed_seed(100 + i, 128)
-                vectors.append(vector.tolist() if hasattr(vector, 'tolist') else vector)
+                vectors.append(vector.tolist() if hasattr(vector, "tolist") else vector)
                 ids.append(f"concurrent_{i}")
                 metadatas.append({"batch": batch_num, "index": i})
 
@@ -583,7 +606,7 @@ class TestBatchingOptimization:
                     collection_id=batching_collection.name,
                     vectors=vectors,
                     ids=ids,
-                    metadata=metadatas
+                    metadata=metadatas,
                 )
                 return {"success": True, "count": size}
             except Exception as e:
@@ -603,8 +626,10 @@ class TestBatchingOptimization:
         successful_batches = sum(1 for r in results if r["success"])
         total_vectors = sum(r.get("count", 0) for r in results if r["success"])
 
-        logger.info(f"Concurrent batching: {successful_batches}/{num_batches} batches, "
-                    f"{total_vectors} vectors in {elapsed_time:.2f}s")
+        logger.info(
+            f"Concurrent batching: {successful_batches}/{num_batches} batches, "
+            f"{total_vectors} vectors in {elapsed_time:.2f}s"
+        )
 
         assert successful_batches >= num_batches * 0.8  # Allow some failures
 

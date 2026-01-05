@@ -75,7 +75,7 @@ class TestDataModels:
             start_line=10,
             end_line=20,
             start_column=0,
-            end_column=50
+            end_column=50,
         )
         assert loc.file_path == "/test/file.py"
         assert loc.start_line == 10
@@ -93,7 +93,7 @@ class TestDataModels:
             source_code="def test_function(): pass",
             language="python",
             signature="def test_function(arg: str) -> bool",
-            documentation="Test function docstring"
+            documentation="Test function docstring",
         )
         assert symbol.simple_name == "test_function"
         assert symbol.symbol_type == CodeSymbolType.FUNCTION
@@ -106,7 +106,7 @@ class TestDataModels:
             from_symbol_id="caller_func_1",
             to_symbol_id="callee_func_1",
             relation_type=CodeRelationType.CALLS,
-            call_site=loc
+            call_site=loc,
         )
         assert relation.from_symbol_id == "caller_func_1"
         assert relation.to_symbol_id == "callee_func_1"
@@ -120,7 +120,7 @@ class TestDataModels:
             symbols=[],
             relations=[],
             imports=[],
-            content_hash="abc123"
+            content_hash="abc123",
         )
         assert parsed.language == "python"
         assert parsed.file_path == "/test/file.py"
@@ -158,6 +158,7 @@ class TestRegistryFunctions:
 
     def test_register_language_parser(self):
         """Test registering a custom language parser."""
+
         class CustomParser(LanguageParser):
             @property
             def language(self) -> str:
@@ -214,7 +215,9 @@ class TestPythonParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.py")
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
 
         assert len(class_symbols) >= 2  # User, BaseService, UserService
         class_names = [s.simple_name for s in class_symbols]
@@ -227,7 +230,9 @@ class TestPythonParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.py")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
 
         func_names = [s.simple_name for s in func_symbols]
         assert "calculate_factorial" in func_names
@@ -239,7 +244,9 @@ class TestPythonParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.py")
-        method_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.METHOD]
+        method_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.METHOD
+        ]
 
         method_names = [s.simple_name for s in method_symbols]
         assert "get_display_name" in method_names
@@ -256,7 +263,7 @@ class TestPythonParser:
 
     def test_parse_decorators(self, parser):
         """Test parsing decorated functions."""
-        code = '''
+        code = """
 @decorator
 def decorated_func():
     pass
@@ -264,19 +271,25 @@ def decorated_func():
 @dataclass
 class DataClass:
     field: str
-'''
+"""
         result = parser.parse(code, "test.py")
-        symbols = [s for s in result.symbols if s.simple_name in ["decorated_func", "DataClass"]]
+        symbols = [
+            s
+            for s in result.symbols
+            if s.simple_name in ["decorated_func", "DataClass"]
+        ]
         assert len(symbols) >= 1
 
     def test_parse_async_functions(self, parser):
         """Test parsing async functions."""
-        code = '''
+        code = """
 async def async_function():
     await something()
-'''
+"""
         result = parser.parse(code, "test.py")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
         assert any(s.simple_name == "async_function" for s in func_symbols)
 
 
@@ -312,7 +325,9 @@ class TestRustParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.rs")
-        struct_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.STRUCT]
+        struct_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.STRUCT
+        ]
         # May be empty if tree-sitter not available
         if struct_symbols:
             struct_names = [s.simple_name for s in struct_symbols]
@@ -324,7 +339,9 @@ class TestRustParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.rs")
-        trait_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.TRAIT]
+        trait_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.TRAIT
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(trait_symbols, list)
 
@@ -334,7 +351,9 @@ class TestRustParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.rs")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(func_symbols, list)
 
@@ -344,20 +363,22 @@ class TestRustParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.rs")
-        enum_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.ENUM]
+        enum_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.ENUM
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(enum_symbols, list)
 
     def test_parse_impl_blocks(self, parser):
         """Test parsing Rust impl blocks."""
-        code = '''
+        code = """
 struct MyStruct;
 
 impl MyStruct {
     fn new() -> Self { Self }
     fn method(&self) {}
 }
-'''
+"""
         result = parser.parse(code, "test.rs")
         # May be empty if tree-sitter not available
         assert isinstance(result.symbols, list)
@@ -394,7 +415,9 @@ class TestGoParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.go")
-        struct_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.STRUCT]
+        struct_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.STRUCT
+        ]
         assert isinstance(struct_symbols, list)
 
     def test_parse_interfaces(self, parser, sample_code):
@@ -403,7 +426,9 @@ class TestGoParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.go")
-        interface_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.INTERFACE]
+        interface_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.INTERFACE
+        ]
         assert isinstance(interface_symbols, list)
 
     def test_parse_functions(self, parser, sample_code):
@@ -412,7 +437,9 @@ class TestGoParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.go")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
         assert isinstance(func_symbols, list)
 
     def test_parse_methods(self, parser, sample_code):
@@ -421,7 +448,9 @@ class TestGoParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.go")
-        method_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.METHOD]
+        method_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.METHOD
+        ]
         assert isinstance(method_symbols, list)
 
 
@@ -456,7 +485,9 @@ class TestJavaParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "Sample.java")
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
 
         class_names = [s.simple_name for s in class_symbols]
         assert "User" in class_names
@@ -468,7 +499,9 @@ class TestJavaParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "Sample.java")
-        interface_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.INTERFACE]
+        interface_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.INTERFACE
+        ]
 
         interface_names = [s.simple_name for s in interface_symbols]
         assert "Service" in interface_names
@@ -505,7 +538,9 @@ class TestJavaScriptParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.js")
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(class_symbols, list)
 
@@ -515,18 +550,20 @@ class TestJavaScriptParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.js")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(func_symbols, list)
 
     def test_parse_arrow_functions(self, parser):
         """Test parsing arrow functions."""
-        code = '''
+        code = """
 const arrowFunc = (x) => x * 2;
 const multiLine = (a, b) => {
     return a + b;
 };
-'''
+"""
         result = parser.parse(code, "test.js")
         # May be empty if tree-sitter not available
         assert isinstance(result.symbols, list)
@@ -562,7 +599,9 @@ class TestTypeScriptParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.ts")
-        interface_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.INTERFACE]
+        interface_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.INTERFACE
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(interface_symbols, list)
 
@@ -572,7 +611,9 @@ class TestTypeScriptParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.ts")
-        enum_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.ENUM]
+        enum_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.ENUM
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(enum_symbols, list)
 
@@ -608,7 +649,9 @@ class TestCppParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.cpp")
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(class_symbols, list)
 
@@ -643,7 +686,9 @@ class TestCParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.c")
-        struct_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.STRUCT]
+        struct_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.STRUCT
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(struct_symbols, list)
 
@@ -653,7 +698,9 @@ class TestCParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.c")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(func_symbols, list)
 
@@ -689,7 +736,9 @@ class TestCSharpParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "Sample.cs")
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(class_symbols, list)
 
@@ -725,7 +774,9 @@ class TestRubyParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.rb")
-        class_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS]
+        class_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.CLASS
+        ]
         # May be empty if tree-sitter not available
         assert isinstance(class_symbols, list)
 
@@ -865,7 +916,9 @@ class TestBashParser:
             pytest.skip("Sample file not found")
 
         result = parser.parse(sample_code, "sample.sh")
-        func_symbols = [s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION]
+        func_symbols = [
+            s for s in result.symbols if s.symbol_type == CodeSymbolType.FUNCTION
+        ]
 
         func_names = [s.simple_name for s in func_symbols]
         assert "calculate_factorial" in func_names
@@ -1124,7 +1177,7 @@ def greet(name):
         """Test parsing deeply nested code."""
         parser = PythonParser()
         # Deeply nested classes and functions
-        code = '''
+        code = """
 class A:
     class B:
         class C:
@@ -1134,7 +1187,7 @@ class A:
                         pass
                     return deeper
                 return inner
-'''
+"""
         result = parser.parse(code, "nested.py")
         assert isinstance(result, ParsedCode)
         assert isinstance(result.symbols, list)

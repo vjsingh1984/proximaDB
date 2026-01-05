@@ -9,6 +9,7 @@ from proximadb_sdk.models import VectorRecord
 
 def rest_available(url: str) -> bool:
     import httpx
+
     try:
         r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return r.status_code < 500
@@ -20,7 +21,9 @@ def rest_available(url: str) -> bool:
 def test_unified_client_end_to_end():
     base_url = os.getenv("PROXIMADB_URL", "http://localhost:5678")
     if not rest_available(base_url):
-        pytest.skip("ProximaDB REST server not available; set PROXIMADB_URL and start server to run integration tests.")
+        pytest.skip(
+            "ProximaDB REST server not available; set PROXIMADB_URL and start server to run integration tests."
+        )
 
     # Force REST path for this integration test (gRPC covered separately)
     client = ProximaDBClient(url=base_url, protocol="rest", sks_warmup_collection=None)
@@ -53,4 +56,3 @@ def test_unified_client_end_to_end():
             client.delete_collection(coll)
         except Exception:
             pass
-

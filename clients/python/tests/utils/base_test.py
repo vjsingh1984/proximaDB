@@ -98,7 +98,7 @@ class BaseProximaDBTest:
         client: Optional[EmbeddedClientAdapter] = None,
         name: Optional[str] = None,
         dimension: int = 384,
-        engine: str = "sst"
+        engine: str = "sst",
     ) -> str:
         """
         Create a test collection
@@ -126,7 +126,7 @@ class BaseProximaDBTest:
         collection_name: str,
         count: int = 10,
         dimension: int = 384,
-        metadata_template: Optional[Dict[str, Any]] = None
+        metadata_template: Optional[Dict[str, Any]] = None,
     ) -> List[VectorRecord]:
         """
         Insert test vectors into collection
@@ -149,18 +149,16 @@ class BaseProximaDBTest:
             vector = embed_seed(i, dimension)
 
             metadata = metadata_template.copy() if metadata_template else {}
-            metadata.update({
-                "index": i,
-                "test": True,
-                "category": f"cat_{i % 3}",
-                "value": float(i)
-            })
-
-            record = VectorRecord(
-                id=f"vec_{i:04d}",
-                vector=vector,
-                metadata=metadata
+            metadata.update(
+                {
+                    "index": i,
+                    "test": True,
+                    "category": f"cat_{i % 3}",
+                    "value": float(i),
+                }
             )
+
+            record = VectorRecord(id=f"vec_{i:04d}", vector=vector, metadata=metadata)
             vectors.append(record)
 
         # Insert in batch
@@ -172,10 +170,7 @@ class BaseProximaDBTest:
         return vectors
 
     def verify_search_results(
-        self,
-        results: List[Any],
-        expected_count: int,
-        check_scores: bool = True
+        self, results: List[Any], expected_count: int, check_scores: bool = True
     ):
         """
         Verify search results are valid
@@ -185,17 +180,23 @@ class BaseProximaDBTest:
             expected_count: Expected number of results
             check_scores: Whether to verify scores are descending
         """
-        assert len(results) == expected_count, f"Expected {expected_count} results, got {len(results)}"
+        assert (
+            len(results) == expected_count
+        ), f"Expected {expected_count} results, got {len(results)}"
 
         if check_scores and len(results) > 1:
             # Verify scores are in descending order
-            scores = [r.score if hasattr(r, 'score') else r.get("score", 0) for r in results]
-            assert scores == sorted(scores, reverse=True), "Scores not in descending order"
+            scores = [
+                r.score if hasattr(r, "score") else r.get("score", 0) for r in results
+            ]
+            assert scores == sorted(
+                scores, reverse=True
+            ), "Scores not in descending order"
 
         # Verify each result has required fields
         for result in results:
             # Handle both Pydantic models and dicts
-            if hasattr(result, 'id'):
+            if hasattr(result, "id"):
                 assert result.id is not None
                 assert result.score is not None
                 assert isinstance(result.score, (int, float))
@@ -225,7 +226,7 @@ def cleanup_test_collections(client):
     try:
         collections = client.list_collections()
         for col in collections:
-            col_name = col.name if hasattr(col, 'name') else str(col)
+            col_name = col.name if hasattr(col, "name") else str(col)
             if col_name.startswith("test_"):
                 try:
                     client.delete_collection(col_name)

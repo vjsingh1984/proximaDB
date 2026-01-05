@@ -25,8 +25,7 @@ sys.path.insert(0, str(src_path))
 
 # Load module directly to avoid __init__.py import chain
 spec = importlib.util.spec_from_file_location(
-    "repository_manager",
-    str(src_path / "proximadb_sdk" / "repository_manager.py")
+    "repository_manager", str(src_path / "proximadb_sdk" / "repository_manager.py")
 )
 repo_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(repo_module)
@@ -327,11 +326,13 @@ class TestGitRepository:
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test User"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
 
         # Create initial commit
@@ -340,7 +341,8 @@ class TestGitRepository:
         subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Initial commit"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
 
         yield repo_path
@@ -436,7 +438,8 @@ class TestGitRepository:
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Second commit"],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
 
         commits = repo.get_commits(limit=10)
@@ -454,7 +457,8 @@ class TestGitRepository:
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Update test.py"],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
 
         history = repo.get_file_history("test.py")
@@ -473,19 +477,20 @@ class TestRepositoryManager:
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test User"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
 
         test_file = repo_path / "main.py"
         test_file.write_text("def main(): pass")
         subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=repo_path, capture_output=True
+            ["git", "commit", "-m", "Initial"], cwd=repo_path, capture_output=True
         )
 
         yield repo_path
@@ -536,7 +541,8 @@ class TestRepositoryManager:
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Add new file"],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
 
         # Get changes since last index
@@ -556,8 +562,7 @@ class TestRepositoryManager:
 
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Add files"],
-            cwd=temp_git_repo, capture_output=True
+            ["git", "commit", "-m", "Add files"], cwd=temp_git_repo, capture_output=True
         )
 
         # First index returns all files
@@ -579,11 +584,10 @@ class TestRepositoryManager:
 
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Add"],
-            cwd=temp_git_repo, capture_output=True
+            ["git", "commit", "-m", "Add"], cwd=temp_git_repo, capture_output=True
         )
 
-        changes = manager.get_files_to_reindex(extensions={'.py', '.rs'})
+        changes = manager.get_files_to_reindex(extensions={".py", ".rs"})
         paths = {c.path for c in changes}
 
         assert "a.py" in paths or "main.py" in paths
@@ -594,9 +598,7 @@ class TestRepositoryManager:
         """Test updating index state."""
         manager = RepositoryManager.from_path(temp_git_repo)
 
-        manager.update_index_state(
-            indexed_files={"main.py": "hash123"}
-        )
+        manager.update_index_state(indexed_files={"main.py": "hash123"})
 
         assert manager.index_state.last_indexed_commit is not None
         assert manager.index_state.last_indexed_time is not None
@@ -631,19 +633,18 @@ class TestUtilityFunctions:
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
         subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=repo_path, capture_output=True
+            ["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True
         )
 
         test_file = repo_path / "test.py"
         test_file.write_text("pass")
         subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Init"],
-            cwd=repo_path, capture_output=True
+            ["git", "commit", "-m", "Init"], cwd=repo_path, capture_output=True
         )
 
         yield repo_path
@@ -691,19 +692,18 @@ class TestRepositoryContext:
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path, capture_output=True
+            cwd=repo_path,
+            capture_output=True,
         )
         subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=repo_path, capture_output=True
+            ["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True
         )
 
         test_file = repo_path / "main.py"
         test_file.write_text("code")
         subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Init"],
-            cwd=repo_path, capture_output=True
+            ["git", "commit", "-m", "Init"], cwd=repo_path, capture_output=True
         )
 
         yield repo_path

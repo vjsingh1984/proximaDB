@@ -15,6 +15,7 @@ try:
         vectors_to_arrow_table,
         arrow_table_to_vectors,
     )
+
     ARROW_FLIGHT_AVAILABLE = True
 except ImportError:
     ARROW_FLIGHT_AVAILABLE = False

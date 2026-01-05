@@ -14,19 +14,19 @@ from proximadb_sdk.embedding_providers.core import (
     ProviderConfig,
     ModelMetadata,
     ProviderRegistry,
-    ModelCache
+    ModelCache,
 )
 
 # Mixins
 from proximadb_sdk.embedding_providers.mixins import (
     NormalizationMixin,
-    InstructionMixin
+    InstructionMixin,
 )
 
 # Import the new provider
 from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
     GTEQwenProvider,
-    GTE_QWEN_MODELS
+    GTE_QWEN_MODELS,
 )
 
 
@@ -35,11 +35,7 @@ class TestModelMetadata:
 
     def test_basic_metadata(self):
         """Test basic model metadata creation"""
-        metadata = ModelMetadata(
-            name="test-model",
-            dimension=768,
-            max_length=512
-        )
+        metadata = ModelMetadata(name="test-model", dimension=768, max_length=512)
 
         assert metadata.name == "test-model"
         assert metadata.dimension == 768
@@ -53,7 +49,7 @@ class TestModelMetadata:
             name="instructed-model",
             dimension=1024,
             requires_instruction=True,
-            instruction_template="Query: {query}"
+            instruction_template="Query: {query}",
         )
 
         assert metadata.requires_instruction is True
@@ -62,10 +58,7 @@ class TestModelMetadata:
     def test_metadata_str(self):
         """Test string representation"""
         metadata = ModelMetadata(
-            name="model-1",
-            dimension=384,
-            mteb_score=65.5,
-            languages="multilingual"
+            name="model-1", dimension=384, mteb_score=65.5, languages="multilingual"
         )
 
         str_repr = str(metadata)
@@ -102,10 +95,7 @@ class TestProviderConfig:
     def test_config_extra_merge(self):
         """Test merging extra params"""
         model = ModelMetadata(name="test", dimension=768)
-        config1 = ProviderConfig(
-            model=model,
-            extra={"key1": "value1"}
-        )
+        config1 = ProviderConfig(model=model, extra={"key1": "value1"})
 
         config2 = config1.merge(extra={"key2": "value2"})
 
@@ -121,7 +111,9 @@ class TestProviderRegistry:
     def setup_class(cls):
         """Ensure provider is imported/registered before tests"""
         # Import triggers registration via decorator
-        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import GTEQwenProvider
+        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
+            GTEQwenProvider,
+        )
 
     def test_registry_decorator(self):
         """Test provider registration via decorator"""
@@ -134,15 +126,13 @@ class TestProviderRegistry:
             # Clear registry for test
             ProviderRegistry.clear()
 
-            test_models = {
-                "model-1": ModelMetadata(name="model-1", dimension=384)
-            }
+            test_models = {"model-1": ModelMetadata(name="model-1", dimension=384)}
 
             @ProviderRegistry.register(
                 name="test-provider",
                 models=test_models,
                 aliases=["alias1"],
-                description="Test provider"
+                description="Test provider",
             )
             class TestProvider(BaseEmbeddingProvider):
                 def default_config(self):
@@ -171,7 +161,9 @@ class TestProviderRegistry:
     def test_get_models(self):
         """Test getting models for a provider"""
         # Re-import to ensure registration after previous test cleared registry
-        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import GTEQwenProvider
+        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
+            GTEQwenProvider,
+        )
 
         models = ProviderRegistry.get_models("gte-qwen")
         assert len(models) > 0
@@ -180,7 +172,9 @@ class TestProviderRegistry:
     def test_get_provider_info(self):
         """Test getting provider info"""
         # Re-import to ensure registration after previous test cleared registry
-        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import GTEQwenProvider
+        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
+            GTEQwenProvider,
+        )
 
         info = ProviderRegistry.get_provider_info("gte-qwen")
         assert info["name"] == "gte-qwen"
@@ -331,7 +325,7 @@ class TestGTEQwenProvider:
         provider = GTEQwenProvider()
         passages = [
             "Machine learning is a subset of AI",
-            "Deep learning uses neural networks"
+            "Deep learning uses neural networks",
         ]
 
         passage_embs = provider.embed_passages(passages)

@@ -25,14 +25,14 @@ def build_search_optimization_rest(
     streaming_buffer_size: Optional[int] = None,
     streaming_concurrent_search: Optional[bool] = None,
     streaming_max_concurrent_tasks: Optional[int] = None,
-    streaming_batch_size: Optional[int] = None
+    streaming_batch_size: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build search optimization parameters for REST API.
-    
+
     Returns dict compatible with REST API SearchOptimization structure.
     """
     optimization = {}
-    
+
     if top_k is not None:
         optimization["top_k"] = top_k
     if filters:
@@ -45,57 +45,47 @@ def build_search_optimization_rest(
         optimization["timeout_ms"] = timeout_ms
     if enable_two_stage is not None:
         optimization["enable_two_stage"] = enable_two_stage
-        
+
     # Handle quantization hint for REST
     if quantization_hint is not None:
         if isinstance(quantization_hint, str):
             hint_lower = quantization_hint.lower()
             if hint_lower in ["none", "no", "fp32", "float32"]:
-                optimization["quantization_hint"] = {
-                    "hint_type": "none"
-                }
+                optimization["quantization_hint"] = {"hint_type": "none"}
             elif hint_lower in ["binary", "bin"]:
-                optimization["quantization_hint"] = {
-                    "hint_type": "binary"
-                }
+                optimization["quantization_hint"] = {"hint_type": "binary"}
             elif hint_lower in ["scalar", "int8"]:
                 optimization["quantization_hint"] = {
                     "hint_type": "scalar",
-                    "parameters": {"bits": 8}
+                    "parameters": {"bits": 8},
                 }
             elif hint_lower == "int16":
                 optimization["quantization_hint"] = {
                     "hint_type": "scalar",
-                    "parameters": {"bits": 16}
+                    "parameters": {"bits": 16},
                 }
             elif hint_lower.startswith("pq"):
                 try:
                     bits = int(hint_lower[2:]) if len(hint_lower) > 2 else 8
                     optimization["quantization_hint"] = {
                         "hint_type": "product",
-                        "parameters": {
-                            "num_subvectors": 8,
-                            "bits_per_code": bits
-                        }
+                        "parameters": {"num_subvectors": 8, "bits_per_code": bits},
                     }
                 except ValueError:
                     optimization["quantization_hint"] = {
                         "hint_type": "product",
-                        "parameters": {
-                            "num_subvectors": 8,
-                            "bits_per_code": 8
-                        }
+                        "parameters": {"num_subvectors": 8, "bits_per_code": 8},
                     }
         elif isinstance(quantization_hint, dict):
             optimization["quantization_hint"] = quantization_hint
-            
+
     if enable_clustering_hint is not None:
         optimization["enable_clustering_hint"] = enable_clustering_hint
     if enable_metadata_filtering_hint is not None:
         optimization["enable_metadata_filtering_hint"] = enable_metadata_filtering_hint
     if custom_hints:
         optimization["custom_hints"] = custom_hints
-        
+
     # Additional parameters
     if distance_metric:
         optimization["distance_metric"] = distance_metric
@@ -103,21 +93,33 @@ def build_search_optimization_rest(
         optimization["requires_ordering"] = requires_ordering
     if candidate_multiplier is not None:
         optimization["candidate_multiplier"] = candidate_multiplier
-        
+
     # Add streaming config to custom hints if provided
-    if any([streaming_buffer_size, streaming_concurrent_search, 
-            streaming_max_concurrent_tasks, streaming_batch_size]):
+    if any(
+        [
+            streaming_buffer_size,
+            streaming_concurrent_search,
+            streaming_max_concurrent_tasks,
+            streaming_batch_size,
+        ]
+    ):
         if "custom_hints" not in optimization:
             optimization["custom_hints"] = {}
         if streaming_buffer_size is not None:
-            optimization["custom_hints"]["streaming_buffer_size"] = streaming_buffer_size
+            optimization["custom_hints"][
+                "streaming_buffer_size"
+            ] = streaming_buffer_size
         if streaming_concurrent_search is not None:
-            optimization["custom_hints"]["streaming_concurrent_search"] = streaming_concurrent_search
+            optimization["custom_hints"][
+                "streaming_concurrent_search"
+            ] = streaming_concurrent_search
         if streaming_max_concurrent_tasks is not None:
-            optimization["custom_hints"]["streaming_max_concurrent_tasks"] = streaming_max_concurrent_tasks
+            optimization["custom_hints"][
+                "streaming_max_concurrent_tasks"
+            ] = streaming_max_concurrent_tasks
         if streaming_batch_size is not None:
             optimization["custom_hints"]["streaming_batch_size"] = streaming_batch_size
-        
+
     return optimization
 
 
@@ -140,7 +142,7 @@ def build_search_params_grpc(
     streaming_buffer_size: Optional[int] = None,
     streaming_concurrent_search: Optional[bool] = None,
     streaming_max_concurrent_tasks: Optional[int] = None,
-    streaming_batch_size: Optional[int] = None
+    streaming_batch_size: Optional[int] = None,
 ) -> Any:
     """Build search params for gRPC API (v1 proto).
 
@@ -257,6 +259,7 @@ def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
     elif value is None:
         # For None, use NullValue from google.protobuf
         from google.protobuf import struct_pb2
+
         sql_value.null_value = struct_pb2.NULL_VALUE
     elif isinstance(value, list):
         # Convert to SqlArray
@@ -291,19 +294,19 @@ def build_search_hints(
     enable_clustering_hint: Optional[bool] = None,
     enable_metadata_filtering_hint: Optional[bool] = None,
     custom_hints: Optional[Dict[str, Any]] = None,
-    **kwargs  # Accept additional parameters
+    **kwargs,  # Accept additional parameters
 ) -> Union[Dict[str, Any], Any]:
     """Build search hints based on protocol type.
-    
+
     Args:
         protocol: Either 'rest' or 'grpc'
         Other args: Search optimization parameters
-        
+
     Returns:
         For REST: Dict with search optimization
         For gRPC: SearchParams proto message
     """
-    if protocol.lower() == 'rest':
+    if protocol.lower() == "rest":
         return build_search_optimization_rest(
             top_k=top_k,
             filters=filters,
@@ -315,9 +318,9 @@ def build_search_hints(
             enable_clustering_hint=enable_clustering_hint,
             enable_metadata_filtering_hint=enable_metadata_filtering_hint,
             custom_hints=custom_hints,
-            **kwargs
+            **kwargs,
         )
-    elif protocol.lower() == 'grpc':
+    elif protocol.lower() == "grpc":
         return build_search_params_grpc(
             top_k=top_k,
             filters=filters,
@@ -329,7 +332,7 @@ def build_search_hints(
             enable_clustering_hint=enable_clustering_hint,
             enable_metadata_filtering_hint=enable_metadata_filtering_hint,
             custom_hints=custom_hints,
-            **kwargs
+            **kwargs,
         )
     else:
         raise ValueError(f"Unknown protocol: {protocol}")

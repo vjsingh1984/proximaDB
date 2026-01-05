@@ -15,7 +15,7 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
     Generate a diverse text corpus for testing
     Assumes ~4 chars per token, creates meaningful text for embeddings
     """
-    
+
     # Base categories with sample texts
     categories = {
         "technology": [
@@ -28,7 +28,7 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
             "internet of things IoT sensors smart devices connectivity",
             "robotics automation industrial manufacturing processes",
             "quantum computing quantum mechanics superposition entanglement",
-            "virtual reality augmented reality immersive digital experiences"
+            "virtual reality augmented reality immersive digital experiences",
         ],
         "science": [
             "physics quantum mechanics relativity electromagnetic radiation",
@@ -40,7 +40,7 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
             "medicine healthcare diagnosis treatment pharmaceutical research",
             "environmental science climate change ecosystem biodiversity",
             "mathematics calculus statistics probability theoretical analysis",
-            "materials science nanotechnology advanced composite materials"
+            "materials science nanotechnology advanced composite materials",
         ],
         "business": [
             "entrepreneurship startup ventures business development strategies",
@@ -52,7 +52,7 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
             "economics macroeconomics microeconomics fiscal monetary policy",
             "consulting management advisory business transformation",
             "sales customer relationship management revenue generation",
-            "leadership organizational behavior team management skills"
+            "leadership organizational behavior team management skills",
         ],
         "arts": [
             "literature poetry novels creative writing storytelling",
@@ -64,7 +64,7 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
             "architecture design structural engineering urban planning",
             "fashion design textile industry style trends",
             "photography digital imaging visual documentation",
-            "crafts traditional handmade artisan techniques"
+            "crafts traditional handmade artisan techniques",
         ],
         "sports": [
             "football soccer basketball athletics team sports",
@@ -76,26 +76,26 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
             "hockey ice hockey field hockey team dynamics",
             "volleyball beach volleyball indoor court sports",
             "martial arts boxing wrestling combat sports",
-            "winter sports skiing snowboarding alpine competitions"
-        ]
+            "winter sports skiing snowboarding alpine competitions",
+        ],
     }
-    
+
     corpus = []
     doc_id = 0
-    
+
     # Calculate how many documents per category
     categories_list = list(categories.keys())
     docs_per_category = size // len(categories_list)
     remainder = size % len(categories_list)
-    
+
     for cat_idx, (category, base_texts) in enumerate(categories.items()):
         # Add extra document to some categories to handle remainder
         docs_for_this_category = docs_per_category + (1 if cat_idx < remainder else 0)
-        
+
         for i in range(docs_for_this_category):
             # Select base text and add variations
             base_text = base_texts[i % len(base_texts)]
-            
+
             # Add variations to make each document unique
             variations = [
                 f"research study analysis {base_text} methodology results",
@@ -107,15 +107,15 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
                 f"professional expertise {base_text} best practices",
                 f"technical implementation {base_text} system design",
                 f"strategic approach {base_text} business value",
-                f"theoretical framework {base_text} empirical evidence"
+                f"theoretical framework {base_text} empirical evidence",
             ]
-            
+
             text = variations[i % len(variations)]
-            
+
             # Ensure text is at least 16 chars (4 tokens * 4 chars)
             if len(text) < 16:
                 text = f"{text} additional context information details"
-            
+
             # Create document
             doc = {
                 "id": f"doc_{doc_id:06d}",
@@ -125,18 +125,18 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
                 "doc_index": doc_id,
                 "word_count": len(text.split()),
                 "char_count": len(text),
-                "timestamp": time.time() + doc_id  # Unique timestamps
+                "timestamp": time.time() + doc_id,  # Unique timestamps
             }
-            
+
             corpus.append(doc)
             doc_id += 1
-            
+
             if doc_id >= size:
                 break
-        
+
         if doc_id >= size:
             break
-    
+
     return corpus[:size]
 
 
@@ -152,62 +152,64 @@ def create_deterministic_embedding(text: str, dimension: int = 384) -> np.ndarra
 
 def create_query_texts() -> List[Dict[str, Any]]:
     """Create sample query texts for search testing"""
-    
+
     queries = [
         {
             "text": "artificial intelligence machine learning deep learning",
             "expected_category": "technology",
-            "description": "AI/ML query"
+            "description": "AI/ML query",
         },
         {
             "text": "quantum physics mechanics relativity",
-            "expected_category": "science", 
-            "description": "Physics query"
+            "expected_category": "science",
+            "description": "Physics query",
         },
         {
             "text": "business strategy marketing finance",
             "expected_category": "business",
-            "description": "Business query"
+            "description": "Business query",
         },
         {
             "text": "music art creative literature",
             "expected_category": "arts",
-            "description": "Arts query"
+            "description": "Arts query",
         },
         {
             "text": "sports football basketball athletics",
             "expected_category": "sports",
-            "description": "Sports query"
+            "description": "Sports query",
         },
         {
             "text": "data science analytics big data processing",
             "expected_category": "technology",
-            "description": "Data science query"
+            "description": "Data science query",
         },
         {
             "text": "biology genetics DNA molecular structure",
             "expected_category": "science",
-            "description": "Biology query"
+            "description": "Biology query",
         },
         {
             "text": "investment banking capital markets trading",
-            "expected_category": "business", 
-            "description": "Finance query"
-        }
+            "expected_category": "business",
+            "description": "Finance query",
+        },
     ]
-    
+
     return queries
 
 
-def convert_corpus_to_vectors(corpus: List[Dict[str, Any]], dimension: int = 384) -> List[Dict[str, Any]]:
+def convert_corpus_to_vectors(
+    corpus: List[Dict[str, Any]], dimension: int = 384
+) -> List[Dict[str, Any]]:
     """Convert text corpus to vector format with embeddings"""
-    
+
     vectors = []
-    
+
     for doc in corpus:
         # Create embedding for the text
         embedding = create_deterministic_embedding(doc["text"], dimension)
-        
+
         # Create vector entry
         vector = {
             "id": doc["id"],
@@ -219,12 +221,12 @@ def convert_corpus_to_vectors(corpus: List[Dict[str, Any]], dimension: int = 384
                 "doc_index": doc["doc_index"],
                 "word_count": doc["word_count"],
                 "char_count": doc["char_count"],
-                "timestamp": doc["timestamp"]
-            }
+                "timestamp": doc["timestamp"],
+            },
         }
-        
+
         vectors.append(vector)
-    
+
     return vectors
 
 
@@ -232,26 +234,26 @@ def test_embedding_quality():
     """Test the quality of our embedding generation"""
     print("🧪 Testing BERT Embedding Quality")
     print("=" * 40)
-    
+
     # Test texts from different categories
     test_texts = [
         "artificial intelligence machine learning",
-        "quantum physics relativity mechanics", 
+        "quantum physics relativity mechanics",
         "business strategy marketing finance",
         "music art creative literature",
-        "sports football basketball tennis"
+        "sports football basketball tennis",
     ]
-    
+
     embeddings = create_bert_embeddings(test_texts)
-    
+
     print(f"Generated {len(embeddings)} embeddings of dimension {embeddings.shape[1]}")
-    
+
     # Test similarity within and across categories
     from scipy.spatial.distance import cosine
-    
+
     print("\nSimilarity Matrix (lower = more similar):")
     print("     ", "   ".join([f"T{i+1}" for i in range(len(test_texts))]))
-    
+
     for i, text1 in enumerate(test_texts):
         similarities = []
         for j, text2 in enumerate(test_texts):
@@ -260,7 +262,7 @@ def test_embedding_quality():
             else:
                 sim = cosine(embeddings[i], embeddings[j])
             similarities.append(sim)
-        
+
         sim_str = "  ".join([f"{s:.3f}" for s in similarities])
         print(f"T{i+1}: {sim_str}  | {test_texts[i][:30]}...")
 
@@ -269,22 +271,22 @@ if __name__ == "__main__":
     # Test the embedding utilities
     print("🚀 BERT Embedding Utilities Test")
     print("=" * 50)
-    
+
     # Test corpus generation
     corpus = generate_text_corpus(10)
     print(f"✅ Generated corpus with {len(corpus)} documents")
-    
+
     for i, doc in enumerate(corpus[:3]):
         print(f"   Doc {i+1}: {doc['category']} - {doc['text'][:50]}...")
-    
+
     # Test embedding generation
     test_embedding_quality()
-    
+
     # Test vector conversion
     vectors = convert_corpus_to_vectors(corpus[:5])
     print(f"\n✅ Converted {len(vectors)} documents to vectors")
-    
+
     print(f"   Sample vector shape: {len(vectors[0]['vector'])}")
     print(f"   Sample metadata: {list(vectors[0]['metadata'].keys())}")
-    
+
     print("\n🎉 BERT embedding utilities ready for use!")

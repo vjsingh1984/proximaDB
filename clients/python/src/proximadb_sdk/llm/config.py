@@ -154,7 +154,11 @@ class LLMConfig:
 
         return cls(
             enabled=data.get("enabled", True),
-            embedding=EmbeddingConfig(**embedding_data) if embedding_data else EmbeddingConfig(),
+            embedding=(
+                EmbeddingConfig(**embedding_data)
+                if embedding_data
+                else EmbeddingConfig()
+            ),
             rag=RAGConfig(**data.get("rag", {})),
             cache=SemanticCacheConfig(**data.get("cache", {})),
             default_collection=data.get("default_collection", "embeddings"),

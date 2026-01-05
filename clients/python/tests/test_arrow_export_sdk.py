@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+
 # Test imports and availability
 def test_arrow_export_imports():
     """Test that Arrow export module can be imported."""
@@ -24,6 +25,7 @@ def test_arrow_export_imports():
         read_proximadb_file,
         read_proximadb_collection,
     )
+
     assert ArrowExportClient is not None
     assert FileFormat is not None
 
@@ -94,7 +96,7 @@ class TestArrowExportWithMocks:
     @pytest.fixture
     def mock_flight_client(self):
         """Create a mocked Flight client."""
-        with patch('proximadb_sdk.arrow_export.flight') as mock_flight:
+        with patch("proximadb_sdk.arrow_export.flight") as mock_flight:
             mock_client = MagicMock()
             mock_flight.connect.return_value = mock_client
             yield mock_client
@@ -129,18 +131,21 @@ class TestArrowExportWithMocks:
 try:
     import pyarrow as pa
     import pyarrow.flight as flight
+
     PYARROW_AVAILABLE = True
 except ImportError:
     PYARROW_AVAILABLE = False
 
 try:
     import polars as pl
+
     POLARS_AVAILABLE = True
 except ImportError:
     POLARS_AVAILABLE = False
 
 try:
     import duckdb
+
     DUCKDB_AVAILABLE = True
 except ImportError:
     DUCKDB_AVAILABLE = False
@@ -152,10 +157,12 @@ class TestArrowExportWithPyArrow:
 
     def test_pyarrow_table_creation(self):
         """Test creating a PyArrow table (basic sanity check)."""
-        table = pa.table({
-            "id": ["vec_0", "vec_1", "vec_2"],
-            "vector": [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
-        })
+        table = pa.table(
+            {
+                "id": ["vec_0", "vec_1", "vec_2"],
+                "vector": [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
+            }
+        )
         assert table.num_rows == 3
         assert "id" in table.column_names
         assert "vector" in table.column_names
@@ -170,10 +177,12 @@ class TestPolarsIntegration:
         if not PYARROW_AVAILABLE:
             pytest.skip("PyArrow required")
 
-        table = pa.table({
-            "id": ["vec_0", "vec_1"],
-            "value": [1.0, 2.0],
-        })
+        table = pa.table(
+            {
+                "id": ["vec_0", "vec_1"],
+                "value": [1.0, 2.0],
+            }
+        )
 
         df = pl.from_arrow(table)
         assert len(df) == 2
@@ -189,10 +198,12 @@ class TestDuckDBIntegration:
         if not PYARROW_AVAILABLE:
             pytest.skip("PyArrow required")
 
-        table = pa.table({
-            "id": ["vec_0", "vec_1"],
-            "value": [1.0, 2.0],
-        })
+        table = pa.table(
+            {
+                "id": ["vec_0", "vec_1"],
+                "value": [1.0, 2.0],
+            }
+        )
 
         conn = duckdb.connect(":memory:")
         conn.register("vectors", table)
@@ -260,21 +271,25 @@ class TestSDKExports:
     def test_sdk_exports_arrow_client(self):
         """Test ArrowExportClient is exported from main SDK."""
         from proximadb_sdk import ArrowExportClient
+
         assert ArrowExportClient is not None
 
     def test_sdk_exports_connect_arrow(self):
         """Test connect_arrow is exported from main SDK."""
         from proximadb_sdk import connect_arrow
+
         assert connect_arrow is not None
 
     def test_sdk_exports_file_format(self):
         """Test FileFormat is exported from main SDK."""
         from proximadb_sdk import FileFormat
+
         assert FileFormat is not None
 
     def test_sdk_exports_file_info(self):
         """Test FileInfo is exported from main SDK."""
         from proximadb_sdk import FileInfo
+
         assert FileInfo is not None
 
 

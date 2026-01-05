@@ -48,6 +48,7 @@ def _ensure_sdk_loaded():
                 StorageEngine,
                 ProximaDBError,
             )
+
             _SDK_TYPES["CollectionConfig"] = CollectionConfig
             _SDK_TYPES["DistanceMetric"] = DistanceMetric
             _SDK_TYPES["StorageEngine"] = StorageEngine
@@ -86,6 +87,7 @@ except Exception:
 # Import embedded database
 try:
     from proximadb import ProximaDB
+
     EMBEDDED_AVAILABLE = True
 except ImportError:
     EMBEDDED_AVAILABLE = False
@@ -95,8 +97,8 @@ except ImportError:
 # Configure logging for tests
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -107,13 +109,14 @@ TEST_CONFIG = {
     "test_collection_prefix": "pytest_",
     "cleanup_on_failure": True,
     "cache_size_mb": 256,
-    "default_engine": "sst"
+    "default_engine": "sst",
 }
 
 
 # ============================================================================
 # Embedded Database Client Wrapper
 # ============================================================================
+
 
 class EmbeddedClientWrapper:
     """
@@ -122,7 +125,7 @@ class EmbeddedClientWrapper:
     This allows existing tests to work with minimal modifications.
     """
 
-    def __init__(self, db: 'ProximaDB', data_dir: str):
+    def __init__(self, db: "ProximaDB", data_dir: str):
         self._db = db
         self._data_dir = data_dir
         self._collections: Dict[str, Dict] = {}
@@ -135,7 +138,7 @@ class EmbeddedClientWrapper:
         distance_metric: str = "cosine",
         description: str = "",
         storage_engine: Optional[StorageEngine] = None,
-        **kwargs
+        **kwargs,
     ):
         """Create a collection in embedded database"""
         # Check if collection already exists
@@ -151,7 +154,7 @@ class EmbeddedClientWrapper:
 
         if config is not None:
             dim = config.dimension
-            engine = getattr(config, 'storage_engine', None)
+            engine = getattr(config, "storage_engine", None)
             engine_str = engine.value if engine else "sst"
         else:
             dim = dimension or 128
@@ -165,7 +168,7 @@ class EmbeddedClientWrapper:
             dimension=dim,
             engine=engine_str,
             distance_metric=distance_metric,
-            description=description
+            description=description,
         )
         self._collections[name] = collection_info
         return collection_info
@@ -188,8 +191,8 @@ class EmbeddedClientWrapper:
             if info is not None:
                 collection_info = CollectionInfo(
                     name=name,
-                    dimension=getattr(info, 'dimension', 128),
-                    engine=getattr(info, 'engine', 'sst')
+                    dimension=getattr(info, "dimension", 128),
+                    engine=getattr(info, "engine", "sst"),
                 )
                 self._collections[name] = collection_info
                 return collection_info
@@ -208,9 +211,9 @@ class EmbeddedClientWrapper:
             collections = self._db.list_collections()
             return [
                 CollectionInfo(
-                    name=getattr(c, 'name', str(c)),
-                    dimension=getattr(c, 'dimension', 0),
-                    engine=getattr(c, 'engine', 'sst')
+                    name=getattr(c, "name", str(c)),
+                    dimension=getattr(c, "dimension", 0),
+                    engine=getattr(c, "engine", "sst"),
                 )
                 for c in collections
             ]
@@ -222,7 +225,7 @@ class EmbeddedClientWrapper:
         collection_id: str,
         vector_id: str,
         vector: List[float],
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
     ):
         """Insert a single vector"""
         if not isinstance(vector, np.ndarray):
@@ -243,7 +246,7 @@ class EmbeddedClientWrapper:
         collection_id: str,
         vectors: List,
         ids: List[str],
-        metadata: Optional[List[Dict]] = None
+        metadata: Optional[List[Dict]] = None,
     ):
         """Insert multiple vectors"""
         if not isinstance(vectors, np.ndarray):
@@ -255,7 +258,9 @@ class EmbeddedClientWrapper:
             metadata = [{} for _ in range(len(ids))]
 
         count = self._db.insert(collection_id, ids, vectors, metadata)
-        return InsertResult(success=True, count=count, successful_count=count, total=len(ids))
+        return InsertResult(
+            success=True, count=count, successful_count=count, total=len(ids)
+        )
 
     def search(
         self,
@@ -265,7 +270,7 @@ class EmbeddedClientWrapper:
         include_metadata: bool = True,
         include_vectors: bool = False,
         metadata_filter: Optional[Dict] = None,
-        **kwargs
+        **kwargs,
     ) -> List:
         """Search for similar vectors"""
         if top_k <= 0:
@@ -278,7 +283,7 @@ class EmbeddedClientWrapper:
             collection_id,
             vector,
             top_k=top_k,
-            filter=None  # Client-side filtering if needed
+            filter=None,  # Client-side filtering if needed
         )
 
         search_results = []
@@ -286,8 +291,8 @@ class EmbeddedClientWrapper:
             result = SearchResult(
                 id=r.id,
                 score=r.score,
-                metadata=getattr(r, 'metadata', {}) if include_metadata else {},
-                vector=getattr(r, 'vector', None) if include_vectors else None
+                metadata=getattr(r, "metadata", {}) if include_metadata else {},
+                vector=getattr(r, "vector", None) if include_vectors else None,
             )
             search_results.append(result)
 
@@ -311,7 +316,7 @@ class EmbeddedClientWrapper:
         collection_id: str,
         vector_id: str,
         include_vector: bool = True,
-        include_metadata: bool = True
+        include_metadata: bool = True,
     ) -> Optional[Dict]:
         """Get a vector by ID - search based implementation"""
         # Embedded doesn't have direct get by ID, so we'd need to implement it
@@ -360,7 +365,7 @@ class EmbeddedClientWrapper:
         labels: List[str],
         properties: Optional[Dict] = None,
         embedding: Optional[List[float]] = None,
-        **kwargs
+        **kwargs,
     ):
         """Create a graph node"""
         # Store as vector with node metadata
@@ -368,7 +373,7 @@ class EmbeddedClientWrapper:
             "node_id": node_id,
             "labels": labels,
             "properties": properties or {},
-            "created": True
+            "created": True,
         }
 
     def create_edge(
@@ -379,7 +384,7 @@ class EmbeddedClientWrapper:
         edge_type: str,
         properties: Optional[Dict] = None,
         weight: Optional[float] = None,
-        **kwargs
+        **kwargs,
     ):
         """Create a graph edge"""
         return {
@@ -389,7 +394,7 @@ class EmbeddedClientWrapper:
             "edge_type": edge_type,
             "properties": properties or {},
             "weight": weight,
-            "created": True
+            "created": True,
         }
 
     def graph_traverse(
@@ -400,28 +405,23 @@ class EmbeddedClientWrapper:
         node_labels: Optional[List[str]] = None,
         algorithm: str = "BFS",
         limit: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         """Traverse graph from starting node"""
         return {
             "start_node_id": start_node_id,
             "max_depth": max_depth,
             "nodes": [],
-            "edges": []
+            "edges": [],
         }
 
-    def graph_shortest_path(
-        self,
-        start_node_id: str,
-        target_node_id: str,
-        **kwargs
-    ):
+    def graph_shortest_path(self, start_node_id: str, target_node_id: str, **kwargs):
         """Find shortest path between two nodes"""
         return {
             "start_node_id": start_node_id,
             "target_node_id": target_node_id,
             "path": [],
-            "total_weight": 0.0
+            "total_weight": 0.0,
         }
 
     def query_nodes(
@@ -430,7 +430,7 @@ class EmbeddedClientWrapper:
         properties: Optional[Dict] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         """Query nodes by labels and properties"""
         return {"nodes": []}
@@ -442,6 +442,7 @@ class EmbeddedClientWrapper:
 # ============================================================================
 # Pytest Fixtures
 # ============================================================================
+
 
 @pytest.fixture(scope="session")
 def test_config() -> Dict[str, Any]:
@@ -472,7 +473,7 @@ def embedded_db(embedded_data_dir):
         data_dirs=embedded_data_dir,
         cache_size_mb=TEST_CONFIG["cache_size_mb"],
         default_engine=TEST_CONFIG["default_engine"],
-        enable_wal=True
+        enable_wal=True,
     )
 
     yield db
@@ -495,7 +496,9 @@ def verify_server_running(embedded_db):
 
 
 @pytest.fixture(scope="class")
-def rest_client(embedded_db, embedded_data_dir) -> Generator[EmbeddedClientWrapper, None, None]:
+def rest_client(
+    embedded_db, embedded_data_dir
+) -> Generator[EmbeddedClientWrapper, None, None]:
     """
     REST client fixture - uses embedded database wrapper.
     Named 'rest_client' for backward compatibility with existing tests.
@@ -506,7 +509,9 @@ def rest_client(embedded_db, embedded_data_dir) -> Generator[EmbeddedClientWrapp
 
 
 @pytest.fixture(scope="class")
-def grpc_client(embedded_db, embedded_data_dir) -> Generator[EmbeddedClientWrapper, None, None]:
+def grpc_client(
+    embedded_db, embedded_data_dir
+) -> Generator[EmbeddedClientWrapper, None, None]:
     """
     gRPC client fixture - uses embedded database wrapper.
     Named 'grpc_client' for backward compatibility with existing tests.
@@ -526,7 +531,9 @@ def client(rest_client):
 def unique_collection_name(test_config) -> str:
     """Generate unique collection name for each test"""
     timestamp = int(time.time() * 1000)  # Milliseconds for uniqueness
-    test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
+    test_name = (
+        os.environ.get("PYTEST_CURRENT_TEST", "unknown").split("::")[-1].split("[")[0]
+    )
     return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
 
 
@@ -537,7 +544,7 @@ def basic_collection_config() -> CollectionConfig:
         name="test_collection",
         dimension=128,
         distance_metric="cosine",
-        description="Test collection created by pytest"
+        description="Test collection created by pytest",
     )
 
 
@@ -549,14 +556,16 @@ def advanced_collection_config() -> CollectionConfig:
         dimension=768,
         distance_metric="cosine",
         description="Advanced test collection with BERT dimensions",
-        storage_engine=StorageEngine.VIPER
+        storage_engine=StorageEngine.VIPER,
     )
 
 
 @pytest.fixture
 def test_collection(rest_client, unique_collection_name, basic_collection_config):
     """Create and manage a test collection with automatic cleanup"""
-    collection = rest_client.create_collection(unique_collection_name, config=basic_collection_config)
+    collection = rest_client.create_collection(
+        unique_collection_name, config=basic_collection_config
+    )
     yield collection
 
     # Cleanup
@@ -575,17 +584,19 @@ class TestCollectionManager:
         self.config = config
         self.created_collections = []
 
-    def create_test_collection(self, name_suffix: str = "", config: CollectionConfig = None) -> str:
+    def create_test_collection(
+        self, name_suffix: str = "", config: CollectionConfig = None
+    ) -> str:
         """Create a test collection with automatic tracking"""
         if config is None:
             config = CollectionConfig(
-                name="test_collection",
-                dimension=128,
-                distance_metric="cosine"
+                name="test_collection", dimension=128, distance_metric="cosine"
             )
 
         timestamp = int(time.time() * 1000)
-        collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
+        collection_name = (
+            f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
+        )
 
         self.client.create_collection(collection_name, config=config)
         self.created_collections.append(collection_name)
@@ -618,9 +629,7 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow: marks tests as slow (may take > 10 seconds)"
     )
-    config.addinivalue_line(
-        "markers", "integration: marks tests as integration tests"
-    )
+    config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line(
         "markers", "storage: marks tests related to storage layer functionality"
     )
@@ -650,7 +659,7 @@ def corpus_data():
             "text": f"Sample document {i} about technology and innovation in artificial intelligence",
             "category": "technology" if i % 2 == 0 else "science",
             "importance": i % 10,
-            "author": f"Author_{i % 3}"
+            "author": f"Author_{i % 3}",
         }
         for i in range(20)
     ]
@@ -662,6 +671,7 @@ def bert_service():
     """BERT embedding service for tests"""
     try:
         from sentence_transformers import SentenceTransformer
+
         return SentenceTransformer("all-MiniLM-L6-v2")
     except ImportError:
         logger.warning("sentence-transformers not available")
@@ -699,7 +709,11 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.storage)
 
         # Mark search tests
-        if "search" in item.name or "similarity" in item.name or "proximity" in item.name:
+        if (
+            "search" in item.name
+            or "similarity" in item.name
+            or "proximity" in item.name
+        ):
             item.add_marker(pytest.mark.search)
 
 
@@ -710,6 +724,7 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture
 def performance_monitor():
     """Fixture for monitoring test performance"""
+
     class PerformanceMonitor:
         def __init__(self):
             self.timings = {}
@@ -732,7 +747,9 @@ def performance_monitor():
         def assert_performance(self, operation: str, max_seconds: float):
             assert operation in self.timings, f"No timing recorded for {operation}"
             actual = self.timings[operation]
-            assert actual <= max_seconds, f"{operation} took {actual:.3f}s, expected <= {max_seconds}s"
+            assert (
+                actual <= max_seconds
+            ), f"{operation} took {actual:.3f}s, expected <= {max_seconds}s"
 
     return PerformanceMonitor()
 
@@ -760,7 +777,7 @@ def generate_test_metadata(count: int, categories: list = None) -> List[Dict]:
             "category": categories[i % len(categories)],
             "importance": (i % 10) + 1,
             "test_timestamp": time.time(),
-            "test_generated": True
+            "test_generated": True,
         }
         metadata_list.append(metadata)
 

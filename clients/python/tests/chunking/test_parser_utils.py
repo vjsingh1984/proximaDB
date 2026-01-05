@@ -26,17 +26,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loader import code_module, RESOURCES_DIR, read_resource_file
 
 # Import parser utilities
-parser_utils = sys.modules.get('proximadb.chunking_strategies.parser_utils')
+parser_utils = sys.modules.get("proximadb.chunking_strategies.parser_utils")
 if parser_utils is None:
     # Load it manually
     import importlib.util
+
     src_path = Path(__file__).parent.parent.parent / "src"
     spec = importlib.util.spec_from_file_location(
-        'proximadb.chunking_strategies.parser_utils',
-        str(src_path / 'proximadb' / 'chunking_strategies' / 'parser_utils.py')
+        "proximadb.chunking_strategies.parser_utils",
+        str(src_path / "proximadb" / "chunking_strategies" / "parser_utils.py"),
     )
     parser_utils = importlib.util.module_from_spec(spec)
-    sys.modules['proximadb.chunking_strategies.parser_utils'] = parser_utils
+    sys.modules["proximadb.chunking_strategies.parser_utils"] = parser_utils
     spec.loader.exec_module(parser_utils)
 
 # Get references
@@ -76,30 +77,21 @@ class TestParserErrors:
     def test_parser_error_with_context(self):
         """Test ParserError with context."""
         error = ParserError(
-            "Parse failed",
-            language="python",
-            file_path="/path/to/file.py"
+            "Parse failed", language="python", file_path="/path/to/file.py"
         )
         assert error.language == "python"
         assert error.file_path == "/path/to/file.py"
 
     def test_parser_initialization_error(self):
         """Test ParserInitializationError."""
-        error = ParserInitializationError(
-            "Tree-sitter not available",
-            language="rust"
-        )
+        error = ParserInitializationError("Tree-sitter not available", language="rust")
         assert isinstance(error, ParserError)
         assert error.language == "rust"
 
     def test_parse_error_with_location(self):
         """Test ParseError with line/column info."""
         error = ParseError(
-            "Syntax error",
-            line=42,
-            column=10,
-            language="python",
-            file_path="test.py"
+            "Syntax error", line=42, column=10, language="python", file_path="test.py"
         )
         assert error.line == 42
         assert error.column == 10
@@ -107,10 +99,7 @@ class TestParserErrors:
 
     def test_unsupported_language_error(self):
         """Test UnsupportedLanguageError."""
-        error = UnsupportedLanguageError(
-            "Language not supported",
-            language="brainfuck"
-        )
+        error = UnsupportedLanguageError("Language not supported", language="brainfuck")
         assert isinstance(error, ParserError)
         assert error.language == "brainfuck"
 
@@ -141,7 +130,7 @@ class TestFallbackStrategy:
             strategy=FallbackStrategy.SEMANTIC,
             max_retries=3,
             retry_delay_ms=500,
-            log_errors=False
+            log_errors=False,
         )
         assert config.strategy == FallbackStrategy.SEMANTIC
         assert config.max_retries == 3
@@ -154,10 +143,7 @@ class TestParserMetrics:
 
     def test_metrics_creation(self):
         """Test ParserMetrics creation."""
-        metrics = ParserMetrics(
-            language="python",
-            file_path="test.py"
-        )
+        metrics = ParserMetrics(language="python", file_path="test.py")
         assert metrics.language == "python"
         assert metrics.file_path == "test.py"
         assert metrics.parse_time_ms == 0.0
@@ -173,7 +159,7 @@ class TestParserMetrics:
             symbol_count=10,
             relation_count=5,
             fallback_used=True,
-            tree_sitter_available=True
+            tree_sitter_available=True,
         )
         assert metrics.parse_time_ms == 15.5
         assert metrics.symbol_count == 10
@@ -183,17 +169,14 @@ class TestParserMetrics:
     def test_metrics_to_dict(self):
         """Test ParserMetrics to_dict method."""
         metrics = ParserMetrics(
-            language="go",
-            file_path="test.go",
-            parse_time_ms=12.345,
-            symbol_count=5
+            language="go", file_path="test.go", parse_time_ms=12.345, symbol_count=5
         )
         d = metrics.to_dict()
         assert isinstance(d, dict)
-        assert d['language'] == "go"
-        assert d['file_path'] == "test.go"
-        assert d['parse_time_ms'] == 12.35  # Rounded
-        assert d['symbol_count'] == 5
+        assert d["language"] == "go"
+        assert d["file_path"] == "test.go"
+        assert d["parse_time_ms"] == 12.35  # Rounded
+        assert d["symbol_count"] == 5
 
 
 class TestMetricsCollector:
@@ -229,14 +212,14 @@ class TestMetricsCollector:
                 language="python",
                 file_path=f"test{i}.py",
                 parse_time_ms=10.0 + i,
-                symbol_count=i * 2
+                symbol_count=i * 2,
             )
             collector.record(metrics)
 
         summary = collector.get_summary()
-        assert summary['python']['total_parses'] == 5
-        assert summary['python']['avg_parse_time_ms'] == 12.0  # (10+11+12+13+14)/5
-        assert summary['python']['total_symbols'] == 20  # 0+2+4+6+8
+        assert summary["python"]["total_parses"] == 5
+        assert summary["python"]["avg_parse_time_ms"] == 12.0  # (10+11+12+13+14)/5
+        assert summary["python"]["total_symbols"] == 20  # 0+2+4+6+8
 
     def test_clear_metrics(self):
         """Test clearing metrics."""
@@ -384,7 +367,7 @@ class TestParserPlugin:
             languages=["python", "cython"],
             extensions=[".py", ".pyx"],
             priority=10,
-            metadata={"version": "1.0"}
+            metadata={"version": "1.0"},
         )
 
         assert plugin.name == "test-plugin"
@@ -399,7 +382,7 @@ class TestParserPlugin:
             name="test",
             parser_class=Mock(),
             languages=["Python", "CYTHON"],
-            extensions=[".py"]
+            extensions=[".py"],
         )
 
         assert plugin.supports_language("python")
@@ -413,7 +396,7 @@ class TestParserPlugin:
             name="test",
             parser_class=Mock(),
             languages=["python"],
-            extensions=[".py", ".pyi"]
+            extensions=[".py", ".pyi"],
         )
 
         assert plugin.supports_extension(".py")
@@ -429,7 +412,7 @@ class TestParserPlugin:
             name="test",
             parser_class=mock_parser_class,
             languages=["python"],
-            extensions=[".py"]
+            extensions=[".py"],
         )
 
         parser1 = plugin.get_parser()
@@ -464,7 +447,7 @@ class TestParserPluginRegistry:
             name="test-register",
             parser_class=Mock(),
             languages=["testlang"],
-            extensions=[".test"]
+            extensions=[".test"],
         )
 
         result = registry.register(plugin)
@@ -472,7 +455,7 @@ class TestParserPluginRegistry:
 
         # Verify plugin is registered
         plugins = registry.list_plugins()
-        names = [p['name'] for p in plugins]
+        names = [p["name"] for p in plugins]
         assert "test-register" in names
 
     def test_register_duplicate(self):
@@ -482,7 +465,7 @@ class TestParserPluginRegistry:
             name="test-duplicate",
             parser_class=Mock(),
             languages=["testlang"],
-            extensions=[".test"]
+            extensions=[".test"],
         )
 
         registry.register(plugin)
@@ -497,7 +480,7 @@ class TestParserPluginRegistry:
             name="test-unregister",
             parser_class=Mock(),
             languages=["testlang"],
-            extensions=[".test"]
+            extensions=[".test"],
         )
 
         registry.register(plugin)
@@ -521,7 +504,7 @@ class TestParserPluginRegistry:
             name="test-by-lang",
             parser_class=Mock(return_value=mock_parser),
             languages=["testbylang"],
-            extensions=[".tbl"]
+            extensions=[".tbl"],
         )
         registry.register(plugin)
 
@@ -537,7 +520,7 @@ class TestParserPluginRegistry:
             name="test-by-ext",
             parser_class=Mock(return_value=mock_parser),
             languages=["testbyext"],
-            extensions=[".tbe"]
+            extensions=[".tbe"],
         )
         registry.register(plugin)
 
@@ -556,14 +539,14 @@ class TestParserPluginRegistry:
             parser_class=Mock(return_value=low_priority_parser),
             languages=["prioritylang"],
             extensions=[".pri"],
-            priority=1
+            priority=1,
         )
         high_plugin = ParserPlugin(
             name="test-high-priority",
             parser_class=Mock(return_value=high_priority_parser),
             languages=["prioritylang"],
             extensions=[".pri"],
-            priority=10
+            priority=10,
         )
 
         registry.register(low_plugin)
@@ -630,6 +613,7 @@ class TestConfigValidator:
 
     def test_validate_config_complete(self):
         """Test complete config validation."""
+
         @dataclass
         class MockConfig:
             chunk_size: int = 1000
@@ -654,19 +638,13 @@ class TestValidationResult:
 
     def test_invalid_result(self):
         """Test invalid result with errors."""
-        result = ValidationResult(
-            valid=False,
-            errors=["Error 1", "Error 2"]
-        )
+        result = ValidationResult(valid=False, errors=["Error 1", "Error 2"])
         assert result.valid is False
         assert len(result.errors) == 2
 
     def test_result_with_warnings(self):
         """Test result with warnings."""
-        result = ValidationResult(
-            valid=True,
-            warnings=["Warning 1"]
-        )
+        result = ValidationResult(valid=True, warnings=["Warning 1"])
         assert result.valid is True
         assert len(result.warnings) == 1
 
@@ -700,19 +678,21 @@ class TestDetectLanguageFromContent:
 
     def test_detect_go_pattern(self):
         """Test detecting Go from patterns."""
-        content = "package main\n\nfunc main() {\n    fmt.Println(\"hello\")\n}"
+        content = 'package main\n\nfunc main() {\n    fmt.Println("hello")\n}'
         lang = detect_language_from_content(content)
         assert lang == "go"
 
     def test_detect_rust_pattern(self):
         """Test detecting Rust from patterns."""
-        content = "fn main() {\n    println!(\"hello\");\n}"
+        content = 'fn main() {\n    println!("hello");\n}'
         lang = detect_language_from_content(content)
         assert lang == "rust"
 
     def test_detect_java_pattern(self):
         """Test detecting Java from patterns."""
-        content = "public class Main {\n    public static void main(String[] args) {}\n}"
+        content = (
+            "public class Main {\n    public static void main(String[] args) {}\n}"
+        )
         lang = detect_language_from_content(content)
         assert lang == "java"
 
@@ -758,13 +738,21 @@ class TestCFamilyParserHelpers:
 
     def test_find_matching_brace(self):
         """Test finding matching brace."""
+
         class TestParser(CFamilyParser):
             @property
-            def language(self): return "test"
+            def language(self):
+                return "test"
+
             @property
-            def file_extensions(self): return [".test"]
-            def parse(self, content, file_path): pass
-            def _fallback_regex_parse(self, content, file_path): pass
+            def file_extensions(self):
+                return [".test"]
+
+            def parse(self, content, file_path):
+                pass
+
+            def _fallback_regex_parse(self, content, file_path):
+                pass
 
         parser = TestParser()
         content = "{ inner { nested } outer }"
@@ -774,19 +762,27 @@ class TestCFamilyParserHelpers:
 
     def test_find_matching_brace_with_strings(self):
         """Test matching brace ignores braces in strings."""
+
         class TestParser(CFamilyParser):
             @property
-            def language(self): return "test"
+            def language(self):
+                return "test"
+
             @property
-            def file_extensions(self): return [".test"]
-            def parse(self, content, file_path): pass
-            def _fallback_regex_parse(self, content, file_path): pass
+            def file_extensions(self):
+                return [".test"]
+
+            def parse(self, content, file_path):
+                pass
+
+            def _fallback_regex_parse(self, content, file_path):
+                pass
 
         parser = TestParser()
         content = '{ "string with { brace" }'
         end = parser._find_matching_brace(content, 0)
 
-        assert content[end-1] == '}'
+        assert content[end - 1] == "}"
 
 
 class TestJVMFamilyParserHelpers:
@@ -794,13 +790,21 @@ class TestJVMFamilyParserHelpers:
 
     def test_extract_package(self):
         """Test package extraction."""
+
         class TestParser(JVMFamilyParser):
             @property
-            def language(self): return "test"
+            def language(self):
+                return "test"
+
             @property
-            def file_extensions(self): return [".test"]
-            def parse(self, content, file_path): pass
-            def _fallback_regex_parse(self, content, file_path): pass
+            def file_extensions(self):
+                return [".test"]
+
+            def parse(self, content, file_path):
+                pass
+
+            def _fallback_regex_parse(self, content, file_path):
+                pass
 
         parser = TestParser()
         content = "package com.example.myapp;\n\nclass Test {}"
@@ -810,13 +814,21 @@ class TestJVMFamilyParserHelpers:
 
     def test_extract_imports(self):
         """Test import extraction."""
+
         class TestParser(JVMFamilyParser):
             @property
-            def language(self): return "test"
+            def language(self):
+                return "test"
+
             @property
-            def file_extensions(self): return [".test"]
-            def parse(self, content, file_path): pass
-            def _fallback_regex_parse(self, content, file_path): pass
+            def file_extensions(self):
+                return [".test"]
+
+            def parse(self, content, file_path):
+                pass
+
+            def _fallback_regex_parse(self, content, file_path):
+                pass
 
         parser = TestParser()
         content = """

@@ -31,6 +31,7 @@ from proximadb_sdk.models import VectorRecord
 # Server process
 server_process = None
 
+
 def get_project_paths():
     """Get project root and binary paths"""
     test_dir = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +40,7 @@ def get_project_paths():
     config_file = os.path.join(project_root, "config/config.toml")
 
     return project_root, server_binary, config_file
+
 
 def start_server():
     """Start ProximaDB server"""
@@ -62,12 +64,13 @@ def start_server():
         cwd=project_root,
         env={**os.environ, "RUST_LOG": "info"},
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stderr=subprocess.PIPE,
     )
 
     # Wait for server startup
     time.sleep(5)
     print("✅ Server started\n")
+
 
 def stop_server():
     """Stop ProximaDB server"""
@@ -83,6 +86,7 @@ def stop_server():
         server_process = None
         time.sleep(2)
         print("✅ Server stopped\n")
+
 
 def test_comprehensive_recovery():
     """
@@ -104,9 +108,9 @@ def test_comprehensive_recovery():
     print("Testing: Vector, Graph, and Entity Store Persistence")
     print("=" * 80)
 
-    #========================
+    # ========================
     # Phase 1: Initial Setup
-    #========================
+    # ========================
     start_server()
 
     rest_client = ProximaDBClient("http://localhost:5678", protocol="rest")
@@ -125,7 +129,7 @@ def test_comprehensive_recovery():
         collection = rest_client.create_collection(
             name=collection_name,
             dimension=128,
-            storage_engine="sst"  # Using SST for persistence testing
+            storage_engine="sst",  # Using SST for persistence testing
         )
         print(f"✅ Collection created: {collection_name}")
         print(f"   Storage engine: SST")
@@ -146,15 +150,15 @@ def test_comprehensive_recovery():
                 "index": i,
                 "category": "test",
                 "phase": "initial",
-                "description": f"Test vector {i}"
-            }
+                "description": f"Test vector {i}",
+            },
         )
         test_vectors.append(vector)
 
     try:
         result = grpc_client.insert_vectors(collection_name, test_vectors)
         print(f"✅ Inserted {len(test_vectors)} vectors via gRPC")
-        if hasattr(result, 'successful_count'):
+        if hasattr(result, "successful_count"):
             print(f"   Success count: {result.successful_count}")
     except Exception as e:
         print(f"❌ Failed to insert vectors: {e}")
@@ -178,11 +182,7 @@ def test_comprehensive_recovery():
                 rest_client.create_node(
                     node_id=f"node_{i}",
                     labels=["TestNode"],
-                    properties={
-                        "index": i,
-                        "name": f"Node {i}",
-                        "type": "test"
-                    }
+                    properties={"index": i, "name": f"Node {i}", "type": "test"},
                 )
                 nodes_created += 1
             except Exception as e:
@@ -199,7 +199,7 @@ def test_comprehensive_recovery():
                     from_node_id=f"node_{i}",
                     to_node_id=f"node_{i+1}",
                     edge_type="CONNECTS_TO",
-                    properties={"weight": i + 1}
+                    properties={"weight": i + 1},
                 )
                 edges_created += 1
             except Exception as e:
@@ -215,9 +215,7 @@ def test_comprehensive_recovery():
     try:
         # Search vectors
         search_results = grpc_client.search(
-            collection_id=collection_name,
-            vector=[0.5] * 128,
-            top_k=10
+            collection_id=collection_name, vector=[0.5] * 128, top_k=10
         )
         print(f"✅ Search found {len(search_results)} vectors before restart")
 
@@ -232,9 +230,9 @@ def test_comprehensive_recovery():
     print("Initial data creation complete - stopping server for recovery test")
     print("=" * 80)
 
-    #========================
+    # ========================
     # Phase 2: Server Restart
-    #========================
+    # ========================
     print("\n⏸️  Stopping server to test persistence...")
     stop_server()
 
@@ -252,9 +250,9 @@ def test_comprehensive_recovery():
     print("PHASE 2: Verifying Data Recovery After Restart")
     print("=" * 80)
 
-    #========================
+    # ========================
     # Phase 3: Verification
-    #========================
+    # ========================
 
     recovery_results = {
         "collections": False,
@@ -262,7 +260,7 @@ def test_comprehensive_recovery():
         "vector_count": 0,
         "graph_nodes": False,
         "graph_edges": False,
-        "errors": []
+        "errors": [],
     }
 
     # 3.1 Verify collection persisted
@@ -271,8 +269,10 @@ def test_comprehensive_recovery():
         collections = rest_client.list_collections()
         found = False
         for c in collections:
-            name = c.config.name if hasattr(c, 'config') else c.get('name', '')
-            if name == collection_name or (hasattr(c, 'id') and c.id == collection_name):
+            name = c.config.name if hasattr(c, "config") else c.get("name", "")
+            if name == collection_name or (
+                hasattr(c, "id") and c.id == collection_name
+            ):
                 found = True
                 break
 
@@ -291,9 +291,7 @@ def test_comprehensive_recovery():
     try:
         # Search for vectors
         search_results = grpc_client.search(
-            collection_id=collection_name,
-            vector=[0.5] * 128,
-            top_k=10
+            collection_id=collection_name, vector=[0.5] * 128, top_k=10
         )
 
         if len(search_results) > 0:
@@ -307,7 +305,9 @@ def test_comprehensive_recovery():
 
             # Check metadata persisted
             if len(search_results) > 0 and search_results[0].metadata:
-                print(f"   Metadata preserved: {list(search_results[0].metadata.keys())}")
+                print(
+                    f"   Metadata preserved: {list(search_results[0].metadata.keys())}"
+                )
         else:
             print(f"❌ No vectors found after restart")
             recovery_results["errors"].append("Vectors not recovered")
@@ -328,10 +328,7 @@ def test_comprehensive_recovery():
 
         # Query nodes
         try:
-            result = rest_client.query_nodes(
-                labels=["TestNode"],
-                limit=10
-            )
+            result = rest_client.query_nodes(labels=["TestNode"], limit=10)
             nodes = result.get("nodes", []) if isinstance(result, dict) else result
             if len(nodes) > 0:
                 print(f"✅ Found {len(nodes)} graph nodes after restart")
@@ -344,17 +341,23 @@ def test_comprehensive_recovery():
     except Exception as e:
         print(f"⚠️  Error checking graph: {e}")
 
-    #========================
+    # ========================
     # Phase 4: Final Report
-    #========================
+    # ========================
     print("\n" + "=" * 80)
     print("RECOVERY TEST RESULTS")
     print("=" * 80)
 
     print(f"\n📊 Recovery Summary:")
-    print(f"   Collections recovered: {'✅' if recovery_results['collections'] else '❌'}")
-    print(f"   Vectors recovered: {'✅' if recovery_results['vectors'] else '❌'} ({recovery_results['vector_count']} found)")
-    print(f"   Graph nodes recovered: {'✅' if recovery_results['graph_nodes'] else '⚠️ '}")
+    print(
+        f"   Collections recovered: {'✅' if recovery_results['collections'] else '❌'}"
+    )
+    print(
+        f"   Vectors recovered: {'✅' if recovery_results['vectors'] else '❌'} ({recovery_results['vector_count']} found)"
+    )
+    print(
+        f"   Graph nodes recovered: {'✅' if recovery_results['graph_nodes'] else '⚠️ '}"
+    )
 
     if recovery_results["errors"]:
         print(f"\n⚠️  Errors encountered:")
@@ -374,11 +377,14 @@ def test_comprehensive_recovery():
     # Test assertions
     assert recovery_results["collections"], "Collections must be recovered"
     assert recovery_results["vectors"], "Vectors must be recovered"
-    assert recovery_results["vector_count"] >= 8, f"Expected >=8 vectors, found {recovery_results['vector_count']}"
+    assert (
+        recovery_results["vector_count"] >= 8
+    ), f"Expected >=8 vectors, found {recovery_results['vector_count']}"
 
     print("\n" + "=" * 80)
     print("✅ COMPREHENSIVE RECOVERY TEST PASSED!")
     print("=" * 80)
+
 
 if __name__ == "__main__":
     test_comprehensive_recovery()

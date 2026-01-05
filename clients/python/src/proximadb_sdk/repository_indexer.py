@@ -42,10 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import (
-    List, Dict, Optional, Any, Set, Tuple,
-    Callable, Union, AsyncIterator
-)
+from typing import List, Dict, Optional, Any, Set, Tuple, Callable, Union, AsyncIterator
 import asyncio
 import json
 import logging
@@ -81,23 +78,27 @@ logger = logging.getLogger(__name__)
 # Enums and Configuration
 # =============================================================================
 
+
 class IndexMode(Enum):
     """Indexing mode selection"""
-    FULL = auto()          # Full re-index of all files
-    INCREMENTAL = auto()   # Only changed files since last index
-    SMART = auto()         # Auto-detect based on repository state
+
+    FULL = auto()  # Full re-index of all files
+    INCREMENTAL = auto()  # Only changed files since last index
+    SMART = auto()  # Auto-detect based on repository state
 
 
 class ChangeStrategy(Enum):
     """Strategy for detecting changes"""
-    GIT_DIFF = auto()      # Use git diff for change detection
-    FILE_HASH = auto()     # Use file content hashing
-    HYBRID = auto()        # Combine git diff with hash verification
+
+    GIT_DIFF = auto()  # Use git diff for change detection
+    FILE_HASH = auto()  # Use file content hashing
+    HYBRID = auto()  # Combine git diff with hash verification
 
 
 @dataclass
 class RepositoryIndexConfig(CodeIndexConfig):
     """Extended configuration for repository indexing"""
+
     # Git integration
     enable_git_integration: bool = True
     track_commits: bool = True
@@ -117,13 +118,16 @@ class RepositoryIndexConfig(CodeIndexConfig):
     max_concurrent_files: int = 10
 
     # Filtering
-    index_branches: List[str] = field(default_factory=lambda: ["main", "master", "develop"])
+    index_branches: List[str] = field(
+        default_factory=lambda: ["main", "master", "develop"]
+    )
     skip_merge_commits: bool = False
 
 
 @dataclass
 class RepositoryIndexResult(IndexingResult):
     """Extended result with repository information"""
+
     repository_root: Optional[str] = None
     current_commit: Optional[str] = None
     current_branch: Optional[str] = None
@@ -164,6 +168,7 @@ class RepositoryIndexResult(IndexingResult):
 @dataclass
 class GitEnrichedSearchResult(CodeSearchResult):
     """Search result enriched with git information"""
+
     # Git context
     commit_hash: Optional[str] = None
     branch: Optional[str] = None
@@ -180,6 +185,7 @@ class GitEnrichedSearchResult(CodeSearchResult):
 # =============================================================================
 # Repository Indexer
 # =============================================================================
+
 
 class RepositoryIndexer:
     """
@@ -270,9 +276,7 @@ class RepositoryIndexer:
 
         state_file = repo_path / self.config.state_file_name
         try:
-            state_file.write_text(
-                json.dumps(manager.index_state.to_dict(), indent=2)
-            )
+            state_file.write_text(json.dumps(manager.index_state.to_dict(), indent=2))
         except Exception as e:
             logger.warning(f"Failed to save index state: {e}")
 
@@ -429,6 +433,7 @@ class RepositoryIndexer:
     def _matches_exclude_pattern(self, rel_path: str) -> bool:
         """Check if path matches exclude patterns."""
         import fnmatch
+
         for pattern in self.config.exclude_patterns:
             if fnmatch.fnmatch(rel_path, pattern):
                 return True
@@ -466,10 +471,9 @@ class RepositoryIndexer:
                 result.files_deleted += 1
                 logger.info(f"File deleted: {change.path}")
             except Exception as e:
-                result.errors.append({
-                    "file": change.path,
-                    "error": f"Failed to handle deletion: {e}"
-                })
+                result.errors.append(
+                    {"file": change.path, "error": f"Failed to handle deletion: {e}"}
+                )
 
     async def _index_single_file(
         self,
@@ -478,18 +482,18 @@ class RepositoryIndexer:
     ) -> Tuple[IndexingResult, Optional[str]]:
         """Index a single file with git metadata enrichment."""
         try:
-            content = file_path.read_text(encoding='utf-8')
+            content = file_path.read_text(encoding="utf-8")
         except Exception as e:
             result = IndexingResult()
             result.files_failed = 1
-            result.errors.append({
-                "file": str(file_path),
-                "error": f"Failed to read: {e}"
-            })
+            result.errors.append(
+                {"file": str(file_path), "error": f"Failed to read: {e}"}
+            )
             return result, None
 
         # Compute hash
         import hashlib
+
         content_hash = hashlib.sha256(content.encode()).hexdigest()
 
         # Build metadata with git info
@@ -526,7 +530,9 @@ class RepositoryIndexer:
         total = len(files)
         completed = 0
 
-        async def process_file(file_path: Path) -> Tuple[IndexingResult, Path, Optional[str]]:
+        async def process_file(
+            file_path: Path,
+        ) -> Tuple[IndexingResult, Path, Optional[str]]:
             nonlocal completed
             async with semaphore:
                 result, content_hash = await self._index_single_file(
@@ -586,10 +592,7 @@ class RepositoryIndexer:
         )
 
         if not include_git_context:
-            return [
-                GitEnrichedSearchResult(**vars(r))
-                for r in base_results
-            ]
+            return [GitEnrichedSearchResult(**vars(r)) for r in base_results]
 
         # Enrich with git context
         enriched_results = []
@@ -609,9 +612,7 @@ class RepositoryIndexer:
                         authors = git_info.get("authors", [])
                         if authors:
                             enriched.last_modified_by = authors[0].get("email")
-                            enriched.contributors = [
-                                a.get("email") for a in authors
-                            ]
+                            enriched.contributors = [a.get("email") for a in authors]
                 except Exception:
                     pass
 
@@ -654,7 +655,8 @@ class RepositoryIndexer:
                 "last_indexed_commit": index_state.last_indexed_commit,
                 "last_indexed_time": (
                     index_state.last_indexed_time.isoformat()
-                    if index_state.last_indexed_time else None
+                    if index_state.last_indexed_time
+                    else None
                 ),
                 "indexed_files_count": len(index_state.indexed_files),
                 "branch_states": index_state.branch_states,
@@ -704,6 +706,7 @@ class RepositoryIndexer:
 # =============================================================================
 # Factory Functions
 # =============================================================================
+
 
 def create_repository_indexer(
     client: Any,

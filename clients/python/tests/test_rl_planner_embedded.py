@@ -211,7 +211,9 @@ def test_rl_with_different_engines():
             print(f"\nTesting engine: {engine}")
 
             try:
-                db_multi_engine.create_collection(collection_name, dimension=64, engine=engine)
+                db_multi_engine.create_collection(
+                    collection_name, dimension=64, engine=engine
+                )
 
                 # Insert vectors
                 vectors = generate_random_vectors(200, 64)
@@ -224,12 +226,16 @@ def test_rl_with_different_engines():
                 for i in range(5):
                     query = generate_random_vectors(1, 64)[0]
                     start = time.time()
-                    results = db_multi_engine.search(collection_name, query=query, top_k=5)
+                    results = db_multi_engine.search(
+                        collection_name, query=query, top_k=5
+                    )
                     elapsed = (time.time() - start) * 1000
                     query_times.append(elapsed)
 
                 avg_time = sum(query_times) / len(query_times)
-                print(f"  {engine}: avg query time {avg_time:.2f}ms, results: {len(results)}")
+                print(
+                    f"  {engine}: avg query time {avg_time:.2f}ms, results: {len(results)}"
+                )
 
             except Exception as e:
                 print(f"  {engine}: Error - {e}")
@@ -250,6 +256,7 @@ def test_collection_persistence():
 
     # Use a fixed path (not TemporaryDirectory) to test persistence
     import shutil
+
     persist_dir = "/tmp/proximadb_rl_persist_test"
     if os.path.exists(persist_dir):
         shutil.rmtree(persist_dir)
@@ -283,8 +290,9 @@ def test_collection_persistence():
         session2_collections = [c.name for c in db_session2.list_collections()]
         print(f"Session 2: Collections = {session2_collections}")
 
-        assert "persist_vectors" in session2_collections, \
-            f"Collection should persist: got {session2_collections}"
+        assert (
+            "persist_vectors" in session2_collections
+        ), f"Collection should persist: got {session2_collections}"
 
         # Verify we can search the persisted data
         query = generate_random_vectors(1, 64)[0]
@@ -323,6 +331,7 @@ def run_all_tests():
     except Exception as e:
         print(f"\nTEST FAILED: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

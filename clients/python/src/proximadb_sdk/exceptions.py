@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 
 class ProximaDBError(Exception):
     """Base exception for all ProximaDB client errors"""
-    
+
     def __init__(
         self,
         message: str,
@@ -36,7 +36,7 @@ class ProximaDBError(Exception):
         self.details = details or {}
         self.request_id = request_id
         self.retryable = retryable
-    
+
     def __str__(self) -> str:
         parts = [self.message]
         if self.error_code:
@@ -48,21 +48,21 @@ class ProximaDBError(Exception):
 
 class AuthenticationError(ProximaDBError):
     """Authentication failed - invalid API key or token"""
-    
+
     def __init__(self, message: str = "Authentication failed", **kwargs) -> None:
         super().__init__(message, error_code="AUTH_FAILED", **kwargs)
 
 
 class AuthorizationError(ProximaDBError):
     """Authorization failed - insufficient permissions"""
-    
+
     def __init__(self, message: str = "Insufficient permissions", **kwargs) -> None:
         super().__init__(message, error_code="AUTH_INSUFFICIENT", **kwargs)
 
 
 class CollectionNotFoundError(ProximaDBError):
     """Collection does not exist"""
-    
+
     def __init__(self, collection_id: str, **kwargs) -> None:
         message = f"Collection not found: {collection_id}"
         super().__init__(message, error_code="COLLECTION_NOT_FOUND", **kwargs)
@@ -71,7 +71,7 @@ class CollectionNotFoundError(ProximaDBError):
 
 class CollectionExistsError(ProximaDBError):
     """Collection already exists"""
-    
+
     def __init__(self, collection_name: str, **kwargs) -> None:
         message = f"Collection already exists: {collection_name}"
         super().__init__(message, error_code="COLLECTION_EXISTS", **kwargs)
@@ -80,7 +80,7 @@ class CollectionExistsError(ProximaDBError):
 
 class VectorNotFoundError(ProximaDBError):
     """Vector does not exist"""
-    
+
     def __init__(self, vector_id: str, **kwargs) -> None:
         message = f"Vector not found: {vector_id}"
         super().__init__(message, error_code="VECTOR_NOT_FOUND", **kwargs)
@@ -89,7 +89,7 @@ class VectorNotFoundError(ProximaDBError):
 
 class VectorDimensionError(ProximaDBError):
     """Vector dimension mismatch"""
-    
+
     def __init__(self, expected: int, actual: int, **kwargs) -> None:
         message = f"Vector dimension mismatch: expected {expected}, got {actual}"
         super().__init__(message, error_code="DIMENSION_MISMATCH", **kwargs)
@@ -99,19 +99,19 @@ class VectorDimensionError(ProximaDBError):
 
 class InvalidVectorError(ProximaDBError):
     """Invalid vector data"""
-    
+
     def __init__(self, message: str = "Invalid vector data", **kwargs) -> None:
         super().__init__(message, error_code="INVALID_VECTOR", **kwargs)
 
 
 class RateLimitError(ProximaDBError):
     """Rate limit exceeded"""
-    
+
     def __init__(
         self,
         message: str = "Rate limit exceeded",
         retry_after: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="RATE_LIMIT_EXCEEDED", **kwargs)
         self.retry_after = retry_after  # seconds to wait before retry
@@ -119,12 +119,12 @@ class RateLimitError(ProximaDBError):
 
 class QuotaExceededError(ProximaDBError):
     """Usage quota exceeded"""
-    
+
     def __init__(
         self,
         message: str = "Usage quota exceeded",
         quota_type: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="QUOTA_EXCEEDED", **kwargs)
         self.quota_type = quota_type
@@ -132,7 +132,7 @@ class QuotaExceededError(ProximaDBError):
 
 class ValidationError(ProximaDBError):
     """Request validation failed"""
-    
+
     def __init__(self, message: str, field: Optional[str] = None, **kwargs) -> None:
         super().__init__(message, error_code="VALIDATION_ERROR", **kwargs)
         self.field = field
@@ -140,12 +140,12 @@ class ValidationError(ProximaDBError):
 
 class ServerError(ProximaDBError):
     """Internal server error"""
-    
+
     def __init__(
         self,
         message: str = "Internal server error",
         status_code: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="SERVER_ERROR", **kwargs)
         self.status_code = status_code
@@ -153,12 +153,12 @@ class ServerError(ProximaDBError):
 
 class NetworkError(ProximaDBError):
     """Network communication error"""
-    
+
     def __init__(
         self,
         message: str = "Network error",
         original_error: Optional[Exception] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="NETWORK_ERROR", **kwargs)
         self.original_error = original_error
@@ -166,13 +166,13 @@ class NetworkError(ProximaDBError):
 
 class TransportError(ProximaDBError):
     """Transport layer error (REST/gRPC)"""
-    
+
     def __init__(
         self,
         message: str = "Transport error",
         transport_type: Optional[str] = None,
         original_error: Optional[Exception] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="TRANSPORT_ERROR", **kwargs)
         self.transport_type = transport_type
@@ -181,12 +181,12 @@ class TransportError(ProximaDBError):
 
 class TimeoutError(ProximaDBError):
     """Request timeout"""
-    
+
     def __init__(
         self,
         message: str = "Request timeout",
         timeout_seconds: Optional[float] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="TIMEOUT", **kwargs)
         self.timeout_seconds = timeout_seconds
@@ -194,29 +194,31 @@ class TimeoutError(ProximaDBError):
 
 class ConfigurationError(ProximaDBError):
     """Client configuration error"""
-    
+
     def __init__(self, message: str, **kwargs) -> None:
         super().__init__(message, error_code="CONFIG_ERROR", **kwargs)
 
 
 class IndexError(ProximaDBError):
     """Vector index error"""
-    
-    def __init__(self, message: str, index_type: Optional[str] = None, **kwargs) -> None:
+
+    def __init__(
+        self, message: str, index_type: Optional[str] = None, **kwargs
+    ) -> None:
         super().__init__(message, error_code="INDEX_ERROR", **kwargs)
         self.index_type = index_type
 
 
 class BatchError(ProximaDBError):
     """Batch operation error"""
-    
+
     def __init__(
         self,
         message: str,
         successful_count: int = 0,
         failed_count: int = 0,
         errors: Optional[list] = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__(message, error_code="BATCH_ERROR", **kwargs)
         self.successful_count = successful_count
@@ -226,18 +228,14 @@ class BatchError(ProximaDBError):
 
 class WALError(ProximaDBError):
     """Write-Ahead Log operation error"""
-    
-    def __init__(
-        self,
-        message: str = "WAL operation failed",
-        **kwargs
-    ) -> None:
+
+    def __init__(self, message: str = "WAL operation failed", **kwargs) -> None:
         super().__init__(message, error_code="WAL_ERROR", **kwargs)
 
 
 class StreamingError(ProximaDBError):
     """Streaming operation error"""
-    
+
     def __init__(self, message: str, **kwargs) -> None:
         super().__init__(message, error_code="STREAMING_ERROR", **kwargs)
 
@@ -248,7 +246,7 @@ def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
     message = response_data.get("message", f"HTTP {status_code} error")
     request_id = response_data.get("request_id")
     details = response_data.get("details", {})
-    
+
     if status_code == 400:
         if error_code == "VALIDATION_ERROR":
             return ValidationError(message, request_id=request_id, details=details)
@@ -258,13 +256,13 @@ def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
             if expected and actual:
                 return VectorDimensionError(expected, actual, request_id=request_id)
         return ProximaDBError(message, error_code, details, request_id, retryable=False)
-    
+
     elif status_code == 401:
         return AuthenticationError(message, request_id=request_id, details=details)
-    
+
     elif status_code == 403:
         return AuthorizationError(message, request_id=request_id, details=details)
-    
+
     elif status_code == 404:
         if error_code == "COLLECTION_NOT_FOUND":
             collection_id = details.get("collection_id", "unknown")
@@ -273,24 +271,30 @@ def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
             vector_id = details.get("vector_id", "unknown")
             return VectorNotFoundError(vector_id, request_id=request_id)
         return ProximaDBError(message, error_code, details, request_id, retryable=False)
-    
+
     elif status_code == 409:
         if error_code == "COLLECTION_EXISTS":
             collection_name = details.get("collection_name", "unknown")
             return CollectionExistsError(collection_name, request_id=request_id)
         return ProximaDBError(message, error_code, details, request_id, retryable=False)
-    
+
     elif status_code == 429:
         retry_after = details.get("retry_after")
-        return RateLimitError(message, retry_after=retry_after, request_id=request_id, details=details)
-    
+        return RateLimitError(
+            message, retry_after=retry_after, request_id=request_id, details=details
+        )
+
     elif status_code == 413:
         quota_type = details.get("quota_type")
-        return QuotaExceededError(message, quota_type=quota_type, request_id=request_id, details=details)
-    
+        return QuotaExceededError(
+            message, quota_type=quota_type, request_id=request_id, details=details
+        )
+
     elif 500 <= status_code < 600:
-        return ServerError(message, status_code=status_code, request_id=request_id, details=details)
-    
+        return ServerError(
+            message, status_code=status_code, request_id=request_id, details=details
+        )
+
     else:
         return ProximaDBError(message, error_code, details, request_id, retryable=False)
 
@@ -299,10 +303,10 @@ def map_grpc_error(grpc_error) -> ProximaDBError:
     """Map gRPC errors to appropriate exceptions"""
     try:
         import grpc
-        
+
         status_code = grpc_error.code()
         message = grpc_error.details()
-        
+
         if status_code == grpc.StatusCode.UNAUTHENTICATED:
             return AuthenticationError(message)
         elif status_code == grpc.StatusCode.PERMISSION_DENIED:
@@ -322,8 +326,12 @@ def map_grpc_error(grpc_error) -> ProximaDBError:
         elif status_code == grpc.StatusCode.INTERNAL:
             return ServerError(message)
         else:
-            return ProximaDBError(message, error_code=status_code.name, details={"grpc_error": str(grpc_error)})
-    
+            return ProximaDBError(
+                message,
+                error_code=status_code.name,
+                details={"grpc_error": str(grpc_error)},
+            )
+
     except ImportError:
         # grpc not available
         return ProximaDBError(str(grpc_error), error_code="GRPC_ERROR")

@@ -10,9 +10,11 @@ class FakeGrpcAsync:
 
     def shortest_path(self, *args, **kwargs):
         self.calls.append(("shortest_path", args, kwargs))
+
         class R:
             node_ids = ["n1", "n8"]
             total_weight = 1.0
+
         return R()
 
 
@@ -45,12 +47,16 @@ async def test_unified_async_uses_grpc_when_available(monkeypatch):
 
     client = ProximaDBAsyncUnified(url="http://localhost:5678", protocol="auto")
     await client.astart()
-    resp_sp = await client.graph_shortest_path("n1", "n8", enable_prefetch=True, prefetch_budget=3)
+    resp_sp = await client.graph_shortest_path(
+        "n1", "n8", enable_prefetch=True, prefetch_budget=3
+    )
     assert getattr(resp_sp, "node_ids", None) == ["n1", "n8"]
     # Traversal goes REST; ensure _rest is available (inject if gRPC path selected)
     if client._rest is None:
         client._rest = FakeRestAsync(url="http://localhost:5678")
-    resp_tr = await client.graph_traverse("n1", max_depth=2, enable_prefetch=True, prefetch_budget=3)
+    resp_tr = await client.graph_traverse(
+        "n1", max_depth=2, enable_prefetch=True, prefetch_budget=3
+    )
     assert resp_tr["ok"] is True
     await client.aclose()
 

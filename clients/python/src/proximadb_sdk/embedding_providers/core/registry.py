@@ -41,7 +41,7 @@ class ProviderRegistry:
         name: str,
         models: Dict[str, ModelMetadata],
         aliases: Optional[List[str]] = None,
-        description: str = ""
+        description: str = "",
     ):
         """
         Decorator for provider registration
@@ -65,6 +65,7 @@ class ProviderRegistry:
             class GTEQwenProvider(BaseEmbeddingProvider):
                 ...
         """
+
         def decorator(provider_class: Type[BaseEmbeddingProvider]):
             # Validate provider class
             if not issubclass(provider_class, BaseEmbeddingProvider):
@@ -78,7 +79,7 @@ class ProviderRegistry:
             cls._descriptions[name] = description
 
             # Register aliases
-            for alias in (aliases or []):
+            for alias in aliases or []:
                 if alias in cls._aliases:
                     logger.warning(
                         f"Alias '{alias}' already registered for '{cls._aliases[alias]}', "
@@ -92,6 +93,7 @@ class ProviderRegistry:
             )
 
             return provider_class
+
         return decorator
 
     @classmethod
@@ -118,7 +120,9 @@ class ProviderRegistry:
         name = cls._aliases.get(name, name)
 
         if name not in cls._providers:
-            available = sorted(set(list(cls._providers.keys()) + list(cls._aliases.keys())))
+            available = sorted(
+                set(list(cls._providers.keys()) + list(cls._aliases.keys()))
+            )
             raise ValueError(
                 f"Unknown embedding provider: '{original_name}'. "
                 f"Available providers: {available}"
@@ -218,7 +222,7 @@ class ProviderRegistry:
             "description": cls._descriptions.get(provider_name, ""),
             "num_models": len(models),
             "models": list(models.keys()),
-            "default_model": next(iter(models.keys())) if models else None
+            "default_model": next(iter(models.keys())) if models else None,
         }
 
     @classmethod

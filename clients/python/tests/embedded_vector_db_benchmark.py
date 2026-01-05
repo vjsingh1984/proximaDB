@@ -31,9 +31,11 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 import numpy as np
+
 try:
     from rich.console import Console
     from rich.table import Table
+
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
@@ -45,6 +47,7 @@ except ImportError:
 # ProximaDB (native Rust via PyO3)
 try:
     import proximadb_sdk
+
     PROXIMADB_AVAILABLE = True
     print(f"ProximaDB v{proximadb.__version__} loaded")
 except ImportError as e:
@@ -60,6 +63,7 @@ import lancedb
 # FAISS
 try:
     import faiss
+
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
@@ -68,6 +72,7 @@ except ImportError:
 try:
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, VectorParams, PointStruct
+
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
@@ -77,6 +82,7 @@ except ImportError:
 # Benchmark Functions
 # =============================================================================
 
+
 def generate_random_vectors(num_vectors: int, dimension: int = 384) -> np.ndarray:
     """Generate random normalized vectors."""
     vectors = np.random.randn(num_vectors, dimension).astype(np.float32)
@@ -84,7 +90,9 @@ def generate_random_vectors(num_vectors: int, dimension: int = 384) -> np.ndarra
     return vectors / norms
 
 
-def benchmark_proximadb(vectors: np.ndarray, temp_dir: str, engine: str = "sst") -> Dict[str, Any]:
+def benchmark_proximadb(
+    vectors: np.ndarray, temp_dir: str, engine: str = "sst"
+) -> Dict[str, Any]:
     """Benchmark ProximaDB embedded mode with specified storage engine."""
     if not PROXIMADB_AVAILABLE:
         return {"error": "ProximaDB not available"}
@@ -131,7 +139,9 @@ def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
 
     try:
         client = chromadb.PersistentClient(path=data_dir)
-        collection = client.create_collection("benchmark", metadata={"hnsw:space": "cosine"})
+        collection = client.create_collection(
+            "benchmark", metadata={"hnsw:space": "cosine"}
+        )
 
         ids = [f"vec_{i}" for i in range(len(vectors))]
 
@@ -154,7 +164,7 @@ def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
             "p95_ms": float(np.percentile(search_times, 95)),
             "p99_ms": float(np.percentile(search_times, 99)),
             "docs_per_sec": len(vectors) / insert_time,
-            "num_results": len(results['ids'][0]) if results['ids'] else 0,
+            "num_results": len(results["ids"][0]) if results["ids"] else 0,
         }
     except Exception as e:
         return {"error": str(e)}
@@ -166,7 +176,10 @@ def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
 
     try:
         db = lancedb.connect(data_dir)
-        data = [{"id": f"vec_{i}", "vector": vectors[i].tolist()} for i in range(len(vectors))]
+        data = [
+            {"id": f"vec_{i}", "vector": vectors[i].tolist()}
+            for i in range(len(vectors))
+        ]
 
         start = time.perf_counter()
         table = db.create_table("benchmark", data)
@@ -239,12 +252,11 @@ def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         dimension = vectors.shape[1]
         client.create_collection(
             collection_name="benchmark",
-            vectors_config=VectorParams(size=dimension, distance=Distance.COSINE)
+            vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
         )
 
         points = [
-            PointStruct(id=i, vector=vectors[i].tolist())
-            for i in range(len(vectors))
+            PointStruct(id=i, vector=vectors[i].tolist()) for i in range(len(vectors))
         ]
 
         start = time.perf_counter()
@@ -294,8 +306,13 @@ def run_benchmark(batch_sizes: List[int] = [1024, 5000, 10000]):
 
     benchmarks = [
         # ProximaDB with all storage engines
-        *[(f"ProximaDB-{eng.upper()}", lambda v, t, e=eng: benchmark_proximadb(v, t, e))
-          for eng in proximadb_engines],
+        *[
+            (
+                f"ProximaDB-{eng.upper()}",
+                lambda v, t, e=eng: benchmark_proximadb(v, t, e),
+            )
+            for eng in proximadb_engines
+        ],
         # Other embedded databases
         ("ChromaDB", benchmark_chromadb),
         ("LanceDB", benchmark_lancedb),
@@ -312,7 +329,9 @@ def run_benchmark(batch_sizes: List[int] = [1024, 5000, 10000]):
 
         print(f"\nGenerating {batch_size:,} random vectors...")
         vectors = generate_random_vectors(batch_size, dimension)
-        print(f"  Shape: {vectors.shape}, Memory: {vectors.nbytes / 1024 / 1024:.1f} MB")
+        print(
+            f"  Shape: {vectors.shape}, Memory: {vectors.nbytes / 1024 / 1024:.1f} MB"
+        )
 
         results = {}
 
@@ -326,8 +345,12 @@ def run_benchmark(batch_sizes: List[int] = [1024, 5000, 10000]):
                 if "error" in result:
                     print(f"    Error: {result['error'][:50]}")
                 else:
-                    print(f"    Insert: {result['insert_time_ms']:.2f}ms ({result['docs_per_sec']:,.0f} vectors/sec)")
-                    print(f"    Search: {result['search_time_ms']:.3f}ms ({result['num_results']} results)")
+                    print(
+                        f"    Insert: {result['insert_time_ms']:.2f}ms ({result['docs_per_sec']:,.0f} vectors/sec)"
+                    )
+                    print(
+                        f"    Search: {result['search_time_ms']:.3f}ms ({result['num_results']} results)"
+                    )
 
             gc.collect()
 
@@ -351,19 +374,23 @@ def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> N
     print("\n" + header)
 
     def fmt_row(name: str, r: Dict[str, Any]) -> str:
-        return (f"{name:<18} {r['insert_time_ms']:>10.2f}ms   "
-                f"{r['docs_per_sec']:>14,.0f}/s   {r['search_time_ms']:>8.3f}ms   "
-                f"p95 {r.get('p95_ms', r['search_time_ms']):>8.3f}ms")
+        return (
+            f"{name:<18} {r['insert_time_ms']:>10.2f}ms   "
+            f"{r['docs_per_sec']:>14,.0f}/s   {r['search_time_ms']:>8.3f}ms   "
+            f"p95 {r.get('p95_ms', r['search_time_ms']):>8.3f}ms"
+        )
 
     sorted_results = sorted(
         [(k, v) for k, v in results.items() if "error" not in v],
-        key=lambda x: x[1]['docs_per_sec'],
-        reverse=True
+        key=lambda x: x[1]["docs_per_sec"],
+        reverse=True,
     )
 
     if RICH_AVAILABLE:
         console = Console()
-        table = Table(title=f"Embedded Vector DBs – {batch_size:,} vectors", expand=True)
+        table = Table(
+            title=f"Embedded Vector DBs – {batch_size:,} vectors", expand=True
+        )
         table.add_column("Database", style="cyan", no_wrap=True)
         table.add_column("Insert (ms)", justify="right")
         table.add_column("Throughput (/s)", justify="right")
@@ -371,11 +398,17 @@ def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> N
         table.add_column("p95 Search (ms)", justify="right")
 
         best_tput = max((v["docs_per_sec"] for _, v in sorted_results), default=0)
-        best_p95 = min((v.get("p95_ms", v["search_time_ms"]) for _, v in sorted_results), default=0)
+        best_p95 = min(
+            (v.get("p95_ms", v["search_time_ms"]) for _, v in sorted_results), default=0
+        )
 
         for name, r in sorted_results:
             style = "bold green" if r["docs_per_sec"] == best_tput else None
-            p95_style = "bold magenta" if r.get("p95_ms", r["search_time_ms"]) == best_p95 else None
+            p95_style = (
+                "bold magenta"
+                if r.get("p95_ms", r["search_time_ms"]) == best_p95
+                else None
+            )
             table.add_row(
                 name,
                 f"{r['insert_time_ms']:.2f}",
@@ -392,7 +425,9 @@ def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> N
 
         console.print(table)
     else:
-        print(f"  {'Database':<18} {'Insert (ms)':<15} {'Throughput':<18} {'Search (ms)':<12} {'p95 (ms)':<10}")
+        print(
+            f"  {'Database':<18} {'Insert (ms)':<15} {'Throughput':<18} {'Search (ms)':<12} {'p95 (ms)':<10}"
+        )
         print(f"  {'─'*78}")
         for name, r in sorted_results:
             print(f"  {fmt_row(name, r)}")
@@ -401,13 +436,20 @@ def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> N
                 print(f"  {name:<18} Error: {r['error'][:50]}")
 
 
-def render_summary_table(all_results: Dict[int, Dict[str, Dict[str, Any]]], proximadb_engines: List[str]) -> None:
+def render_summary_table(
+    all_results: Dict[int, Dict[str, Dict[str, Any]]], proximadb_engines: List[str]
+) -> None:
     """Render cross-batch summary for throughput."""
     print("\n" + "=" * 80)
     print("SUMMARY: Insert Throughput (vectors/second)")
     print("=" * 80)
     batch_sizes = list(all_results.keys())
-    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines] + ["ChromaDB", "LanceDB", "FAISS", "Qdrant"]
+    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines] + [
+        "ChromaDB",
+        "LanceDB",
+        "FAISS",
+        "Qdrant",
+    ]
 
     if RICH_AVAILABLE:
         console = Console()
@@ -420,7 +462,9 @@ def render_summary_table(all_results: Dict[int, Dict[str, Dict[str, Any]]], prox
             cells = []
             for b in batch_sizes:
                 result = all_results[b].get(db_name, {})
-                cells.append("N/A" if "error" in result else f"{result['docs_per_sec']:,.0f}")
+                cells.append(
+                    "N/A" if "error" in result else f"{result['docs_per_sec']:,.0f}"
+                )
             table.add_row(db_name, *cells)
         console.print(table)
     else:
@@ -436,12 +480,14 @@ def render_summary_table(all_results: Dict[int, Dict[str, Dict[str, Any]]], prox
                 if "error" in result:
                     print(f" {'N/A':>12}", end="")
                 else:
-                    throughput = result['docs_per_sec']
+                    throughput = result["docs_per_sec"]
                     print(f" {throughput:>12,.0f}", end="")
             print()
 
 
-def write_markdown_report(all_results: Dict[int, Dict[str, Dict[str, Any]]], proximadb_engines: List[str]) -> None:
+def write_markdown_report(
+    all_results: Dict[int, Dict[str, Dict[str, Any]]], proximadb_engines: List[str]
+) -> None:
     """Persist a Markdown-friendly snapshot for sharing."""
     target_dir = Path("target")
     target_dir.mkdir(exist_ok=True)
@@ -449,18 +495,22 @@ def write_markdown_report(all_results: Dict[int, Dict[str, Dict[str, Any]]], pro
 
     lines.append("# Embedded Vector DB Benchmark")
     lines.append("")
-    lines.append("Databases: ProximaDB (SST/HELIX/VIPER/NOVA/SWIFT/RAPTOR), ChromaDB, LanceDB, FAISS, Qdrant.")
+    lines.append(
+        "Databases: ProximaDB (SST/HELIX/VIPER/NOVA/SWIFT/RAPTOR), ChromaDB, LanceDB, FAISS, Qdrant."
+    )
     lines.append("")
 
     for batch_size, results in all_results.items():
         lines.append(f"## {batch_size:,} vectors")
         lines.append("")
-        lines.append("| Database | Insert (ms) | Throughput (/s) | Search (ms) | p95 (ms) |")
+        lines.append(
+            "| Database | Insert (ms) | Throughput (/s) | Search (ms) | p95 (ms) |"
+        )
         lines.append("| --- | ---: | ---: | ---: | ---: |")
         sorted_results = sorted(
             [(k, v) for k, v in results.items() if "error" not in v],
             key=lambda x: x[1]["docs_per_sec"],
-            reverse=True
+            reverse=True,
         )
         for name, r in sorted_results:
             lines.append(
@@ -472,13 +522,20 @@ def write_markdown_report(all_results: Dict[int, Dict[str, Dict[str, Any]]], pro
                 lines.append(f"| {name} | error | error | error | error |")
         lines.append("")
 
-    summary_header = "| Database | " + " | ".join(f"{b:,} vec" for b in all_results.keys()) + " |"
+    summary_header = (
+        "| Database | " + " | ".join(f"{b:,} vec" for b in all_results.keys()) + " |"
+    )
     summary_sep = "| --- " + " | ---: " * len(all_results) + "|"
     lines.append("## Throughput Summary")
     lines.append("")
     lines.append(summary_header)
     lines.append(summary_sep)
-    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines] + ["ChromaDB", "LanceDB", "FAISS", "Qdrant"]
+    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines] + [
+        "ChromaDB",
+        "LanceDB",
+        "FAISS",
+        "Qdrant",
+    ]
     for db_name in db_names:
         row = [db_name]
         for batch_size in all_results.keys():
