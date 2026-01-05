@@ -159,7 +159,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-clippy"

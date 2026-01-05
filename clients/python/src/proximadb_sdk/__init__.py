@@ -108,6 +108,7 @@ from .filters import (
 )
 
 # Models
+from .models import IndexingAlgorithm  # Alias for compatibility
 from .models import (
     Collection,
     CollectionConfig,
@@ -121,12 +122,6 @@ from .models import (
     FlushConfig,
     HealthStatus,
     IndexConfiguration,
-)
-from .models import (
-    IndexingAlgorithm,  # Collection models; Vector models; Operation responses; Enums; Quantization; Search optimization; Additional models; Type aliases
-)
-from .models import IndexingAlgorithm as IndexType  # Alias for compatibility
-from .models import (
     MetadataDict,
     OperationMetrics,
     QuantizationConfig,
