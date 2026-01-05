@@ -109,11 +109,12 @@ class TestGrpcSyncIntegration:
         mock_response.success = True
         mock_stub.CreateCollection.return_value = mock_response
 
-        with patch(
-            "proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub"
-        ) as mock_stub_class, patch(
-            "proximadb_sdk.protocols.grpc_sync.pb2"
-        ) as mock_pb2:
+        with (
+            patch(
+                "proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub"
+            ) as mock_stub_class,
+            patch("proximadb_sdk.protocols.grpc_sync.pb2") as mock_pb2,
+        ):
 
             mock_stub_class.return_value = mock_stub
 
@@ -147,11 +148,12 @@ class TestGrpcSyncIntegration:
         mock_response.inserted_count = 2
         mock_stub.InsertVectors.return_value = mock_response
 
-        with patch(
-            "proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub"
-        ) as mock_stub_class, patch(
-            "proximadb_sdk.protocols.grpc_sync.pb2"
-        ) as mock_pb2:
+        with (
+            patch(
+                "proximadb_sdk.protocols.grpc_sync.pb2_grpc.ProximaDBStub"
+            ) as mock_stub_class,
+            patch("proximadb_sdk.protocols.grpc_sync.pb2") as mock_pb2,
+        ):
 
             mock_stub_class.return_value = mock_stub
 

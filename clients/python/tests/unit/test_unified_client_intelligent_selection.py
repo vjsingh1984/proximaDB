@@ -200,11 +200,12 @@ class TestUnifiedClientIntelligentSelection:
 
     def test_operation_result_recording(self, config):
         """Test operation result recording for metrics"""
-        with patch(
-            "proximadb_sdk.unified_client.create_protocol_selector"
-        ) as mock_create, patch(
-            "proximadb_sdk.unified_client.OperationRouter"
-        ) as mock_router_class:
+        with (
+            patch(
+                "proximadb_sdk.unified_client.create_protocol_selector"
+            ) as mock_create,
+            patch("proximadb_sdk.unified_client.OperationRouter") as mock_router_class,
+        ):
 
             mock_selector = Mock()
             mock_selector.get_client.return_value = Mock()
@@ -337,11 +338,14 @@ class TestIntelligentSelectionIntegration:
         config = ClientConfig(url="http://localhost:5678")
 
         # Mock both client types
-        with patch(
-            "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
-        ) as mock_grpc_factory, patch(
-            "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
-        ) as mock_rest_factory:
+        with (
+            patch(
+                "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
+            ) as mock_grpc_factory,
+            patch(
+                "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
+            ) as mock_rest_factory,
+        ):
 
             mock_grpc_client = Mock()
             mock_grpc_client.health_check.return_value = {"status": "healthy"}
@@ -379,11 +383,14 @@ class TestIntelligentSelectionIntegration:
         """Test performance-based selection with simulated metrics"""
         config = ClientConfig(url="http://localhost:5678")
 
-        with patch(
-            "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
-        ) as mock_grpc_factory, patch(
-            "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
-        ) as mock_rest_factory:
+        with (
+            patch(
+                "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
+            ) as mock_grpc_factory,
+            patch(
+                "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
+            ) as mock_rest_factory,
+        ):
 
             # Create client with performance-based strategy
             client = ProximaDBClient(
@@ -422,11 +429,14 @@ class TestIntelligentSelectionPerformance:
         """Test that intelligent selection adds minimal overhead"""
         config = ClientConfig(url="http://localhost:5678")
 
-        with patch(
-            "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
-        ) as mock_grpc_factory, patch(
-            "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
-        ) as mock_rest_factory:
+        with (
+            patch(
+                "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
+            ) as mock_grpc_factory,
+            patch(
+                "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
+            ) as mock_rest_factory,
+        ):
 
             mock_grpc_factory.return_value = Mock()
             mock_rest_factory.return_value = Mock()
@@ -473,11 +483,14 @@ class TestIntelligentSelectionPerformance:
 
         def selection_worker():
             try:
-                with patch(
-                    "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
-                ) as mock_grpc, patch(
-                    "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
-                ) as mock_rest:
+                with (
+                    patch(
+                        "proximadb_sdk.unified_client.ProximaDBClient._create_grpc_client"
+                    ) as mock_grpc,
+                    patch(
+                        "proximadb_sdk.unified_client.ProximaDBClient._create_rest_client"
+                    ) as mock_rest,
+                ):
 
                     mock_grpc.return_value = Mock()
                     mock_rest.return_value = Mock()

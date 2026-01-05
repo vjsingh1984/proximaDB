@@ -57,8 +57,9 @@ class TestGrpcSyncBasic:
     @pytest.fixture
     def mock_grpc(self):
         """Mock gRPC for all tests"""
-        with patch("grpc.insecure_channel") as mock_channel, patch(
-            "proximadb_sdk.resource_pool.ResourcePool", MockResourcePool
+        with (
+            patch("grpc.insecure_channel") as mock_channel,
+            patch("proximadb_sdk.resource_pool.ResourcePool", MockResourcePool),
         ):
             mock_channel.return_value = Mock()
             yield mock_channel
