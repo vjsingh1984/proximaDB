@@ -341,6 +341,7 @@ reports/
 *.html
 !docs/**/*.html
 !target/criterion/**/*.html
+!src/network/rest/dashboard.html
 
 # Generated configuration files (but keep examples)
 #*_config.toml
