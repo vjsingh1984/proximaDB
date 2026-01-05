@@ -153,7 +153,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
       - name: Install System Dependencies
@@ -162,7 +162,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-clippy"
+          prefix-key: "v1-clippy-nightly"
       - run: cargo clippy --all-targets -- -D warnings
 
   rust-security:
@@ -271,7 +271,7 @@ jobs:
     if: needs.changes.outputs.rust_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt, clippy
       - name: Check Format
@@ -399,11 +399,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-${{ matrix.profile }}"
+          prefix-key: "v1-rust-nightly-${{ matrix.profile }}"
           shared-key: "build"
 
       - name: Install Dependencies
@@ -444,11 +444,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-dev"
+          prefix-key: "v1-rust-nightly-dev"
           shared-key: "build"
 
       - name: Install Dependencies
@@ -470,10 +470,10 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-dev"
+          prefix-key: "v1-rust-nightly-dev"
           shared-key: "build"
       - name: Install Dependencies
         run: |
@@ -502,10 +502,10 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-dev"
+          prefix-key: "v1-rust-nightly-dev"
           shared-key: "build"
       - name: Install Dependencies
         run: |
@@ -531,10 +531,10 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-dev"
+          prefix-key: "v1-rust-nightly-dev"
           shared-key: "build"
       - name: Install Dependencies
         run: |
@@ -560,10 +560,10 @@ jobs:
        needs.changes.outputs.core_changes == 'true')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-dev"
+          prefix-key: "v1-rust-nightly-dev"
           shared-key: "build"
       - name: Install Dependencies
         run: |
@@ -585,10 +585,10 @@ jobs:
     needs: [rust-test]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-coverage"
+          prefix-key: "v1-rust-nightly-coverage"
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -853,11 +853,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "v1-rust-bench"
+          prefix-key: "v1-rust-nightly-bench"
 
       - name: Install Dependencies
         run: |
