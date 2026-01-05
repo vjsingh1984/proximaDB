@@ -161,6 +161,9 @@ impl FloydWarshallAPSP {
             if is_x86_feature_detected!("avx2") {
                 // SAFETY: We've checked for AVX2 support at runtime
                 return unsafe { self.floyd_warshall_avx2(dist) };
+            } else {
+                // Fallback to scalar when AVX2 is not available
+                return self.floyd_warshall_scalar(dist);
             }
         }
 
