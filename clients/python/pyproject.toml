@@ -28,6 +28,7 @@ classifiers = [
 
 dependencies = [
     "httpx>=0.24.0",
+    "h2>=4.0.0",  # Required for HTTP/2 support in httpx
     "pydantic>=2.0.0",
     "numpy>=1.21.0",
     "typing-extensions>=4.0.0",
