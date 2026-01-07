@@ -1166,7 +1166,6 @@ impl SstableWriter {
     // Quantization methods removed - now handled by unified compute module directly
 
     /// ❌ REMOVED: Duplicate finalize_block method - using finalize_vector_block with Proxima composition pattern!
-
     /// Set bloom filter configuration
     pub fn with_bloom_config(mut self, config: BloomFilterConfig) -> Self {
         self.bloom_config = config;

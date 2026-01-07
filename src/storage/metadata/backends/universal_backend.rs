@@ -1177,7 +1177,6 @@ impl UniversalMetadataBackend {
         self.execute_atomic_write(operation, prepared_data).await
     }
     */
-
     /// Serialize record to bytes for rollback
     fn serialize_record(&self, record: &Collection) -> Result<Vec<u8>> {
         // Proto-first: serialize directly to protobuf

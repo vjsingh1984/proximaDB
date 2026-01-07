@@ -501,7 +501,6 @@ impl ParquetReconstructor {
     }
 
     /// Helper methods
-
     fn detect_compression(&self, _range: &FileSeekRange) -> Result<CompressionType> {
         // TODO: Detect compression from Parquet metadata
         Ok(CompressionType::None)
