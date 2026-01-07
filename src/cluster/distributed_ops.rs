@@ -1270,10 +1270,10 @@ pub struct RebalanceResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::{ConsensusConfig, NodeInfo, NodeRegistryConfig, NodeStatus, RoutingConfig, ShardConfig};
     use crate::cluster::rpc::{
         ForwardWriteResponse, RpcResult, ShardSearchResponse, ShardSearchResult as RpcSearchResult,
     };
-    use crate::cluster::{ConsensusConfig, NodeRegistryConfig, RoutingConfig, ShardConfig};
     use async_trait::async_trait;
     use futures::Stream;
     use std::pin::Pin;
@@ -1926,10 +1926,10 @@ mod tests {
         // Register the remote node in the registry first
         coordinator
             .node_registry
-            .register_node(super::NodeInfo {
+            .register_node(NodeInfo {
                 node_id: "remote-node-1".to_string(),
                 address: "localhost:5679".to_string(),
-                status: super::NodeStatus::Running,
+                status: NodeStatus::Running,
                 ..Default::default()
             })
             .await
