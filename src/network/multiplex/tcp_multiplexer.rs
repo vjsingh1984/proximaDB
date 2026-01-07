@@ -204,7 +204,7 @@ impl Default for TcpMultiplexer {
 
 /// Handle a single connection
 async fn handle_connection(
-    mut client_stream: TcpStream,
+    client_stream: TcpStream,
     peer_addr: SocketAddr,
     config: Arc<TcpMultiplexConfig>,
 ) -> Result<(), TcpMultiplexError> {

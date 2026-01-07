@@ -297,7 +297,7 @@ unsafe fn delta_decode_f32_neon(
     base_bits: i64,
     output: &mut [f32],
     count: usize,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     // Process 4 values at a time
     let chunks = count / 4;
 
@@ -324,7 +324,7 @@ unsafe fn delta_decode_f32_neon(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]

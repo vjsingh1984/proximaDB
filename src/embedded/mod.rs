@@ -2563,7 +2563,7 @@ impl EmbeddedProximaDB {
         // Check write access before creating checkpoint
         self.check_write_access()?;
 
-        use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
+        
 
         self.runtime.block_on(async {
             // First, flush all pending writes to ensure checkpoint captures current state

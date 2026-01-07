@@ -110,7 +110,7 @@ impl FullTextIndex {
         }
 
         // Add to index
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         writer.add_document(tantivy_doc)?;
 
         Ok(())
@@ -120,7 +120,7 @@ impl FullTextIndex {
     pub fn remove_document(&self, doc_id: &str) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.id_field, doc_id);
 
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         writer.delete_term(term);
 
         Ok(())

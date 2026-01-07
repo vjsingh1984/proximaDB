@@ -285,7 +285,7 @@ impl TantivyLogIndex {
         doc.add_text(self.all_text_field, &all_text);
 
         // Add to index
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         writer.add_document(doc)?;
 
         // Update count
@@ -297,7 +297,7 @@ impl TantivyLogIndex {
 
     /// Index multiple log entries in batch
     pub fn index_logs(&self, logs: &[(String, LogEntry)]) -> Result<usize> {
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         let mut indexed = 0;
 
         for (log_id, log) in logs {
@@ -363,7 +363,7 @@ impl TantivyLogIndex {
     /// Delete a log entry from the index
     pub fn delete_log(&self, log_id: &str) -> Result<()> {
         let term = Term::from_field_text(self.id_field, log_id);
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         writer.delete_term(term);
 
         let mut count = self.doc_count.write().unwrap();
@@ -390,7 +390,7 @@ impl TantivyLogIndex {
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(100_000))?;
 
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         let mut deleted = 0u64;
 
         for (_score, doc_address) in top_docs {

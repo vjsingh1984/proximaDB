@@ -241,7 +241,7 @@ impl FloydWarshallAPSP {
     /// Processes 2 f64 distances per instruction using 128-bit NEON vectors
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
-    unsafe fn floyd_warshall_neon(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
+    unsafe fn floyd_warshall_neon(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> { unsafe {
         use std::arch::aarch64::*;
 
         let n = dist.len();
@@ -286,7 +286,7 @@ impl FloydWarshallAPSP {
         }
 
         Ok(())
-    }
+    }}
 }
 
 impl GraphAlgorithm for FloydWarshallAPSP {

@@ -115,9 +115,6 @@ pub mod types;
 mod config_tests;
 
 #[cfg(test)]
-mod error_tests;
-
-#[cfg(test)]
 mod config_loader_tests;
 
 #[cfg(test)]

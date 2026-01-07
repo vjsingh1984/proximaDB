@@ -614,7 +614,7 @@ fn decode_variable_bits_i32_neon(input: &[u8], bits: u8, output: &mut [i32]) -> 
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn reconstruct_delta_f32_neon(deltas: &[i64], base: f32, output: &mut [f32]) -> Result<()> {
+unsafe fn reconstruct_delta_f32_neon(deltas: &[i64], base: f32, output: &mut [f32]) -> Result<()> { unsafe {
     let base_bits = base.to_bits() as i64;
     let count = deltas.len().min(output.len());
 
@@ -644,7 +644,7 @@ unsafe fn reconstruct_delta_f32_neon(deltas: &[i64], base: f32, output: &mut [f3
     }
 
     Ok(())
-}
+}}
 
 #[cfg(target_arch = "aarch64")]
 fn prefix_sum_i64(output: &mut [i64], count: usize, base: i64) {

@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::consensus::RaftConsensus;
-use super::node_registry::{NodeInfo, NodeRegistry, NodeStatus};
+use super::node_registry::NodeRegistry;
 use super::routing::RoutingService;
 use super::rpc::{
     ForwardWriteRequest, NodeEndpoint, SearchFanout, SearchParams, ShardSearchRequest,

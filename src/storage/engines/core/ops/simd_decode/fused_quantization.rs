@@ -580,7 +580,7 @@ unsafe fn fused_decode_int4_neon(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let scale = params.scale;
     let zero_point = params.zero_point;
 
@@ -629,7 +629,7 @@ unsafe fn fused_decode_int4_neon(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
@@ -638,7 +638,7 @@ unsafe fn fused_decode_int8_neon(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let scale = params.scale;
     let zero_point = params.zero_point;
 
@@ -678,7 +678,7 @@ unsafe fn fused_decode_int8_neon(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
@@ -688,7 +688,7 @@ unsafe fn progressive_decode_neon(
     count: usize,
     params: &QuantizationParams,
     bipolar: bool,
-) -> Result<usize> {
+) -> Result<usize> { unsafe {
     let scale = params.scale;
     let zero_point = params.zero_point;
 
@@ -732,7 +732,7 @@ unsafe fn progressive_decode_neon(
     }
 
     Ok(count)
-}
+}}
 
 #[cfg(test)]
 mod tests {

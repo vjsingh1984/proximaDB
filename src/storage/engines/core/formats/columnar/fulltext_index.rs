@@ -309,7 +309,7 @@ impl Tokenizer {
     fn tokenize_standard(&self, text: &str) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut position = 0u32;
-        let mut start = 0;
+        let start = 0;
         let mut in_token = false;
         let mut token_start = 0;
 
