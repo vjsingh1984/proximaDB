@@ -1270,9 +1270,11 @@ pub struct RebalanceResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cluster::{ConsensusConfig, NodeInfo, NodeRegistryConfig, NodeStatus, RoutingConfig, ShardConfig};
     use crate::cluster::rpc::{
         ForwardWriteResponse, RpcResult, ShardSearchResponse, ShardSearchResult as RpcSearchResult,
+    };
+    use crate::cluster::{
+        ConsensusConfig, NodeInfo, NodeRegistryConfig, NodeStatus, RoutingConfig, ShardConfig,
     };
     use async_trait::async_trait;
     use futures::Stream;
