@@ -2,7 +2,7 @@
 # Single container with ProximaDB server
 
 # Stage 1: Build ProximaDB server
-FROM rust:1.88-slim as builder
+FROM rust:1.88-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -79,128 +79,31 @@ COPY demo/config/docker-config.toml /opt/proximadb/config/docker-config.toml
 WORKDIR /app
 
 # Create a stable requirements file to improve Docker layer caching
+# Note: Use minimal dependencies for CI to avoid "No space left on device"
 RUN cat > requirements-stable.txt << 'EOF'
-# Core dependencies
+# Core runtime dependencies only
 numpy>=1.24.0
 requests>=2.28.0
-asyncio-mqtt>=0.11.0
-
-# Text processing for chunking
-nltk>=3.8.0
-spacy>=3.5.0
-sentence-transformers>=2.2.0
-
-# Data science and ML
-pandas>=1.5.0
-scikit-learn>=1.2.0
-
-# Visualization
-matplotlib>=3.6.0
-seaborn>=0.12.0
 
 # Progress bars and CLI
 tqdm>=4.64.0
 click>=8.1.0
 
-# HTTP clients
-aiohttp>=3.8.0
-aiohttp-cors>=0.7.0
-httpx[http2]>=0.24.0
-h2>=4.0.0
-
 # JSON handling
 orjson>=3.8.0
 
-# Logging
-structlog>=22.3.0
-
-# Testing
-pytest>=7.2.0
-pytest-asyncio>=0.21.0
-
-# Development
-black>=22.12.0
-isort>=5.11.0
-mypy>=1.0.0
-
-# BERT embeddings and system (REQUIRED - no fallbacks)
-sentence-transformers>=2.2.0
-torch>=1.13.0
-transformers>=4.21.0
-tokenizers>=0.13.0
+# Process management (for demo server)
 supervisor>=4.2.0
-
-# LLM support for RAG demo (Flan-T5)
-# Already included via transformers above
 EOF
 
 # Install Python dependencies (this layer will be cached unless requirements change)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements-stable.txt
+    pip install --no-cache-dir -r requirements-stable.txt && \
+    rm -rf ~/.cache/pip
 
-# Download required NLTK data (cached layer)
-RUN python -c "import nltk; nltk.download('punkt', quiet=True)" || true
-
-# Set up proper cache directory for BERT models with correct permissions
-RUN mkdir -p /app/embedding_cache /tmp/hf_cache && \
-    chown -R proximadb:proximadb /app/embedding_cache /tmp/hf_cache && \
-    chmod -R 777 /app/embedding_cache /tmp/hf_cache
-
-# Set environment variables for model downloads
-ENV TRANSFORMERS_CACHE=/app/embedding_cache
-ENV HF_HOME=/app/embedding_cache
-ENV TORCH_HOME=/app/embedding_cache
-ENV TRANSFORMERS_OFFLINE=0
-ENV HF_HUB_OFFLINE=0
-
-# Pre-download BERT models with proper permissions and error handling
-RUN python -c "\
-import os; \
-os.makedirs('/app/embedding_cache', exist_ok=True); \
-os.chmod('/app/embedding_cache', 0o777); \
-try: \
-    from sentence_transformers import SentenceTransformer; \
-    import torch; \
-    print('🤖 Pre-downloading BERT models for real embeddings...'); \
-    \
-    # Download with explicit cache directory \
-    model = SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/embedding_cache'); \
-    print('✅ all-MiniLM-L6-v2 (384-dim) downloaded'); \
-    test_embedding = model.encode('test', show_progress_bar=False); \
-    print(f'✅ Model test successful: {len(test_embedding)}D embedding'); \
-    \
-    model2 = SentenceTransformer('all-mpnet-base-v2', cache_folder='/app/embedding_cache'); \
-    print('✅ all-mpnet-base-v2 (768-dim) downloaded'); \
-    \
-    model3 = SentenceTransformer('all-MiniLM-L12-v2', cache_folder='/app/embedding_cache'); \
-    print('✅ all-MiniLM-L12-v2 (384-dim) downloaded'); \
-    \
-    print('🎉 All BERT models ready for production use!'); \
-except Exception as e: \
-    print(f'⚠️ Model download failed: {e}'); \
-    print('Models will be downloaded at runtime'); \
-" || echo "Model pre-download failed, will download at runtime"
-
-# Pre-download Flan-T5 model for RAG demo (adds ~250MB to image)
-# This enables offline AI Knowledge Base functionality
-RUN python -c "\
-import os; \
-os.makedirs('/app/embedding_cache/llm', exist_ok=True); \
-os.chmod('/app/embedding_cache/llm', 0o777); \
-try: \
-    from transformers import T5ForConditionalGeneration, T5Tokenizer; \
-    print('🤖 Pre-downloading Flan-T5-small for RAG demo...'); \
-    tokenizer = T5Tokenizer.from_pretrained('google/flan-t5-small', cache_dir='/app/embedding_cache/llm'); \
-    model = T5ForConditionalGeneration.from_pretrained('google/flan-t5-small', cache_dir='/app/embedding_cache/llm'); \
-    print('✅ Flan-T5-small downloaded for offline RAG'); \
-except Exception as e: \
-    print(f'⚠️ Flan-T5 download failed: {e}'); \
-    print('Will use Hugging Face API or download at runtime'); \
-" || echo "Flan-T5 pre-download skipped"
-
-# Ensure cache directory has correct permissions after download
-RUN chown -R proximadb:proximadb /app/embedding_cache && \
-    chmod -R 755 /app/embedding_cache
+# Create cache directory for models (minimal setup for CI)
+RUN mkdir -p /app/embedding_cache && \
+    chown -R proximadb:proximadb /app/embedding_cache
 
 # Copy and install ProximaDB Python SDK (cached unless SDK changes)
 COPY clients/python /app/proximadb-sdk
