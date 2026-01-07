@@ -282,7 +282,6 @@ fn compute_centroid(vectors: &[Vec<f32>]) -> Vec<f32> {
 }
 
 /// Enhanced HELIX SSTable writer with SIMD optimization
-
 /// HELIX-specific SSTable metadata with clustering information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixBlockMetadata {

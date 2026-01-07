@@ -71,7 +71,7 @@ impl FieldProjection {
     }
 
     /// Convert to columnar projection (for Parquet)
-    #[cfg(feature = "parquet")]
+    #[cfg(feature = "datafusion-integration")]
     pub fn to_columnar_projection(&self) -> crate::storage::engines::core::formats::columnar::columnar_query_engine::column_projector::ColumnProjection{
         use crate::storage::engines::core::formats::columnar::columnar_query_engine::column_projector::ColumnProjection;
 

@@ -689,7 +689,6 @@ impl CollectionService {
     }
 
     /// Convert Collection to core Collection - direct proto to core mapping
-
     /// Get IndexConfig for a collection by name or UUID with caching
     pub async fn native_index_config(
         &self,

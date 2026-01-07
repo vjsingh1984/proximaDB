@@ -244,7 +244,6 @@ impl AxisTieringIntegration {
     }
 
     /// Helper methods for tier mapping and utilities
-
     pub fn map_tier_level_to_axis(&self, tier_level: u8) -> TierLevel {
         match tier_level {
             1 => TierLevel::Memory,

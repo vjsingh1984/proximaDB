@@ -72,7 +72,7 @@ mod service_transactions;
 #[path = "service_traversal_api.rs"]
 mod service_traversal_api;
 #[allow(clippy::wildcard_imports)]
-pub(super) use service_helpers::*;
+pub(in crate::graph) use service_helpers::*;
 pub use service_transactions::{
     IsolationLevel, TransactionHandle, TransactionId, TransactionManager, TransactionState,
     UnitOfWork,
@@ -273,9 +273,8 @@ impl GraphOperationsService {
 
     // get_or_create_graph_engine moved to service_engine_factory.rs
 
-    /// Initialize constraint registries based on graph schema (unique constraints)
+    // /// Initialize constraint registries based on graph schema (unique constraints)
     // initialize_schema_constraints moved to service_engine_factory.rs
-
     /// List all active graph engines (not collections)
     pub fn list_active_graphs(&self) -> Vec<String> {
         self.graphs
@@ -454,7 +453,7 @@ impl GraphOperationsService {
         Ok(())
     }
 
-    /// Compute shortest path with algorithm selection and optional k-shortest support.
+    // /// Compute shortest path with algorithm selection and optional k-shortest support.
     /* moved to service_traversal_api.rs
     pub async fn shortest_path(
         &self,

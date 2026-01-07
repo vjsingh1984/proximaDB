@@ -607,9 +607,8 @@ pub struct SqlQueryRequest {
     pub seeding: Option<String>,
 }
 
-/// SQL query response structure
+// SQL query response structure
 // For REST, we now return proximadb.v1 ExecuteSqlResponse directly, wrapped by ProtoApiResponse
-
 /// Column information in SQL results
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SqlColumnInfo {

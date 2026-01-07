@@ -169,7 +169,6 @@ pub mod io {
 /// Complexity calculation constants for performance analysis
 pub mod complexity {
     /// Matrix Trinity complexity: k² + p×(k+p)
-
     /// RAPTOR complexity components: k² + p×(k+p) where:
     /// - k = number of clusters (typically √n)
     /// - p = rowgroup size (typically √n/5)
