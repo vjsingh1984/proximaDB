@@ -703,14 +703,16 @@ jobs:
         run: |
           # Run only tests that don't require native embedded module
           # Skip tests that depend on embedded Rust bindings (ProximaDB class)
-          pytest tests/unit/ -v --tb=short --ignore=tests/unit/test_batching.py \
+          # Use --timeout to prevent hanging tests from blocking the job
+          pytest tests/unit/ -v --tb=short --timeout=180 \
+            --ignore=tests/unit/test_batching.py \
             --ignore=tests/unit/test_collection_operations.py \
             --ignore=tests/unit/test_embedding_interface.py \
             --ignore=tests/unit/test_operation_router.py \
             --ignore=tests/unit/test_protocol_selector.py \
             --ignore=tests/unit/test_response_cache.py \
             --ignore=tests/unit/test_semantic_chunking.py \
-            --ignore=tests/unit/test_chunking_refactored.py || echo "Some tests skipped (embedded module not available)"
+            --ignore=tests/unit/test_chunking_refactored.py
 
   # ============================================================================
   # INTEGRATION TESTS - Full stack testing
