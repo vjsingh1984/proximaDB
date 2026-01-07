@@ -91,7 +91,6 @@
 
 /// REST and gRPC API definitions and protocol contracts
 // pub mod api; // Removed - using proto types directly with serde compatibility
-
 /// Shared infrastructure components for cross-cutting concerns
 pub mod infrastructure;
 

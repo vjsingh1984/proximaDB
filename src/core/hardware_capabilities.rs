@@ -317,12 +317,12 @@ impl HardwareBackend {
             if hw.has_gpu() {
                 let preferred = hw.preferred_backend();
 
-                #[cfg(all(target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 if matches!(preferred, Self::CUDA) {
                     return Self::CUDA;
                 }
 
-                #[cfg(all(target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 if matches!(preferred, Self::ROCm) {
                     return Self::ROCm;
                 }
