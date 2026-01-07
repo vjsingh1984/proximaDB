@@ -43,7 +43,6 @@ pub mod config_reloader;
 pub mod conversions;
 
 /// Migration utilities for vector record formats
-
 /// Legacy error module (being replaced by errors module)
 pub mod error;
 

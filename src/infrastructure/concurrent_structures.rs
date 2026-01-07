@@ -175,7 +175,7 @@ where
 
         let now = Instant::now();
         let item = StoredItem {
-            value: value,
+            value,
             timestamp: now,
             last_accessed: now,
             access_count: AtomicUsize::new(1),

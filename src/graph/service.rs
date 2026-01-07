@@ -71,6 +71,7 @@ mod service_schema_validation;
 mod service_transactions;
 #[path = "service_traversal_api.rs"]
 mod service_traversal_api;
+#[allow(clippy::wildcard_imports)]
 pub(super) use service_helpers::*;
 pub use service_transactions::{
     IsolationLevel, TransactionHandle, TransactionId, TransactionManager, TransactionState,
