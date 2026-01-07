@@ -2269,9 +2269,10 @@ mod tests {
             value: serde_json::json!("electronics"),
         };
 
+        let search_params = SearchParams::default();
         let context = UnifiedQueryContext {
             collection,
-            search_params: Some(&SearchParams::default()),
+            search_params: Some(&search_params),
             filter_params: Some(&filter),
             optimization_goal: OptimizationGoal::Balanced,
             available_files: vec!["file1.parquet".to_string()],
