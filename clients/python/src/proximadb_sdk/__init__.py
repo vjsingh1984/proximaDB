@@ -109,9 +109,9 @@ from .filters import (
 
 # Models
 from .models import (
-    IndexingAlgorithm,
-    IndexType,  # Collection models; Vector models; Operation responses; Enums; Quantization; Search optimization; Additional models; Type aliases
+    IndexingAlgorithm,  # Collection models; Vector models; Operation responses
 )
+from .models import IndexType  # Enums; Type aliases
 from .models import (
     Collection,
     CollectionConfig,
