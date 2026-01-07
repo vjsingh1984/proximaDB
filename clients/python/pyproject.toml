@@ -59,6 +59,7 @@ code-chunking = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.20.0",
+    "pytest-timeout>=2.1.0",
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
@@ -68,6 +69,16 @@ dev = [
     "mypy>=1.0.0",
     "pre-commit>=2.20.0",
     "ruff>=0.0.280",
+]
+
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-cov>=4.0.0",
+    "pytest-html>=3.1.0",
+    "pytest-xdist>=3.0.0",
+    "sentence-transformers>=2.2.0",
 ]
 
 docs = [
