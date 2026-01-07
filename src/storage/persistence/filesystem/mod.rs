@@ -1481,9 +1481,7 @@ impl FilesystemFactory {
     }
 
     /// Create a zero-copy filesystem wrapper for intelligent caching and optimization
-    ///
     // create_zero_copy_filesystem removed - functionality integrated into get_unified_caching_filesystem
-
     /// Unified filesystem operations - automatically route to correct backend
     pub async fn read(&self, url: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("🔍 FilesystemFactory::read() - URL: {}", url);

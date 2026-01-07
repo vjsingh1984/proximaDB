@@ -943,7 +943,6 @@ pub mod operations {
 
 /// Global utility functions for backward compatibility with existing tests
 /// These functions create temporary environments for one-off operations
-
 /// Create test vectors (global function for backward compatibility)
 pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
     (0..count)

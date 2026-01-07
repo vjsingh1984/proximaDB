@@ -140,7 +140,6 @@ impl FlushManager {
 }
 
 /// Engine-specific flush coordinators
-
 /// SST flush coordinator
 struct SstFlushCoordinator {
     // TODO: Add SST-specific flush coordination
