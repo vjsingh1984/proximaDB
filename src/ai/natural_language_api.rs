@@ -150,7 +150,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             conversation_metadata: ConversationMetadata {
                 query_complexity: parsed_query.complexity_analysis.complexity_score,
                 processing_time_ms: 2400, // Target <3 seconds
-                confidence_score: confidence_score,
+                confidence_score,
                 business_relevance: 0.94,
             },
             generated_at: Utc::now(),
@@ -328,7 +328,7 @@ impl NaturalLanguageQueryProcessor {
             original_question: question.to_string(),
             business_entities,
             business_intent,
-            complexity_analysis: complexity_analysis,
+            complexity_analysis,
             regulatory_requirements: self.extract_regulatory_requirements(business_context),
             cross_domain_requirements: self.identify_cross_domain_requirements(&primary_intent),
         })

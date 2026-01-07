@@ -349,7 +349,7 @@ async fn query_logs(
     debug!("Querying logs in namespace: {}", namespace);
 
     let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-    let one_hour_ns = 3600_000_000_000i64;
+    let one_hour_ns = 3_600_000_000_000_i64;
 
     let params = LogQueryParams {
         start_time_ns: request.start_time_ns.unwrap_or(now_ns - one_hour_ns),

@@ -259,7 +259,7 @@ impl PostgresProtocol {
         // Check for SSL request
         if version == 80877103 {
             // SSL request - send 'N' (no SSL)
-            self.stream.write_all(&[b'N']).await?;
+            self.stream.write_all(b"N").await?;
             // Use Box::pin for async recursion
             return Box::pin(self.handle_startup()).await;
         }
@@ -896,7 +896,7 @@ impl PostgresProtocol {
         };
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let one_hour_ns = 3600_000_000_000i64;
+        let one_hour_ns = 3_600_000_000_000_i64;
 
         // Extract time range from WHERE clause
         let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
@@ -983,7 +983,7 @@ impl PostgresProtocol {
         };
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let one_hour_ns = 3600_000_000_000i64;
+        let one_hour_ns = 3_600_000_000_000_i64;
 
         let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
 

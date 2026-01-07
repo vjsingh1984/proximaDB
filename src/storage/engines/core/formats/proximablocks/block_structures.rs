@@ -3544,7 +3544,7 @@ impl ProximaDataBlock {
         let bloom_filter = Self::generate_bloom_filter(&records);
 
         Ok(Self {
-            encoding_marker: encoding_marker,
+            encoding_marker,
             encoding_metadata: None, // Will be reconstructed if needed
             block_id,
             records,

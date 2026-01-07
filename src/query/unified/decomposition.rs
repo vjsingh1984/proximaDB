@@ -302,7 +302,7 @@ impl QueryDecomposer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos() as i64;
-            let hour_ago = now - 3600_000_000_000; // 1 hour in nanoseconds
+            let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
 
             return Ok(Some(QueryComponent {
                 model: DataModel::Observability,
