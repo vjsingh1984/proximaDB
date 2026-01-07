@@ -66,7 +66,6 @@ impl Ord for OrdFloat {
 /// Result structures for similarity search
 /// Note: Using unified SimilarityResult from compute::distance_computation::engine
 /// Local struct removed to eliminate duplication
-
 /// Partial rowgroup structure for selective column reading
 pub struct PartialRowGroup {
     pub vectors: Option<Vec<Vec<f32>>>,
@@ -1345,7 +1344,6 @@ impl RaptorReader {
     /// This method ensures consistency between storage organization (clustering) and
     /// search navigation (P² matrix traversal) by applying the identical boosting formula:
     /// D = α₁·d₁ + α₂·d₂ + α₃·d₃ + β₁·d₄ + β₂·d₅
-
     /// Calculate raw distance between two vectors using specified metric
     fn calculate_raw_distance(
         &self,
@@ -3118,7 +3116,6 @@ impl RaptorReader {
     }
 
     /// Hierarchical search using the neighbor structure
-
     /// Comprehensive validation method to verify reader-writer alignment
     pub async fn validate_alignment_with_writer(
         &self,

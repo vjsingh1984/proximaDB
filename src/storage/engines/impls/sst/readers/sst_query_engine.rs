@@ -158,7 +158,6 @@ pub struct CacheMetrics {
 use crate::storage::engines::impls::sst::SstableIndex;
 
 /// Enhanced bloom filter supporting metadata columns
-
 /// Reading strategy for SSTable access
 #[derive(Debug, Clone)]
 pub enum ReadStrategy {
