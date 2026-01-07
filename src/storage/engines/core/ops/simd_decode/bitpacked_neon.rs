@@ -614,37 +614,39 @@ fn decode_variable_bits_i32_neon(input: &[u8], bits: u8, output: &mut [i32]) -> 
 }
 
 #[cfg(target_arch = "aarch64")]
-unsafe fn reconstruct_delta_f32_neon(deltas: &[i64], base: f32, output: &mut [f32]) -> Result<()> { unsafe {
-    let base_bits = base.to_bits() as i64;
-    let count = deltas.len().min(output.len());
+unsafe fn reconstruct_delta_f32_neon(deltas: &[i64], base: f32, output: &mut [f32]) -> Result<()> {
+    unsafe {
+        let base_bits = base.to_bits() as i64;
+        let count = deltas.len().min(output.len());
 
-    // Process 4 values at a time
-    let chunks = count / 4;
+        // Process 4 values at a time
+        let chunks = count / 4;
 
-    for i in 0..chunks {
-        let idx = i * 4;
+        for i in 0..chunks {
+            let idx = i * 4;
 
-        // Reconstruct bit patterns
-        let v0 = (base_bits + deltas[idx]) as u32;
-        let v1 = (base_bits + deltas[idx + 1]) as u32;
-        let v2 = (base_bits + deltas[idx + 2]) as u32;
-        let v3 = (base_bits + deltas[idx + 3]) as u32;
+            // Reconstruct bit patterns
+            let v0 = (base_bits + deltas[idx]) as u32;
+            let v1 = (base_bits + deltas[idx + 1]) as u32;
+            let v2 = (base_bits + deltas[idx + 2]) as u32;
+            let v3 = (base_bits + deltas[idx + 3]) as u32;
 
-        // Load as u32 vector and reinterpret as f32
-        let u32_vec = vld1q_u32([v0, v1, v2, v3].as_ptr());
-        let f32_vec = vreinterpretq_f32_u32(u32_vec);
+            // Load as u32 vector and reinterpret as f32
+            let u32_vec = vld1q_u32([v0, v1, v2, v3].as_ptr());
+            let f32_vec = vreinterpretq_f32_u32(u32_vec);
 
-        vst1q_f32(output.as_mut_ptr().add(idx), f32_vec);
+            vst1q_f32(output.as_mut_ptr().add(idx), f32_vec);
+        }
+
+        // Handle remaining
+        for i in (chunks * 4)..count {
+            let value_bits = (base_bits + deltas[i]) as u32;
+            output[i] = f32::from_bits(value_bits);
+        }
+
+        Ok(())
     }
-
-    // Handle remaining
-    for i in (chunks * 4)..count {
-        let value_bits = (base_bits + deltas[i]) as u32;
-        output[i] = f32::from_bits(value_bits);
-    }
-
-    Ok(())
-}}
+}
 
 #[cfg(target_arch = "aarch64")]
 fn prefix_sum_i64(output: &mut [i64], count: usize, base: i64) {

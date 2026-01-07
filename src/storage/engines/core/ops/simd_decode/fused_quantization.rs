@@ -580,56 +580,58 @@ unsafe fn fused_decode_int4_neon(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> { unsafe {
-    let scale = params.scale;
-    let zero_point = params.zero_point;
+) -> Result<usize> {
+    unsafe {
+        let scale = params.scale;
+        let zero_point = params.zero_point;
 
-    // Create broadcast vectors
-    let scale_vec = vdupq_n_f32(scale);
-    let zp_vec = vdupq_n_f32(zero_point as f32);
+        // Create broadcast vectors
+        let scale_vec = vdupq_n_f32(scale);
+        let zp_vec = vdupq_n_f32(zero_point as f32);
 
-    // Process 4 INT4 values (2 bytes) at a time
-    let chunks = count / 4;
+        // Process 4 INT4 values (2 bytes) at a time
+        let chunks = count / 4;
 
-    for i in 0..chunks {
-        let byte_base = i * 2;
-        let out_base = i * 4;
+        for i in 0..chunks {
+            let byte_base = i * 2;
+            let out_base = i * 4;
 
-        // Extract 4 INT4 values from 2 bytes
-        let mut int4_vals = [0i32; 4];
-        for j in 0..2 {
-            let byte = input[byte_base + j];
-            let lo = (byte & 0x0F) as i8;
-            let hi = ((byte >> 4) & 0x0F) as i8;
-            int4_vals[j * 2] = if lo > 7 { lo as i32 - 16 } else { lo as i32 };
-            int4_vals[j * 2 + 1] = if hi > 7 { hi as i32 - 16 } else { hi as i32 };
+            // Extract 4 INT4 values from 2 bytes
+            let mut int4_vals = [0i32; 4];
+            for j in 0..2 {
+                let byte = input[byte_base + j];
+                let lo = (byte & 0x0F) as i8;
+                let hi = ((byte >> 4) & 0x0F) as i8;
+                int4_vals[j * 2] = if lo > 7 { lo as i32 - 16 } else { lo as i32 };
+                int4_vals[j * 2 + 1] = if hi > 7 { hi as i32 - 16 } else { hi as i32 };
+            }
+
+            // Convert to f32 vector
+            let int_vec = vld1q_s32(int4_vals.as_ptr());
+            let float_vec = vcvtq_f32_s32(int_vec);
+
+            // Dequantize
+            let dequant = vmulq_f32(vsubq_f32(float_vec, zp_vec), scale_vec);
+
+            vst1q_f32(output.as_mut_ptr().add(out_base), dequant);
         }
 
-        // Convert to f32 vector
-        let int_vec = vld1q_s32(int4_vals.as_ptr());
-        let float_vec = vcvtq_f32_s32(int_vec);
+        // Handle remaining
+        let start = chunks * 4;
+        for i in start..count {
+            let byte_idx = i / 2;
+            let nibble = if i % 2 == 0 {
+                (input[byte_idx] & 0x0F) as i8
+            } else {
+                ((input[byte_idx] >> 4) & 0x0F) as i8
+            };
+            let signed = if nibble > 7 { nibble - 16 } else { nibble };
+            output[i] = (signed as i32 - zero_point) as f32 * scale;
+        }
 
-        // Dequantize
-        let dequant = vmulq_f32(vsubq_f32(float_vec, zp_vec), scale_vec);
-
-        vst1q_f32(output.as_mut_ptr().add(out_base), dequant);
+        Ok(count)
     }
-
-    // Handle remaining
-    let start = chunks * 4;
-    for i in start..count {
-        let byte_idx = i / 2;
-        let nibble = if i % 2 == 0 {
-            (input[byte_idx] & 0x0F) as i8
-        } else {
-            ((input[byte_idx] >> 4) & 0x0F) as i8
-        };
-        let signed = if nibble > 7 { nibble - 16 } else { nibble };
-        output[i] = (signed as i32 - zero_point) as f32 * scale;
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
@@ -638,47 +640,49 @@ unsafe fn fused_decode_int8_neon(
     output: &mut [f32],
     count: usize,
     params: &QuantizationParams,
-) -> Result<usize> { unsafe {
-    let scale = params.scale;
-    let zero_point = params.zero_point;
+) -> Result<usize> {
+    unsafe {
+        let scale = params.scale;
+        let zero_point = params.zero_point;
 
-    // Create broadcast vectors
-    let scale_vec = vdupq_n_f32(scale);
-    let zp_vec = vdupq_n_f32(zero_point as f32);
+        // Create broadcast vectors
+        let scale_vec = vdupq_n_f32(scale);
+        let zp_vec = vdupq_n_f32(zero_point as f32);
 
-    // Process 4 INT8 values at a time
-    let chunks = count / 4;
+        // Process 4 INT8 values at a time
+        let chunks = count / 4;
 
-    for i in 0..chunks {
-        let in_base = i * 4;
-        let out_base = i * 4;
+        for i in 0..chunks {
+            let in_base = i * 4;
+            let out_base = i * 4;
 
-        // Load 4 bytes and sign-extend to i32
-        let int8_vals = [
-            input[in_base] as i8 as i32,
-            input[in_base + 1] as i8 as i32,
-            input[in_base + 2] as i8 as i32,
-            input[in_base + 3] as i8 as i32,
-        ];
+            // Load 4 bytes and sign-extend to i32
+            let int8_vals = [
+                input[in_base] as i8 as i32,
+                input[in_base + 1] as i8 as i32,
+                input[in_base + 2] as i8 as i32,
+                input[in_base + 3] as i8 as i32,
+            ];
 
-        let int_vec = vld1q_s32(int8_vals.as_ptr());
-        let float_vec = vcvtq_f32_s32(int_vec);
+            let int_vec = vld1q_s32(int8_vals.as_ptr());
+            let float_vec = vcvtq_f32_s32(int_vec);
 
-        // Dequantize
-        let dequant = vmulq_f32(vsubq_f32(float_vec, zp_vec), scale_vec);
+            // Dequantize
+            let dequant = vmulq_f32(vsubq_f32(float_vec, zp_vec), scale_vec);
 
-        vst1q_f32(output.as_mut_ptr().add(out_base), dequant);
+            vst1q_f32(output.as_mut_ptr().add(out_base), dequant);
+        }
+
+        // Handle remaining
+        let start = chunks * 4;
+        for i in start..count {
+            let value = input[i] as i8;
+            output[i] = (value as i32 - zero_point) as f32 * scale;
+        }
+
+        Ok(count)
     }
-
-    // Handle remaining
-    let start = chunks * 4;
-    for i in start..count {
-        let value = input[i] as i8;
-        output[i] = (value as i32 - zero_point) as f32 * scale;
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
@@ -688,51 +692,53 @@ unsafe fn progressive_decode_neon(
     count: usize,
     params: &QuantizationParams,
     bipolar: bool,
-) -> Result<usize> { unsafe {
-    let scale = params.scale;
-    let zero_point = params.zero_point;
+) -> Result<usize> {
+    unsafe {
+        let scale = params.scale;
+        let zero_point = params.zero_point;
 
-    let (int8_0, int8_1): (i8, i8) = if bipolar { (-127, 127) } else { (0, -1) };
+        let (int8_0, int8_1): (i8, i8) = if bipolar { (-127, 127) } else { (0, -1) };
 
-    let scale_vec = vdupq_n_f32(scale);
-    let zp_vec = vdupq_n_f32(zero_point as f32);
+        let scale_vec = vdupq_n_f32(scale);
+        let zp_vec = vdupq_n_f32(zero_point as f32);
 
-    // Process 4 bits at a time
-    let chunks = count / 4;
+        // Process 4 bits at a time
+        let chunks = count / 4;
 
-    for i in 0..chunks {
-        let byte_idx = i / 2;
-        let bit_offset = (i % 2) * 4;
-        let byte = input[byte_idx];
-        let out_base = i * 4;
+        for i in 0..chunks {
+            let byte_idx = i / 2;
+            let bit_offset = (i % 2) * 4;
+            let byte = input[byte_idx];
+            let out_base = i * 4;
 
-        // Stage 1: Binary -> INT8
-        let mut int8_vals = [0i32; 4];
-        for bit in 0..4 {
-            let is_set = (byte >> (bit_offset + bit)) & 1 == 1;
-            int8_vals[bit] = if is_set { int8_1 as i32 } else { int8_0 as i32 };
+            // Stage 1: Binary -> INT8
+            let mut int8_vals = [0i32; 4];
+            for bit in 0..4 {
+                let is_set = (byte >> (bit_offset + bit)) & 1 == 1;
+                int8_vals[bit] = if is_set { int8_1 as i32 } else { int8_0 as i32 };
+            }
+
+            // Stage 2: INT8 -> FP32
+            let int_vec = vld1q_s32(int8_vals.as_ptr());
+            let float_vec = vcvtq_f32_s32(int_vec);
+            let dequant = vmulq_f32(vsubq_f32(float_vec, zp_vec), scale_vec);
+
+            vst1q_f32(output.as_mut_ptr().add(out_base), dequant);
         }
 
-        // Stage 2: INT8 -> FP32
-        let int_vec = vld1q_s32(int8_vals.as_ptr());
-        let float_vec = vcvtq_f32_s32(int_vec);
-        let dequant = vmulq_f32(vsubq_f32(float_vec, zp_vec), scale_vec);
+        // Handle remaining
+        let start = chunks * 4;
+        for i in start..count {
+            let byte_idx = i / 8;
+            let bit_idx = i % 8;
+            let bit = (input[byte_idx] >> bit_idx) & 1;
+            let int8_val = if bit == 1 { int8_1 } else { int8_0 };
+            output[i] = (int8_val as i32 - zero_point) as f32 * scale;
+        }
 
-        vst1q_f32(output.as_mut_ptr().add(out_base), dequant);
+        Ok(count)
     }
-
-    // Handle remaining
-    let start = chunks * 4;
-    for i in start..count {
-        let byte_idx = i / 8;
-        let bit_idx = i % 8;
-        let bit = (input[byte_idx] >> bit_idx) & 1;
-        let int8_val = if bit == 1 { int8_1 } else { int8_0 };
-        output[i] = (int8_val as i32 - zero_point) as f32 * scale;
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(test)]
 mod tests {

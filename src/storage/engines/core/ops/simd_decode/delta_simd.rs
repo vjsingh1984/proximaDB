@@ -297,34 +297,36 @@ unsafe fn delta_decode_f32_neon(
     base_bits: i64,
     output: &mut [f32],
     count: usize,
-) -> Result<usize> { unsafe {
-    // Process 4 values at a time
-    let chunks = count / 4;
+) -> Result<usize> {
+    unsafe {
+        // Process 4 values at a time
+        let chunks = count / 4;
 
-    for i in 0..chunks {
-        let idx = i * 4;
+        for i in 0..chunks {
+            let idx = i * 4;
 
-        // Add base to each delta
-        let v0 = (base_bits + deltas[idx]) as u32;
-        let v1 = (base_bits + deltas[idx + 1]) as u32;
-        let v2 = (base_bits + deltas[idx + 2]) as u32;
-        let v3 = (base_bits + deltas[idx + 3]) as u32;
+            // Add base to each delta
+            let v0 = (base_bits + deltas[idx]) as u32;
+            let v1 = (base_bits + deltas[idx + 1]) as u32;
+            let v2 = (base_bits + deltas[idx + 2]) as u32;
+            let v3 = (base_bits + deltas[idx + 3]) as u32;
 
-        // Load u32 values and reinterpret as f32
-        let u32_vec = vld1q_u32([v0, v1, v2, v3].as_ptr());
-        let f32_vec = vreinterpretq_f32_u32(u32_vec);
+            // Load u32 values and reinterpret as f32
+            let u32_vec = vld1q_u32([v0, v1, v2, v3].as_ptr());
+            let f32_vec = vreinterpretq_f32_u32(u32_vec);
 
-        vst1q_f32(output.as_mut_ptr().add(idx), f32_vec);
+            vst1q_f32(output.as_mut_ptr().add(idx), f32_vec);
+        }
+
+        // Handle remaining
+        for i in (chunks * 4)..count {
+            let value_bits = (base_bits + deltas[i]) as u32;
+            output[i] = f32::from_bits(value_bits);
+        }
+
+        Ok(count)
     }
-
-    // Handle remaining
-    for i in (chunks * 4)..count {
-        let value_bits = (base_bits + deltas[i]) as u32;
-        output[i] = f32::from_bits(value_bits);
-    }
-
-    Ok(count)
-}}
+}
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]

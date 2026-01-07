@@ -2563,8 +2563,6 @@ impl EmbeddedProximaDB {
         // Check write access before creating checkpoint
         self.check_write_access()?;
 
-        
-
         self.runtime.block_on(async {
             // First, flush all pending writes to ensure checkpoint captures current state
             tracing::info!(
