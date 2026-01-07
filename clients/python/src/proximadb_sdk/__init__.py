@@ -108,7 +108,9 @@ from .filters import (
 )
 
 # Models
-from .models import IndexingAlgorithm  # Alias for compatibility
+from .models import (
+    IndexingAlgorithm,  # Collection models; Vector models; Operation responses; Enums; Quantization; Search optimization; Additional models; Type aliases
+)
 from .models import (
     Collection,
     CollectionConfig,
