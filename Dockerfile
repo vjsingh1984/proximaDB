@@ -42,8 +42,11 @@ RUN cargo build --release --bin proximadb-server && \
 COPY src/ ./src/
 
 # Build final optimized binary with real source code
-# Use release profile with limited codegen-units to reduce memory pressure
-ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+# Use reduced optimization to fit within CI memory constraints
+# opt-level=2 (instead of 3) and no LTO significantly reduces memory usage
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=2 \
+    CARGO_PROFILE_RELEASE_LTO=false
 RUN cargo build --release --bin proximadb-server --jobs=1
 
 # Stage 2: Unified runtime with Python and system dependencies
