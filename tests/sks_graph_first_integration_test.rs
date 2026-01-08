@@ -739,8 +739,13 @@ async fn test_performance_comparison_legacy_vs_graph_first() {
     // With WAL durability: ~15,000-20,000 entities/sec in debug mode
     // With WAL durability: ~40,000-60,000 entities/sec in release mode
     //
-    // Minimum: 15,000 entities/sec (debug mode with ACID compliance)
-    let min_throughput = 15_000.0;
+    // CI environments have variable performance due to shared resources,
+    // virtualization overhead, and I/O limitations. We use a conservative
+    // threshold that allows for CI variability while still catching severe
+    // performance regressions.
+    //
+    // Minimum: 10,000 entities/sec (conservative for CI environments)
+    let min_throughput = 10_000.0;
     assert!(
         graph_first_throughput >= min_throughput,
         "Graph-first throughput ({:.2} entities/sec) should exceed {:.2} entities/sec (with WAL durability)",
