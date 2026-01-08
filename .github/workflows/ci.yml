@@ -637,6 +637,7 @@ jobs:
   python-test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: changes
     if: (needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true') && !inputs.skip_tests
     strategy:
@@ -704,6 +705,7 @@ jobs:
           # Run only tests that don't require native embedded module
           # Skip tests that depend on embedded Rust bindings (ProximaDB class)
           # Use --timeout to prevent hanging tests from blocking the job
+          echo "=== Starting Python Unit Tests ==="
           pytest tests/unit/ -v --tb=short --timeout=180 \
             --ignore=tests/unit/test_batching.py \
             --ignore=tests/unit/test_collection_operations.py \
@@ -713,6 +715,16 @@ jobs:
             --ignore=tests/unit/test_response_cache.py \
             --ignore=tests/unit/test_semantic_chunking.py \
             --ignore=tests/unit/test_chunking_refactored.py
+          echo "=== Python Unit Tests Completed Successfully ==="
+
+      - name: Test Summary
+        if: always()
+        working-directory: clients/python
+        run: |
+          echo "=== Python Test Job Summary ==="
+          echo "Python Version: ${{ matrix.python-version }}"
+          echo "Job Status: ${{ job.status }}"
+          echo "Tests completed. Check above for detailed results."
 
   # ============================================================================
   # INTEGRATION TESTS - Full stack testing
@@ -720,6 +732,7 @@ jobs:
   integration-test:
     name: Python Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [changes, rust-build, python-test]
     if: |
       always() &&
