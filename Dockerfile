@@ -42,8 +42,11 @@ RUN cargo build --release --bin proximadb-server && \
 COPY src/ ./src/
 
 # Build final optimized binary with real source code
-ENV RUSTFLAGS="-C opt-level=3"
-RUN cargo build --release --bin proximadb-server
+# Use release profile with limited codegen-units to reduce memory pressure
+ENV CARGO_PROFILE_RELEASE=release
+RUN cargo build --release --bin proximadb-server \
+    --codegen-units=1 \
+    --jobs=1
 
 # Stage 2: Unified runtime with Python and system dependencies
 FROM python:3.11-slim
