@@ -72,7 +72,7 @@ mod service_transactions;
 #[path = "service_traversal_api.rs"]
 mod service_traversal_api;
 #[allow(clippy::wildcard_imports)]
-pub(in crate::graph) use service_helpers::*;
+use service_helpers::*;
 pub use service_transactions::{
     IsolationLevel, TransactionHandle, TransactionId, TransactionManager, TransactionState,
     UnitOfWork,
@@ -1410,7 +1410,6 @@ impl GraphOperationsService {
         Ok(res.drain(offset..end).collect())
     }
     */
-
     /// Legacy query_edges (moved). Kept for reference; new implementation in service_edge_ops.rs
     pub(crate) async fn query_edges_legacy(
         &self,
@@ -1956,16 +1955,16 @@ impl GraphOperationsService {
 
     // traverse moved to service_traversal_api.rs
 
-    /// Perform graph traversal with per-call override hints (prefetch settings)
+    // /// Perform graph traversal with per-call override hints (prefetch settings)
     // traverse_with_overrides moved to service_traversal_api.rs
 
-    /// Execute traversal with specific configuration
+    // /// Execute traversal with specific configuration
     // traverse_with_config moved to service_traversal_api.rs
 
-    /// Get connected components (basic implementation)
+    // /// Get connected components (basic implementation)
     // connected_components moved to service_traversal_api.rs
 
-    /// Check for cycles (basic implementation)
+    // /// Check for cycles (basic implementation)
     // has_cycle moved to service_traversal_api.rs
 
     // ===== Unique (multi-field) and schema validation helpers =====

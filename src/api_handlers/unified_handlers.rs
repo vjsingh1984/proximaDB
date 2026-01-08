@@ -452,15 +452,15 @@ impl UnifiedHandlers {
         })
     }
 
-    /// Handle vector batch operations with unified logic
-    ///
-    /// **OPTIMIZED**: Uses VectorOperationsService when available for 40-60% performance improvement
-    /// ✅ DUAL COLLECTION RESOLUTION: Supports both collection name and ID
+    // /// Handle vector batch operations with unified logic
+    // ///
+    // /// **OPTIMIZED**: Uses VectorOperationsService when available for 40-60% performance improvement
+    // /// ✅ DUAL COLLECTION RESOLUTION: Supports both collection name and ID
     // Note: Non-v1 batch handler removed. Use handle_vector_batch_v1 directly.
 
     // Optimized non-v1 batch path removed. Use handle_vector_batch_v1.
 
-    /// Handle vector search operations with unified logic
+    // /// Handle vector search operations with unified logic
     // Note: Non-v1 search handler removed. Use handle_vector_search_v1 directly.
 
     /// v1 wrapper: accept v1::VectorSearchRequest and return v1 response using v1 builders
