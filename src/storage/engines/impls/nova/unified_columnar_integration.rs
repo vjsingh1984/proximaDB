@@ -392,7 +392,7 @@ impl NovaUnifiedEngine {
         &self,
         collection_id: &str,
         vector_stream: impl futures::Stream<Item = VectorRecord> + Send + Unpin,
-        quantization_engine: Option<
+        _quantization_engine: Option<
             Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
         >,
     ) -> Result<StreamingInsertResult> {
@@ -409,7 +409,7 @@ impl NovaUnifiedEngine {
         );
 
         // Initialize streaming session
-        let session = self
+        let _session = self
             .streaming_processor
             .start_session(
                 session_id.clone(),
@@ -578,7 +578,7 @@ impl NovaUnifiedEngine {
         // Phase 4: Progressive distance computation
         let computation_start = std::time::Instant::now();
         let distance_results = if search_options.enable_progressive {
-            let prog_results = self
+            let _prog_results = self
                 .compute_progressive_distances(
                     &query_vector,
                     &quantized_vectors,
@@ -599,7 +599,7 @@ impl NovaUnifiedEngine {
                 .as_ref()
                 .cloned()
                 .unwrap_or(SelectedFormat::FP32); // Default to full precision
-            let distances = distance_calc
+            let _distances = distance_calc
                 .compute_columnar_batch_distances(&query_vector, &quantized_vectors, format)
                 .await?;
 
@@ -780,7 +780,7 @@ impl NovaUnifiedEngine {
 
     async fn process_insert_batch(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         metadata: &NovaCollectionMetadata,
         batch: Vec<VectorRecord>,
     ) -> Result<BatchInsertResult> {
@@ -885,7 +885,7 @@ impl NovaUnifiedEngine {
             } else if let Some(binary_vec) = &vector.binary {
                 // Approximate: use binary hamming distance
                 let hamming_distance = compute_hamming_distance(query_vector, binary_vec);
-                let normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
+                let _normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
                 let sim = crate::compute::distance_computation::engine::SimilarityResult::new(
                     hamming_distance as f32,
                     DistanceMetric::Hamming,

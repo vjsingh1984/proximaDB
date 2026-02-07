@@ -7,9 +7,8 @@ use anyhow::{Result, anyhow};
 // These parquet metadata types are used internally for low-level operations
 // The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
-use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, mpsc};
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 use tracing::{debug, info, warn};
 /// Configuration for streaming row group processing
 #[derive(Debug, Clone)]

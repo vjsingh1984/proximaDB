@@ -152,7 +152,7 @@ fn group_by_block(
 
 /// Load blocks in parallel and extract requested records
 async fn load_and_extract_records(
-    sst: &SwiftFile,
+    _sst: &SwiftFile,
     grouped: HashMap<(u32, u32), Vec<(String, u32)>>,
     max_concurrent: usize,
     cache: Option<BlockCache>,
@@ -188,7 +188,7 @@ async fn load_and_extract_records(
 
             // Extract requested records
             let mut records = Vec::new();
-            for (id, offset) in id_offsets {
+            for (_id, offset) in id_offsets {
                 if let Some(record) = extract_record_from_block(&block, offset) {
                     records.push(record);
                 } else {
@@ -216,7 +216,7 @@ async fn load_and_extract_records(
 }
 
 /// Load a block from disk (simulated)
-async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<ProximaDataBlock> {
+async fn load_block_from_disk(_superblock_idx: u32, _block_idx: u32) -> Result<ProximaDataBlock> {
     // In real implementation, this would:
     // 1. Calculate file offset using superblock and block indices
     // 2. Seek to that position in the file
@@ -263,8 +263,8 @@ fn estimate_block_size(block: &ProximaDataBlock) -> usize {
 
 /// Batch update operations
 pub async fn update_records_batch(
-    swift_file: &mut SwiftFile,
-    updates: Vec<(String, VectorRecord)>,
+    _swift_file: &mut SwiftFile,
+    _updates: Vec<(String, VectorRecord)>,
 ) -> Result<usize> {
     // In a real implementation, SST files are immutable
     // Updates would create a new SST file or use a write-ahead log
@@ -295,7 +295,7 @@ pub async fn delete_records_batch(swift_file: &mut SwiftFile, ids: &[String]) ->
 
 /// Prefetch blocks for anticipated access patterns
 pub async fn prefetch_blocks(
-    sst: &SwiftFile,
+    _sst: &SwiftFile,
     block_ids: Vec<(u32, u32)>,
     cache: Option<BlockCache>,
 ) -> Result<()> {

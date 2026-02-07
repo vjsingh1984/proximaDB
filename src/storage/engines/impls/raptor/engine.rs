@@ -448,7 +448,7 @@ impl RaptorEngine {
         // ============================================================================
 
         // Initialize filesystem factory for creating appropriate filesystems
-        let filesystem_factory =
+        let _filesystem_factory =
             Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
         // Storage tier and paths will be determined at runtime from FlushParameters

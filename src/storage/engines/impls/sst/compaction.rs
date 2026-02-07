@@ -153,11 +153,11 @@ impl Compaction {
 
         // Extract collection ID from path like: /path/to/collection_id/data/level0/file.sst
         if let Some(path) = paths.first() {
-            if let Some(parent) = path.parent() {
-                if let Some(parent_parent) = parent.parent() {
-                    if let Some(parent_parent_parent) = parent_parent.parent() {
-                        if let Some(collection_id) = parent_parent_parent.file_name() {
-                            return Ok(collection_id.to_string_lossy().to_string());
+            if let Some(_parent) = path.parent() {
+                if let Some(_parent_parent) = _parent.parent() {
+                    if let Some(parent_parent_parent) = _parent_parent.parent() {
+                        if let Some(_collection_id) = parent_parent_parent.file_name() {
+                            return Ok(_collection_id.to_string_lossy().to_string());
                         }
                     }
                 }
@@ -1339,13 +1339,13 @@ impl Compaction {
             collection_dir.display()
         );
 
-        let collection_path = collection_dir.to_string_lossy();
+        let _collection_path = collection_dir.to_string_lossy();
 
         // Use new orchestrator if available, otherwise fall back to direct file discovery
         let unified_files = if let Some(ref orchestrator) = self.compaction_orchestrator {
             orchestrator
                 .registry
-                .discover_files(&orchestrator.filesystem, &collection_path, "sst")
+                .discover_files(&orchestrator.filesystem, &_collection_path, "sst")
                 .await
                 .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?
         } else {

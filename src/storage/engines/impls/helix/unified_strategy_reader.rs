@@ -255,11 +255,11 @@ impl DirectHELIXReader {
         &self,
         sstables: &[SStableMetadata],
     ) -> Result<Vec<VectorRecord>> {
-        let fs = self.filesystem_factory.get_filesystem("file://")?;
+        let _fs = self.filesystem_factory.get_filesystem("file://")?;
         let mut all_records = Vec::new();
 
         for sstable in sstables {
-            let _data = fs.read(&sstable.path.to_string_lossy()).await?;
+            let _data = _fs.read(&sstable.path.to_string_lossy()).await?;
             // TODO: Read Proxima blocks and extract records
             // For now, return empty vec - actual implementation would parse Proxima format
         }
@@ -312,7 +312,7 @@ impl CachedHELIXReader {
         &self,
         file_path: &str,
         query_hilbert: Option<HilbertKey>,
-        range_filter: Option<(f64, f64)>, // (min_value, max_value) for any dimension
+        _range_filter: Option<(f64, f64)>, // (min_value, max_value) for any dimension
     ) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;
 
@@ -327,7 +327,9 @@ impl CachedHELIXReader {
             HelixSearchStrategy::ZoneMapPruning => {
                 // Apply zone map pruning with PCA projection
             }
-            HelixSearchStrategy::LiquidClustering { pattern_threshold } => {
+            HelixSearchStrategy::LiquidClustering {
+                pattern_threshold: _,
+            } => {
                 // Apply adaptive clustering patterns
             }
         }
@@ -339,7 +341,7 @@ impl CachedHELIXReader {
     pub async fn read_with_liquid_clustering(
         &self,
         file_path: &str,
-        access_pattern: &str, // Query pattern for adaptation
+        _access_pattern: &str, // Query pattern for adaptation
     ) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;
 
@@ -383,10 +385,10 @@ mod tests {
     #[tokio::test]
     async fn test_helix_reader_creation() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().to_str().unwrap().to_string();
+        let _path = temp_dir.path().to_str().unwrap().to_string();
 
         let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", path));
+        fs_config.default_fs = Some(format!("file://{}", _path));
         let factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
@@ -404,22 +406,22 @@ mod tests {
         assert!(!compaction_reader.is_using_cache());
 
         // Search should use CachedSearch
-        let search_reader =
+        let _search_reader =
             UnifiedHELIXReader::for_search(factory.clone(), "test_collection".to_string()).unwrap();
-        matches!(
-            search_reader.strategy(),
+        assert!(matches!(
+            _search_reader.strategy(),
             ReadAccessStrategy::CachedSearch { .. }
-        );
-        assert!(search_reader.is_using_cache());
+        ));
+        assert!(_search_reader.is_using_cache());
     }
 
     #[tokio::test]
     async fn test_strategy_updates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().to_str().unwrap().to_string();
+        let _path = temp_dir.path().to_str().unwrap().to_string();
 
         let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        fs_config.default_fs = Some(format!("file://{}", path));
+        fs_config.default_fs = Some(format!("file://{}", _path));
         let factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await

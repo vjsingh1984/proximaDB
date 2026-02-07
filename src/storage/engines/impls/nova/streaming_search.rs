@@ -244,7 +244,7 @@ impl StreamingSearchEngine {
         let (pruned_superblocks, zone_map_metrics) = self
             .apply_advanced_zone_map_pruning(query_vector, superblocks, &execution_plan)
             .await?;
-        let zone_map_duration = zone_map_start.elapsed();
+        let _zone_map_duration = zone_map_start.elapsed();
 
         // Phase 3: Progressive streaming search
         let progressive_start = Instant::now();
@@ -258,7 +258,7 @@ impl StreamingSearchEngine {
                 parquet_metadata,
             )
             .await?;
-        let progressive_duration = progressive_start.elapsed();
+        let _progressive_duration = progressive_start.elapsed();
 
         // Extract fields we need before moving results
         let row_groups_scanned = progressive_result.row_groups_scanned;

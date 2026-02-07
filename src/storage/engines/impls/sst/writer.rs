@@ -60,7 +60,7 @@ use crate::storage::persistence::filesystem::{
 };
 
 use super::IndexEntry;
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
+use crate::core::bloom::{BloomFilterConfig, HashAlgorithm};
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::storage::engines::core::formats::proximablocks::{
     ProximaBlockMetadata, ProximaDataBlock,
@@ -362,7 +362,7 @@ impl SstableWriter {
             filesystem,
             compression_provider,
             quantization_engine,
-            compression_config: compression_config,
+            compression_config,
         }
     }
 
@@ -448,7 +448,7 @@ impl SstableWriter {
             .unwrap_or_default();
 
         // ✅ STEP 2: Process VectorRecords in streaming fashion - Proxima handles bloom filters!
-        for (key, vector_record) in sorted_records_vec.into_iter() {
+        for (_key, vector_record) in sorted_records_vec.into_iter() {
             // ✅ No manual bloom filter updates needed - Proxima automatically handles this!
 
             // FASTEST: Use existing protobuf serialization (already optimized)
@@ -655,7 +655,7 @@ impl SstableWriter {
         let current_offset = 0u64;
 
         // Create global header
-        let global_header = SstGlobalHeader {
+        let _global_header = SstGlobalHeader {
             file_size: 0, // Will be updated after writing all data
             num_blocks: data_blocks.len() as u32,
             bloom_filter_offset: current_offset as u32,
@@ -674,7 +674,7 @@ impl SstableWriter {
 
         // Create block headers for each data block
         let mut block_headers = Vec::new();
-        for (i, block) in data_blocks.iter().enumerate() {
+        for (_i, block) in data_blocks.iter().enumerate() {
             let header = SstBlockHeader {
                 offset: 0,            // Will be calculated during writing
                 compressed_size: 0,   // Will be calculated during compression
@@ -759,12 +759,12 @@ impl SstableWriter {
         // Calculate block offsets and build index (two-pass to resolve index size dependency)
         let mut index_bytes: Vec<u8> = Vec::new();
         let mut sorted_index_entries: Vec<IndexEntry> = Vec::new();
-        let mut blocks_start_offset: u64 = 0;
+        let mut _blocks_start_offset: u64 = 0;
         for _ in 0..2 {
-            blocks_start_offset = (output_data.len() + 4 + index_bytes.len()) as u64; // +4 for index length prefix
+            _blocks_start_offset = (output_data.len() + 4 + index_bytes.len()) as u64; // +4 for index length prefix
 
             // Update offsets in index entries based on current index size guess
-            let mut current_block_offset = blocks_start_offset;
+            let mut current_block_offset = _blocks_start_offset;
             for (i, entry) in layout_index_entries.iter_mut().enumerate() {
                 entry.offset = current_block_offset;
 

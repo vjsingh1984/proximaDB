@@ -202,7 +202,7 @@ impl IdIndex {
         }
     }
 
-    fn split_root(&self, root: &mut Box<BPlusNode>) -> Result<()> {
+    fn split_root(&self, _root: &mut Box<BPlusNode>) -> Result<()> {
         // Implementation of root splitting
         // This would create a new root with the old root as a child
         Ok(())
@@ -210,9 +210,9 @@ impl IdIndex {
 
     fn split_child(
         &self,
-        keys: &mut Vec<String>,
-        children: &mut Vec<Box<BPlusNode>>,
-        child_idx: usize,
+        _keys: &mut Vec<String>,
+        _children: &mut Vec<Box<BPlusNode>>,
+        _child_idx: usize,
     ) -> Result<()> {
         // Implementation of child node splitting
         Ok(())

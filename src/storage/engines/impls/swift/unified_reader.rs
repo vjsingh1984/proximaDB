@@ -205,7 +205,7 @@ impl UnifiedSwiftReader {
         unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         config: SwiftReaderConfig,
-        bandwidth_optimizer: Option<
+        _bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
         >,
     ) -> Result<Self> {
@@ -397,7 +397,7 @@ impl UnifiedSwiftReader {
     ) -> Result<SuperBlockMetadata> {
         // CACHE-FIRST: Check zero-copy cache for SWIFT SuperBlock metadata
         // Cache key format: filename:collection_id:swift:superblock:{id}
-        let cache_key = format!(
+        let _cache_key = format!(
             "{}:{}:swift:superblock:{}",
             self.file_path, self.collection_id, superblock_id
         );
@@ -416,7 +416,7 @@ impl UnifiedSwiftReader {
     /// Extract SuperBlock metadata from cached data
     async fn extract_superblock_from_cache(
         &self,
-        cached_metadata: Arc<
+        _cached_metadata: Arc<
             Box<dyn crate::storage::engines::core::io::zero_copy::traits::EngineMetadata>,
         >,
         superblock_id: u32,

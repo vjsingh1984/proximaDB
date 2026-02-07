@@ -9,7 +9,6 @@ mod edge_tests {
     use crate::core::config::SstConfig;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
-    use crate::storage::engines::impls::sst::SstableWriter;
     use crate::storage::engines::impls::sst::readers::sst_query_engine::{
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
@@ -19,7 +18,6 @@ mod edge_tests {
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     fn create_test_config() -> SstConfig {
         SstConfig {
@@ -93,7 +91,7 @@ mod edge_tests {
     // ===== High Dimensional Vector Tests =====
     #[tokio::test]
     async fn test_high_dimensional_vectors() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test with 4096-dimensional vectors (large but realistic)
         let params = SearchParams {
@@ -122,8 +120,8 @@ mod edge_tests {
     // ===== Extreme Top-K Values =====
     #[tokio::test]
     async fn test_extreme_top_k_values() {
-        let reader = create_test_reader().await;
-        let context = create_test_context("test", vec!["test.sstable".to_string()]);
+        let _reader = create_test_reader().await;
+        let _context = create_test_context("test", vec!["test.sstable".to_string()]);
 
         // Test with very large top_k
         let params_large = SearchParams {
@@ -157,7 +155,7 @@ mod edge_tests {
     // ===== Deeply Nested Filter Expressions =====
     #[tokio::test]
     async fn test_deeply_nested_filter_expressions() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Create deeply nested filter expression (10+ levels deep)
         let filter = FilterExpression::And(vec![
@@ -210,7 +208,7 @@ mod edge_tests {
     // ===== Type Mismatch Tests =====
     #[tokio::test]
     async fn test_type_mismatch_in_filters() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // String comparison on numeric field
         let filter1 = FilterExpression::Comparison {
@@ -261,7 +259,7 @@ mod edge_tests {
     // ===== Null and Missing Value Tests =====
     #[tokio::test]
     async fn test_null_and_missing_values() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test null value in filter
         let filter_null = FilterExpression::Comparison {
@@ -325,7 +323,7 @@ mod edge_tests {
     // ===== Numeric Boundary Values =====
     #[tokio::test]
     async fn test_numeric_boundary_values() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test with maximum safe integer
         let filter_max = FilterExpression::Comparison {
@@ -389,7 +387,7 @@ mod edge_tests {
     // ===== Special Characters in Field Names =====
     #[tokio::test]
     async fn test_special_characters_in_fields() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Field names with special characters
         let special_fields = vec![
@@ -450,7 +448,7 @@ mod edge_tests {
     // ===== Batch Query Edge Cases =====
     #[tokio::test]
     async fn test_batch_query_edge_cases() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Empty batch
         let params_empty = SearchParams {
@@ -497,7 +495,7 @@ mod edge_tests {
     // ===== MVCC Version Handling Edge Cases =====
     #[tokio::test]
     async fn test_mvcc_version_edge_cases() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Create records with multiple versions
         let mut records = vec![];
@@ -551,7 +549,7 @@ mod edge_tests {
     // ===== Bloom Filter Edge Cases =====
     #[tokio::test]
     async fn test_bloom_filter_edge_cases() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test bloom filter false positives
         let bloom_config = BloomFilterConfig {
@@ -605,7 +603,7 @@ mod edge_tests {
     // ===== Block Cache Edge Cases =====
     #[tokio::test]
     async fn test_block_cache_edge_cases() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test cache with zero size - using config instead of private field access
         let zero_config = ReaderConfig {
@@ -620,11 +618,11 @@ mod edge_tests {
     // ===== Concurrent Access Scenarios =====
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_reader_access() {
-        // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
         use crate::storage::engines::impls::sst::SstableWriter;
         use tempfile::TempDir;
+
+        // Initialize hardware capabilities for testing
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Create a temporary directory and write test SSTable
         let temp_dir = TempDir::new().unwrap();
@@ -738,7 +736,7 @@ mod edge_tests {
     // ===== Unicode Handling =====
     #[tokio::test]
     async fn test_unicode_handling() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test various Unicode strings
         let unicode_values = vec![
@@ -845,7 +843,7 @@ mod edge_tests {
     // ===== Tombstone Handling Edge Cases =====
     #[tokio::test]
     async fn test_tombstone_edge_cases() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Create various tombstone scenarios
         let tombstones = vec![
@@ -940,7 +938,7 @@ mod edge_tests {
     // ===== File Path Edge Cases =====
     #[tokio::test]
     async fn test_file_path_edge_cases() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Test various problematic file paths
         let edge_paths = vec![
@@ -983,7 +981,7 @@ mod edge_tests {
     // ===== Memory Pressure Simulation =====
     #[tokio::test]
     async fn test_memory_pressure_scenarios() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
 
         // Simulate memory pressure by creating large records
         let mut large_records = Vec::new();
@@ -1040,19 +1038,22 @@ mod edge_tests {
             match field.as_str() {
                 // Use as_str() instead of as_deref()
                 "numeric_field" => {
-                    let (min_val, max_val, null_cnt, distinct_cnt) =
-                        (min, max, null_count, distinct_count);
-                    assert!(distinct_cnt <= &usize::MAX);
+                    let _min_val = min;
+                    let _max_val = max;
+                    let _null_cnt = null_count;
+                    assert!(distinct_count <= &usize::MAX);
                 }
                 "string_field" => {
-                    let (min_val, max_val, null_cnt, distinct_cnt) =
-                        (min, max, null_count, distinct_count);
-                    assert!(distinct_cnt <= &usize::MAX);
+                    let _min_val = min;
+                    let _max_val = max;
+                    let _null_cnt = null_count;
+                    assert!(distinct_count <= &usize::MAX);
                 }
                 "bool_field" => {
-                    let (min_val, max_val, null_cnt, distinct_cnt) =
-                        (min, max, null_count, distinct_count);
-                    assert!(distinct_cnt <= &usize::MAX);
+                    let _min_val = min;
+                    let _max_val = max;
+                    let _null_cnt = null_count;
+                    assert!(distinct_count <= &usize::MAX);
                 }
                 _ => {}
             }

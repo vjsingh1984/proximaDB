@@ -167,7 +167,7 @@ impl SstEngine {
             id, collection_id
         );
 
-        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        let _storage_url = self.get_collection_storage_url(collection_id).await?;
 
         // Get unified filesystem for this collection
         let unified_fs = self
@@ -225,7 +225,7 @@ impl SstEngine {
     pub async fn cleanup_collection_files(&self, collection_id: &str) -> Result<()> {
         info!("🧹 SST: Cleaning up files for collection {}", collection_id);
 
-        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        let _storage_url = self.get_collection_storage_url(collection_id).await?;
         let unified_fs = self
             .unified_fs()
             .ok_or_else(|| SstError::Internal("Unified filesystem not initialized".to_string()))?;
@@ -283,7 +283,7 @@ impl SstEngine {
             collection_id, offset, limit
         );
 
-        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        let _storage_url = self.get_collection_storage_url(collection_id).await?;
 
         // In a real implementation, this would:
         // 1. List all SST files for the collection
@@ -292,7 +292,7 @@ impl SstEngine {
         // 4. Return paginated results
 
         let results = Vec::new();
-        let effective_limit = limit.unwrap_or(1000); // Default limit
+        let _effective_limit = limit.unwrap_or(1000); // Default limit
 
         // For now, return empty results as this is a complex operation
         // that requires implementing SST file reading
@@ -312,8 +312,7 @@ impl SstEngine {
         // 2. Return the appropriate storage URL
 
         // For now, use a default path structure
-        let base_path = "/data/collections";
-        let storage_url = format!("{}/{}", base_path, collection_id);
+        let storage_url = format!("/data/collections/{}", collection_id);
 
         debug!(
             "📂 Storage URL for collection {}: {}",
@@ -333,7 +332,7 @@ impl SstEngine {
             collection_id
         );
 
-        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        let _storage_url = self.get_collection_storage_url(collection_id).await?;
 
         // In a real implementation, this would:
         // 1. Identify files that need compaction at the target level

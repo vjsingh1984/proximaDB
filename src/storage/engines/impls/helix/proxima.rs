@@ -11,6 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::storage::persistence::filesystem::FileSystem;
+
 // Reuse existing Proxima structures
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, QuantizationStatistics,
@@ -19,7 +21,6 @@ use crate::storage::engines::core::formats::proximablocks::spatial_encoding::Spa
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::constants::HELIX_MAGIC;
-use crate::storage::persistence::filesystem::FileSystem;
 
 // ProximaDataBlock now uses ProximaCodec internally
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
@@ -31,7 +32,6 @@ pub use crate::storage::engines::core::formats::proximablocks::block_structures:
 /// Uses ProximaDataBlock's internal SIMD encoding with spatial clustering
 pub struct HelixSIMDWriter {
     hilbert_curve_size: usize,
-    spatial_grouping_enabled: bool,
     dimension: usize,
     max_vectors: usize,
 }
@@ -40,7 +40,6 @@ impl HelixSIMDWriter {
     pub fn new(dimension: usize, max_vectors: usize, hilbert_curve_size: usize) -> Result<Self> {
         Ok(Self {
             hilbert_curve_size,
-            spatial_grouping_enabled: true,
             dimension,
             max_vectors,
         })
@@ -186,7 +185,7 @@ impl HelixSIMDWriter {
             proxima_metadata: block.metadata.clone(),
             hilbert_range,
             block_centroid,
-            pca_stats: None, // Could be added later for advanced PCA integration
+            pca_stats: None,
             clustering_hints: Some(clustering_hints),
         };
 
@@ -553,7 +552,7 @@ pub async fn write_helix_sstable(
 
     // OPTIMIZATION: Write unified file header containing ALL metadata
     // This allows single-call reading of all metadata for queries
-    let file_header = HelixFileHeader {
+    let _file_header = HelixFileHeader {
         magic: HELIX_MAGIC,
         version: 1,   // HELIX v1 (active development)
         file_size: 0, // Will be updated by reader
@@ -729,11 +728,12 @@ pub(crate) async fn read_helix_header_optimized(
     let mut file_size_bytes = [0u8; 8];
     std::io::Read::read_exact(&mut cursor, &mut file_size_bytes)?;
     let _stored_file_size = u64::from_le_bytes(file_size_bytes);
+    let _ = _stored_file_size; // Explicitly ignore to avoid unused warning
 
-    // 4. Read num_blocks
+    // 4. Read num_blocks (for validation, not directly used)
     let mut num_blocks_bytes = [0u8; 4];
     std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
-    let num_blocks = u32::from_le_bytes(num_blocks_bytes);
+    let _num_blocks = u32::from_le_bytes(num_blocks_bytes);
 
     // 5. Read block_metadata
     let mut metadata_len_bytes = [0u8; 4];
@@ -830,9 +830,9 @@ pub async fn search_helix_sstable(
     let header = read_helix_header_optimized(filesystem, path).await?;
 
     let path_str = path.to_str().unwrap_or("");
-    let num_blocks = header.block_metadata.len();
+    let _num_blocks = header.block_metadata.len();
     let mut results = Vec::new();
-    let mut blocks_pruned = 0;
+    let mut _blocks_pruned = 0;
     let mut blocks_searched = 0;
 
     // Centroid-based pruning (sqrt heuristic) to reduce block reads
@@ -878,7 +878,7 @@ pub async fn search_helix_sstable(
         };
 
         if should_prune {
-            blocks_pruned += 1;
+            _blocks_pruned += 1;
             continue; // CRITICAL: Don't read this block from disk at all!
         }
 
@@ -1088,7 +1088,7 @@ fn compute_query_hilbert_code(query: &[f32]) -> SpatialCode {
     encoder.encode(&normalized)
 }
 
-fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
+fn _l2_distance(a: &[f32], b: &[f32]) -> f32 {
     a.iter()
         .zip(b.iter())
         .fold(0.0f32, |acc, (x, y)| acc + (x - y) * (x - y))

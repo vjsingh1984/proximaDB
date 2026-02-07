@@ -93,7 +93,7 @@ struct SearchCandidate {
 
 impl PartialEq for SearchCandidate {
     fn eq(&self, other: &Self) -> bool {
-        self.similarity == other.similarity
+        self.similarity == other.similarity && self.row_group_id == other.row_group_id
     }
 }
 
@@ -144,7 +144,7 @@ impl NovaColumnarSearch {
                     codebook_store,
                 ),
             );
-            let quantization_engine = Arc::new(
+            let _ = Arc::new(
                 crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                     unified_quant_engine.clone(),
                     quant_distance_compute.clone(),
@@ -186,7 +186,7 @@ impl NovaColumnarSearch {
         top_k: usize,
         distance_metric: DistanceMetric,
         filter: Option<&MetadataFilter>,
-        search_params: Option<&serde_json::Value>,
+        _search_params: Option<&serde_json::Value>,
     ) -> Result<Vec<(VectorRecord, f32)>> {
         info!(
             "NOVA columnar search: dimension={}, top_k={}, mode={:?}",
@@ -225,12 +225,12 @@ impl NovaColumnarSearch {
         distance_metric: DistanceMetric,
         filter: Option<&MetadataFilter>,
     ) -> Result<Vec<(VectorRecord, f32)>> {
-        let progressive_search = self
+        let _progressive_search = self
             .progressive_search
             .as_ref()
             .ok_or_else(|| anyhow!("Progressive search not initialized"))?;
 
-        debug!("Starting progressive search with {} stages", 4);
+        debug!("Starting progressive search");
 
         // Stage 1: Binary filtering
         let binary_candidates = self
@@ -288,7 +288,7 @@ impl NovaColumnarSearch {
         distance_metric: DistanceMetric,
         filter: Option<&MetadataFilter>,
     ) -> Result<Vec<(VectorRecord, f32)>> {
-        let streaming_processor = self
+        let _streaming_processor = self
             .streaming_processor
             .as_ref()
             .ok_or_else(|| anyhow!("Streaming processor not initialized"))?;
@@ -313,15 +313,13 @@ impl NovaColumnarSearch {
             let tx = tx.clone();
             let query = query_vector.to_vec();
             let metric = distance_metric.clone();
-            let file_path = nova_file.metadata.collection_id.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
 
                 // Process row group with streaming
                 let candidates =
-                    process_row_group_streaming(&file_path, rg_idx, &query, metric, top_k * 2)
-                        .await;
+                    process_row_group_streaming("", rg_idx, &query, metric, top_k * 2).await;
 
                 if let Ok(candidates) = candidates {
                     let _ = tx.send(candidates).await;
@@ -407,7 +405,7 @@ impl NovaColumnarSearch {
             }
 
             // Load row group with projection
-            let projection = if self.config.enable_projection {
+            let _projection = if self.config.enable_projection {
                 Some(vec!["id".to_string(), "vector".to_string()])
             } else {
                 None
@@ -418,7 +416,7 @@ impl NovaColumnarSearch {
                 .read_row_groups_projected(
                     &nova_file.metadata.collection_id,
                     &[rg_idx],
-                    projection.as_deref(),
+                    _projection.as_deref(),
                 )
                 .await?;
 
@@ -439,7 +437,7 @@ impl NovaColumnarSearch {
 
                 all_candidates.push(SearchCandidate {
                     row_group_id: rg_idx,
-                    row_offset: 0, // TODO: Get actual row offset
+                    row_offset: 0, // Will be calculated when proper indexing is implemented
                     similarity: 1.0 - distance,
                     vector_id: Some(record.id.clone()),
                 });
@@ -538,7 +536,7 @@ impl NovaColumnarSearch {
         query_vector: &[f32],
         max_candidates: usize,
         distance_metric: DistanceMetric,
-        filter: Option<&MetadataFilter>,
+        _filter: Option<&MetadataFilter>,
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Binary filter stage: max_candidates={}", max_candidates);
 
@@ -553,13 +551,6 @@ impl NovaColumnarSearch {
             );
         }
 
-        // Compute binary sketch of query (used if binary filtering available)
-        let query_binary = if use_binary_filter {
-            Some(compute_binary_sketch(query_vector))
-        } else {
-            None
-        };
-
         // Track pruning statistics
         let mut row_groups_pruned = 0;
         let total_row_groups = nova_file.row_groups.len();
@@ -567,7 +558,7 @@ impl NovaColumnarSearch {
         // Process each row group
         for (rg_idx, _row_group) in nova_file.row_groups.iter().enumerate() {
             // Use enhanced stats for zone map pruning if available
-            if let Some(enhanced_stats) = nova_file.enhanced_stats.get(rg_idx) {
+            if let Some(_enhanced_stats) = nova_file.enhanced_stats.get(rg_idx) {
                 // Use zone map intersection check for pruning
                 // Dynamic threshold: use k-th best distance if we have enough candidates,
                 // otherwise use a generous initial threshold based on metric
@@ -601,9 +592,9 @@ impl NovaColumnarSearch {
                     }
                 };
 
-                if !enhanced_stats.vector_zone_map.intersects_query(
+                if !_enhanced_stats.vector_zone_map.intersects_query(
                     query_vector,
-                    metric_name,
+                    metric_name.clone(),
                     current_threshold,
                 ) {
                     debug!(
@@ -688,7 +679,7 @@ impl NovaColumnarSearch {
         query_vector: &[f32],
         candidates: &[SearchCandidate],
         max_candidates: usize,
-        distance_metric: DistanceMetric,
+        _distance_metric: DistanceMetric,
     ) -> Result<Vec<SearchCandidate>> {
         debug!(
             "INT8 filter stage: input={}, max={}",
@@ -701,7 +692,7 @@ impl NovaColumnarSearch {
         }
 
         // Quantize query to INT8
-        let query_int8 = quantize_to_int8(query_vector);
+        let _query_int8 = quantize_to_int8(query_vector);
 
         let mut refined_candidates = BinaryHeap::new();
 
@@ -727,7 +718,7 @@ impl NovaColumnarSearch {
                 .await?;
 
             // Compute INT8 distances for candidates
-            for record in batch {
+            for _record in batch {
                 // Check if record has int8 quantized vector
                 // VectorRecord doesn't have quantized field in proto
                 // TODO: Implement proper quantized vector access
@@ -762,7 +753,7 @@ impl NovaColumnarSearch {
         query_vector: &[f32],
         candidates: &[SearchCandidate],
         max_candidates: usize,
-        distance_metric: DistanceMetric,
+        _distance_metric: DistanceMetric,
     ) -> Result<Vec<SearchCandidate>> {
         debug!(
             "PQ filter stage: input={}, max={}",
@@ -775,7 +766,7 @@ impl NovaColumnarSearch {
         }
 
         // Prepare PQ distance table for query
-        let pq_table = compute_pq_distance_table(query_vector, 32, 256);
+        let _pq_table = compute_pq_distance_table(query_vector, 32, 256);
 
         let mut refined_candidates = BinaryHeap::new();
 
@@ -801,7 +792,7 @@ impl NovaColumnarSearch {
                 .await?;
 
             // Compute PQ distances
-            for record in batch {
+            for _record in batch {
                 // Check if record has PQ quantized vector
                 // VectorRecord doesn't have quantized field in proto
                 // TODO: Implement proper quantized vector access
@@ -917,7 +908,7 @@ impl NovaColumnarSearch {
 
     fn should_process_row_group(
         &self,
-        row_group: &parquet::file::metadata::RowGroupMetaData,
+        _row_group: &parquet::file::metadata::RowGroupMetaData,
         filter: Option<&MetadataFilter>,
     ) -> Result<bool> {
         if !self.config.enable_row_group_pruning {
@@ -1073,7 +1064,7 @@ fn compute_binary_sketch(vector: &[f32]) -> Vec<u8> {
     sketch
 }
 
-fn compute_hamming_distance(query: &[u8], column: &ArrayRef, row_idx: usize) -> u32 {
+fn _compute_hamming_distance(_query: &[u8], _column: &ArrayRef, _row_idx: usize) -> u32 {
     // Simplified - would extract binary from column and compute Hamming distance
     0
 }
@@ -1090,17 +1081,17 @@ fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
         .collect()
 }
 
-fn compute_int8_distance(query: &[i8], column: &ArrayRef, row_idx: usize) -> f32 {
+fn _compute_int8_distance(_query: &[i8], _column: &ArrayRef, _row_idx: usize) -> f32 {
     // Simplified - would extract INT8 vector and compute distance
     0.0
 }
 
-fn compute_pq_distance_table(vector: &[f32], segments: usize, codes: usize) -> Vec<Vec<f32>> {
+fn compute_pq_distance_table(_vector: &[f32], segments: usize, codes: usize) -> Vec<Vec<f32>> {
     // Simplified - would compute actual PQ distance table
     vec![vec![0.0; codes]; segments]
 }
 
-fn compute_pq_distance(table: &[Vec<f32>], column: &ArrayRef, row_idx: usize) -> f32 {
+fn _compute_pq_distance(_table: &[Vec<f32>], _column: &ArrayRef, _row_idx: usize) -> f32 {
     // Simplified - would extract PQ codes and compute distance using table
     0.0
 }
@@ -1121,11 +1112,11 @@ fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f
 }
 
 async fn process_row_group_streaming(
-    file_path: &str,
-    row_group_idx: usize,
-    query_vector: &[f32],
-    distance_metric: DistanceMetric,
-    max_candidates: usize,
+    _file_path: &str,
+    _row_group_idx: usize,
+    _query_vector: &[f32],
+    _distance_metric: DistanceMetric,
+    _max_candidates: usize,
 ) -> Result<Vec<(VectorRecord, f32)>> {
     // Simplified streaming processing
     // In production, would stream through row group with memory bounds
@@ -1232,7 +1223,6 @@ fn build_projection_mask(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BinaryHeap;
 
     #[test]
     fn test_candidate_ordering() {

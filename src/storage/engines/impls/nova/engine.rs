@@ -4,7 +4,6 @@
 use crate::core::compression::StandardCompression;
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::utils::StoragePath;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
 use crate::storage::engines::core::ops::{
@@ -480,7 +479,7 @@ impl NovaEngine {
     }
 
     /// Update global statistics file for collection
-    async fn update_global_stats(&self, collection_id: &str, storage_path: &str) -> Result<()> {
+    async fn update_global_stats(&self, _collection_id: &str, _storage_path: &str) -> Result<()> {
         // Path: {storage_path}/{collection_id}/global.stats
         // This is updated after flush/compaction to maintain collection-wide metrics
         // File-level statistics are embedded in Parquet metadata properties
@@ -664,7 +663,7 @@ impl NovaEngine {
     async fn optimize_parquet_storage_tier(
         &self,
         file_path: &str,
-        row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats,
+        _row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats,
     ) -> Result<DataFreshnessTier> {
         // Use common utility for consistent vector size estimation
         // Default configuration since NovaEngine doesn't have config field
@@ -1416,7 +1415,7 @@ impl UnifiedStorageEngine for NovaEngine {
         );
 
         // Construct data directory from base_path and collection_id
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let _data_dir = format!("{}/{}/data", base_path, collection_id);
 
         // TODO: Load actual Parquet files from data_dir
         // For now, return None as placeholder
@@ -1764,13 +1763,13 @@ impl NovaEngine {
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
         &self,
-        ctx: &crate::storage::traits::StorageQueryContext,
+        _ctx: &crate::storage::traits::StorageQueryContext,
         collection_id: &str,
         storage_path: &str,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        _filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         tracing::warn!("🔄 NOVA: Falling back to direct search implementation");
 
@@ -1782,7 +1781,7 @@ impl NovaEngine {
         let mut all_results = Vec::new();
 
         // Search each NOVA file using columnar optimization
-        for nova_file in files.iter() {
+        for _nova_file in files.iter() {
             // Placeholder - would implement actual columnar search
             let results: Vec<(crate::proto::proximadb_v1::VectorRecord, f32)> = Vec::new();
 

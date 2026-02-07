@@ -3,12 +3,8 @@
 //! This test demonstrates metadata filtering without hitting the bincode
 //! deserialization issue by using concrete types instead of serde_json::Value.
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;

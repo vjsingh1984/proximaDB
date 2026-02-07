@@ -158,10 +158,6 @@ impl StorageEngineFactory {
                 warn!("Hybrid engine not yet implemented, using SST");
                 Self::create_sst()
             }
-            _ => {
-                warn!("Unknown storage engine type, defaulting to SST");
-                Self::create_sst()
-            }
         }
     }
 
@@ -186,10 +182,6 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Hybrid => {
                 warn!("Hybrid engine not yet implemented, using SST");
-                Self::create_sst_async().await
-            }
-            _ => {
-                warn!("Unknown storage engine type, defaulting to SST");
                 Self::create_sst_async().await
             }
         }

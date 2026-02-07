@@ -142,7 +142,7 @@ impl ProgressiveSearchCoordinator {
         filesystem: &Arc<
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
         >,
-        quant_engine: &Arc<StorageQuantizationEngine>,
+        _quant_engine: &Arc<StorageQuantizationEngine>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut candidates = Vec::new();
 
@@ -245,8 +245,8 @@ impl ProgressiveSearchCoordinator {
         query_vector: &[f32],
         candidates: Vec<OptimizedSearchRecord>,
         k: usize,
-        distance_metric: DistanceMetric,
-        quantization_level: UnifiedQuantizationLevel,
+        _distance_metric: DistanceMetric,
+        _quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
 
@@ -270,7 +270,7 @@ impl ProgressiveSearchCoordinator {
         query_vector: &[f32],
         candidates: Vec<OptimizedSearchRecord>,
         k: usize,
-        distance_metric: DistanceMetric,
+        _distance_metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
 
@@ -348,12 +348,13 @@ impl ProgressiveSearchCoordinator {
         query_hilbert: Option<HilbertKey>,
         sstable: &SStableMetadata,
         k: usize,
-        _distance_metric: DistanceMetric,
+        distance_metric: DistanceMetric,
         filesystem: &Arc<
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
         >,
         quantization_level: &UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
+        let _ = (distance_metric, quantization_level); // Currently unused, will be used for future optimizations
         // Determine if we should use binary or INT8 based on quantization level
         use crate::compute::quantization::types::QuantizationLevel;
         let use_binary = matches!(

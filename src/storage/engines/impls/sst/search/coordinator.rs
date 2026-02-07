@@ -29,9 +29,6 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::impls::sst::SstEngine;
 use crate::storage::traits::StorageQueryContext;
 
-/// Default over-fetch multiplier to account for tombstones being filtered
-const TOMBSTONE_OVERFETCH_MULTIPLIER: f32 = 1.2;
-
 /// Search strategy enumeration
 #[derive(Debug, Clone)]
 pub enum SearchStrategy {
@@ -338,7 +335,7 @@ mod tests {
             .unwrap()
     }
 
-    fn create_test_context(use_indexes: bool, has_quantization: bool) -> StorageQueryContext {
+    fn create_test_context(_use_indexes: bool, _has_quantization: bool) -> StorageQueryContext {
         let search_params = Arc::new(SearchParams {
             query_vectors: None,
             vector: Some(vec![1.0, 2.0, 3.0]),

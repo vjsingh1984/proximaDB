@@ -452,7 +452,6 @@ impl Flush {
                         let sidecar_url =
                             final_url.replace(".parquet", &format!(".{}", sidecar_ext));
                         if let Ok(fs) = self.filesystem_factory.get_filesystem(&sidecar_url) {
-                            use crate::storage::persistence::filesystem::FileSystem;
                             match fs.write(&sidecar_url, &sidecar_bytes, None).await {
                                 Ok(_) => {
                                     debug!(

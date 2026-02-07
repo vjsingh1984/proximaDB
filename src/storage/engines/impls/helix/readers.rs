@@ -13,7 +13,6 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
 // Filter evaluator now uses unified module from core
@@ -137,7 +136,7 @@ pub async fn find_vector_by_id(
     vector_id: &str,
 ) -> Result<Option<VectorRecord>> {
     // Check bloom filter if available
-    if let Some(ref bloom_data) = sstable.bloom_filter {
+    if let Some(ref _bloom_data) = sstable.bloom_filter {
         // Deserialize and check bloom filter
         // If not present, return early
         // (Implementation would use actual bloom filter)

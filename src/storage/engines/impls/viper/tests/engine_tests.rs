@@ -12,11 +12,10 @@ use tempfile::TempDir;
 use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
 use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
+use crate::storage::engines::impls::viper::ViperEngine;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use crate::utils::StoragePath;
@@ -31,13 +30,14 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
 // Also use columnar module's exports
 use crate::storage::engines::core::formats::columnar::{
-    BatchParquetWriter, FIELD_ID, FIELD_TIMESTAMP, ParquetWriterConfig, ReaderConfig,
-    UnifiedParquetReader,
+    FIELD_ID, FIELD_TIMESTAMP, UnifiedParquetReader,
 };
 
 /// Create test configuration
-fn create_test_config(_base_path: &str) -> ViperEngineConfig {
-    let mut config = ViperEngineConfig::default();
+fn create_test_config(
+    _base_path: &str,
+) -> crate::storage::engines::impls::viper::ViperEngineConfig {
+    let mut config = crate::storage::engines::impls::viper::ViperEngineConfig::default();
     config.enable_ml_clustering = false;
     config.flush_size_bytes = Some(1024 * 1024); // 1MB flush size
     config
@@ -273,8 +273,8 @@ async fn search_with_params(
 
 #[tokio::test]
 async fn test_viper_engine_creation() {
-    let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _temp_dir = TempDir::new().unwrap();
+    let _config = create_test_config(_temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let engine = ViperEngine::from_core_config(
@@ -293,7 +293,7 @@ async fn test_single_vector_operations() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
@@ -310,7 +310,7 @@ async fn test_single_vector_operations() {
 
     // VIPER is columnar storage - it doesn't support single vector inserts
     // Create a vector to flush directly
-    let vector = create_test_vector("vec1", 128, 0.5);
+    let _vector = create_test_vector("vec1", 128, 0.5);
 
     // Flush to make data searchable (VIPER searches parquet files, not memtable)
     let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
@@ -318,7 +318,7 @@ async fn test_single_vector_operations() {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: vec![vector.clone()],
+        vector_records: vec![_vector.clone()],
         batch_ids: vec![],
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
@@ -355,7 +355,7 @@ async fn test_single_vector_operations() {
         collection_id
     );
     let search_params = crate::core::search::SearchParams {
-        vector: Some(vector.vector.clone()),
+        vector: Some(_vector.vector.clone()),
         top_k: Some(1),
         distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
         ..Default::default()
@@ -384,7 +384,7 @@ async fn test_single_vector_operations() {
 #[tokio::test]
 async fn test_batch_insertion_and_flush() {
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
@@ -447,7 +447,7 @@ async fn test_similarity_search() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
@@ -528,7 +528,7 @@ async fn test_similarity_search() {
 #[tokio::test]
 async fn test_collection_operations() {
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
@@ -579,7 +579,7 @@ async fn test_compaction() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
     // Compaction threshold is handled internally
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
@@ -659,7 +659,7 @@ async fn test_multi_collection_isolation() {
 
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path().to_str().unwrap();
-    let config = create_test_config(base_path);
+    let _config = create_test_config(base_path);
 
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
@@ -737,7 +737,7 @@ async fn test_persistence_across_restarts() {
 
     let temp_dir = TempDir::new().unwrap();
     let base_path = temp_dir.path().to_str().unwrap();
-    let config = create_test_config(base_path);
+    let _config = create_test_config(base_path);
 
     let collection_id = "persistence_test";
 
@@ -822,7 +822,7 @@ async fn test_search_vectors_unified() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
     let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
@@ -1186,7 +1186,7 @@ async fn test_concurrent_operations() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_test_config(temp_dir.path().to_str().unwrap());
+    let _config = create_test_config(temp_dir.path().to_str().unwrap());
 
     let engine = Arc::new(
         {
