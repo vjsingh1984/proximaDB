@@ -67,13 +67,13 @@ pub struct StageThresholds {
 #[derive(Debug, Default)]
 struct StageStatistics {
     /// Number of vectors processed per stage
-    stage_vectors_processed: HashMap<String, usize>,
+    _stage_vectors_processed: HashMap<String, usize>,
 
     /// Average selectivity per stage
-    stage_selectivity: HashMap<String, f32>,
+    _stage_selectivity: HashMap<String, f32>,
 
     /// Stage execution times
-    stage_times_ms: HashMap<String, u64>,
+    _stage_times_ms: HashMap<String, u64>,
 
     /// Stage hit rates (how often stage was used)
     stage_hit_rates: HashMap<String, usize>,
@@ -274,8 +274,8 @@ impl UnifiedProgressiveSearchPipeline {
     fn select_dynamic_stages(
         &self,
         records: &[VectorRecord],
-        config: &QuantizationConfig,
-        top_k: usize,
+        _config: &QuantizationConfig,
+        _top_k: usize,
     ) -> Vec<SearchStage> {
         let record_count = records.len();
         let dimension = records.first().map(|r| r.vector.len()).unwrap_or(0);
@@ -444,16 +444,16 @@ impl UnifiedProgressiveSearchPipeline {
         &self,
         records: &[Arc<VectorRecord>],
         query_binary: &Option<Arc<Vec<u8>>>,
-        distance_metric: &DistanceMetric,
+        _distance_metric: &DistanceMetric,
         keep_count: usize,
     ) -> Result<Vec<StageCandidate>> {
-        let query = query_binary
+        let _query = query_binary
             .as_ref()
             .context("Binary quantized query not available")?;
 
         let mut candidates = Vec::new();
 
-        for record in records {
+        for _record in records {
             // Note: quantized_vector field removed - quantization is now internalized
             // during flush/compaction and stored in ProximaDataBlock's QuantizedSection
             // Binary search stage would need to access the quantized data from storage blocks
@@ -476,16 +476,16 @@ impl UnifiedProgressiveSearchPipeline {
         &self,
         records: &[Arc<VectorRecord>],
         query_int8: &Option<Arc<Vec<i8>>>,
-        distance_metric: &DistanceMetric,
+        _distance_metric: &DistanceMetric,
         keep_count: usize,
     ) -> Result<Vec<StageCandidate>> {
-        let query = query_int8
+        let _query = query_int8
             .as_ref()
             .context("INT8 quantized query not available")?;
 
         let mut candidates = Vec::new();
 
-        for record in records {
+        for _record in records {
             // Note: quantized_vector field removed - quantization is now internalized
             // INT8 quantized data would be accessed from ProximaDataBlock's QuantizedSection
             // For now, skip INT8 stage if quantization not available in memory
@@ -506,17 +506,17 @@ impl UnifiedProgressiveSearchPipeline {
         &self,
         records: &[Arc<VectorRecord>],
         query_pq: &Option<Arc<Vec<u8>>>,
-        distance_metric: &DistanceMetric,
+        _distance_metric: &DistanceMetric,
         keep_count: usize,
-        pq_bits: usize,
+        _pq_bits: usize,
     ) -> Result<Vec<StageCandidate>> {
-        let query = query_pq
+        let _query = query_pq
             .as_ref()
             .context("PQ quantized query not available")?;
 
         let mut candidates = Vec::new();
 
-        for record in records {
+        for _record in records {
             // Note: quantized_vector field removed - quantization is now internalized
             // PQ quantized data would be accessed from ProximaDataBlock's QuantizedSection
             // For now, skip PQ stage if quantization not available in memory
@@ -737,8 +737,8 @@ impl UnifiedProgressiveSearchPipeline {
             .into_iter()
             .take(top_k)
             .enumerate()
-            .map(|(rank, candidate)| {
-                let json_metadata = self.convert_metadata(&candidate.record);
+            .map(|(_rank, candidate)| {
+                let _json_metadata = self.convert_metadata(&candidate.record);
                 // Convert metadata directly to SqlValue format
                 let metadata: std::collections::HashMap<
                     String,
@@ -791,7 +791,7 @@ impl UnifiedProgressiveSearchPipeline {
         let mut stats = self.stage_stats.write();
         let stage_name = format!("{:?}", stage);
 
-        let entry = stats.stage_times_ms.entry(stage_name).or_insert(0);
+        let entry = stats._stage_times_ms.entry(stage_name).or_insert(0);
         *entry = (*entry + time_ms) / 2; // Running average
     }
 

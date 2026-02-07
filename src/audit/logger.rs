@@ -278,11 +278,17 @@ impl AuditLogger {
                     super::storage::DatabaseAuditStorage::new(connection_string.clone()).await?;
                 Ok(Arc::new(storage))
             }
-            AuditStorageBackend::S3 { bucket, region } => {
+            AuditStorageBackend::S3 {
+                bucket: _,
+                region: _,
+            } => {
                 // Placeholder for S3 storage implementation
                 Err(anyhow!("S3 audit storage not yet implemented"))
             }
-            AuditStorageBackend::Combined { primary, secondary } => {
+            AuditStorageBackend::Combined {
+                primary: _,
+                secondary: _,
+            } => {
                 // Placeholder for combined storage implementation
                 Err(anyhow!("Combined audit storage not yet implemented"))
             }

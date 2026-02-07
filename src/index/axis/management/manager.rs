@@ -837,8 +837,6 @@ impl AxisManager {
         collection_id: &str,
         query: &HybridQuery,
     ) -> Result<Vec<ScoredResult>> {
-        use crate::index::axis::index_factory::AxisVectorIndex;
-
         let indexes = self.ivf_indexes.read().await;
         if let Some(index_lock) = indexes.get(collection_id) {
             let index = index_lock.read().await;

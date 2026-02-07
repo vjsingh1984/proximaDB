@@ -683,9 +683,6 @@ pub fn create_lsh_index_for_collection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::axis::*;
-    use crate::proto::proximadb_v1::VectorRecord;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_lsh_basic_operations() {

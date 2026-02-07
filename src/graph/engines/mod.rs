@@ -611,7 +611,7 @@ pub trait GraphEngine: Send + Sync {
 
     /// Save graph snapshot to persistent storage
     /// Uses UnifiedCachingFilesystem for cloud-native storage support
-    async fn save_snapshot(&self, path: &Path) -> Result<()> {
+    async fn save_snapshot(&self, _path: &Path) -> Result<()> {
         // Default implementation - engines should override for optimal performance
         Err(ProximaDBError::NotImplemented(
             "Graph persistence not implemented for this engine".to_string(),
@@ -620,7 +620,7 @@ pub trait GraphEngine: Send + Sync {
 
     /// Load graph from persistent storage
     /// Restores graph state from a previous snapshot
-    async fn load_snapshot(&self, path: &Path) -> Result<()> {
+    async fn load_snapshot(&self, _path: &Path) -> Result<()> {
         Err(ProximaDBError::NotImplemented(
             "Graph persistence not implemented for this engine".to_string(),
         ))
@@ -633,14 +633,14 @@ pub trait GraphEngine: Send + Sync {
     }
 
     /// Export graph to standard format (GraphML, GEXF, etc.)
-    async fn export(&self, format: GraphExportFormat, path: &Path) -> Result<()> {
+    async fn export(&self, _format: GraphExportFormat, _path: &Path) -> Result<()> {
         Err(ProximaDBError::NotImplemented(
             "Graph export not implemented for this engine".to_string(),
         ))
     }
 
     /// Import graph from standard format
-    async fn import(&self, format: GraphExportFormat, path: &Path) -> Result<()> {
+    async fn import(&self, _format: GraphExportFormat, _path: &Path) -> Result<()> {
         Err(ProximaDBError::NotImplemented(
             "Graph import not implemented for this engine".to_string(),
         ))
@@ -748,7 +748,7 @@ impl GraphEngineImpl {
                 Ok(GraphEngineImpl::Pulsar(engine))
             }
             GraphEngineType::Quasar => {
-                let quasar_config = config.quasar_config.unwrap_or_default();
+                let _quasar_config = config.quasar_config.unwrap_or_default();
                 // Note: This needs async, so we'll provide a different factory method
                 Err(ProximaDBError::InvalidInput(
                     "Use new_quasar_async for QUASAR engine".to_string(),

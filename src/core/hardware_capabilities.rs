@@ -1003,25 +1003,23 @@ impl HardwareCapabilities {
         use std::fs;
 
         // Generic ARM64 detection for non-Linux platforms (e.g., Windows ARM64)
-        let mut cache_sizes = CacheSizes::default();
-
         // Try to read ARM system registers via platform-specific methods
         #[cfg(target_os = "windows")]
-        {
+        let cache_sizes = {
             // Windows ARM64 would need WinAPI calls to get cache info
             // For now, use enhanced defaults based on common ARM architectures
-            cache_sizes = Self::get_arm_defaults();
-        }
+            Self::get_arm_defaults()
+        };
 
         #[cfg(not(target_os = "windows"))]
-        {
+        let cache_sizes = {
             // For other ARM64 platforms, try Linux-style detection first
             if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
-                cache_sizes = Self::parse_arm_cpuinfo(&cpuinfo);
+                Self::parse_arm_cpuinfo(&cpuinfo)
             } else {
-                cache_sizes = Self::get_arm_defaults();
+                Self::get_arm_defaults()
             }
-        }
+        };
 
         tracing::info!(
             "Detected ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
@@ -1096,7 +1094,7 @@ impl HardwareCapabilities {
     #[cfg(target_arch = "aarch64")]
     fn parse_arm_cache_size(line: &str) -> Option<usize> {
         // ARM cache size parsing - more flexible than Linux KB/MB parsing
-        let line_lower = line.to_lowercase();
+        let _line_lower = line.to_lowercase();
 
         // Look for size patterns: "32KB", "1MB", "8192 KB", etc.
         for word in line.split_whitespace() {

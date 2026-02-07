@@ -218,11 +218,11 @@ impl MetricStorage {
 
         let label_str: String = sorted_labels
             .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(",");
 
-        format!("{}:{{{}}}", name, label_str)
+        format!("{name}:{{{label_str}}}")
     }
 
     /// Write a metric sample
@@ -298,7 +298,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (key, s) in series.iter() {
+        for (_key, s) in series.iter() {
             if s.name != name {
                 continue;
             }
@@ -329,7 +329,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (key, s) in series.iter() {
+        for (_key, s) in series.iter() {
             if s.name != name {
                 continue;
             }
@@ -369,7 +369,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (key, s) in series.iter() {
+        for (_key, s) in series.iter() {
             if s.name != name {
                 continue;
             }
