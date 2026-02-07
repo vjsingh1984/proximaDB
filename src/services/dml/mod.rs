@@ -256,7 +256,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // Get table schema for column mapping
@@ -286,7 +286,7 @@ impl DmlService {
         );
 
         Ok(
-            DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
+            DmlResult::success(num_records as u64, format!("Inserted {num_records} rows"))
                 .with_inserted_ids(inserted_ids),
         )
     }
@@ -305,7 +305,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // For now, UPDATE is not fully implemented
@@ -335,7 +335,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // Get IDs to delete based on WHERE clause
@@ -363,7 +363,7 @@ impl DmlService {
 
         Ok(DmlResult::success(
             deleted_count as u64,
-            format!("Delete of {} rows requested", deleted_count),
+            format!("Delete of {deleted_count} rows requested"),
         )
         .with_warning("Full DELETE implementation pending - records marked for deletion"))
     }
@@ -381,7 +381,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // Get table schema
@@ -412,7 +412,7 @@ impl DmlService {
         );
 
         Ok(
-            DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
+            DmlResult::success(num_records as u64, format!("Upserted {num_records} rows"))
                 .with_inserted_ids(inserted_ids),
         )
     }
@@ -551,7 +551,7 @@ impl DmlService {
                 // Parse ISO 8601 timestamp
                 use chrono::DateTime;
                 let dt = DateTime::parse_from_rfc3339(s)
-                    .map_err(|e| anyhow!("Invalid timestamp format: {}", e))?;
+                    .map_err(|e| anyhow!("Invalid timestamp format: {e}"))?;
                 Ok(Some(dt.timestamp_millis()))
             }
             SqlValueLiteral::Function { name, .. } if name.eq_ignore_ascii_case("NOW") => {
@@ -597,7 +597,7 @@ impl DmlService {
                 {
                     Value::Int64Value(chrono::Utc::now().timestamp_millis())
                 } else {
-                    return Err(anyhow!("Unsupported function: {}", name));
+                    return Err(anyhow!("Unsupported function: {name}"));
                 }
             }
         };
@@ -607,6 +607,8 @@ impl DmlService {
 
     /// Convert SqlValueLiteral to JSON value
     fn literal_to_json(&self, val: &SqlValueLiteral) -> Result<serde_json::Value> {
+        // Allow recursive calls - this is intentional for array processing
+        let _ = val; // Suppress unused warning while implementation is pending
         match val {
             SqlValueLiteral::Null => Ok(serde_json::Value::Null),
             SqlValueLiteral::Boolean(b) => Ok(serde_json::Value::Bool(*b)),

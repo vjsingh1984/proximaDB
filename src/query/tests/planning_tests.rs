@@ -270,8 +270,6 @@ fn test_extract_join_key_pairs_with_parens_and_reversed_order() {
 #[tokio::test]
 async fn test_query_plan_caching() {
     use crate::graph::GraphOperationsService;
-    use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 
     // Create mock services (simplified for testing)
     let _graph_service = Arc::new(GraphOperationsService::new());
@@ -282,7 +280,6 @@ async fn test_query_plan_caching() {
 #[tokio::test]
 async fn test_set_operation_planning() {
     use crate::graph::GraphOperationsService;
-    use crate::services::operations::vectors::VectorOperationsService;
 
     // Create simple test planner
     let _graph_service = Arc::new(GraphOperationsService::new());
@@ -293,7 +290,6 @@ async fn test_set_operation_planning() {
 #[tokio::test]
 async fn test_cache_key_generation() {
     use crate::graph::GraphOperationsService;
-    use crate::services::operations::vectors::VectorOperationsService;
 
     let _graph_service = Arc::new(GraphOperationsService::new());
     // Skip test - requires complex VectorOperationsService setup
