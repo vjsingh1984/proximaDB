@@ -230,7 +230,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
         _tenant_id: &str,
         _structured_query: &StructuredBusinessQuery,
         _business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<DomainIntelligenceResult> {
         // Execute structured query with Release 1 domain intelligence
         // This integrates with existing DomainKnowledgeGraph implementation
@@ -303,7 +303,7 @@ impl NaturalLanguageQueryProcessor {
         &self,
         question: &str,
         business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<ParsedEnterpriseQuery> {
         // Parse query with business context understanding
         let business_entities = self
@@ -373,7 +373,7 @@ impl BusinessIntelligenceTranslator {
         &self,
         parsed_query: &ParsedEnterpriseQuery,
         business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<StructuredBusinessQuery> {
         // Apply domain-specific translation rules
         let domain_query = self
@@ -823,7 +823,7 @@ impl EnterpriseResponseValidator {
         &self,
         _response_text: &str,
         _business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<ValidatedEnterpriseResponse> {
         Ok(ValidatedEnterpriseResponse {
             response_text: "Validated enterprise response".to_string(),
@@ -977,7 +977,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let nl_api = NaturalLanguageBusinessIntelligenceAPI::new(ai_foundation)
+        let _nl_api = NaturalLanguageBusinessIntelligenceAPI::new(ai_foundation)
             .await
             .unwrap();
         // Basic validation that NL API was created
@@ -1028,12 +1028,12 @@ mod tests {
     #[test]
     fn test_query_type_classification() {
         let risk_query = QueryType::RiskAnalysis;
-        let customer_query = QueryType::CustomerAnalysis;
-        let clinical_query = QueryType::ClinicalAnalysis;
+        let _customer_query = QueryType::CustomerAnalysis;
+        let _clinical_query = QueryType::ClinicalAnalysis;
 
         assert!(matches!(risk_query, QueryType::RiskAnalysis));
-        assert!(matches!(customer_query, QueryType::CustomerAnalysis));
-        assert!(matches!(clinical_query, QueryType::ClinicalAnalysis));
+        assert!(matches!(_customer_query, QueryType::CustomerAnalysis));
+        assert!(matches!(_clinical_query, QueryType::ClinicalAnalysis));
     }
 
     #[test]

@@ -165,7 +165,9 @@ pub struct Improvement {
 
 /// AutoML Service
 pub struct AutoMLService {
+    #[allow(dead_code)]
     config: AutoMLConfig,
+    #[allow(dead_code)]
     metrics_collector: Arc<UnifiedMetricsCollector>,
     optimization_queue: Arc<RwLock<Vec<OptimizationRequest>>>,
     active_optimizations: Arc<RwLock<HashMap<String, OptimizationRequest>>>,
@@ -295,7 +297,7 @@ impl AutoMLService {
     /// Evaluate optimization urgency based on metrics
     async fn evaluate_optimization_urgency(
         &self,
-        metrics: &CollectionMetrics,
+        _metrics: &CollectionMetrics,
     ) -> Result<OptimizationUrgency> {
         // Simple heuristic based on query latency
         let avg_latency = 100.0; // TODO: Get from actual metrics
@@ -361,7 +363,7 @@ impl AutoMLService {
     /// Select the most appropriate optimization type
     async fn select_optimization_type(
         &self,
-        context: &OptimizationContext,
+        _context: &OptimizationContext,
         urgency: &OptimizationUrgency,
     ) -> Result<OptimizationType> {
         // Simple heuristic for now
@@ -459,7 +461,7 @@ impl AutoMLService {
 
     async fn optimize_index_selection(
         &self,
-        request: &OptimizationRequest,
+        _request: &OptimizationRequest,
     ) -> Result<Vec<Improvement>> {
         // TODO: Implement index selection optimization
         Ok(vec![Improvement {
@@ -472,7 +474,7 @@ impl AutoMLService {
 
     async fn optimize_quantization(
         &self,
-        request: &OptimizationRequest,
+        _request: &OptimizationRequest,
     ) -> Result<Vec<Improvement>> {
         // TODO: Implement quantization optimization
         Ok(vec![Improvement {
@@ -485,7 +487,7 @@ impl AutoMLService {
 
     async fn optimize_engine_selection(
         &self,
-        request: &OptimizationRequest,
+        _request: &OptimizationRequest,
     ) -> Result<Vec<Improvement>> {
         // TODO: Implement engine selection optimization
         Ok(vec![Improvement {
@@ -498,7 +500,7 @@ impl AutoMLService {
 
     async fn optimize_cache_config(
         &self,
-        request: &OptimizationRequest,
+        _request: &OptimizationRequest,
     ) -> Result<Vec<Improvement>> {
         // TODO: Implement cache configuration optimization
         Ok(vec![Improvement {
@@ -511,7 +513,7 @@ impl AutoMLService {
 
     async fn tune_hyperparameters(
         &self,
-        request: &OptimizationRequest,
+        _request: &OptimizationRequest,
     ) -> Result<Vec<Improvement>> {
         // TODO: Implement hyperparameter tuning
         Ok(vec![Improvement {
@@ -522,7 +524,7 @@ impl AutoMLService {
         }])
     }
 
-    async fn adapt_to_workload(&self, request: &OptimizationRequest) -> Result<Vec<Improvement>> {
+    async fn adapt_to_workload(&self, _request: &OptimizationRequest) -> Result<Vec<Improvement>> {
         // TODO: Implement workload adaptation
         Ok(vec![Improvement {
             metric: "adaptive_performance".to_string(),

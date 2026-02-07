@@ -135,8 +135,8 @@ impl AutomatedInsightEngine {
     /// Generate executive strategic insights for C-level intelligence
     pub async fn generate_executive_strategic_insights(
         &self,
-        tenant_id: &str,
-        strategic_focus: &StrategicFocus,
+        _tenant_id: &str,
+        _strategic_focus: &StrategicFocus,
         executive_context: &ExecutiveUserContext,
     ) -> Result<ExecutiveStrategicInsights> {
         // Generate high-level strategic insights for executives
@@ -286,7 +286,7 @@ impl BusinessInsightsGenerator {
     pub async fn generate_strategic_insights(
         &self,
         business_data: &BusinessIntelligenceData,
-        strategic_context: &StrategicContext,
+        _strategic_context: &StrategicContext,
         executive_context: &ExecutiveUserContext,
     ) -> Result<StrategicBusinessInsights> {
         // Generate financial insights
@@ -341,9 +341,9 @@ impl BusinessInsightsGenerator {
 
     async fn generate_strategic_recommendations(
         &self,
-        financial: &FinancialInsights,
-        operational: &OperationalInsights,
-        competitive: &CompetitiveInsights,
+        _financial: &FinancialInsights,
+        _operational: &OperationalInsights,
+        _competitive: &CompetitiveInsights,
         executive_context: &ExecutiveUserContext,
     ) -> Result<Vec<StrategicRecommendation>> {
         let mut recommendations = Vec::new();

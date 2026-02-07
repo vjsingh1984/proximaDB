@@ -316,7 +316,7 @@ impl LLMIntegrationEngine {
 
     async fn execute_llm_with_enterprise_context(
         &self,
-        prompt: &EnterprisePrompt,
+        _prompt: &EnterprisePrompt,
         model_config: &LLMModelConfiguration,
         business_intent: &BusinessIntent,
     ) -> Result<LLMResponse> {
@@ -435,7 +435,7 @@ impl BusinessContextAI {
 
     async fn identify_business_domain(
         &self,
-        query: &str,
+        _query: &str,
         context: &BusinessContext,
     ) -> Result<String> {
         // Map query to business domain
@@ -455,7 +455,7 @@ impl BusinessContextAI {
 
     async fn apply_industry_context(
         &self,
-        intent: &str,
+        _intent: &str,
         business_function: &str,
         user_context: &EnterpriseUserContext,
     ) -> Result<IndustryContext> {
@@ -537,7 +537,7 @@ impl BusinessContextAI {
 
     async fn extract_business_constraints(
         &self,
-        query: &str,
+        _query: &str,
         context: &BusinessContext,
     ) -> Result<Vec<String>> {
         let mut constraints = Vec::new();
@@ -843,7 +843,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ai_intelligence_foundation_creation() {
-        let ai_foundation = AIIntelligenceFoundation::new().await.unwrap();
+        let _ai_foundation = AIIntelligenceFoundation::new().await.unwrap();
         // Basic validation that AI foundation was created
         assert!(true);
     }

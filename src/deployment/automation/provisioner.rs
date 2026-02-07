@@ -220,7 +220,7 @@ impl DeploymentProvisioner {
             .await?;
 
         // Step 5: Setup monitoring and alerting
-        let _monitoring_setup = self.setup_monitoring(&deployment_id, &request).await?;
+        let _ = self.setup_monitoring(&deployment_id, &request).await?;
 
         // Step 6: Generate customer documentation and next steps
         let next_steps = self
@@ -362,13 +362,13 @@ impl DeploymentProvisioner {
         info!("📊 Setting up monitoring for deployment: {}", deployment_id);
 
         // Configure enterprise dashboard
-        let _dashboard_config = self.generate_dashboard_config(request).await?;
+        let _ = self.generate_dashboard_config(request).await?;
 
         // Setup alerting rules
-        let _alerting_rules = self.generate_alerting_rules(request).await?;
+        let _ = self.generate_alerting_rules(request).await?;
 
         // Configure log aggregation
-        let _logging_config = self.setup_log_aggregation(deployment_id).await?;
+        let _ = self.setup_log_aggregation(deployment_id).await?;
 
         Ok(MonitoringSetupResult {
             dashboard_configured: true,
@@ -530,7 +530,7 @@ impl PlatformDeployer for KubernetesDeployer {
         &self,
         deployment_id: String,
         request: &EnterpriseDeploymentRequest,
-        config: &EnterpriseConfiguration,
+        _config: &EnterpriseConfiguration,
     ) -> Result<PlatformDeploymentResult> {
         info!(
             "📦 Deploying to Kubernetes for customer: {}",
@@ -607,7 +607,7 @@ impl PlatformDeployer for DockerDeployer {
         );
 
         // Generate docker-compose.yml
-        let docker_compose = self.generate_docker_compose(config).await?;
+        let _docker_compose = self.generate_docker_compose(config).await?;
 
         // Execute deployment
         let container_name = format!("proximadb-{}", request.tenant_id);
@@ -706,8 +706,8 @@ impl PlatformDeployer for AWSDeployer {
     async fn deploy(
         &self,
         deployment_id: String,
-        request: &EnterpriseDeploymentRequest,
-        config: &EnterpriseConfiguration,
+        _request: &EnterpriseDeploymentRequest,
+        _config: &EnterpriseConfiguration,
     ) -> Result<PlatformDeploymentResult> {
         // AWS-specific deployment logic would go here
         Ok(PlatformDeploymentResult {
