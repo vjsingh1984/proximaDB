@@ -23,15 +23,11 @@ use super::helpers::*;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tempfile::TempDir;
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use crate::storage::engines::impls::raptor::common::{
-    InterCentroidMatrix, VectorCentroidMatrix, VectorCentroidStorageStrategy,
-};
+use crate::storage::engines::impls::raptor::common::VectorCentroidStorageStrategy;
 use crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder;
 
 // ============================================================================

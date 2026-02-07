@@ -150,8 +150,8 @@ fn run_benchmark(engine: &str, search_mode: &str, vector_count: usize) -> Benchm
         cache_size_mb: 256,
         default_engine: engine.to_string(),
         enable_wal: false, // Disable WAL for benchmark speed
-        access_mode: crate::embedded::AccessMode::ReadWrite,
-        node_id: "benchmark-node".to_string(),
+        access_mode: proximadb::embedded::AccessMode::Exclusive,
+        node_id: Some("benchmark-node".to_string()),
         wal_sync_mode: "batch".to_string(),
         block_prune_mode: "sqrt".to_string(),
         block_prune_ratio: 0.2,

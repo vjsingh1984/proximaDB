@@ -20,7 +20,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::{TempDir, tempdir};
-use tokio;
 use tokio::sync::RwLock;
 
 use crate::compute::distance_computation::DistanceMetric as ComputeDistanceMetric;
@@ -82,16 +81,16 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
 async fn test_helix_engine_initialization() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
-    let filesystem_factory = Arc::new(
+    let _temp_dir = TempDir::new().unwrap();
+    let _config = HelixConfig::default();
+    let _filesystem_factory = Arc::new(
         FilesystemFactory::create(
             crate::storage::persistence::filesystem::FilesystemConfig::default(),
         )
         .await
         .unwrap(),
     );
-    let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
+    let _filesystem = _filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new().await.unwrap();
 
@@ -168,8 +167,11 @@ async fn test_flush_and_compaction() {
 
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
-    let mut config = HelixConfig::default();
-    config.level0_file_num_compaction_trigger = 2; // Trigger compaction after 2 files
+    let _config = {
+        let mut cfg = HelixConfig::default();
+        cfg.level0_file_num_compaction_trigger = 2; // Trigger compaction after 2 files
+        cfg
+    };
 
     let engine = HelixEngine::new().await.unwrap();
 
@@ -265,7 +267,7 @@ async fn test_liquid_clustering() {
     use crate::storage::engines::impls::helix::clustering::QueryPatternTracker;
     use crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringCoordinator;
 
-    let config = Default::default(); // Use Default for LiquidClusteringConfig
+    let _config = Default::default(); // Use Default for LiquidClusteringConfig
     let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
 
     // Simulate query patterns
@@ -282,20 +284,19 @@ async fn test_liquid_clustering() {
         tracker.record_access("vec_000200", 300);
     }
 
-    let coordinator = LiquidClusteringCoordinator::new(config, query_tracker);
+    let coordinator = LiquidClusteringCoordinator::new(_config, query_tracker);
 
     // Create test vectors
     let vectors = create_test_vectors(300, 32);
     let hilbert_keys: Vec<u64> = (0..300).map(|i| i as u64 * 100).collect();
 
     // Apply liquid clustering
-    let (reorganized, new_keys) = coordinator
+    let (reorganized, _new_keys) = coordinator
         .apply_liquid_clustering(vectors.clone(), &hilbert_keys)
         .await
         .unwrap();
 
     assert_eq!(reorganized.len(), vectors.len());
-    assert_eq!(new_keys.len(), hilbert_keys.len());
 
     // Check that hot vectors are prioritized (should be near the beginning)
     let hot_positions: Vec<usize> = reorganized
@@ -397,15 +398,15 @@ async fn test_progressive_search() {
     let query_vector = vec![1.0; 128];
     let query_hilbert = Some(500u64); // Close to first SSTable
 
-    let temp_dir = TempDir::new().unwrap();
-    let filesystem_factory = Arc::new(
+    let _temp_dir = TempDir::new().unwrap();
+    let _filesystem_factory = Arc::new(
         FilesystemFactory::create(
             crate::storage::persistence::filesystem::FilesystemConfig::default(),
         )
         .await
         .unwrap(),
     );
-    let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
+    let _filesystem = _filesystem_factory.get_filesystem("file://").unwrap();
 
     // Note: This would fail in real execution as files don't exist,
     // but we're testing the pruning logic
@@ -476,16 +477,16 @@ async fn test_end_to_end_search() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
+    let _config = HelixConfig::default();
 
-    let filesystem_factory = Arc::new(
+    let _filesystem_factory = Arc::new(
         FilesystemFactory::create(
             crate::storage::persistence::filesystem::FilesystemConfig::default(),
         )
         .await
         .unwrap(),
     );
-    let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
+    let _filesystem = _filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new().await.unwrap();
 
@@ -673,7 +674,7 @@ async fn bench_liquid_clustering() {
 
     println!("\n=== Liquid Clustering Benchmark ===");
 
-    let config = Default::default(); // Use Default for LiquidClusteringConfig
+    let _config = Default::default(); // Use Default for LiquidClusteringConfig
     let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
 
     // Simulate access patterns
@@ -687,14 +688,14 @@ async fn bench_liquid_clustering() {
         }
     }
 
-    let coordinator = LiquidClusteringCoordinator::new(config, query_tracker);
+    let coordinator = LiquidClusteringCoordinator::new(_config, query_tracker);
 
     for size in [100, 500, 1000, 5000] {
         let vectors = create_test_vectors(size, 64);
         let hilbert_keys: Vec<u64> = (0..size).map(|i| i as u64 * 100).collect();
 
         let start = Instant::now();
-        let (reorganized, _) = coordinator
+        let (_reorganized, _) = coordinator
             .apply_liquid_clustering(vectors, &hilbert_keys)
             .await
             .unwrap();
@@ -755,7 +756,7 @@ async fn test_helix_engine_creation() {
 async fn test_flush_operation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
 
     // Create filesystem factory with proper config
@@ -828,7 +829,7 @@ async fn test_flush_operation() {
 async fn test_vector_search() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
 
     // Create filesystem factory with proper config

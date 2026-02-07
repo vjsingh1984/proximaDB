@@ -15,7 +15,6 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 // ============================================================================
 // From: tests.rs
@@ -457,13 +456,13 @@ async fn test_cloud_io_optimization() -> Result<()> {
     // Note: is_cloud_storage() is private - removed assertion
 
     // Test with cloud path
-    let cloud_config = RaptorConfig::default();
-    let cache = Arc::new(
+    let _cloud_config = RaptorConfig::default();
+    let _cache = Arc::new(
         crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(
             1024 * 1024 * 10, // 10MB cache
         ),
     );
-    let cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new().await?;
+    let _cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new().await?;
 
     // Note: is_cloud_storage() is private - removed assertion
 
@@ -629,7 +628,7 @@ fn test_centroid_distance_matrix_performance() {
         ("XLarge", 5000, 384), // 12,497,500 distance calculations
     ];
 
-    for (name, k, dim) in test_cases {
+    for (name, k, _dim) in test_cases {
         // Calculate number of distance computations
         let (num_distances, estimated_ms) = estimate_matrix_compute_time(k);
 

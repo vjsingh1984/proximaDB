@@ -32,7 +32,6 @@ fn test_streaming_search_config() {
 
 #[test]
 fn test_performance_tracker() {
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::impls::nova::streaming_search::*;
 
     // PerformanceTracker is private, so we test through public APIs
@@ -59,7 +58,6 @@ fn test_execution_plan() {
 fn test_binary_sketch() {
     use crate::storage::engines::impls::nova::progressive_search::*;
 
-    let vector = vec![0.5, -0.3, 0.8, -0.1, 0.0];
     // BinarySketch is private, test via ProgressiveSearchConfig
     let config = ProgressiveSearchConfig::default();
     assert_eq!(config.binary_config.max_candidates, 10000);
@@ -69,7 +67,6 @@ fn test_binary_sketch() {
 fn test_int8_vector() {
     use crate::storage::engines::impls::nova::progressive_search::*;
 
-    let vector = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     // Int8Vector is private, test via int8 config
     let config = ProgressiveSearchConfig::default();
     assert_eq!(config.int8_config.max_candidates, 1000);
@@ -123,9 +120,9 @@ fn test_memory_tracker() {
     use crate::storage::engines::impls::nova::streaming_processor::*;
 
     // MemoryTracker is private, test configuration instead
-    let config = StreamingConfig::default();
-    assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);
-    assert_eq!(config.backpressure_threshold, 0.8);
+    let _config = StreamingConfig::default();
+    assert_eq!(_config.max_memory_bytes, 512 * 1024 * 1024);
+    assert_eq!(_config.backpressure_threshold, 0.8);
 }
 
 #[tokio::test]

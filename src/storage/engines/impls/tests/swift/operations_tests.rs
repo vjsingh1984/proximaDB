@@ -10,7 +10,6 @@ use super::super::super::swift::*;
 use crate::core::hardware_capabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use std::sync::Arc;
 
 // =====================================================
@@ -132,18 +131,18 @@ async fn test_optimized_operations() {
     // Initialize hardware capabilities for testing
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let ops = OptimizedSwiftOperations::new().unwrap();
+    let _ops = OptimizedSwiftOperations::new().unwrap();
 
     // NOTE: Accessing private fields ops.hardware and ops.distance_compute
     // These assertions are disabled because the fields are private
     // assert!(ops.hardware.cpu.physical_cores > 0);
 
     // Verify distance compute is initialized
-    let query = vec![1.0; 128];
+    let _query = vec![1.0; 128];
     let vectors = vec![vec![0.0; 128], vec![1.0; 128]];
 
     let mut distances = Vec::new();
-    for vector in &vectors {
+    for _vector in &vectors {
         // NOTE: Accessing private field ops.distance_compute - disabled
         // let similarity =
         //     ops.distance_compute

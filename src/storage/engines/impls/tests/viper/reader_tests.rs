@@ -13,23 +13,19 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio;
-use tracing::{debug, error, info};
+use tracing::debug;
 
 // Core imports
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::SimilarityResult;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
 use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use crate::core::service_types::VectorSearchResponse;
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::core::formats::columnar::CollectionContext;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 // Arrow imports for parquet file creation
-use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
@@ -44,14 +40,14 @@ use super::helpers::*;
 
 #[tokio::test]
 async fn test_reader_creation() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
     // Test passes if reader is created successfully
     assert!(true);
 }
 
 #[tokio::test]
 async fn test_strategy_selection_basic() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
     let context = create_test_context();
 
     let params = SearchParams {
@@ -68,7 +64,7 @@ async fn test_strategy_selection_basic() {
 
 #[tokio::test]
 async fn test_strategy_with_filters() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
     let context = create_test_context();
 
     let params = SearchParams {
@@ -89,7 +85,7 @@ async fn test_strategy_with_filters() {
 
 #[tokio::test]
 async fn test_strategy_with_quantization() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
     let context = create_test_context();
     // Note: quantization_columns field removed from CollectionContext
 
@@ -486,7 +482,7 @@ async fn test_vector_extraction_debug() -> Result<()> {
 
 #[tokio::test]
 async fn test_empty_collection_search() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
     // Note: CollectionContext structure may differ from source
     let context = create_test_context();
 
@@ -503,7 +499,7 @@ async fn test_empty_collection_search() {
 
 #[tokio::test]
 async fn test_high_dimensional_vectors() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Test with 4096-dimensional vectors (large but realistic)
     let params = SearchParams {
@@ -518,7 +514,7 @@ async fn test_high_dimensional_vectors() {
 
 #[tokio::test]
 async fn test_extreme_top_k_values() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Test with very large top_k
     let params_large = SearchParams {
@@ -542,7 +538,7 @@ async fn test_extreme_top_k_values() {
 
 #[tokio::test]
 async fn test_deeply_nested_filter_expressions() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Create deeply nested filter expression
     let filter = FilterExpression::And(vec![
@@ -600,7 +596,7 @@ async fn test_deeply_nested_filter_expressions() {
 
 #[tokio::test]
 async fn test_type_mismatch_in_filters() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // String comparison on numeric field
     let filter1 = FilterExpression::Comparison {
@@ -637,7 +633,7 @@ async fn test_type_mismatch_in_filters() {
 
 #[tokio::test]
 async fn test_null_and_missing_values() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Test null value in filter
     let filter_null = FilterExpression::Comparison {
@@ -672,7 +668,7 @@ async fn test_null_and_missing_values() {
 
 #[tokio::test]
 async fn test_numeric_boundary_values() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Test with maximum safe integer
     let filter_max = FilterExpression::Comparison {
@@ -714,7 +710,7 @@ async fn test_numeric_boundary_values() {
 
 #[tokio::test]
 async fn test_special_characters_in_fields() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Field names with special characters
     let special_fields = vec![
@@ -749,7 +745,7 @@ async fn test_special_characters_in_fields() {
 
 #[tokio::test]
 async fn test_batch_query_edge_cases() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Empty batch
     let params_empty = SearchParams {
@@ -785,7 +781,7 @@ async fn test_batch_query_edge_cases() {
 
 #[tokio::test]
 async fn test_cloud_storage_paths() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Test different cloud storage paths (validation only)
     let cloud_paths = vec![
@@ -801,7 +797,7 @@ async fn test_cloud_storage_paths() {
 
 #[tokio::test]
 async fn test_memory_estimation_edge_cases() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     // Test with zero memory
     let zero_memory_mb = 0.0;
@@ -859,10 +855,8 @@ async fn test_range_coalescing_edge_cases() {
 
 #[tokio::test]
 async fn test_concurrent_reader_access() {
-    use tokio::task::JoinSet;
-
     let reader = Arc::new(create_test_reader().await);
-    let mut tasks = JoinSet::new();
+    let mut tasks = tokio::task::JoinSet::new();
 
     // Spawn multiple concurrent searches
     for i in 0..10 {
@@ -891,7 +885,7 @@ async fn test_concurrent_reader_access() {
 
 #[tokio::test]
 async fn test_unicode_handling() {
-    let reader = create_test_reader().await;
+    let _reader = create_test_reader().await;
 
     let unicode_values = vec![
         "Hello 世界",    // Chinese
