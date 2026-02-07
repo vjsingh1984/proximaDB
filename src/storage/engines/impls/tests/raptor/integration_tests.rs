@@ -15,6 +15,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // ============================================================================
 // From: tests.rs
@@ -545,7 +546,7 @@ async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
 
         let columnar = ColumnarCentroids {
             count: num_centroids as u32,
-            dimension: dimension,
+            dimension,
             rowgroup_ids,
             transposed_data,
             encoding_metadata: vec![],

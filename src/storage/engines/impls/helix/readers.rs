@@ -13,6 +13,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
 // Filter evaluator now uses unified module from core

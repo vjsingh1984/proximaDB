@@ -60,7 +60,7 @@ impl SstEngine {
         &self,
         ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let search_start = std::time::Instant::now();
+        let _search_start = std::time::Instant::now();
 
         // Track metadata access for cache optimization
         if let Some(orch) = self.orchestrator() {
@@ -514,7 +514,7 @@ impl SstEngine {
         }
 
         // For adaptive mode with small datasets, search all files
-        if let SearchMode::Adaptive { threshold } = search_mode {
+        if let SearchMode::Adaptive { threshold: _threshold } = search_mode {
             if all_files.len() <= 3 {
                 return Ok(all_files);
             }
@@ -533,7 +533,7 @@ impl SstEngine {
 
         for file_path in &all_files {
             match self.load_sst_header_centroid(file_path).await {
-                Ok(Some((centroid, max_distance_to_centroid))) => {
+                Ok(Some((centroid, _max_distance_to_centroid))) => {
                     if centroid.len() == query_vector.len() {
                         // Compute distance from query to file centroid
                         let distance = self.compute_centroid_distance(

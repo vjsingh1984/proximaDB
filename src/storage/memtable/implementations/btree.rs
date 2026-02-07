@@ -10,6 +10,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -22,7 +23,7 @@ use super::super::core::{MemtableCore, MemtableMVCC, MemtableMetrics};
 #[derive(Debug)]
 pub struct BTreeMemtable<K, V>
 where
-    K: Clone + Ord + Send + Sync + Debug,
+    K: Clone + Ord + Hash + Send + Sync + Debug,
     V: Clone + Send + Sync + Debug + 'static,
 {
     /// Main BTree storage ordered by key
@@ -43,7 +44,7 @@ where
 
 impl<K, V> BTreeMemtable<K, V>
 where
-    K: Clone + Ord + Send + Sync + Debug,
+    K: Clone + Ord + Hash + Send + Sync + Debug,
     V: Clone + Send + Sync + Debug,
 {
     /// Create new BTree memtable
@@ -88,7 +89,7 @@ where
 #[async_trait]
 impl<K, V> MemtableCore<K, V> for BTreeMemtable<K, V>
 where
-    K: Clone + Ord + Send + Sync + Debug,
+    K: Clone + Ord + Hash + Send + Sync + Debug,
     V: Clone + Send + Sync + Debug + 'static,
 {
     async fn insert(&self, key: K, value: V) -> Result<u64> {
@@ -259,7 +260,7 @@ where
 #[async_trait]
 impl<K, V> MemtableMVCC<K, V> for BTreeMemtable<K, V>
 where
-    K: Clone + Ord + Send + Sync + Debug,
+    K: Clone + Ord + Hash + Send + Sync + Debug,
     V: Clone + Send + Sync + Debug + 'static,
 {
     async fn get_versions(&self, logical_key: &str) -> Result<Vec<(K, V)>> {

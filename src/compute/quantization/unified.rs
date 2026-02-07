@@ -1283,7 +1283,7 @@ impl UnifiedQuantizationEngine {
     ) -> Result<Vec<f32>> {
         let CodebookData::ProductQuantization {
             centroids,
-            _subvector_dim: subvector_dim,
+            _subvector_dim: _,
         } = &codebook.data
         else {
             anyhow::bail!("Invalid codebook type for PQ dequantization");
