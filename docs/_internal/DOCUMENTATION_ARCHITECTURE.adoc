@@ -7,6 +7,21 @@ This document defines the organization, canonical sources, and authoring convent
 
 == Canonical Sources by Topic
 
+=== Anchoring Artifacts (Source of Truth)
+
+- Product Vision: `docs/00-product/VISION.adoc` _(supersedes `docs/concepts/vision.adoc`)_
+- Product Requirements: `docs/00-product/PRD.adoc`
+- Competitive Landscape: `docs/00-product/COMPETITIVE_LANDSCAPE.adoc`
+- Architecture: `docs/concepts/architecture.adoc`
+- Strategic Roadmap: `docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc`
+- Feature Dashboard: `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc`
+- Technical Debt: `docs/10-quality/TECHNICAL_DEBT.adoc` _(Markdown copy at `docs/TECHNICAL_DEBT.md`)_
+- Use Case Catalog: `docs/11-usecases/USECASE_CATALOG.adoc`
+- ibkrtrading Dogfood: `docs/11-usecases/IBKRTRADING_DOGFOOD.adoc`
+- Design Patterns: `docs/12-design/DESIGN_PATTERNS.adoc`
+
+=== Reference Documentation
+
 - Getting Started: `docs/01-getting-started/getting_started.adoc`
 - API Reference (REST): `docs/03-reference/rest-api-specification.adoc`
 - API Reference (Graph): `docs/03-reference/graph_api_reference.adoc`
@@ -16,10 +31,13 @@ This document defines the organization, canonical sources, and authoring convent
 - Security (Auth Flow): `docs/06-security/unified_authentication_flow.adoc`
 - Architecture (Storage): `docs/architecture/storage-layer.adoc`
 - Storage Engine Layouts: `docs/technical/storage_engine_layouts.adoc`
+- Strategic Analysis: `docs/10-quality/proximadb-strategic-analysis.adoc`
+- Code Coverage: `docs/10-quality/code-coverage-report.adoc`
 
 [NOTE]
 ====
 The `docs/09-roadmap` directory is authoritative for roadmap content and must not be edited as part of routine doc cleanup.
+The `docs/00-product` directory contains product-level anchoring artifacts and should only be updated when strategy changes.
 ====
 
 == Duplication Policy
@@ -67,4 +85,6 @@ The `docs/09-roadmap` directory is authoritative for roadmap content and must no
 - Standardize mermaid init blocks across security and storage deep-dive docs.
 - Cross-link enterprise deployment docs to the single production runbook to avoid drift.
 - Review storage engine deep-dives for overlapping content with `storage_engine_layouts.adoc`.
+- Deprecate `docs/concepts/vision.adoc` in favor of `docs/00-product/VISION.adoc` (add redirect notice).
+- Ensure all 10 anchoring artifacts stay mutually consistent when any one is updated.
 

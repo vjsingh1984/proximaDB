@@ -23,6 +23,8 @@ flowchart TB
     DOC[Document Ops]
     GRAPH[Graph Ops]
     OBS[Observability Ops]
+    TS[Time-Series Ops]
+    EVT[Event Store Ops]
     UQ[Unified Query]
   end
 
@@ -32,6 +34,9 @@ flowchart TB
     ENG[Vector Engines]
     OBSSTORE[Observability Storage
 (partitioned logs, time‑series, traces)]
+    TSENG[Time-Series Engine\n(TST, columnar, time-partitioned)]
+    EVTENG[Event Sourcing Engine\n(append-only, indexed)]
+    BM25[Hybrid Search\n(BM25 + Vector RRF)]
   end
 
   subgraph ControlPlane[Control Plane]
@@ -43,6 +48,8 @@ flowchart TB
   API --> Services --> WAL --> MEM
   MEM --> ENG
   MEM --> OBSSTORE
+  MEM --> TSENG
+  MEM --> EVTENG
   Services --> ControlPlane
 ----
 
@@ -52,6 +59,8 @@ flowchart TB
 * **Pluggable engines**: storage engines are optimized for different workloads.
 * **Model adapters**: each model (vector/document/graph/obs) has a dedicated service layer.
 * **Developer‑first**: REST + gRPC are primary; pgwire is experimental.
+* **Time-series-native**: first-class time-partitioned storage with ASOF joins and downsampling.
+* **Event-sourcing-native**: append-only immutable event logs for compliance and audit trails.
 
 == Request Flow (Write Path)
 
@@ -92,6 +101,55 @@ sequenceDiagram
   UQ->>O: Log/metric query
   UQ-->>C: Fused result
 ----
+
+== Target 8-Model Architecture
+
+ProximaDB's vision extends the current 4-model architecture (vector, graph, document, observability) to 8 models:
+
+[cols="1,2,2,1", options="header"]
+|===
+| Model | Engine | Use Case | Status
+
+| *Vector*
+| SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR
+| Similarity search, embeddings, RAG
+| Production
+
+| *Graph*
+| ORION (production), PULSAR (experimental), QUASAR (experimental)
+| Relationships, traversals, knowledge graphs
+| Production (ORION)
+
+| *Document*
+| WAL-backed JSON store
+| Structured data, metadata, state management
+| Production
+
+| *Observability*
+| Partitioned logs, time-series metrics, trace spans
+| Monitoring, SIEM, audit
+| Production
+
+| *Time-Series*
+| TST (Time-Series Tree)
+| OHLC bars, IoT sensors, metrics, streaming data
+| Planned
+
+| *Event Sourcing*
+| Append-only WAL with indexed queries
+| Audit trails, compliance, CDC, order history
+| Planned
+
+| *Relational*
+| DataFusion-backed SQL tables
+| Structured queries, joins, aggregations
+| Foundation exists
+
+| *Media*
+| Multi-modal embeddings (CLIP, ImageBind)
+| Image, audio, video search
+| Planned
+|===
 
 == Federated Query Engine
 
@@ -176,11 +234,70 @@ When combining results from multiple models, the engine supports:
 * **Reciprocal Rank Fusion (RRF)** - Weighted rank combination
 * **Ranked Fusion** - Custom weights per model
 
+== Hybrid Search Architecture
+
+Hybrid search combines BM25 keyword matching with vector similarity for improved retrieval accuracy.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    Q[Query] --> BM25[BM25 Index\n(tantivy)]
+    Q --> VEC[Vector Search\n(engine)]
+    BM25 --> RRF[Reciprocal Rank\nFusion]
+    VEC --> RRF
+    RRF --> RES[Ranked Results]
+----
+
+=== Fusion Strategies
+
+* **Reciprocal Rank Fusion (RRF)**: Default. Combines ranked lists without score normalization. Robust across different score distributions.
+* **Weighted Linear**: User-specified weights for BM25 vs vector scores. Useful when one signal is known to be more reliable.
+* **Learned Fusion**: RL-based weight optimization using the existing Thompson Sampling planner.
+
+=== Integration Points
+
+* BM25 index maintained alongside vector index per collection
+* Queries can specify `search_mode`: `vector_only`, `keyword_only`, `hybrid` (default)
+* Filter predicates applied before fusion for efficiency
+
+== CQRS and Event Sourcing Pattern
+
+For workloads like algorithmic trading, ProximaDB supports Command Query Responsibility Segregation (CQRS) combined with Event Sourcing.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    subgraph Commands[Command Path]
+        CMD[Write Command] --> VAL[Validation]
+        VAL --> EVT[Event Store\n(append-only)]
+        EVT --> PROJ[Projections]
+    end
+
+    subgraph Queries[Query Path]
+        QRY[Read Query] --> CACHE[Cache Layer]
+        CACHE --> MAT[Materialized Views]
+        MAT --> IDX[Indexes]
+    end
+
+    PROJ --> MAT
+    EVT --> CDC[CDC Stream]
+----
+
+=== Key Properties
+
+* **Immutability**: Events are append-only. No updates or deletes. Required for MiFID II and SEC compliance.
+* **Projections**: Materialized views are derived from the event stream. Can be rebuilt from scratch.
+* **Temporal Queries**: Query state at any point in time by replaying events up to a timestamp.
+* **CDC Integration**: Event stream can be consumed by external systems via CDC sinks (Kafka, webhooks).
+
 == Current Implementation Notes
 
 * **Phase 1 Complete**: All 6 storage engines, WAL, APIs, quantization, AXIS indexes.
 * **Phase 2 Complete**: Cross-model queries, graph database (ORION), document store, observability.
 * **Phase 3 In Progress**: External catalogs, streaming/CDC, distributed operations.
+* **Phase 4 Planned**: Time-series engine, event sourcing, hybrid search (BM25), framework integrations.
 * Document and observability services use WAL‑backed recovery.
 * Unified query execution supports VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS.
 
@@ -197,7 +314,10 @@ When combining results from multiple models, the engine supports:
 | Unified query | P2 | ✅ Stable | Cross-model SQL
 | External catalogs | P3 | 🔄 In Progress | Iceberg, Delta Lake
 | Distributed ops | P3 | 🔄 In Progress | Raft, sharding
+| Hybrid search (BM25) | P4 | Planned | tantivy integration
+| Time-series engine | P4 | Planned | TST engine
+| Event sourcing | P4 | Planned | Append-only WAL
 |===
 
-See link:vision.adoc[Vision Document] for phase definitions.
+See link:vision.adoc[Vision Document (legacy)] and link:../00-product/VISION.adoc[Refined Vision Document] for phase definitions.
 

@@ -3,11 +3,11 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: December 2025
+:last-updated: February 2026
 :verified: true
 
 [.lead]
-**Central index of all 126 features with accurate implementation status based on codebase verification**
+**Central index of all 143 features with accurate implementation status based on codebase verification**
 
 [TIP]
 ====
@@ -24,6 +24,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | **Phase 1** | Format & Catalog Contract (Foundation) | ✅ Complete
 | **Phase 2** | Cross-Model Query & Indexing (Differentiation) | ✅ Complete
 | **Phase 3** | Deployment & Ecosystem Integration (Scale) | 🔄 In Progress
+| **Phase 4** | Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search) | Planned
 |===
 
 == 🎯 Executive Summary
@@ -44,8 +45,12 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | Platform Features | P3 | 8 | 4 | 50%
 | Developer SDKs | P3 | 9 | 1 | 11%
 | Documentation | P1-P2 | 35 | 35 | 100%
+| Time-Series Engine | P4 | 5 | 0 | 0%
+| Event Sourcing | P4 | 4 | 0 | 0%
+| Hybrid Search (BM25) | P4 | 4 | 0 | 0%
+| Framework Integrations | P4 | 4 | 0 | 0%
 | **MVP (P1+P2)** | | **83** | **80** | **96%**
-| **TOTAL** | | **135** | **105** | **78%**
+| **TOTAL** | | **152** | **105** | **69%**
 |===
 
 [NOTE]
@@ -53,6 +58,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 * **P1** = Phase 1 (Format & Catalog) - MVP Foundation
 * **P2** = Phase 2 (Cross-Model Query) - Differentiation
 * **P3** = Phase 3 (Ecosystem Integration) - Scale
+* **P4** = Phase 4 (Context Database Evolution) - Time-Series, Event Sourcing, Hybrid Search
 * **OOS** = Out of Scope for core vision (see link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap])
 ====
 
@@ -111,8 +117,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
 | 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR; `src/graph/engines/orion/`
-| 037 | PULSAR Graph Engine | Graph | ⚠️ Partial | Distributed engine; `src/graph/engines/pulsar/` (wiring pending)
-| 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine; `src/graph/engines/quasar/` (wiring pending)
+| 037 | PULSAR Graph Engine | Graph | ⚠️ Partial | Distributed engine; `src/graph/engines/pulsar/` (experimental, not wired to service layer)
+| 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine; `src/graph/engines/quasar/` (experimental, not wired to service layer)
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
 | 040 | UnifiedAuthService | Security | ⚠️ Partial | SSO, JWT, API Key support. mTLS pending.
@@ -203,7 +209,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | 114 | Java SDK | Developer | ❌ | Client library
 | 115 | C++ SDK | Developer | ❌ | Client library
-| 116 | Rust Native SDK | Developer | ❌ | Client library
+| 116 | Rust Native SDK | Developer | ✅ | Client library; `clients/rust/`
 | 117 | Go SDK | Developer | ❌ | Client library
 | 118 | .NET SDK | Developer | ❌ | Client library
 | 119 | Node.js SDK | Developer | ❌ | Client library
@@ -215,6 +221,27 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 124 | Circuit Breaker | Enterprise | ✅ | `src/core/resilience/circuit_breaker.rs`
 | 125 | Retry with Backoff | Enterprise | ✅ | `src/core/resilience/retry.rs`
 | 126 | Health Aggregator | Enterprise | ✅ | `src/core/resilience/health_aggregator.rs`
+
+| 127 | BM25 Full-Text Index (tantivy) | Hybrid Search | Planned | P4 requirement
+| 128 | Reciprocal Rank Fusion | Hybrid Search | Planned | P4 requirement
+| 129 | Hybrid Search API | Hybrid Search | Planned | P4 requirement
+| 130 | Search Mode Selection | Hybrid Search | Planned | vector_only/keyword_only/hybrid
+
+| 131 | TST Time-Partitioned Storage | Time-Series | Planned | 7th storage engine
+| 132 | ASOF Joins | Time-Series | Planned | Point-in-time lookups
+| 133 | Time-Bucketing / Downsampling | Time-Series | Planned | Multi-granularity
+| 134 | OHLC Aggregation | Time-Series | Planned | Native OHLC computation
+| 135 | Grafana Query API | Time-Series | Planned | Direct datasource
+
+| 136 | Append-Only Event Store | Event Sourcing | Planned | Immutable event log
+| 137 | Event Stream Projections | Event Sourcing | Planned | Materialized views
+| 138 | Temporal Queries | Event Sourcing | Planned | Historical state replay
+| 139 | Compliance Event Immutability | Event Sourcing | Planned | MiFID II / SEC
+
+| 140 | LangChain VectorStore | Framework Integration | Planned | Python integration
+| 141 | LlamaIndex Integration | Framework Integration | Planned | Python integration
+| 142 | Haystack Integration | Framework Integration | Planned | Python integration
+| 143 | CrewAI Integration | Framework Integration | Planned | Agent memory
 |===
 
 [[category-index]]
@@ -411,8 +438,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 == 📋 Notes
 
 === Tracking Methodology
-* **ID Format**: 001-121 sequential numbering
-* **Status Icons**: ✅ Complete, 🔄 In Progress, ❌ Not Started
+* **ID Format**: 001-143 sequential numbering
+* **Status Icons**: ✅ Complete, 🔄 In Progress, ❌ Not Started, Planned (P4)
 * **Priority**: Lower numbers = higher priority
 * **Categories**: Logical grouping for management
 
@@ -422,10 +449,11 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 * **Quarterly**: Strategic realignment
 
 ---
-*Last Updated*: December 30, 2025 +
-*Total Features*: 135 +
+*Last Updated*: February 6, 2026 +
+*Total Features*: 152 +
 *MVP Features (P1+P2)*: 83 features, 96% complete +
 *Phase 3 Features*: 42 features, 24% complete +
+*Phase 4 Features*: 17 features, 0% complete +
 *Documentation*: 100% complete +
 *Implementation Roadmaps*: Streaming, CDC, SDKs - Ready for P3 execution
 

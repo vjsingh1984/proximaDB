@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: December 2025
+:last-updated: February 2026
 
 [.lead]
 **Strategic roadmap aligned with the Vision document phases. This is the authoritative source for feature status and prioritization.**
@@ -14,6 +14,7 @@ This roadmap implements the three-phase approach from link:../../concepts/vision
 * **Phase 1**: Format and Catalog Contract (Foundation)
 * **Phase 2**: Cross-Model Query and Indexing (Differentiation)
 * **Phase 3**: Deployment and Ecosystem Integration (Scale)
+* **Phase 4**: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search)
 
 == Status Legend
 
@@ -246,11 +247,73 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 | Go SDK | 🔄 In Progress | P2 | Basic implementation
 | Java SDK | 📅 Phase 3 | P3 | JVM ecosystem
 | Node.js SDK | 📅 Phase 3 | P3 | JavaScript ecosystem
-| Rust SDK | 💡 Nice to Have | - | Native Rust
+| Rust SDK | ✅ Complete | P1 | Native Rust; `clients/rust/`
 | C++ SDK | 💡 Nice to Have | - | C++ ecosystem
 | .NET SDK | 💡 Nice to Have | - | .NET ecosystem
 | Ruby SDK | 💡 Nice to Have | - | Ruby ecosystem
 | Swift SDK | 💡 Nice to Have | - | Apple ecosystem
+|===
+
+== Phase 4: Context Database Evolution
+
+[.lead]
+_Category Leadership: Time-series, event sourcing, hybrid search, and framework integrations transform ProximaDB into "The Context Database"._
+
+=== Hybrid Search (BM25 + Vector) [Planned]
+
+|===
+| Feature | Status | Phase | Notes
+
+| tantivy BM25 Integration | Planned | P4 | Full-text indexing via tantivy crate
+| Reciprocal Rank Fusion (RRF) | Planned | P4 | Default fusion strategy for hybrid results
+| Weighted Linear Fusion | Planned | P4 | User-specified BM25/vector weights
+| Hybrid Search API | Planned | P4 | search_mode: vector_only, keyword_only, hybrid
+|===
+
+=== Time-Series Engine (TST) [Planned]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Columnar Time-Partitioned Storage | Planned | P4 | 7th storage engine for time-series data
+| ASOF Joins | Planned | P4 | Point-in-time lookups across time-series
+| Time-Bucketing and Downsampling | Planned | P4 | 5s, 5m, 1h, 1d granularities
+| OHLC Aggregation | Planned | P4 | Native open-high-low-close computation
+| Grafana-Compatible Query API | Planned | P4 | Direct Grafana datasource integration
+|===
+
+=== Event Sourcing Engine [Planned]
+
+|===
+| Feature | Status | Phase | Notes
+
+| Append-Only WAL Store | Planned | P4 | Immutable event log with indexed queries
+| Event Stream Projections | Planned | P4 | Materialized views from event streams
+| Temporal Queries | Planned | P4 | Query state at any historical timestamp
+| MiFID II / SEC Compliance | Planned | P4 | Immutable audit trails for financial compliance
+|===
+
+=== Framework Integrations [Planned]
+
+|===
+| Feature | Status | Phase | Notes
+
+| LangChain VectorStore | Planned | P4 | VectorStore, Retriever, ChatMessageHistory
+| LlamaIndex Integration | Planned | P4 | VectorStoreIndex, StorageContext
+| Haystack Integration | Planned | P4 | DocumentStore adapter
+| CrewAI Integration | Planned | P4 | Agent memory backend
+|===
+
+=== ibkrtrading Dogfood Milestones [Cross-Cutting]
+
+|===
+| Milestone | Dependencies | Phase | Target
+
+| Replace JSONL with Event Sourcing | Event Sourcing Engine | P4 | Q1 2026
+| Replace SQLite with Document Store | Document Store (exists) | P4 | Q1 2026
+| Replace PostgreSQL with Time-Series | TST Engine | P4 | Q2 2026
+| Cross-Model Trading Queries | All engines | P4 | Q3 2026
+| Full ProximaDB-Only Operation | All above | P4 | Q3 2026
 |===
 
 == Features Marked for Future Consideration
@@ -354,29 +417,57 @@ For v1.0 release, the following must be complete:
 
 == Quarterly Focus
 
-=== Q1 2025 [✅ Complete]
+=== Q1 2025 [Complete]
 
 * Storage engine consolidation
 * Unified quantization framework
 * DataFusion integration foundation
 
-=== Q2 2025 [🔄 In Progress]
+=== Q2 2025 [Complete]
 
 * Cross-model query optimization
-* Go SDK development
-* PULSAR/QUASAR engine wiring
+* Go SDK development started
+* PULSAR/QUASAR engine foundation
 
-=== Q3 2025 [📅 Planned]
+=== Q3 2025 [Complete]
 
-* External catalog integration (Iceberg, Delta)
-* Streaming foundation
-* Enterprise security hardening
+* External catalog integration foundation (Iceberg, Delta stubs)
+* Streaming specification complete
+* Enterprise security foundation
 
-=== Q4 2025 [📅 Planned]
+=== Q4 2025 [Complete]
 
-* Distributed operations GA
-* Compute engine adapters (Trino, Spark)
-* Multi-region support
+* Strategic analysis and gap identification
+* Documentation comprehensive overhaul
+* CI/CD pipeline hardening
+
+=== Q1 2026 [In Progress]
+
+* Hybrid search (BM25) implementation
+* Event sourcing engine foundation
+* Framework integrations (LangChain, LlamaIndex)
+* ibkrtrading: Replace JSONL with event sourcing
+
+=== Q2 2026 [Planned]
+
+* Time-series engine (TST) implementation
+* ibkrtrading: Replace PostgreSQL with TST
+* Backup / point-in-time recovery
+* mTLS completion
+
+=== Q3 2026 [Planned]
+
+* ibkrtrading: Full ProximaDB-only operation
+* Integrated inference (ONNX runtime)
+* Streaming subscriptions
+* Published benchmarks
+
+=== Q4 2026 [Planned]
+
+* Raft consensus foundation
+* Cross-model ACID transactions
+* DiskANN index
+* CNCF submission preparation
 
 == Metrics and Success Criteria
 
@@ -401,6 +492,6 @@ For v1.0 release, the following must be complete:
 
 ---
 
-_Last Updated_: December 30, 2025
+_Last Updated_: February 6, 2026
 _Version_: 0.2.0
-_Next Review_: Q1 2025 End
+_Next Review_: Q1 2026 End
