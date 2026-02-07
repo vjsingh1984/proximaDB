@@ -19,7 +19,13 @@ use proximadb::services::graph_collection::GraphCollectionService;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-const ENGINES: &[&str] = &["ORION", "PULSAR", "QUASAR"]; // Falls back if not fully implemented
+const ENGINES: &[&str] = &[
+    "ORION",
+    #[cfg(feature = "distributed-graph")]
+    "PULSAR",
+    #[cfg(feature = "tiered-graph")]
+    "QUASAR",
+];
 
 async fn ensure_graph_with_engine(
     collection_service: &GraphCollectionService,

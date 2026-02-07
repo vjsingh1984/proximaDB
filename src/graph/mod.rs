@@ -66,7 +66,9 @@ pub mod service_algorithms;
 
 // Re-export public types
 pub use engines::orion::OrionGraphEngine;
+#[cfg(feature = "distributed-graph")]
 pub use engines::pulsar::PulsarGraphEngine;
+#[cfg(feature = "tiered-graph")]
 pub use engines::quasar::QuasarGraphEngine;
 pub use engines::{
     EmbeddingMode, EngineCapabilities, GraphEngineConfig, GraphEngineFactory, GraphEngineType,

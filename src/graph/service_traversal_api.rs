@@ -58,6 +58,7 @@ impl super::GraphOperationsService {
                 )
                 .await?
             }
+            #[cfg(feature = "distributed-graph")]
             crate::graph::engines::GraphEngineImpl::Pulsar(p) => {
                 let nodes = p
                     .cross_shard_traversal(&request.start_node_id, request.max_depth)
