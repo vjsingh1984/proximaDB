@@ -359,8 +359,8 @@ pub type OptimizationRule = String; // Will be enhanced in future phases
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::context::DataSensitivityLevel;
     use crate::storage::tenant::PerformanceRequirements;
+    use crate::storage::tenant::context::DataSensitivityLevel;
 
     #[tokio::test]
     async fn test_domain_creation() {

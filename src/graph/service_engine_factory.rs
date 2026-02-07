@@ -118,8 +118,7 @@ impl super::GraphOperationsService {
                             .join(graph_id)
                             .join("quasar_cold");
                     }
-                    let quasar =
-                        crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
+                    let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
                     crate::graph::engines::GraphEngineImpl::Quasar(quasar)
                 }
                 #[cfg(not(feature = "tiered-graph"))]
