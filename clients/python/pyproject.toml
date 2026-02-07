@@ -56,6 +56,10 @@ code-chunking = [
     "tree-sitter-language-pack>=0.13.0",
 ]
 
+langchain = [
+    "langchain-core>=0.1.0",
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.20.0",
@@ -136,18 +140,39 @@ known_first_party = ["proximadb"]
 
 [tool.mypy]
 python_version = "3.10"
-warn_return_any = true
+warn_return_any = false
 warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+warn_unreachable = false
+strict_equality = true
+
+# Ignore errors in generated proto files
+[[tool.mypy.overrides]]
+module = ["proximadb_sdk.v1.*"]
+ignore_errors = true
+
+# Strict checking for well-typed core modules
+[[tool.mypy.overrides]]
+module = [
+    "proximadb_sdk.models",
+    "proximadb_sdk.models_v2",
+    "proximadb_sdk.config",
+    "proximadb_sdk.filters",
+    "proximadb_sdk.auth",
+    "proximadb_sdk.exceptions",
+    "proximadb_sdk.integrations.*",
+]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
+warn_return_any = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

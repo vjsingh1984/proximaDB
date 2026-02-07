@@ -582,6 +582,14 @@ if _circuit_breaker_available:
         ]
     )
 
+# LangChain integration (if langchain-core is installed)
+try:
+    from .integrations.langchain import ProximaDBVectorStore
+
+    _langchain_available = True
+except ImportError:
+    _langchain_available = False
+
 # Backwards compatibility aliases
 IndexConfig = IndexConfiguration  # Alias for backwards compatibility
 Vector = VectorRecord  # Alias for backwards compatibility
@@ -592,6 +600,9 @@ __all__.extend(
         "Vector",
     ]
 )
+
+if _langchain_available:
+    __all__.append("ProximaDBVectorStore")
 
 # Graph Analytics
 try:
