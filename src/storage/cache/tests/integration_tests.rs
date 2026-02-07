@@ -175,10 +175,8 @@ async fn test_cache_under_memory_pressure() {
     // Create caches with limited memory (values in MB, not bytes!)
     // For small caches, use 1 MB minimum since the API takes MB
     let vector_cache = Arc::new(MetadataStore::new(1)); // 1MB (smallest unit)
-    let query_cache = Arc::new(QueryCache::new(1)); // 1MB 
+    let query_cache = Arc::new(QueryCache::new(1)); // 1MB
     let filter_cache = Arc::new(BitmapFilterCache::new(1)); // 1MB
-
-    let orchestrator = orchestrator;
 
     // Fill caches to capacity
     for i in 0..1000 {

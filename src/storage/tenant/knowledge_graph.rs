@@ -344,8 +344,8 @@ impl DomainKnowledgeGraph {
 
     fn create_business_mapping_for_collection(
         &self,
-        collection_id: &str,
-        bridge_config: &CollectionBridgeConfig,
+        _collection_id: &str,
+        _bridge_config: &CollectionBridgeConfig,
     ) -> Result<BusinessMapping> {
         // Create business mapping based on domain context
         Ok(BusinessMapping {
@@ -362,7 +362,7 @@ impl DomainKnowledgeGraph {
     fn apply_cross_domain_business_intelligence(
         &self,
         composed_results: &[DomainCompositionResult],
-        composition_query: &CrossDomainCompositionQuery,
+        _composition_query: &CrossDomainCompositionQuery,
     ) -> Result<CrossDomainBusinessIntelligence> {
         // Foundation implementation for cross-domain intelligence
         Ok(CrossDomainBusinessIntelligence {
@@ -505,7 +505,7 @@ impl DomainQueryOptimizer {
         Ok(optimized)
     }
 
-    fn extract_entity_type_filter(&self, query: &DomainEntityQuery) -> Option<String> {
+    fn extract_entity_type_filter(&self, _query: &DomainEntityQuery) -> Option<String> {
         // Extract entity type based on business context
         match self.business_context.primary_function.as_str() {
             "risk_management" => Some("risk_entity".to_string()),
@@ -514,7 +514,7 @@ impl DomainQueryOptimizer {
         }
     }
 
-    fn generate_performance_hints(&self, query: &DomainEntityQuery) -> Vec<String> {
+    fn generate_performance_hints(&self, _query: &DomainEntityQuery) -> Vec<String> {
         let mut hints = Vec::new();
 
         // Business context-specific performance hints

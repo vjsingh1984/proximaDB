@@ -21,11 +21,9 @@ use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::{
     EmbeddingVersion, Entity, MetadataFilter, Provenance, Relation, TemporalInfo, TypedMetadata,
 };
-use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::UnifiedStorageEngine;
 use crate::storage::kv::{FsKV, StorageKV};
-use tokio::io::AsyncWriteExt;
 
 /// Core trait for entity storage operations
 #[async_trait]
@@ -82,7 +80,7 @@ pub struct EntityHeader {
 pub struct ProximaEntityStore {
     /// Storage engine for vectors
     #[allow(dead_code)]
-    vector_engine: Arc<dyn UnifiedStorageEngine>,
+    _vector_engine: Arc<dyn UnifiedStorageEngine>,
 
     /// Relations store (to be implemented)
     relations_store: Arc<dyn RelationsStore>,
@@ -101,7 +99,7 @@ pub struct ProximaEntityStore {
     embeddings: RwLock<HashMap<String, Vec<f32>>>,
 
     /// Optional vector service for engine-backed persistence
-    vector_service: Option<Arc<VectorOperationsService>>,
+    vector_service: Option<Arc<crate::services::operations::vectors::VectorOperationsService>>,
 
     /// Entity ↔ Vector index (in-memory; rebuilt or persisted in future)
     entity_to_vectors: RwLock<HashMap<String, Vec<String>>>,
@@ -119,7 +117,7 @@ impl ProximaEntityStore {
         provenance_registry: Arc<dyn ProvenanceRegistry>,
     ) -> Self {
         Self {
-            vector_engine,
+            _vector_engine: vector_engine,
             relations_store,
             provenance_registry,
             headers: RwLock::new(HashMap::new()),
@@ -138,7 +136,7 @@ impl ProximaEntityStore {
         vector_engine: Arc<dyn UnifiedStorageEngine>,
         relations_store: Arc<dyn RelationsStore>,
         provenance_registry: Arc<dyn ProvenanceRegistry>,
-        vector_service: Arc<VectorOperationsService>,
+        vector_service: Arc<crate::services::operations::vectors::VectorOperationsService>,
     ) -> Self {
         let mut s = Self::new(vector_engine, relations_store, provenance_registry);
         s.vector_service = Some(vector_service);
@@ -308,11 +306,12 @@ impl EntityStore for ProximaEntityStore {
             let mut v2e = self.vector_to_entity.write().unwrap();
             let entry = e2v.entry(entity.id.clone()).or_default();
             for embedding in &entity.embeddings {
+                let _modality = embedding.modality;
                 let key = Self::embedding_key(
                     collection_id,
                     &entity.id,
                     &embedding.model_id,
-                    &format!("{:?}", embedding.modality),
+                    &format!("{:?}", _modality),
                 );
                 if !entry.iter().any(|k| k == &key) {
                     entry.push(key.clone());
@@ -413,7 +412,7 @@ impl EntityStore for ProximaEntityStore {
                     provenance,
                     temporal,
                 },
-                Err(_e) => {
+                Err(_) => {
                     // If deserialization fails, check test_entity_headers in test mode
                     #[cfg(test)]
                     {
@@ -601,7 +600,7 @@ impl EntityStore for ProximaEntityStore {
                     }
                 }
             }
-        } else if let Some(filter) = core_filter {
+        } else if let Some(_filter) = core_filter {
             // Implement efficient pure metadata filter path using entity headers
             if let Some(ref metadata_filter) = metadata_filter {
                 results = self
@@ -792,8 +791,8 @@ impl ProximaEntityStore {
     /// Check if typed field matches filter clause
     fn typed_field_matches(
         &self,
-        typed_field: &crate::proto::proximadb_v1::TypedField,
-        clause: &crate::proto::proximadb_v1::FilterClause,
+        _typed_field: &crate::proto::proximadb_v1::TypedField,
+        _clause: &crate::proto::proximadb_v1::FilterClause,
     ) -> bool {
         // For now, simplified matching - in full implementation would handle typed field values properly
         // This is a placeholder since TypedField structure needs to be analyzed further
@@ -857,7 +856,7 @@ impl ProximaEntityStore {
         filters: &'a [MetadataFilter],
         batch_size: usize,
     ) -> impl futures::Stream<Item = Result<Vec<Entity>>> + 'a {
-        use futures::stream::{self, StreamExt};
+        use futures::{StreamExt, stream};
 
         #[cfg(test)]
         let total_count = self.test_entity_headers.read().unwrap().len();
@@ -939,11 +938,11 @@ impl ProximaEntityStore {
                         // TODO: Implement header-level filtering once EntityHeader serialization is resolved
                         // For now, defer to entity-level filtering
                         for filter in filters {
-                            if let Ok(Some(entity)) = self
+                            if let Ok(Some(_entity)) = self
                                 .get_entity(collection_id, entity_id, false, false)
                                 .await
                             {
-                                if !self.entity_matches_metadata_filter(&entity, filter) {
+                                if !self.entity_matches_metadata_filter(&_entity, filter) {
                                     all_match = false;
                                     break;
                                 }
@@ -968,32 +967,6 @@ impl ProximaEntityStore {
                 Ok(results)
             }
         })
-    }
-
-    #[allow(dead_code)]
-    async fn list_entities(
-        &self,
-        collection_id: &str,
-        offset: usize,
-        limit: usize,
-    ) -> Result<Vec<Entity>> {
-        let prefix = format!("{}/entity/", collection_id);
-        let mut ids: Vec<String> = {
-            let headers = self.headers.read().unwrap();
-            headers
-                .keys()
-                .filter_map(|k| k.strip_prefix(&prefix).map(|rest| rest.to_string()))
-                .collect()
-        }; // Lock is released here
-        ids.sort();
-        let slice = ids.into_iter().skip(offset).take(limit);
-        let mut out = Vec::new();
-        for id in slice {
-            if let Some(entity) = self.get_entity(collection_id, &id, false, false).await? {
-                out.push(entity);
-            }
-        }
-        Ok(out)
     }
 }
 
@@ -1023,7 +996,7 @@ impl ProximaEntityStore {
                 Some(filter_clause::Value::BoolValue(b)) => serde_json::json!(*b),
                 None => serde_json::Value::Null,
             };
-            let op = match ComparisonOp::from_i32(c.op).unwrap_or(ComparisonOp::Eq) {
+            let op = match ComparisonOp::try_from(c.op).unwrap_or(ComparisonOp::Eq) {
                 ComparisonOp::Eq => Op::Equals,
                 ComparisonOp::Ne => Op::NotEquals,
                 ComparisonOp::Gt => Op::GreaterThan,
@@ -1040,7 +1013,7 @@ impl ProximaEntityStore {
                 value: val,
             });
         }
-        match LogicalOp::from_i32(f.op).unwrap_or(LogicalOp::And) {
+        match LogicalOp::try_from(f.op).unwrap_or(LogicalOp::And) {
             LogicalOp::And => Some(FE::And(terms)),
             LogicalOp::Or => Some(FE::Or(terms)),
             LogicalOp::Not => {
@@ -1145,7 +1118,6 @@ mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Modality, Relation};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use tokio::runtime::Runtime;
 
     // Test helper struct for mocking storage engine
     struct NoopEngine {
@@ -1435,6 +1407,7 @@ mod tests {
             let batch = batch_result.unwrap();
             total_entities += batch.len();
             batch_count += 1;
+            let _end_idx = batch.len(); // For future pagination support
             assert!(batch.len() <= 2); // Batch size should be respected
         }
 

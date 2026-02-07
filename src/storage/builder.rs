@@ -659,10 +659,10 @@ impl StorageSystemBuilder {
         );
 
         // Initialize data storage engines based on layout strategy
-        let storage_engines = self.initialize_storage_engines().await?;
+        let _storage_engines = self.initialize_storage_engines().await?;
 
         // Initialize tiered storage coordination
-        let tiered_coordinator = self.initialize_tiered_storage().await?;
+        let _tiered_coordinator = self.initialize_tiered_storage().await?;
 
         let system = StorageSystem {
             config: self.config,
@@ -825,7 +825,6 @@ impl std::fmt::Debug for StorageSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_storage_system_builder() {

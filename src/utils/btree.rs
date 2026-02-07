@@ -271,7 +271,7 @@ impl LeafNode {
     fn range(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut result = Vec::new();
 
-        for (key, value) in &self.entries {
+        for (key, _value) in &self.entries {
             let key_slice = key.as_slice();
 
             if let Some(start_key) = start {

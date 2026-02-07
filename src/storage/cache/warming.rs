@@ -358,9 +358,9 @@ impl CacheWarmer {
     ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
         // TODO: Get base_path from collection metadata service
         // For now, use default path
-        let base_path = "/data/collections";
+        let _base_path = "/data/collections";
         engine
-            .vector_by_id(collection_id, base_path, vector_id)
+            .vector_by_id(collection_id, _base_path, vector_id)
             .await
     }
 

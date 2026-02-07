@@ -239,8 +239,7 @@ impl Hasher for Fnv1a64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::hash::{Hash, Hasher as StdHasher};
+    use std::hash::Hasher as StdHasher;
     use std::sync::Arc;
     use std::thread;
 
