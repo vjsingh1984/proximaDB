@@ -172,7 +172,7 @@ pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
         crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::BitPacked { bits } => {
             bitpack::encode_f32(values, bits)
         }
-        crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::FrameOfReference { reference, bits } => {
+        crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::FrameOfReference { reference, bits: _ } => {
             frame_of_ref::encode_f32(values, reference)
         }
         crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseBitmap => {
@@ -219,7 +219,7 @@ pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
         crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::BitPacked { bits } => {
             bitpack::encode_i64(values, bits)
         }
-        crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::FrameOfReference { reference, bits } => {
+        crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::FrameOfReference { reference, bits: _ } => {
             frame_of_ref::encode_i64(values, reference)
         }
         crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseBitmap => {
@@ -266,7 +266,7 @@ pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
         crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::BitPacked { bits } => {
             bitpack::encode_i32(values, bits)
         }
-        crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::FrameOfReference { reference, bits } => {
+        crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::FrameOfReference { reference, bits: _ } => {
             frame_of_ref::encode_i32(values, reference)
         }
         crate::storage::engines::core::ops::proximacodec::types::ProximaScheme::SparseBitmap => {

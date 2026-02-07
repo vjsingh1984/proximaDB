@@ -266,12 +266,12 @@ impl UnifiedColumnarReader {
     async fn read_parquet_filtered(
         &self,
         file_path: &str,
-        predicates: Option<&crate::core::search::FilterExpression>,
+        _predicates: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Box<dyn ScanIterator>> {
         let metadata = self.get_or_load_parquet_metadata(file_path).await?;
 
         // Apply predicate pushdown optimizations
-        let qualified_row_groups = if let Some(pred) = predicates {
+        let qualified_row_groups = if let Some(pred) = _predicates {
             self.apply_predicate_pushdown(&metadata, pred)?
         } else {
             (0..metadata.num_row_groups()).collect()
@@ -279,7 +279,7 @@ impl UnifiedColumnarReader {
 
         // Check bloom filters for further pruning
         let filtered_row_groups = if self.config.enable_bloom_filters {
-            self.apply_bloom_filter_pruning(file_path, &metadata, qualified_row_groups, predicates)
+            self.apply_bloom_filter_pruning(file_path, &metadata, qualified_row_groups, _predicates)
                 .await?
         } else {
             qualified_row_groups
@@ -311,7 +311,7 @@ impl UnifiedColumnarReader {
     fn apply_predicate_pushdown(
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
-        predicate: &crate::core::search::FilterExpression,
+        _predicate: &crate::core::search::FilterExpression,
     ) -> Result<Vec<usize>> {
         let mut qualified = Vec::new();
 
@@ -319,7 +319,7 @@ impl UnifiedColumnarReader {
             let stats = rg.column(0).statistics();
 
             // Use column statistics for pruning
-            if let Some(stats) = stats {
+            if let Some(_stats) = stats {
                 // TODO: Implement actual predicate evaluation against statistics
                 // For now, include all row groups
                 qualified.push(idx);
@@ -335,10 +335,10 @@ impl UnifiedColumnarReader {
     /// Apply bloom filter pruning for ID and metadata columns
     async fn apply_bloom_filter_pruning(
         &self,
-        file_path: &str,
-        metadata: &parquet::file::metadata::ParquetMetaData,
+        _file_path: &str,
+        _metadata: &parquet::file::metadata::ParquetMetaData,
         row_groups: Vec<usize>,
-        predicates: Option<&crate::core::search::FilterExpression>,
+        _predicates: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<usize>> {
         // TODO: Implement bloom filter checking
         // For now, return all row groups

@@ -66,12 +66,12 @@ pub fn delta_decode_f32(deltas: &[i64], base: f32, output: &mut [f32]) -> Result
 
     #[cfg(target_arch = "aarch64")]
     {
-        unsafe { return delta_decode_f32_neon(deltas, base_bits, output, count) }
+        return unsafe { delta_decode_f32_neon(deltas, base_bits, output, count) };
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
-        delta_decode_f32_scalar(deltas, base_bits, output, count)
+        return delta_decode_f32_scalar(deltas, base_bits, output, count);
     }
 
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -106,7 +106,7 @@ pub fn delta_decode_i64_prefix_sum(deltas: &[i64], base: i64, output: &mut [i64]
 
     #[cfg(target_arch = "aarch64")]
     {
-        unsafe { return prefix_sum_i64_neon(deltas, base, output, count) }
+        return unsafe { prefix_sum_i64_neon(deltas, base, output, count) };
     }
 
     // Scalar fallback
@@ -130,7 +130,7 @@ pub fn delta_decode_i32_prefix_sum(deltas: &[i32], base: i32, output: &mut [i32]
 
     #[cfg(target_arch = "aarch64")]
     {
-        unsafe { return prefix_sum_i32_neon(deltas, base, output, count) }
+        return unsafe { prefix_sum_i32_neon(deltas, base, output, count) };
     }
 
     // Scalar fallback

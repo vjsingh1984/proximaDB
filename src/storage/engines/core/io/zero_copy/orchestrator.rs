@@ -503,7 +503,7 @@ impl ZeroCopyIOSystem {
         &self,
         optimization: &OptimizedIOResult,
     ) -> Result<Vec<u8>, ProximaDBError> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
 
         debug!(
             strategy = ?optimization.strategy,
@@ -596,6 +596,7 @@ impl ZeroCopyIOSystem {
         // This would implement cache warming logic by scanning collection files
         // and preloading their metadata
         debug!(collection_id, "Cache warming not yet implemented");
+        let _ = collection_id; // Suppress unused warning
         Ok(0)
     }
 
@@ -643,7 +644,7 @@ impl ZeroCopyIOSystem {
 
                 DownloadStrategy::FullDownload {
                     cache_locally,
-                    reason,
+                    reason: _,
                 } => {
                     let io_strategy = IOStrategy::FullDownload {
                         cache_locally,
@@ -689,7 +690,7 @@ impl ZeroCopyIOSystem {
                 DownloadStrategy::SelectiveRanges {
                     ranges,
                     total_bytes,
-                    reason,
+                    reason: _,
                 } => {
                     let io_strategy = IOStrategy::SelectiveRanges {
                         ranges: ranges.clone(),
@@ -780,6 +781,7 @@ impl ZeroCopyIOSystem {
     ) -> Result<Vec<CrossFileOptimization>, ProximaDBError> {
         // This would implement cross-file optimization logic
         // For now, return empty optimizations
+        let _ = (_requests, _individual_results); // Suppress unused warnings
         Ok(Vec::new())
     }
 
@@ -821,6 +823,7 @@ impl ZeroCopyIOSystem {
         _cross_file_optimizations: &[CrossFileOptimization],
     ) -> Result<ExecutionPlan, ProximaDBError> {
         // This would implement batch execution planning
+        let _ = (_individual_results, _cross_file_optimizations); // Suppress unused warnings
         Ok(ExecutionPlan {
             operations: vec![],
             estimated_duration: Duration::from_millis(100),
@@ -832,12 +835,14 @@ impl ZeroCopyIOSystem {
     async fn record_optimization_result(&self, _result: &OptimizedIOResult, _duration: Duration) {
         // This would update performance metrics
         // Implementation would track various statistics
+        let _ = (_result, _duration); // Suppress unused warnings
     }
 
     async fn start_background_tasks(&mut self) {
         // This would start background tasks for metrics collection,
         // cache maintenance, pattern analysis, etc.
         debug!("Background tasks not yet implemented");
+        let _ = &self.config; // Suppress unused warning
     }
 }
 
@@ -881,7 +886,7 @@ impl ZeroCopyIOSystem {
         );
 
         // Try to get from cache first
-        if let Some(cached_metadata) = self
+        if let Some(_cached_metadata) = self
             .metadata_cache
             .get_metadata(&file_path, collection_id, engine_type)
             .await
@@ -889,7 +894,7 @@ impl ZeroCopyIOSystem {
             trace!(cache_key, "Cache HIT for metadata");
             // Create a synthetic EngineMetadata from FilesystemMetadata
             // This would need actual deserialization using the appropriate serializer
-            if let Some(serializer) = self.serializers.get(engine_type) {
+            if self.serializers.get(engine_type).is_some() {
                 // For now, return None as we need to implement proper deserialization
                 // In production, would deserialize mmap_metadata using the serializer
                 Ok(None)
@@ -986,7 +991,6 @@ impl ZeroCopyIOSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_io_savings_calculation() {

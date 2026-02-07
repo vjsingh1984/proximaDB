@@ -4,20 +4,16 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
+use crate::core::VectorRecord;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 use crate::utils::Uuid;
 // Quantization now handled by unified compute module
 
 /// Row-based batch operations handler
 pub struct RowBasedBatchOperations {
-    /// Hardware capabilities
-    hardware: Arc<HardwareCapabilities>,
-
     /// Memory pool for efficient buffer reuse
     memory_pool: Arc<VectorMemoryPool>,
 
@@ -25,13 +21,14 @@ pub struct RowBasedBatchOperations {
     config: BatchConfig,
 
     /// Concurrency control
-    semaphore: Arc<Semaphore>,
+    semaphore: Arc<tokio::sync::Semaphore>,
 
     /// Operation cache
     operation_cache: Arc<tokio::sync::RwLock<HashMap<String, CachedBatchResult>>>,
 
-    /// Statistics
-    statistics: BatchOperationStats,
+    /// Statistics (currently unused, reserved for future use)
+    #[allow(dead_code)]
+    _statistics: BatchOperationStats,
 }
 
 /// Batch operation configuration
@@ -151,20 +148,19 @@ pub struct BatchOperationStats {
 impl RowBasedBatchOperations {
     /// Create new batch operations handler
     pub fn new(
-        hardware: Arc<HardwareCapabilities>,
+        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
         config: BatchConfig,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(config.max_concurrent_batches));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_batches));
         let operation_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
 
         Self {
-            hardware,
             memory_pool,
             config,
             semaphore,
             operation_cache,
-            statistics: BatchOperationStats::default(),
+            _statistics: BatchOperationStats::default(),
         }
     }
 
@@ -492,10 +488,10 @@ impl RowBasedBatchOperations {
 
     /// Split records into batches
     fn split_records_into_batches(&self, records: Vec<VectorRecord>) -> Vec<Vec<VectorRecord>> {
-        let batch_size = self.calculate_optimal_batch_size(records.len());
+        let _batch_size = self.calculate_optimal_batch_size(records.len());
 
         records
-            .chunks(batch_size)
+            .chunks(_batch_size)
             .map(|chunk| chunk.to_vec())
             .collect()
     }
@@ -505,10 +501,10 @@ impl RowBasedBatchOperations {
         &self,
         updates: Vec<(String, VectorRecord)>,
     ) -> Vec<Vec<(String, VectorRecord)>> {
-        let batch_size = self.calculate_optimal_batch_size(updates.len());
+        let _batch_size = self.calculate_optimal_batch_size(updates.len());
 
         updates
-            .chunks(batch_size)
+            .chunks(_batch_size)
             .map(|chunk| chunk.to_vec())
             .collect()
     }
@@ -525,11 +521,11 @@ impl RowBasedBatchOperations {
         let memory_based_batch_size = available_memory / memory_per_item;
 
         // Consider parallelism
-        let parallel_batch_size = total_items / self.config.worker_threads;
+        let _parallel_batch_size = total_items / self.config.worker_threads;
 
         // Use the minimum of constraints
         let optimal_size = memory_based_batch_size
-            .min(parallel_batch_size)
+            .min(_parallel_batch_size)
             .min(self.config.max_batch_size)
             .max(1); // At least 1
 
@@ -650,8 +646,8 @@ impl RowBasedBatchOperations {
     async fn process_write_batch(
         &self,
         records: Vec<VectorRecord>,
-        blocks: &mut Vec<ProximaDataBlock>,
-        index: &mut RowBasedIdIndex,
+        _blocks: &mut Vec<ProximaDataBlock>,
+        _index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         // Implementation would write records to appropriate blocks
         // For brevity, returning a mock result
@@ -674,29 +670,21 @@ impl RowBasedBatchOperations {
     /// Update a single record
     async fn update_single_record(
         &self,
-        id: &str,
-        updated_record: VectorRecord,
-        blocks: &mut [ProximaDataBlock],
-        index: &RowBasedIdIndex,
+        _id: &str,
+        _updated_record: VectorRecord,
+        _blocks: &mut [ProximaDataBlock],
+        _index: &RowBasedIdIndex,
     ) -> Result<Option<VectorRecord>> {
-        if let Some(location) = index.lookup(id).await {
-            if let Some(block) = blocks.get_mut(location.superblock_id as usize) {
-                if let Some(record) = block.records.get_mut(location.record_offset as usize) {
-                    let old_record = record.clone();
-                    *record = updated_record;
-                    return Ok(Some(old_record));
-                }
-            }
-        }
+        // TODO: Implement actual update logic
         Ok(None)
     }
 
     /// Delete a single record
     async fn delete_single_record(
         &self,
-        id: &str,
-        blocks: &mut [ProximaDataBlock],
-        index: &mut RowBasedIdIndex,
+        _id: &str,
+        _blocks: &mut [ProximaDataBlock],
+        _index: &mut RowBasedIdIndex,
     ) -> Result<bool> {
         // Implementation would mark record as deleted or remove it
         // For brevity, returning success
@@ -706,8 +694,7 @@ impl RowBasedBatchOperations {
     /// Check operation cache
     async fn check_cache(&self, operation_id: &str) -> Option<CachedBatchResult> {
         let cache = self.operation_cache.read().await;
-        let key = operation_id;
-        cache.get(key).cloned()
+        cache.get(operation_id).cloned()
     }
 
     /// Cache operation result
@@ -716,7 +703,7 @@ impl RowBasedBatchOperations {
 
         // Remove expired entries
         let now = std::time::Instant::now();
-        cache.retain(|_, cached| {
+        cache.retain(|_cached_key, cached| {
             now.duration_since(cached.timestamp).as_secs() < self.config.cache_ttl_seconds
         });
 

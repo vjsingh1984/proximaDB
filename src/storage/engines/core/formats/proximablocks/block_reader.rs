@@ -17,7 +17,7 @@ use crate::core::search::FilterExpression;
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     ProximaBlockMetadata, ProximaDataBlock,
 };
-use crate::storage::persistence::filesystem::FileSystem; // Need this trait for read method
+use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// ✅ Reading strategy for different access patterns
@@ -163,7 +163,6 @@ impl ProximaBlockReader {
         _prefetch_ahead: usize,
     ) -> Result<Vec<ProximaDataBlock>> {
         // Read the entire file using the underlying filesystem
-        // UnifiedCachingFilesystem implements FileSystem trait
         let data = self
             .filesystem
             .read(file_path)
@@ -249,10 +248,7 @@ impl ProximaBlockReader {
             let block_idx = idx as u32;
             if block_idx >= start_block && block_idx <= end_block {
                 // Check for overlaps if requested
-                if _check_overlaps && _use_bloom_filters {
-                    // Could check if block overlaps with query range
-                    // For now, include all blocks in range
-                }
+                // TODO: Implement overlap checking with bloom filters
                 range_blocks.push(block);
             }
         }
@@ -372,7 +368,7 @@ impl ProximaBlockReader {
             FilterExpression::Comparison { field, value, .. } => {
                 // Check if the field-value combination might exist
                 // Bloom filters typically store record IDs or field keys
-                let check_key = format!("{}:{}", field, value);
+                let _check_key = format!("{}:{}", field, value);
                 // SstableBloomFilter doesn't have proper implementation yet
                 // TODO: Implement once bloom filter strategies are fixed
                 true
@@ -655,8 +651,8 @@ impl HelixBlockReader {
     pub async fn read_with_hilbert_pruning(
         &self,
         file_path: &str,
-        query_hilbert_key: u64,
-        tolerance: u64,
+        _query_hilbert_key: u64,
+        _tolerance: u64,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<ProximaDataBlock>> {
         // First do a selective read with filter
@@ -673,7 +669,7 @@ impl HelixBlockReader {
         // This could be enhanced to use Proxima metadata for Hilbert ranges
         let filtered_blocks = blocks
             .into_iter()
-            .filter(|block| {
+            .filter(|_block| {
                 // Check if block's Hilbert range overlaps with query
                 // This would use the HelixBlockMetadata that composes with Proxima
                 true // For now, pass all blocks

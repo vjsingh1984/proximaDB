@@ -209,13 +209,13 @@ impl SstMetadataSerializer {
         })
     }
 
-    fn parse_footer(&self, footer_data: &[u8]) -> Result<Vec<(u64, u64)>, ProximaDBError> {
+    fn parse_footer(&self, _footer_data: &[u8]) -> Result<Vec<(u64, u64)>, ProximaDBError> {
         // Parse SST footer to extract block locations
         // This is a simplified implementation
         let mut locations = Vec::new();
 
         // For demo, assume 16MB file with 4 blocks of 4MB each
-        let total_size = 16 * 1024 * 1024;
+        let _total_size = 16 * 1024 * 1024;
         let block_size = 4 * 1024 * 1024;
         let header_size = 64 * 1024; // Skip bloom + index
 
@@ -227,7 +227,10 @@ impl SstMetadataSerializer {
         Ok(locations)
     }
 
-    fn parse_block_statistics(&self, block_data: &[u8]) -> Result<(u32, u64, u64), ProximaDBError> {
+    fn parse_block_statistics(
+        &self,
+        _block_data: &[u8],
+    ) -> Result<(u32, u64, u64), ProximaDBError> {
         // Extract block statistics from header
         // This would parse the actual block format
 
@@ -477,7 +480,7 @@ impl MetadataSerializer for SstMetadataSerializer {
             });
 
             // Check each block against ID lookups
-            for (i, block) in sst_metadata.blocks.iter().enumerate() {
+            for (_i, block) in sst_metadata.blocks.iter().enumerate() {
                 let mut need_block = false;
 
                 for id in &query_context.id_lookups {

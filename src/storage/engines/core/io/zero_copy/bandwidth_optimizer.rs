@@ -554,6 +554,7 @@ impl BandwidthOptimizer {
         access_prediction: &AccessPrediction,
         request_priority: RequestPriority,
     ) -> f32 {
+        let _ = (_file_path, access_prediction); // Used in scoring logic below
         let mut score = 0.0;
 
         // Future access probability
@@ -588,7 +589,11 @@ impl BandwidthOptimizer {
     }
 
     /// Get bandwidth-aware threshold that considers network conditions
-    fn get_bandwidth_aware_threshold(&self, factors: &DecisionFactors, base_threshold: f32) -> f32 {
+    fn get_bandwidth_aware_threshold(
+        &self,
+        _factors: &DecisionFactors,
+        base_threshold: f32,
+    ) -> f32 {
         let (latency_ms, bandwidth_mbps) = self.network_tracker.get_current_conditions();
         let mut threshold = base_threshold;
 

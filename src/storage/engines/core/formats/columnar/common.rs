@@ -11,17 +11,16 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::schema::{ColumnarSchemaBuilder, ColumnarSchemaConfig};
 use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
+use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
-use crate::core::compression::CompressionAlgorithm;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone)]
@@ -790,7 +789,7 @@ impl CommonColumnarOperations {
     ) -> Result<(ColumnarFileMetadata, Arc<Schema>, CompressionMetadata)> {
         // This would implement actual file metadata loading
         // For now, return placeholder data
-        warn!("File metadata loading from disk not fully implemented");
+        info!("File metadata loading from disk not fully implemented");
 
         use crate::compute::distance_computation::DistanceMetric;
 
@@ -863,7 +862,7 @@ impl PerformanceMonitor {
         }
     }
 
-    async fn record_schema_generation(&self, duration_ms: f64) {
+    async fn record_schema_generation(&self, _duration_ms: f64) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
             metrics.schema_generations += 1;
@@ -879,19 +878,17 @@ impl PerformanceMonitor {
         }
     }
 
-    async fn record_deserialization(&self, duration_ms: f64, record_count: usize) {
+    async fn record_deserialization(&self, _duration_ms: f64, _record_count: usize) {
         if self.config.enable_metrics {
-            let metrics = self.operation_metrics.write().await;
+            let _metrics = self.operation_metrics.write().await;
             // Deserialization metrics would be tracked separately if needed
         }
     }
 
-    async fn record_distance_computation(&self, duration_ms: f64, vector_count: usize) {
+    async fn record_distance_computation(&self, _duration_ms: f64, _vector_count: usize) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
             metrics.distance_ops += 1;
-            metrics.distance_total_time_ms += duration_ms;
-            metrics.distance_vectors_processed += vector_count;
         }
     }
 

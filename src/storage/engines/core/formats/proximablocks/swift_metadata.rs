@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
@@ -292,8 +292,8 @@ impl SwiftMetadataSerializer {
             });
         }
 
-        debug!(
-            file_path,
+        trace!(
+            file_path = file_path,
             segments = segments.len(),
             total_records = global.total_records,
             "Extracted SWIFT metadata"
@@ -360,7 +360,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         serialized.extend_from_slice(&metadata.variable_data);
 
         trace!(
-            file_path,
+            file_path = file_path,
             serialized_size = serialized.len(),
             segments = metadata.segments.len(),
             "Serialized SWIFT metadata"
@@ -470,7 +470,8 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         trace!(
             segments = metadata.segments.len(),
-            variable_data_size, "Deserialized SWIFT metadata"
+            variable_data_size = variable_data_size,
+            "Deserialized SWIFT metadata"
         );
 
         Ok(Box::new(metadata))
@@ -552,12 +553,11 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_swift_metadata_serialization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
@@ -576,7 +576,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_id_lookup_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
@@ -603,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_segment_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());

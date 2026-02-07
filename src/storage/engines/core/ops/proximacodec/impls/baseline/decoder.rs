@@ -65,10 +65,6 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::Dictionary => functions::dictionary::decode_f32(data, count),
             ProximaScheme::Simple8b => functions::simple8b::decode_f32(data, count),
             ProximaScheme::Adaptive => functions::adaptive::decode_f32(data, count),
-            _ => Err(anyhow::anyhow!(
-                "Scheme {} not yet implemented for f32",
-                scheme.name()
-            )),
         }
     }
 
@@ -94,12 +90,6 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::Dictionary => functions::dictionary::decode_i64(data, count),
             ProximaScheme::Simple8b => functions::simple8b::decode_i64(data, count),
             ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
-
-            // TODO: Implement remaining schemes
-            _ => Err(anyhow::anyhow!(
-                "Scheme {} not yet implemented for i64",
-                scheme.name()
-            )),
         }
     }
 
@@ -125,12 +115,6 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::Dictionary => functions::dictionary::decode_i32(data, count),
             ProximaScheme::Simple8b => functions::simple8b::decode_i32(data, count),
             ProximaScheme::Adaptive => functions::adaptive::decode_i32(data, count),
-
-            // TODO: Implement remaining schemes
-            _ => Err(anyhow::anyhow!(
-                "Scheme {} not yet implemented for i32",
-                scheme.name()
-            )),
         }
     }
 }

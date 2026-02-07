@@ -234,11 +234,11 @@ impl SharedParquetFormatReader {
     /// Read columns using cached metadata (avoids footer download)
     async fn read_with_cached_metadata(
         &self,
-        cached_metadata: Arc<
+        _cached_metadata: Arc<
             Box<dyn crate::storage::engines::core::io::zero_copy::traits::EngineMetadata>,
         >,
-        columns: &[String],
-        row_filter: Option<&FilterExpression>,
+        _columns: &[String],
+        _row_filter: Option<&FilterExpression>,
     ) -> Result<Vec<RecordBatch>, ProximaDBError> {
         if let Some(orch) = &self.orchestrator {
             let key = format!("{}::parquet::metadata_cached", self.collection_id);
@@ -478,23 +478,23 @@ impl SharedParquetFormatReader {
         &self,
         collection_id: &str,
     ) -> Result<(), ProximaDBError> {
-        let mut invalidated = 0;
+        let mut _invalidated = 0;
 
         // Remove from footer cache
         // TODO: Implement cache invalidation using zero_copy_system
         // For now, track invalidation count
-        invalidated = 0;
+        _invalidated = 0;
 
         // TODO: Invalidate in zero_copy_system cache
         // self.zero_copy_system.invalidate_collection(collection_id).await?;
 
         self.stats
             .cache_invalidations
-            .fetch_add(invalidated, Ordering::Relaxed);
+            .fetch_add(_invalidated, Ordering::Relaxed);
 
         info!(
             "Invalidated {} Parquet cache entries for collection {} during compaction",
-            invalidated, collection_id
+            _invalidated, collection_id
         );
 
         Ok(())
@@ -832,6 +832,7 @@ impl Default for ReaderStats {
 }
 
 /// Access pattern tracker (reuse from cache module)
+#[allow(unused_imports)]
 pub use crate::storage::cache::AccessPatternTracker;
 
 /// Memory pressure monitor placeholder (define locally if needed)

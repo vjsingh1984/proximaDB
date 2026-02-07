@@ -67,10 +67,6 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::Dictionary => functions::dictionary::encode_f32(values),
             ProximaScheme::Simple8b => functions::simple8b::encode_f32(values),
             ProximaScheme::Adaptive => functions::adaptive::encode_f32(values),
-            _ => Err(anyhow::anyhow!(
-                "Scheme {} not yet implemented for f32",
-                scheme.name()
-            )),
         }
     }
 
@@ -98,12 +94,6 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
             ProximaScheme::Simple8b => functions::simple8b::encode_i64(values),
             ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
-
-            // TODO: Implement remaining schemes
-            _ => Err(anyhow::anyhow!(
-                "Scheme {} not yet implemented for i64",
-                scheme.name()
-            )),
         }
     }
 
@@ -131,12 +121,6 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::Dictionary => functions::dictionary::encode_i32(values),
             ProximaScheme::Simple8b => functions::simple8b::encode_i32(values),
             ProximaScheme::Adaptive => functions::adaptive::encode_i32(values),
-
-            // TODO: Implement remaining schemes
-            _ => Err(anyhow::anyhow!(
-                "Scheme {} not yet implemented for i32",
-                scheme.name()
-            )),
         }
     }
 }

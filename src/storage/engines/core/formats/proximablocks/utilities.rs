@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::proximadb_v1::VectorRecord;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;

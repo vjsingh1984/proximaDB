@@ -364,12 +364,12 @@ impl ColumnarSerializer {
     pub async fn serialize_vectors(
         &self,
         records: &[VectorRecord],
-        schema: &Schema,
+        _schema: &Schema,
     ) -> Result<SerializationResult> {
         let start_time = std::time::Instant::now();
         let mut quantization_time = 0.0;
-        let mut compression_time = 0.0;
-        let memory_pool_hits = 0;
+        let mut _compression_time = 0.0;
+        let _memory_pool_hits = 0; // TODO: Track actual memory pool hits
 
         info!(
             "Serializing {} vector records with transparent quantization",
@@ -435,7 +435,7 @@ impl ColumnarSerializer {
             &int8_arrays.as_ref().map(|(a, _, _)| a),
             &pq_array,
         )?;
-        compression_time = comp_start.elapsed().as_secs_f64() * 1000.0;
+        _compression_time = comp_start.elapsed().as_secs_f64() * 1000.0;
 
         let total_time = start_time.elapsed().as_secs_f64() * 1000.0;
 
@@ -449,9 +449,9 @@ impl ColumnarSerializer {
             performance_stats: PerformanceStats {
                 serialization_time_ms: total_time,
                 quantization_time_ms: quantization_time,
-                compression_time_ms: compression_time,
+                compression_time_ms: _compression_time,
                 simd_acceleration_used: self.config.simd_config.enable_simd,
-                memory_pool_hits,
+                memory_pool_hits: _memory_pool_hits,
             },
         };
 

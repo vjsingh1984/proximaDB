@@ -24,7 +24,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 // Note: SearchResult is proto type, not in core::search anymore
 use crate::compute::distance_computation::DistanceMetric;
@@ -127,8 +127,8 @@ impl ProgressiveSearchExecutor {
                 .await;
         }
 
-        info!(
-            "🔄 Starting progressive search with {} levels for {} candidates",
+        debug!(
+            "Starting progressive search with {} levels for {} candidates",
             levels.len(),
             initial_candidates.len()
         );
@@ -197,8 +197,8 @@ impl ProgressiveSearchExecutor {
 
                 if should_runtime_quantize {
                     // SLOW PATH: Runtime quantization for storage-optimized collections
-                    debug!(
-                        "⚠️ Vector {} using runtime quantization (storage-optimized path)",
+                    trace!(
+                        "Vector {} using runtime quantization (storage-optimized path)",
                         &record.id
                     );
                     // Perform quantization based on the first level requested
@@ -307,8 +307,8 @@ impl ProgressiveSearchExecutor {
                     representations
                 } else {
                     // ERROR: Runtime quantization not allowed for this collection/query
-                    debug!(
-                        "❌ Vector {} missing pre-quantized data (collection expects pre-quantization)",
+                    trace!(
+                        "Vector {} missing pre-quantized data (collection expects pre-quantization)",
                         if record.id.is_empty() {
                             "unknown"
                         } else {
@@ -391,7 +391,7 @@ impl ProgressiveSearchExecutor {
                     .await?;
             }
             _ => {
-                debug!(
+                trace!(
                     "Unsupported quantization type: {:?}",
                     level.quantization_type
                 );
@@ -553,7 +553,7 @@ impl ProgressiveSearchExecutor {
         query_vector: &[f32],
     ) -> Result<Vec<SearchCandidate>> {
         debug!(
-            "🎯 Final reranking {} candidates with full precision",
+            "Final reranking {} candidates with full precision",
             candidates.len()
         );
 
@@ -696,7 +696,7 @@ impl ProgressiveSearchExecutor {
     }
 
     /// Determine if runtime quantization should be allowed based on multiple factors
-    fn should_allow_runtime_quantization(&self, ctx: &StorageQueryContext) -> Result<bool> {
+    fn should_allow_runtime_quantization(&self, _ctx: &StorageQueryContext) -> Result<bool> {
         // TODO: Implement proper collection config and search hints checking
         // For now, always allow runtime quantization to make it compile
         Ok(true)
@@ -705,8 +705,8 @@ impl ProgressiveSearchExecutor {
     /// Helper: Parse pre-computed quantized data
     fn parse_quantized_data(
         &self,
-        data: &[u8],
-        levels: &[QuantizationLevel],
+        _data: &[u8],
+        _levels: &[QuantizationLevel],
     ) -> Result<Vec<QuantizedRepresentation>> {
         // TODO: Implement parsing of serialized quantized data
         // For now, return empty vec

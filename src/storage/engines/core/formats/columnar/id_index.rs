@@ -286,7 +286,7 @@ impl ColumnarIdIndex {
     pub async fn lookup(&self, id: &str) -> Option<ParquetLocation> {
         // If bloom filters exist, use them for optimization
         if !self.bloom_filters.is_empty() {
-            for (idx, bloom) in self.bloom_filters.iter().enumerate() {
+            for (_idx, bloom) in self.bloom_filters.iter().enumerate() {
                 if bloom.contains(id) {
                     // Potential match in this row group
                     let map = self.id_to_location.read().await;

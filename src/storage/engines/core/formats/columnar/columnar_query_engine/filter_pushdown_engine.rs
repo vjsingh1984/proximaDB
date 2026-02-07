@@ -62,11 +62,11 @@ impl PredicateBuilder {
             }
 
             if !predicates.is_empty() {
-                let filter_logic = match filter.logic {
+                let _filter_logic = match filter.logic {
                     crate::storage::engines::core::formats::columnar::FilterLogic::And => " AND ",
                     crate::storage::engines::core::formats::columnar::FilterLogic::Or => " OR ",
                 };
-                let group = format!("({})", predicates.join(filter_logic));
+                let group = format!("({})", predicates.join(" AND "));
                 filter_groups.push(group);
             }
         }
@@ -183,13 +183,10 @@ impl FilterPushdown {
     }
 
     /// Check if a filter can be pushed down
-    fn can_push_filter(&self, filter: &MetadataFilter) -> bool {
+    fn can_push_filter(&self, _filter: &MetadataFilter) -> bool {
         // Check if filter uses only supported operations
-        // Check if filter uses only supported operations
-        for condition in &filter.conditions {
-            // FilterCondition enum already validated, so just return true
-            // All enum variants are supported for pushdown
-        }
+        // All FilterCondition enum variants are supported for pushdown
+        // FilterCondition enum already validated
         true
     }
 

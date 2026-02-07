@@ -523,9 +523,9 @@ impl RowBasedIdIndex {
     /// Range lookup in hierarchical index
     async fn range_lookup_hierarchical(
         &self,
-        start_key: &str,
-        end_key: &str,
-        limit: usize,
+        _start_key: &str,
+        _end_key: &str,
+        _limit: usize,
     ) -> Vec<(String, BlockLocation)> {
         // Simplified implementation - would need proper range navigation
         Vec::new()
