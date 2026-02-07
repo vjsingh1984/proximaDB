@@ -60,6 +60,27 @@ langchain = [
     "langchain-core>=0.1.0",
 ]
 
+victor = [
+    "victor-ai>=0.2.0",
+]
+
+crewai = [
+    "crewai>=0.80.0",
+]
+
+langgraph = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.1.0",
+]
+
+dspy = [
+    "dspy>=2.5.0",
+]
+
+autogen = [
+    "autogen-agentchat>=0.4.0",
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.20.0",
