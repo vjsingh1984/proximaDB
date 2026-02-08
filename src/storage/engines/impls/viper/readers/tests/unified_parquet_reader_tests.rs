@@ -11,7 +11,7 @@ mod tests {
     use crate::storage::engines::core::formats::columnar::CollectionContext;
     use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
     use anyhow::Result;
-    use arrow_array::{Float32Array, Int64Array, RecordBatch, StringArray};
+use arrow_array::{Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;

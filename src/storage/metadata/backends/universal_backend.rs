@@ -1814,7 +1814,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats, IndexingAlgorithm};
+use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats};
     use tempfile::TempDir;
 
     #[tokio::test]

@@ -5,7 +5,6 @@
 //! the PQ and INT8 optimized distance computations with progressive refinement.
 
 use anyhow::Result;
-use proximadb::utils::Uuid;
 use std::collections::HashMap;
 use std::time::Instant;
 

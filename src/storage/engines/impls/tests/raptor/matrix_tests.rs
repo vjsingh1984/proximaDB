@@ -249,7 +249,6 @@ async fn test_p2_matrix_search_integration() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     use crate::storage::engines::impls::raptor::consolidated_reader::{
-        IntraRowgroupMatrix, RaptorReader,
     };
 
     // Create test P² matrix

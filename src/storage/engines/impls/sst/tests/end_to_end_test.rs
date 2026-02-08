@@ -14,9 +14,9 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use crate::compute::distance_computation::{engine::UnifiedDistanceCompute};
     use crate::core::search::SearchParams;
-    use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::core::search::{FilterExpression};
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
         StorageAssignment, StorageConfig, VectorRecord,
@@ -26,7 +26,7 @@ mod tests {
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
     };
-    use tracing::{debug, info};
+use tracing::{info};
 
     #[tokio::test]
     async fn test_sst_engine_end_to_end_flush_and_search() -> Result<()> {

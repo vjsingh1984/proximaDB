@@ -3,7 +3,6 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::HardwareAccelerationManager;
     use crate::storage::engines::universal::adapter::{
-        AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
         UniversalDistanceAdapter,
     };
     use crate::storage::engines::universal::config::StorageEngineConfig;

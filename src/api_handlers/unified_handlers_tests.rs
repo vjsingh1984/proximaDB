@@ -6,7 +6,6 @@
 #[cfg(test)]
 mod tests {
     use super::super::unified_handlers::*;
-    use crate::proto::proximadb_v1::sql_value::Value;
     use crate::proto::proximadb_v1::{
         CollectionConfig, CollectionOperation, CollectionRequest, IncludeFields, SearchQuery,
         VectorBatchRequest, VectorOperation, VectorRecord, VectorSearchRequest,

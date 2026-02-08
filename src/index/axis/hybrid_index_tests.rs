@@ -9,9 +9,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
-    use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification, ResultCombination};
+use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use tracing::debug;
 
     #[tokio::test]

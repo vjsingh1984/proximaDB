@@ -1357,7 +1357,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_serialization_roundtrip() {
-        use crate::index::axis::storage::serialization::{IndexSerializer, SerializableIndex};
+use crate::index::axis::storage::serialization::{IndexSerializer};
 
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 

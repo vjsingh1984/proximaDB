@@ -5,7 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -13,7 +12,7 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::proto::proximadb_v1::VectorRecord;
-    use crate::proto::proximadb_v1::{Collection, MetadataItem};
+use crate::proto::proximadb_v1::{MetadataItem};
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -23,7 +22,6 @@ mod tests {
         FlushDataSource, WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
         UnifiedStorageEngine,
     };
 

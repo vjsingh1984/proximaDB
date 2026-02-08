@@ -16,8 +16,6 @@
 //!
 //! Total: 4 tests consolidated
 
-use super::helpers::*;
-use anyhow::Result;
 
 use crate::storage::engines::impls::raptor::smart_rowgroup_sizing::*;
 

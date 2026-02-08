@@ -354,7 +354,6 @@ impl QueryPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn test_planner_creation() {
         let planner = QueryPlanner::new(true);

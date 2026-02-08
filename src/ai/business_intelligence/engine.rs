@@ -727,7 +727,6 @@ impl Default for BIEngineConfig {
 
 #[cfg(test)]
 mod tests {
-
     #[test]
     #[ignore = "Requires async runtime and complex mocking setup"]
     fn test_performance_status_calculation() {

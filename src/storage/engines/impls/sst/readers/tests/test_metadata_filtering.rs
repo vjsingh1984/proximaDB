@@ -9,7 +9,6 @@ use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::impls::sst::SstConfig;
 use crate::storage::engines::impls::sst::SstableWriter;
-use crate::storage::engines::impls::sst::filter_methods::BloomFilterConfig;
 use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -25,7 +24,7 @@ fn create_test_config() -> SstConfig {
     }
 }
 use serde_json::json;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 // Helper function to compare SqlValue with JSON
 fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {

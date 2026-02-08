@@ -1651,7 +1651,6 @@ impl DocumentStorageOperations for DocumentService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // TODO: Add unit tests with mock storage engine
 }

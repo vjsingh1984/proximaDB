@@ -219,7 +219,6 @@ impl EmbeddingStats {
 
 #[cfg(test)]
 mod tests {
-
     #[test]
     fn test_bert_embedding_characteristics() {
         let mut generator = EmbeddingGenerator::new(EmbeddingModel::Bert);

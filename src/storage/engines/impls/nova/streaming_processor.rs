@@ -585,7 +585,6 @@ impl MemoryTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::impls::nova::hierarchical_stats::*;
     #[test]
     fn test_streaming_config_defaults() {
         let config = StreamingConfig::default();

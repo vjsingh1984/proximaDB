@@ -1140,7 +1140,6 @@ mod tests {
 
     #[test]
     fn test_mixed_compression_strategy() {
-        use std::collections::HashMap;
 
         // Test column type detection
         let test_columns = vec![

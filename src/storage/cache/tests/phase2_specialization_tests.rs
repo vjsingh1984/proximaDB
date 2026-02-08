@@ -1,14 +1,11 @@
 //! Phase 2: Specialize Existing Cache Tests
 
-use super::super::*;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::specialized::*;
 
 // Type alias for VectorStore since it doesn't exist in the specialized module
 type VectorStore = BaseCacheImpl<String, VectorRecord>;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Test specialized VectorStore
 #[tokio::test]

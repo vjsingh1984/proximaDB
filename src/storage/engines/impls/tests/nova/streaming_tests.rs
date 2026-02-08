@@ -13,7 +13,6 @@
 //! - src/storage/engines/impls/nova/streaming_processor.rs (3 tests)
 //! - src/storage/engines/impls/nova/batch_operations.rs (3 tests)
 
-use super::helpers::*;
 
 // ============================================================================
 // Tests from streaming_search.rs
@@ -128,7 +127,6 @@ fn test_memory_tracker() {
 #[tokio::test]
 async fn test_streaming_processor_creation() {
     use crate::storage::engines::impls::nova::streaming_processor::{
-        StreamingConfig, StreamingRowGroupProcessor,
     };
 
     let config = StreamingConfig::default();
@@ -146,7 +144,6 @@ async fn test_streaming_processor_creation() {
 
 #[test]
 fn test_group_by_row_group() {
-    use crate::storage::engines::impls::nova::batch_operations::*;
 
     // Function is private, test indirectly through BatchConfig
     let config = BatchConfig::default();

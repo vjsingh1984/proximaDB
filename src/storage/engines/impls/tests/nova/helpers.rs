@@ -282,7 +282,6 @@ pub fn int8_l2_distance_squared(a: &[i8], b: &[i8]) -> f32 {
 /// QueryCharacteristics for optimization decisions
 #[allow(dead_code)]
 pub fn extract_query_characteristics(query: &[f32], top_k: usize) -> QueryCharacteristics {
-    use crate::storage::engines::impls::nova::zone_maps::DistanceMetric;
 
     // Compute L2 norm
     let norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -636,7 +635,6 @@ mod tests {
 
     #[test]
     fn test_predict_selectivity() {
-        use crate::storage::engines::impls::nova::zone_maps::DistanceMetric;
 
         let characteristics = QueryCharacteristics {
             norm: 1.0,

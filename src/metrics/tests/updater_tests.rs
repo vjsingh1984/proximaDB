@@ -15,7 +15,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::time::{Duration, sleep};
-    use tracing::{debug, error, info};
+use tracing::{debug, info};
 
     /// Counter for generating unique test paths
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);

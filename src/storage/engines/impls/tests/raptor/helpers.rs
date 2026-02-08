@@ -102,7 +102,6 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::engines::impls::raptor::RaptorEngine;
 use crate::storage::engines::impls::raptor::config::RaptorConfig;
-use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -6,7 +6,6 @@ mod tests {
         MetricsConfig,
         store::MetricsPersistenceLayer,
         updater::{
-            FlushMetricsUpdate, InternalMetricsUpdater,
             MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
         },
     };

@@ -573,7 +573,6 @@ pub async fn search_sstable_quantized(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::persistence::filesystem::FilesystemFactory;
 
     #[tokio::test]
     async fn test_query_stats() {

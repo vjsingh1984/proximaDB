@@ -9,8 +9,6 @@
 use super::super::super::swift::*;
 use crate::core::hardware_capabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::proto::proximadb_v1::VectorRecord;
-use std::sync::Arc;
 
 // =====================================================
 // TESTS FROM batch_operations.rs
@@ -125,7 +123,6 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_optimized_operations() {
-    use crate::compute::distance_computation::DistanceMetric;
     use optimized_operations::OptimizedSwiftOperations;
 
     // Initialize hardware capabilities for testing

@@ -9,7 +9,7 @@ mod tests {
     };
     use serde_json;
     use std::collections::HashMap;
-    use tracing::{debug, error, info};
+use tracing::{debug, info};
 
     #[test]
     fn test_collection_metrics_creation_and_defaults() {

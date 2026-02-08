@@ -13,8 +13,6 @@
 //! - engine.rs (2 tests)
 //! - id_index.rs (1 test)
 
-use super::helpers::*;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::swift::id_index::{BlockLocation, IdIndex};
 use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;

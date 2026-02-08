@@ -1020,7 +1020,6 @@ impl Default for PatternMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphMemoryPool;
     use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
 
     #[test]

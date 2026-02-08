@@ -12,7 +12,7 @@
 
 use crate::core::config::StorageConfig;
 use crate::proto::proximadb_v1::CollectionConfig;
-use crate::query::ast::{BinaryOp, Expr, Literal, ProjectionItem, Query, TableRef, UnaryOp};
+use crate::query::ast::{BinaryOp, Expr, ProjectionItem, Query, TableRef, UnaryOp};
 use crate::query::sql_frontend::lowering::QueryLowering;
 use crate::query::sql_frontend::parser::SqlFrontendParser;
 use crate::services::collection::manager::CollectionService;

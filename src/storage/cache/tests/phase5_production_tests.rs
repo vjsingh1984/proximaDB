@@ -6,7 +6,6 @@ use super::super::*;
 // // use super::super::optimization::*;  // TODO: Add optimization module
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 
 /// Test cache configuration loading and validation
 #[tokio::test]

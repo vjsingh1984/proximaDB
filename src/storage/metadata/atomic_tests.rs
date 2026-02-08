@@ -6,7 +6,6 @@
 #[cfg(test)]
 mod tests {
     use super::super::transaction_coordinator::{
-        StagingConfig, TransactionCoordinator, TransactionStageType,
     };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
@@ -17,7 +16,6 @@ mod tests {
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
-    use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::utils::uuid::Uuid;
     use anyhow::Result;
     use async_trait::async_trait;

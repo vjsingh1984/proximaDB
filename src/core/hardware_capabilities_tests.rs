@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
+use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
 
     #[test]
     fn test_hardware_config_defaults() {
@@ -299,7 +299,6 @@ mod tests {
     #[test]
     fn test_concurrent_initialization() {
         use std::thread;
-        
         // Test that concurrent initialization doesn't cause issues
         let handles: Vec<_> = (0..10).map(|_| {
             thread::spawn(|| {

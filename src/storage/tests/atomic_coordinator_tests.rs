@@ -8,7 +8,6 @@
 //! - Multi-operation coordination
 
 use std::sync::Arc;
-use tempfile::TempDir;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::{SqlValue, sql_value};

@@ -29,7 +29,6 @@ use crate::core::SstConfig;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, MetadataItem, VectorRecord};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::{
-    CollectionContext, ReaderConfig, UnifiedSstableReader,
 };
 use crate::storage::engines::impls::sst::{SstEngine, SstRecord};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};

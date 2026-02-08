@@ -2,9 +2,7 @@
 //!
 //! Tests for VIPER metadata serialization and codebook sidecar storage.
 
-use super::helpers::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 // Tests from unified_metadata_serializer.rs
 

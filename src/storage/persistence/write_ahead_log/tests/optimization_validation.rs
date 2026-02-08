@@ -4,19 +4,17 @@
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use std::sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
     };
-    use tokio::sync::Mutex;
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
     use std::collections::HashMap;
-    use tracing::{debug, error, info};
+use tracing::{debug, info};
 
     /// Mock collection service that tracks how many times it's called
     struct MockCollectionService {

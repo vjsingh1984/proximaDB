@@ -9,7 +9,6 @@ use proximadb::storage::engines::core::formats::proximablocks::spatial_pruning::
     BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
 };
 use proximadb::storage::engines::core::formats::proximablocks::spatial_traits::{
-    CurveType, SpatialCurveEncoder, SpatialEncoderFactory,
 };
 use proximadb::storage::engines::core::pca::{
     BlockInfo, ClusteringConfig, EnhancedPCAModel, SpatialClusteringPipeline,

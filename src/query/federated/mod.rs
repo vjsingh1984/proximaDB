@@ -275,7 +275,6 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_federated_context_creation() {

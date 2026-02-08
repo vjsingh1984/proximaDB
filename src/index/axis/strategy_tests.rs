@@ -2,7 +2,6 @@
 
 use super::management::strategy::{CollectionStatistics, IndexStrategyBuilder, QueryPatterns};
 use super::types::*;
-use super::*;
 use std::collections::HashMap;
 
 // Removed outdated OptimizationConfig tests; configuration lives in optimizers

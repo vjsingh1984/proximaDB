@@ -2,7 +2,6 @@
 //!
 //! Tests for VIPER's column filter, parquet reconstructor, and core functionality.
 
-use super::helpers::*;
 
 // Tests from column_filter.rs
 
@@ -75,7 +74,6 @@ fn test_reconstructor_creation() {
 #[ignore = "accesses private method `detect_compression`"]
 fn test_compression_detection() {
     use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
-        CompressionType, FileSeekRange, ParquetReconstructor, ReconstructorConfig,
     };
 
     let _reconstructor = ParquetReconstructor::new(ReconstructorConfig::default());

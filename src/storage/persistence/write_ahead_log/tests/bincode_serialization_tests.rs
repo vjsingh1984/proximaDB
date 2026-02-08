@@ -13,11 +13,9 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, BincodeSerializationStrategy, WALBatchStrategy, WALConfig,
 };
-use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// Counter for generating unique test paths
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);

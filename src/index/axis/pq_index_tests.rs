@@ -13,7 +13,7 @@ mod tests {
     use crate::index::axis::index_factory::IndexFactory;
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use crate::proto::proximadb_v1::VectorRecord;
-    use tracing::{debug, error, info};
+use tracing::{debug, info};
 
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {

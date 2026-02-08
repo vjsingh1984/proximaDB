@@ -518,7 +518,6 @@ pub async fn create_test_parquet_reader(
 /// debug_parquet_file("file:///tmp/test.parquet", "Test File").await?;
 /// ```
 pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
-    use arrow_array::Array;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use tracing::debug;
 

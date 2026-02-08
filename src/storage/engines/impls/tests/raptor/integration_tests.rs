@@ -472,7 +472,7 @@ async fn test_cloud_io_optimization() -> Result<()> {
 
 #[tokio::test]
 async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
-    use crate::storage::engines::impls::raptor::common::{ColumnarCentroids, ProximaMetadata};
+use crate::storage::engines::impls::raptor::common::{ColumnarCentroids};
     use crate::storage::engines::impls::raptor::writer::RaptorWriter;
     use tempfile::TempDir;
 
@@ -617,7 +617,6 @@ fn test_memory_savings_with_centralized_footer() {
 
 #[test]
 fn test_centroid_distance_matrix_performance() {
-    use std::time::Instant;
 
     println!("\n=== Centroid Distance Matrix Performance Impact ===\n");
 

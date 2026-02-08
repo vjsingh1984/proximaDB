@@ -30,7 +30,6 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
 // Also use columnar module's exports
 use crate::storage::engines::core::formats::columnar::{
-    FIELD_ID, FIELD_TIMESTAMP, UnifiedParquetReader,
 };
 
 /// Create test configuration

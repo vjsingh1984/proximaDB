@@ -1,6 +1,5 @@
 #[cfg(test)]
 pub mod viper_pipeline_tests {
-    use super::*;
     use crate::compute::quantization::types::QuantizationLevel;
     use crate::compute::quantization::types::*;
     use crate::proto::proximadb_v1::SqlValue;

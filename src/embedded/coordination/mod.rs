@@ -82,7 +82,6 @@ impl From<LeaderElectionError> for CoordinationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]

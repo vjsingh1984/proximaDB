@@ -891,7 +891,6 @@ mod tests {
     use super::*;
     use crate::compute::provider::LocalComputeProvider;
     use crate::query::unified_query_optimizer::{
-        ParallelismConfig, ResourceAllocation, UnifiedPerformanceEstimate,
     };
 
     fn create_test_bridge() -> ComputeBridge {
