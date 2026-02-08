@@ -63,7 +63,7 @@ pub enum CompositeIndexType {
 
 /// Wrapper for f64 that implements Ord by treating NaN as greater than all other values
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct OrderedFloat(f64);
+pub struct OrderedFloat(pub f64);
 
 impl Eq for OrderedFloat {}
 

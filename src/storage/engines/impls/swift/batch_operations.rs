@@ -41,10 +41,13 @@ impl Default for BatchConfig {
 
 /// Block cache for recently accessed blocks
 #[derive(Clone)]
-struct BlockCache {
-    cache: Arc<RwLock<crate::utils::cache::LruCache<(u32, u32), Arc<ProximaDataBlock>>>>,
-    current_size: Arc<RwLock<usize>>,
-    max_size: usize,
+pub struct BlockCache {
+    /// LRU cache storing blocks by (superblock_id, block_id) key
+    pub cache: Arc<RwLock<crate::utils::cache::LruCache<(u32, u32), Arc<ProximaDataBlock>>>>,
+    /// Current cache size in bytes
+    pub current_size: Arc<RwLock<usize>>,
+    /// Maximum cache size in bytes
+    pub max_size: usize,
 }
 
 impl BlockCache {

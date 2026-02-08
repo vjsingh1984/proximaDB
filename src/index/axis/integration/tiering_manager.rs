@@ -257,20 +257,29 @@ pub struct AxisTieringManager {
 
 /// A tier operation in progress
 #[derive(Debug, Clone)]
-struct TierOperation {
-    collection_id: String,
-    from_tier: InfrastructureTier,
-    to_tier: InfrastructureTier,
-    start_time: Instant,
-    operation_type: TierOperationType,
+pub struct TierOperation {
+    /// Collection ID for this operation
+    pub collection_id: String,
+    /// Source tier
+    pub from_tier: InfrastructureTier,
+    /// Destination tier
+    pub to_tier: InfrastructureTier,
+    /// When the operation started
+    pub start_time: Instant,
+    /// Type of operation
+    pub operation_type: TierOperationType,
 }
 
 /// Type of tier operation
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TierOperationType {
+pub enum TierOperationType {
+    /// Move data to a faster tier
     Promotion,
+    /// Move data to a slower tier
     Demotion,
+    /// Move data between tiers
     Migration,
+    /// Pre-fetch data to a faster tier
     Prefetch,
 }
 

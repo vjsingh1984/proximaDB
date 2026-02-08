@@ -147,14 +147,22 @@ pub struct UnifiedSwiftReader {
 
 /// Lightweight superblock metadata for caching
 #[derive(Debug, Clone)]
-struct SuperBlockMetadata {
+pub struct SuperBlockMetadata {
+    /// Superblock identifier
     pub id: u32,
+    /// Offset in file
     pub offset: u64,
+    /// Size in bytes
     pub size: u64,
+    /// Number of records
     pub record_count: u32,
+    /// ID range (min, max)
     pub id_range: (String, String),
+    /// Whether deleted records exist
     pub has_deletes: bool,
+    /// Bloom filter offset in file
     pub bloom_filter_offset: u64,
+    /// Bloom filter size in bytes
     pub bloom_filter_size: u32,
 }
 

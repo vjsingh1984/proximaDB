@@ -232,20 +232,30 @@ pub trait AlertSubscriber {
 /// Performance trend analysis
 #[derive(Debug, Clone)]
 pub struct PerformanceTrend {
+    /// Collection identifier
     pub collection_id: String,
+    /// Latency trend direction
     pub latency_trend: TrendDirection,
+    /// Throughput trend direction
     pub throughput_trend: TrendDirection,
+    /// Error rate trend direction
     pub error_rate_trend: TrendDirection,
+    /// Confidence in trend analysis (0.0-1.0)
     pub trend_confidence: f64,
+    /// When the trend was last analyzed
     pub last_analyzed: DateTime<Utc>,
 }
 
-/// Trend directions
-#[derive(Debug, Clone, Copy)]
-enum TrendDirection {
+/// Trend directions for performance metrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendDirection {
+    /// Performance is improving
     Improving,
+    /// Performance is stable
     Stable,
+    /// Performance is degrading
     Degrading,
+    /// Trend is unknown
     Unknown,
 }
 
