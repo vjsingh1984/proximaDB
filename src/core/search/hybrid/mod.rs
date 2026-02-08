@@ -41,16 +41,14 @@ pub mod coordinator;
 pub mod bm25_wrapper;
 pub mod reranker;
 
-pub use fusion::{
-    FusionStrategy, HybridFusionEngine, FusedSearchResult,
-    BM25Result, VectorResult, TextHighlight,
-};
+// Export fusion engine and error from fusion module
+pub use fusion::{HybridFusionEngine, FusionError};
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// Fusion strategies for combining BM25 and vector scores
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FusionStrategy {
     /// Reciprocal Rank Fusion
     ///

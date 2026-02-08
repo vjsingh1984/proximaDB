@@ -45,7 +45,7 @@ mod edge_tests {
     }
 
     // Helper to create test collection context
-    fn create_test_context(collection_id: &str, file_paths: Vec<String>) -> CollectionContext {
+    fn create_test_context(_collection_id: &str, file_paths: Vec<String>) -> CollectionContext {
         CollectionContext {
             file_path: file_paths.first().cloned().unwrap_or_default(),
             sstable_files: file_paths,

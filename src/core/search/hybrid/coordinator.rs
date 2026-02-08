@@ -40,9 +40,9 @@ impl HybridCoordinator {
     /// ```
     pub async fn execute_hybrid_search<F1, F2, Fut1, Fut2>(
         &self,
-        bm25_search_fn: F1,
-        vector_search_fn: F2,
-        top_k: usize,
+        _bm25_search_fn: F1,
+        _vector_search_fn: F2,
+        _top_k: usize,
     ) -> Result<Vec<FusedSearchResult>, Box<dyn std::error::Error>>
     where
         F1: FnOnce(String) -> Fut1,
@@ -55,17 +55,17 @@ impl HybridCoordinator {
             async move {
                 // TODO: Execute BM25 search
                 // For now, return empty results
-                Ok(vec![])
+                Ok::<Vec<BM25Result>, Box<dyn std::error::Error>>(vec![])
             },
             async move {
                 // TODO: Execute vector search
                 // For now, return empty results
-                Ok(vec![])
+                Ok::<Vec<VectorResult>, Box<dyn std::error::Error>>(vec![])
             }
         );
 
-        let bm25_results = bm25_result?;
-        let vector_results = vector_result?;
+        let _bm25_results = bm25_result?;
+        let _vector_results = vector_result?;
 
         // TODO: Fuse results using fusion strategy
         // For now, return empty
@@ -79,7 +79,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_creation() {
-        let coordinator = HybridCoordinator::new(FusionStrategy::ReciprocalRank { k: 60 });
+        let _coordinator = HybridCoordinator::new(FusionStrategy::ReciprocalRank { k: 60 });
         // Coordinator created successfully
     }
 }

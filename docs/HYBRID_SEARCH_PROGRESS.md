@@ -1,6 +1,19 @@
 # Hybrid Search Implementation - Phase 1 Progress
 
-## Status: 🟢 GREEN - Basic Tests Passing!
+## Status: 🟡 YELLOW - Fixing Module Structure
+
+### Current Issue: Module Structure
+**Problem**: Circular import between `mod.rs` and `fusion.rs`
+- `mod.rs` defines types: `FusionStrategy`, `BM25Result`, `VectorResult`, `FusedSearchResult`, `TextHighlight`
+- `fusion.rs` imports from `super` (correct)
+- `mod.rs` tried to re-export from `fusion` (incorrect - creates circular dependency)
+
+**Fix Applied**:
+1. ✅ Removed duplicate `hybrid.rs` file (conflicted with `hybrid/` directory)
+2. ✅ Fixed `mod.rs` exports - only export `HybridFusionEngine` and `FusionError` from fusion module
+3. ✅ Fixed `coordinator.rs` type annotations with explicit `Ok::<Type, Error>(...)`
+
+**Tests**: Currently compiling to verify fixes...
 
 ### What We've Accomplished
 

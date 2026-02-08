@@ -672,7 +672,7 @@ mod tests {
     use super::*;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
-    use super::block_structures::BlockStatistics;
+    use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
 
     #[test]
     fn test_memory_usage_calculation() {

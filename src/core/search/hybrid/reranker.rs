@@ -63,8 +63,8 @@ impl Reranker {
     pub fn boost(
         &self,
         mut results: Vec<FusedSearchResult>,
-        boost_field: &str,
-        boost_factor: f64,
+        _boost_field: &str,
+        _boost_factor: f64,
     ) -> Result<Vec<FusedSearchResult>, Box<dyn std::error::Error>> {
         // TODO: Implement boosting logic
         // For now, return results unchanged

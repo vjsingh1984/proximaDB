@@ -1209,7 +1209,7 @@ mod tests {
             Arc::new(InMemoryProvenanceRegistry::new()),
         );
 
-        let mut entity = Entity {
+        let entity = Entity {
             id: "".to_string(),
             embeddings: vec![EmbeddingVersion {
                 model_id: "model-a".to_string(),

@@ -720,7 +720,7 @@ mod tests {
 
     #[test]
     fn test_scalar_predicate_equal() {
-        let mut bounds = ColumnBounds {
+        let bounds = ColumnBounds {
             min: Some(serde_json::json!(10)),
             max: Some(serde_json::json!(100)),
             null_count: 0,

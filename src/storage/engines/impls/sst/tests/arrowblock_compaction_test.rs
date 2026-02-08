@@ -836,7 +836,7 @@ mod tests {
         // Create second version of vectors (same IDs, different values, higher version)
         let mut vectors_v2 = Vec::new();
         for i in 0..10 {
-            let mut values = vec![2.0f32; dimension]; // All 2.0 for v2
+            let values = vec![2.0f32; dimension]; // All 2.0 for v2
             vectors_v2.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: values,

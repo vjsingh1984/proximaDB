@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_xxhash_round_function() {
-        let mut hasher = XxHash64::new(0);
+        let hasher = XxHash64::new(0);
 
         // Test the internal round function with known values
         let input = 0x123456789ABCDEF0;

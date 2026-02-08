@@ -27,6 +27,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
+    use tracing::{debug, info};
 
     /// Mock storage engine for integration testing
     #[derive(Debug, Clone)]
