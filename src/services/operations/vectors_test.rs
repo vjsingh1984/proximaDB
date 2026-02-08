@@ -9,14 +9,12 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tracing::{debug, error, info};
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::{Config, VectorRecord};
     use crate::proto::proximadb_v1::VectorRecord as ProtoVectorRecord;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstEngine;
-    use crate::storage::engines::impls::viper::ViperEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
 
     /// Create test vector record with customizable properties

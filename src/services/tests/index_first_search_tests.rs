@@ -10,14 +10,17 @@
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use tokio::sync::RwLock;
     use tracing::info;
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::{
         ComparisonOperator, FilterExpression, SearchParams, results::OptimizedSearchRecord,
     };
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstEngine;
