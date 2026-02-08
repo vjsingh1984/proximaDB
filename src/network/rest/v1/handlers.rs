@@ -1600,4 +1600,162 @@ mod tests {
         assert!(doc2.get("vector_score").is_none());
         assert!(doc2.get("vector_rank").is_none());
     }
+
+    // Test parse_search_request with simple format
+    #[test]
+    fn test_parse_search_request_simple_format() {
+        let json = serde_json::json!({
+            "collection": "test_collection",
+            "vector": [0.1, 0.2, 0.3, 0.4],
+            "top_k": 20
+        });
+
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+
+        let request = result.unwrap();
+        assert_eq!(request.collection_id, "test_collection");
+        assert_eq!(request.queries.len(), 1);
+        assert_eq!(request.queries[0].vector, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(request.top_k, 20);
+    }
+
+    // Test parse_search_request with proto format
+    #[test]
+    fn test_parse_search_request_proto_format() {
+        let json = serde_json::json!({
+            "collection_id": "proto_collection",
+            "queries": [
+                {"vector": [0.5, 0.6, 0.7]},
+                {"vector": [0.8, 0.9, 1.0]}
+            ],
+            "top_k": 15
+        });
+
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+
+        let request = result.unwrap();
+        assert_eq!(request.collection_id, "proto_collection");
+        assert_eq!(request.queries.len(), 2);
+        assert_eq!(request.top_k, 15);
+    }
+
+    // Test parse_search_request with filters
+    #[test]
+    fn test_parse_search_request_with_filters() {
+        let json = serde_json::json!({
+            "collection": "filtered_collection",
+            "vector": [0.1, 0.2, 0.3],
+            "top_k": 10,
+            "filters": {
+                "category": "electronics",
+                "price": 299
+            }
+        });
+
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+
+        let request = result.unwrap();
+        assert_eq!(request.queries[0].filters.len(), 2);
+        assert!(request.queries[0].filters.contains_key("category"));
+    }
+
+    // Test ApiError variants
+    #[test]
+    fn test_api_error_variants() {
+        use std::io;
+
+        // Test CollectionNotFound
+        let err = ApiError::CollectionNotFound("test_col".to_string());
+        assert_eq!(err.to_string(), "Collection not found: test_col");
+
+        // Test InvalidArgument
+        let err = ApiError::InvalidArgument("bad argument".to_string());
+        assert_eq!(err.to_string(), "Invalid argument: bad argument");
+
+        // Test Internal
+        let err = ApiError::Internal("internal error".to_string());
+        assert_eq!(err.to_string(), "Internal error: internal error");
+
+        // Test from io::Error
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let api_err: ApiError = io_err.into();
+        assert!(api_err.to_string().contains("file not found"));
+    }
+
+    // Test ApiDisplay trait implementation
+    #[test]
+    fn test_api_display() {
+        let err = ApiError::CollectionNotFound("my_collection".to_string());
+        let display = format!("{}", err);
+        assert!(display.contains("my_collection"));
+    }
+
+    // Test empty collection validation
+    #[test]
+    fn test_empty_collection_validation() {
+        let json = serde_json::json!({
+            "collection": "",
+            "vector": [0.1, 0.2]
+        });
+
+        let result = parse_search_request(json);
+        assert!(result.is_ok()); // parse succeeds but validation happens in handler
+        assert_eq!(result.unwrap().collection_id, "");
+    }
+
+    // Test default values for optional fields
+    #[test]
+    fn test_parse_search_request_defaults() {
+        let json = serde_json::json!({
+            "collection": "defaults_test",
+            "vector": [0.1]
+        });
+
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+
+        let request = result.unwrap();
+        assert_eq!(request.top_k, 10); // default top_k
+        assert!(request.include_fields.is_none()); // optional field
+        assert!(request.search_params.is_none()); // optional field
+    }
+
+    // Test VectorSearchRequest roundtrip
+    #[test]
+    fn test_vector_search_request_roundtrip() {
+        let original_json = serde_json::json!({
+            "collection": "roundtrip",
+            "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "top_k": 100,
+            "filters": {"status": "active"}
+        });
+
+        let parsed = parse_search_request(original_json.clone()).unwrap();
+        let serialized = serde_json::to_value(&parsed).unwrap();
+
+        assert_eq!(
+            serialized["collection_id"].as_str(),
+            original_json["collection"].as_str()
+        );
+        assert_eq!(serialized["top_k"].as_u64(), Some(100));
+    }
+
+    // Test error message formatting
+    #[test]
+    fn test_error_message_formatting() {
+        let errors = vec![
+            ApiError::CollectionNotFound("test".to_string()),
+            ApiError::InvalidArgument("invalid".to_string()),
+            ApiError::Internal("server error".to_string()),
+        ];
+
+        for err in errors {
+            let msg = format!("{}", err);
+            assert!(!msg.is_empty());
+            assert!(!msg.contains("ApiError(")); // Should be user-friendly
+        }
+    }
 }
