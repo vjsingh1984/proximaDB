@@ -180,7 +180,7 @@ impl CodebookSerializer {
     /// Extract codebook metadata from UnifiedQuantizationEngine
     pub async fn extract_from_engine(
         &self,
-        engine: &UnifiedQuantizationEngine,
+        _engine: &UnifiedQuantizationEngine,
         collection_id: &str,
     ) -> Result<QuantizationCodebookMetadata> {
         let mut metadata = QuantizationCodebookMetadata {

@@ -7,8 +7,9 @@ use anyhow::{Result, anyhow};
 // These parquet metadata types are used internally for low-level operations
 // The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
+use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, mpsc};
-use tokio::time::Duration;
+use tokio::time::{Duration, timeout};
 use tracing::{debug, info, warn};
 /// Configuration for streaming row group processing
 #[derive(Debug, Clone)]
@@ -257,7 +258,7 @@ impl StreamingRowGroupProcessor {
                     .await
                     .map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
-                let memory_reservation = {
+                let _memory_reservation = {
                     let mut tracker = memory_tracker.write().await;
                     tracker.reserve_memory(
                         &format!("rg_{}", task.row_group_id),
@@ -317,7 +318,7 @@ impl StreamingRowGroupProcessor {
             match stage {
                 ProcessingStage::BloomFilter => {
                     // Quick existence check - for now, pass all through
-                    if let Some(stats) = enhanced_stats {
+                    if let Some(_stats) = enhanced_stats {
                         // Would check bloom filters here
                         records_processed += task.metadata.num_rows() as usize;
                     }

@@ -201,7 +201,7 @@ impl Compaction {
         ));
 
         // Initialize zero-copy compactor with proper block size from config
-        let sst_compactor = if let Some(ref coord) = atomic_coordinator {
+        let sst_compactor = if let Some(ref _coord) = atomic_coordinator {
             // Create MVCC resolver for the compactor
             let mvcc_resolver = Arc::new(MvccResolver::new());
             debug!(
@@ -263,7 +263,7 @@ impl Compaction {
     pub async fn with_quantization_sorting(mut self) -> Result<Self> {
         // PQ-based sorting is now integrated directly into the compactor
         // using the unified quantization engine
-        if let Some(ref mut compactor) = self.sst_compactor {
+        if let Some(ref mut _compactor) = self.sst_compactor {
             // Create unified quantization engine for PQ-based sorting
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -298,7 +298,7 @@ impl Compaction {
                     self.filesystem_factory.clone(),
                     self.atomic_coordinator
                         .as_ref()
-                        .map(|coord| Arc::new(MvccResolver::new())),
+                        .map(|_coord| Arc::new(MvccResolver::new())),
                     self.config.block_size_kb,
                 )
                 .with_pq_sorting(quantization_engine),

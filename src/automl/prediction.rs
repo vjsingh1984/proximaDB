@@ -553,7 +553,7 @@ impl PerformancePredictor {
     }
 
     /// Get model accuracy metrics
-    pub async fn get_model_metrics(&self, collection_id: &str) -> Result<ModelMetrics> {
+    pub async fn get_model_metrics(&self, _collection_id: &str) -> Result<ModelMetrics> {
         // Placeholder implementation
         Ok(ModelMetrics {
             mse: 0.0,

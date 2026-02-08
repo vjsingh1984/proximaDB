@@ -70,7 +70,7 @@ fn test_grpc_before_rest() {
     assert_eq!(grpc_result.unwrap().protocol, DetectedProtocol::Grpc);
 
     // REST detector should NOT match (grpc content-type is excluded)
-    let rest_result = rest.detect(&request);
+    let _rest_result = rest.detect(&request);
     // With strict mode, REST should not detect
     let strict_rest = RestDetector::strict();
     let strict_result = strict_rest.detect(&request);

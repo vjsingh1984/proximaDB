@@ -483,7 +483,7 @@ async fn ws_subscribe_handler(
 }
 
 /// Handle WebSocket connection for live query subscription
-async fn handle_subscribe_socket(socket: WebSocket, collection: String, state: WebSocketState) {
+async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: WebSocketState) {
     let (mut sender, mut receiver) = socket.split();
 
     let subscription_id = StreamId::new().to_string();

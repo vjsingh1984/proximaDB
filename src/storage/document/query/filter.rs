@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_filter_evaluator_new() {
-        let evaluator = FilterEvaluator::new();
+        let _evaluator = FilterEvaluator::new();
         // Basic instantiation test
         assert!(true);
     }

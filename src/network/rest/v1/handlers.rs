@@ -860,6 +860,13 @@ pub async fn explain_sql(
 // Hybrid Search (BM25 + Vector with RRF Fusion)
 // =============================================================================
 
+/// Compatibility alias for vector search input
+/// Maps internal VectorResult to simple wrapper used by handlers
+struct VectorSearchInput {
+    id: String,
+    score: f32,
+}
+
 /// Request body for hybrid search
 #[derive(Debug, Deserialize)]
 pub struct HybridSearchRequest {
@@ -1119,14 +1126,20 @@ pub async fn hybrid_search(
             .map_err(|e| ApiError::Internal(format!("Lock error: {}", e)))?;
 
         if let Some(index) = indexes.get(&request.collection) {
-            use crate::core::search::hybrid::BM25Result;
+            use crate::core::search::hybrid::{BM25Result, TextHighlight};
             let search_results = index.search(text_query, request.top_k);
             search_results
                 .into_iter()
                 .map(|r| BM25Result {
-                    id: r.doc_id,
+                    doc_id: r.doc_id,
                     score: r.score,
-                    matched_terms: r.matched_terms,
+                    highlights: Some(r.matched_terms.iter().map(|term| TextHighlight {
+                        field: "content".to_string(),
+                        text: term.clone(),
+                        start_offset: 0,
+                        end_offset: term.len(),
+                    }).collect()),
+                    metadata: std::collections::HashMap::new(),
                 })
                 .collect()
         } else {
@@ -1141,26 +1154,38 @@ pub async fn hybrid_search(
         Vec::new()
     };
 
-    // --- RRF Fusion ---
-    let engine = crate::core::search::hybrid::HybridSearchEngine::new();
-    let config = crate::core::search::hybrid::HybridFusionConfig {
-        rrf_k: request.rrf_k,
-        vector_weight: request.vector_weight,
-        min_bm25_score: request.min_bm25_score,
-    };
+    // --- RRF Fusion using comprehensive hybrid module ---
+    use crate::core::search::hybrid::{FusionStrategy, HybridFusionEngine, VectorResult};
 
-    let fused = engine.fuse_results(&bm25_results, &vector_results, &config, request.top_k);
+    // Convert vector results to VectorResult format
+    let vector_results_compact: Vec<VectorResult> = vector_results
+        .into_iter()
+        .map(|v| VectorResult {
+            doc_id: v.id,
+            score: v.score as f64,
+            distance: 1.0 - v.score as f64, // Convert similarity to distance
+            metadata: std::collections::HashMap::new(),
+        })
+        .collect();
+
+    let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: request.rrf_k as usize });
+
+    let fused = engine.fuse(bm25_results, vector_results_compact)
+        .map_err(|e| ApiError::Internal(format!("Fusion failed: {}", e)))?;
 
     let hits: Vec<HybridSearchHit> = fused
         .into_iter()
         .map(|r| HybridSearchHit {
-            id: r.id,
-            combined_score: r.combined_score,
-            vector_score: r.vector_score,
-            bm25_score: r.bm25_score,
-            vector_rank: r.vector_rank,
-            bm25_rank: r.bm25_rank,
-            matched_terms: r.matched_terms,
+            id: r.doc_id,
+            combined_score: r.fused_score,
+            vector_score: if r.vector_score > 0.0 { Some(r.vector_score as f32) } else { None },
+            bm25_score: if r.bm25_score > 0.0 { Some(r.bm25_score) } else { None },
+            vector_rank: if r.vector_rank != usize::MAX { Some(r.vector_rank) } else { None },
+            bm25_rank: if r.bm25_rank != usize::MAX { Some(r.bm25_rank) } else { None },
+            matched_terms: r.highlights
+                .as_ref()
+                .map(|h| h.iter().map(|hl| hl.text.clone()).collect())
+                .unwrap_or_default(),
         })
         .collect();
 

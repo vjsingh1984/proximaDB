@@ -643,7 +643,10 @@ impl RoutingService {
                 }
             }
 
-            PartitionStrategy::Range { field, boundaries } => {
+            PartitionStrategy::Range {
+                field: _field,
+                boundaries,
+            } => {
                 // Find the shard based on value range
                 if let Some(key) = partition_key {
                     self.compute_shard_from_range(collection_id, &key, boundaries, shard_count)

@@ -1496,7 +1496,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_query_execution() {
-        let executor = ParallelExecutor::new(4);
+        let _executor = ParallelExecutor::new(4);
         let query = MultiModelQuery::new();
 
         // Need mock storage engine and document service for full test

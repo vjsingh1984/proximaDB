@@ -109,8 +109,8 @@ impl BranchedFilterExecutor {
     /// Check if a value matches a condition
     fn value_matches_condition(
         &self,
-        value: &crate::proto::proximadb_v1::SqlValue,
-        condition: &crate::storage::engines::core::formats::columnar::FilterCondition,
+        _value: &crate::proto::proximadb_v1::SqlValue,
+        _condition: &crate::storage::engines::core::formats::columnar::FilterCondition,
     ) -> bool {
         // Simplified implementation - would need full SQL value comparison
         // This would convert SqlValue to serde_json::Value and compare against FilterCondition

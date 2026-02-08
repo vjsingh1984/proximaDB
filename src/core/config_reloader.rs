@@ -270,7 +270,6 @@ impl ConfigReloader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{Duration, sleep};
 
     #[tokio::test]
     async fn test_config_change_detection() {

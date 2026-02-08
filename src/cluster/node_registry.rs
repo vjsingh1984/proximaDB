@@ -284,7 +284,7 @@ impl NodeRegistry {
     }
 
     /// Get nodes that can serve a specific shard
-    pub async fn get_nodes_for_shard(&self, shard_id: &str) -> Vec<NodeInfo> {
+    pub async fn get_nodes_for_shard(&self, _shard_id: &str) -> Vec<NodeInfo> {
         // In a full implementation, this would check shard assignments
         // For now, return all healthy nodes
         self.get_healthy_nodes().await

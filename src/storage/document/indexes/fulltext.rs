@@ -75,7 +75,7 @@ impl FullTextIndex {
     pub fn add_field(&mut self, path: &str) -> Result<()> {
         // Rebuild schema with new field
         let mut schema_builder = Schema::builder();
-        let id_field = schema_builder.add_text_field("_id", STORED);
+        let _id_field = schema_builder.add_text_field("_id", STORED);
 
         // Copy existing fields
         let existing_fields = self.text_fields.read().unwrap();

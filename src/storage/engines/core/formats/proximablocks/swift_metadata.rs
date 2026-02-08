@@ -597,7 +597,7 @@ mod tests {
 
         // Test with ID that might exist
         query_context.id_lookups = vec!["id_500000".to_string()]; // Hash likely in range
-        let can_skip = serializer.can_skip_file(metadata.as_ref(), &query_context);
+        let _can_skip = serializer.can_skip_file(metadata.as_ref(), &query_context);
         // Depending on hash, might not be able to skip
     }
 

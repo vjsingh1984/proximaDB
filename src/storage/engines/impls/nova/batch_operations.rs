@@ -273,13 +273,13 @@ pub async fn update_records_batch(
 }
 
 /// Batch delete operations (mark as deleted in metadata)
-pub async fn delete_records_batch(nova_file: &mut NovaFile, ids: &[String]) -> Result<usize> {
+pub async fn delete_records_batch(_nova_file: &mut NovaFile, ids: &[String]) -> Result<usize> {
     // In NOVA, deletions are typically handled by:
     // 1. Maintaining a deletion list
     // 2. Filtering during compaction
     // 3. Rewriting Parquet files
     let mut deleted = 0;
-    for id in ids {
+    for _id in ids {
         // TODO: Implement ID index for NOVA
         if false {
             // Placeholder: nova_file.id_index.lookup(id).await.is_some()

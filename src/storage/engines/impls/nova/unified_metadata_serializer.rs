@@ -256,7 +256,7 @@ mod tests {
 
         // Footer content
         let footer = b"parquet_footer_metadata_content";
-        let footer_start = data.len();
+        let _footer_start = data.len();
         data.extend_from_slice(footer);
 
         // Footer length (4 bytes)

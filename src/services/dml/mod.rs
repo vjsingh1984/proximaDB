@@ -644,9 +644,9 @@ mod tests {
         let null = SqlValueLiteral::Null;
         let bool_val = SqlValueLiteral::Boolean(true);
         let int_val = SqlValueLiteral::Integer(42);
-        let float_val = SqlValueLiteral::Float(3.14);
-        let string_val = SqlValueLiteral::String("hello".to_string());
-        let array_val = SqlValueLiteral::Array(vec![
+        let _float_val = SqlValueLiteral::Float(3.14);
+        let _string_val = SqlValueLiteral::String("hello".to_string());
+        let _array_val = SqlValueLiteral::Array(vec![
             SqlValueLiteral::Float(1.0),
             SqlValueLiteral::Float(2.0),
         ]);

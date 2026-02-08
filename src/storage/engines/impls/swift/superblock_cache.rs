@@ -392,11 +392,11 @@ impl SwiftSuperBlockCache {
 
         // Load all SuperBlock metadata (critical for instant traversal)
         // Filesystem operations handled by caller
-        let superblock_path = format!("{}/superblocks_metadata.bin", collection_id);
+        let _superblock_path = format!("{}/superblocks_metadata.bin", collection_id);
         // TODO: Load superblock metadata from filesystem
 
         // Load tree navigation hints
-        let navigation_path = format!("{}/tree_navigation_hints.bin", collection_id);
+        let _navigation_path = format!("{}/tree_navigation_hints.bin", collection_id);
         // TODO: Load navigation hints from filesystem
 
         // Load bloom filter metadata (for instant filtering)

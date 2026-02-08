@@ -139,7 +139,7 @@ impl PredicateBuilder {
     }
 
     /// Evaluate filters against row group statistics
-    pub fn evaluate_row_group(&self, metadata: &RowGroupMetaData) -> bool {
+    pub fn evaluate_row_group(&self, __metadata: &RowGroupMetaData) -> bool {
         // This would check row group statistics to see if it can be skipped
         // For now, return true to read all row groups
         true
@@ -218,7 +218,7 @@ impl FilterPushdown {
     }
 
     /// Check if row group matches filters based on statistics
-    fn row_group_matches(&self, filters: &[MetadataFilter], rg: &RowGroupMetaData) -> bool {
+    fn row_group_matches(&self, __filters: &[MetadataFilter], __rg: &RowGroupMetaData) -> bool {
         // This would check column statistics (min/max) against filters
         // For now, return true to read all row groups
         true

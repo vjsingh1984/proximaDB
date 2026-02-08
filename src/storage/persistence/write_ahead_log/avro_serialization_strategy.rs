@@ -166,7 +166,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
-        base_location: &str,
+        _base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors (Avro format)",

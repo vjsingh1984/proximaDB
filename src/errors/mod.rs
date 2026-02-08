@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn test_api_error_to_response() {
         let err = ApiError::InvalidArgument("bad input".to_string());
-        let response = err.into_response();
+        let _response = err.into_response();
         // Response will have status 400 and JSON body
     }
 }

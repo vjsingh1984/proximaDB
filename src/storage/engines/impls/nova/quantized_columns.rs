@@ -4,6 +4,7 @@
 //! in compute/quantization, eliminating duplication and ensuring consistency across engines.
 
 use anyhow::{Result, anyhow};
+use arrow::array::ArrayRef;
 use arrow_array::RecordBatch;
 use arrow_array::array::{BinaryArray, Float32Array, Int8Array};
 use arrow_schema::{DataType, Field};

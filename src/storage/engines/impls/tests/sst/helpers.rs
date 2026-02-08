@@ -438,6 +438,9 @@ pub fn create_test_search_params() -> SearchParams {
         optimization_hint: None,
         search_mode: crate::core::search::SearchMode::default(),
         block_prune: crate::core::search::BlockPruneConfig::default(),
+        text_query: None,
+        hybrid_mode: crate::core::search::HybridSearchMode::default(),
+        vector_weight: None,
     }
 }
 

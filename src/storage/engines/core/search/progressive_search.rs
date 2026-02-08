@@ -506,7 +506,7 @@ impl ProgressiveSearchExecutor {
                 for i in 0..num_subvectors {
                     let start = i * subvector_dim;
                     let end = ((i + 1) * subvector_dim).min(query_vector.len());
-                    let query_sub = &query_vector[start..end];
+                    let _query_sub = &query_vector[start..end];
 
                     // Each byte in PQ data represents a codebook index
                     if i < pq_repr.data.len() {

@@ -1671,7 +1671,7 @@ mod tests {
         let service = RecordMigrationService::new(config);
 
         // Create a mix of valid and invalid records
-        let mut valid_record = create_test_record("valid_1");
+        let valid_record = create_test_record("valid_1");
         let mut invalid_record = create_test_record("");
         invalid_record.id = String::new(); // Empty ID will fail validation
 

@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
 use crate::index::axis::eventlog::IndexEvent;
@@ -304,7 +303,7 @@ impl EventLogWAL {
             .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
+        let _acknowledged_ids = if filesystem.exists(ack_file_str).await? {
             let content_bytes = filesystem.read(ack_file_str).await?;
             let content = String::from_utf8(content_bytes).unwrap_or_default();
             content

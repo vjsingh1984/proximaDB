@@ -1307,7 +1307,7 @@ impl CrossCacheOrchestrator {
                 if let Some(cache) = &self.metadata_cache {
                     // Convert Option<Value> to Result<Option<Vec<u8>>, Error>
                     match cache.get(key).await {
-                        Some(value) => {
+                        Some(_value) => {
                             // TODO: Convert Value to Vec<u8> properly
                             Ok(Some(Vec::new()))
                         }
@@ -1331,7 +1331,7 @@ impl CrossCacheOrchestrator {
         cache_type: CacheType,
         key: String,
         value: Vec<u8>,
-        ttl: Option<Duration>,
+        _ttl: Option<Duration>,
     ) -> Result<()> {
         // Track access for pattern learning
         self.pattern_tracker
@@ -1600,9 +1600,9 @@ impl CrossCacheOrchestrator {
         if let Some(ref cache) = self.vector_cache {
             total += cache.memory_usage().await;
         }
-        if let Some(ref cache) = self.query_cache {
+        if let Some(ref _cache) = self.query_cache {
             // Query cache doesn't have memory_usage method yet
-            // total += cache.memory_usage().await;
+            // total += _cache.memory_usage().await;
         }
         // Add other caches as needed
 

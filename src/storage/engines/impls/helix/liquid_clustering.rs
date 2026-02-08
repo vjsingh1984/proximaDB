@@ -235,7 +235,7 @@ impl LiquidClusteringCoordinator {
 
         for i in 0..records.len().saturating_sub(window_size) {
             let window = &records[i..i + window_size];
-            let window_keys = &hilbert_keys[i..i + window_size];
+            let _window_keys = &hilbert_keys[i..i + window_size];
 
             // Check if vectors in window have similar access counts
             let access_counts: Vec<usize> = window

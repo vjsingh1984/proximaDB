@@ -481,7 +481,7 @@ ProximaDB Enterprise Team",
         Ok(())
     }
 
-    async fn load_custom_poc_data(&self, environment: &TrialEnvironment) -> Result<()> {
+    async fn load_custom_poc_data(&self, _environment: &TrialEnvironment) -> Result<()> {
         // Load customer-specific data for custom POCs
         info!("📋 Custom POC data loading - would be customer-specific");
         Ok(())
@@ -641,7 +641,7 @@ impl TrialEnvironmentManager {
 
     pub async fn provision_trial_environment(
         &self,
-        request: &TrialCreationRequest,
+        _request: &TrialCreationRequest,
     ) -> Result<TrialEnvironment> {
         let environment_id = Uuid::new_v4().to_string();
         let subdomain = format!("trial-{}", &environment_id[..8]);

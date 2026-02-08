@@ -297,7 +297,7 @@ impl RowBasedCompressionConfig {
 
     /// Get default vector settings for dimension
     fn default_vector_settings(&self, dimension: usize) -> CompressionSettings {
-        let (algorithm, enable_bytemuck) = match dimension {
+        let (algorithm, _enable_bytemuck) = match dimension {
             // Common embedding dimensions - use bytemuck for performance
             64 | 128 | 256 | 384 | 512 | 768 | 1024 | 1536 | 2048 => {
                 (CompressionAlgorithm::Lz4, true)
@@ -344,7 +344,7 @@ impl RowBasedCompressionConfig {
     /// Get optimal algorithm for context and size
     pub fn get_optimal_algorithm(
         &self,
-        context: &CompressionContext,
+        _context: &CompressionContext,
         data_size: usize,
         hardware: &HardwareCapabilities,
     ) -> CompressionAlgorithm {

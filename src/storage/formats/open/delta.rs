@@ -1225,7 +1225,6 @@ impl DeltaLakeFormat {
         projection: Option<&Vec<String>>,
         _filter: Option<&FilterExpression>,
     ) -> Result<Vec<RecordBatch>> {
-        use arrow_array::RecordBatchReader;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 

@@ -374,7 +374,6 @@ unsafe impl Sync for FileLockManager {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use tempfile::TempDir;
 
     #[test]

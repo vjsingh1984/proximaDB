@@ -2543,6 +2543,9 @@ impl UnifiedStorageEngine for ViperEngine {
             progressive_recalls: None,
             optimization_hint: None,
             search_mode: crate::core::search::SearchMode::default(),
+            hybrid_mode: crate::core::search::HybridSearchMode::default(),
+            text_query: None,
+            vector_weight: None,
         };
 
         // Perform search using the reader's search_vectors method

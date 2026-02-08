@@ -1329,7 +1329,7 @@ impl QueryExecutor {
         vector_results: &[QueryRow],
         graph_results: &[QueryRow],
         strategy: &crate::query::execution::FusionStrategy,
-        weights: &[f64],
+        _weights: &[f64],
     ) -> Result<Vec<QueryRow>> {
         match strategy {
             crate::query::execution::FusionStrategy::ReciprocalRankFusion { k } => {

@@ -623,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_enterprise_nlp_engine_creation() {
-        let nlp_engine = EnterpriseNLPEngine::new().await.unwrap();
+        let _nlp_engine = EnterpriseNLPEngine::new().await.unwrap();
         // Basic validation that NLP engine was created
         assert!(true);
     }

@@ -475,7 +475,7 @@ impl ColumnarSerializer {
     pub async fn deserialize_vectors(
         &self,
         arrays: &HashMap<String, ArrayRef>,
-        schema: &Schema,
+        _schema: &Schema,
         format_preference: FormatPreference,
     ) -> Result<Vec<VectorRecord>> {
         let start_time = std::time::Instant::now();
@@ -616,14 +616,12 @@ impl ColumnarSerializer {
         vectors: &[&[f32]],
         engine: &StorageQuantizationEngine,
     ) -> Result<Vec<StorageQuantizedData>> {
-        let mut quantized_data = Vec::with_capacity(vectors.len());
-
         // Convert vector slices to owned vectors and create IDs
         let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
         let ids: Vec<String> = (0..vectors.len()).map(|i| format!("temp_{}", i)).collect();
 
         // Quantize all vectors at once
-        quantized_data = engine
+        let quantized_data = engine
             .quantize_batch(&owned_vectors, Some(&ids))
             .await
             .context("Failed to quantize vectors")?;
@@ -881,7 +879,7 @@ impl ColumnarSerializer {
                     .downcast_ref::<FixedSizeBinaryArray>()
                     .ok_or_else(|| anyhow::anyhow!("Failed to downcast to FixedSizeBinaryArray"))?;
 
-                let dimension = *size as usize / 4; // 4 bytes per f32
+                let _dimension = *size as usize / 4; // 4 bytes per f32
                 let mut vectors = Vec::with_capacity(fixed_array.len());
 
                 for i in 0..fixed_array.len() {

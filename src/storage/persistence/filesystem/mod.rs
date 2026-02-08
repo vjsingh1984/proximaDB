@@ -543,7 +543,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Get memory-mapped access to a file (only supported for local filesystem)
     /// Returns None if memory mapping is not supported (e.g., cloud storage)
     /// The returned mmap is read-only and safe for concurrent access
-    async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
+    async fn get_mmap(&self, _path: &str) -> FsResult<Option<memmap2::Mmap>> {
         // Default implementation returns None (not supported)
         // LocalFileSystem will override this to provide actual memory mapping
         Ok(None)
@@ -1701,8 +1701,8 @@ mod inline_tests {
 
     #[tokio::test]
     async fn test_path_extraction() {
-        let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::create(config).await.unwrap();
+        let _config = FilesystemConfig::default();
+        let _factory = FilesystemFactory::create(_config).await.unwrap();
 
         assert_eq!(
             FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),

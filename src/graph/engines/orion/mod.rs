@@ -1207,7 +1207,7 @@ mod tests {
         };
 
         // Insert edge
-        let inserted_edge = engine.insert_edge(edge).await.unwrap();
+        let _inserted_edge = engine.insert_edge(edge).await.unwrap();
         assert_eq!(engine.edge_count().unwrap(), 1);
 
         // Give time for async CSR update

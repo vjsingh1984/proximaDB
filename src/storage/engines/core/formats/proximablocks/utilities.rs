@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
-use super::block_structures::BlockStatistics;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::v1::VectorRecord;
 
@@ -673,6 +672,7 @@ mod tests {
     use super::*;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
+    use super::block_structures::BlockStatistics;
 
     #[test]
     fn test_memory_usage_calculation() {

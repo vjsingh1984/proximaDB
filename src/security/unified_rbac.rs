@@ -538,7 +538,7 @@ impl ConsolidatedRBACManager {
     pub async fn get_accessible_collections(
         &self,
         user_context: &UnifiedUserContext,
-        permission_type: CollectionPermissionType,
+        _permission_type: CollectionPermissionType,
     ) -> Result<Vec<String>> {
         let mut accessible_collections = Vec::new();
 

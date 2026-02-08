@@ -54,7 +54,7 @@ impl SstCodebookManager {
             let codebook_offset = current_offset;
             let codebook_bytes = self.serializer.serialize_for_footer(&metadata)?;
             buffer.extend_from_slice(&codebook_bytes);
-            current_offset += codebook_bytes.len() as u64;
+            let _current_offset = current_offset + codebook_bytes.len() as u64;
             (Some(codebook_offset), Some(codebook_bytes.len() as u64))
         } else {
             (None, None)

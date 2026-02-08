@@ -745,7 +745,7 @@ impl PerformanceTracker {
     }
 
     /// Update performance trends
-    async fn update_trends(&self, collection_id: &str, _metrics: &CollectionMetrics) {
+    async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
         // TODO: Implement trend analysis
     }
 }

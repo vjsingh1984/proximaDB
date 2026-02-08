@@ -37,7 +37,7 @@
 
 use std::collections::HashSet;
 
-use crate::core::bloom::{BloomFilter, BloomFilterConfig, BloomFilterStrategy};
+use crate::core::bloom::{BloomFilter, BloomFilterConfig};
 use regex::Regex;
 use thiserror::Error;
 

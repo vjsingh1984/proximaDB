@@ -115,7 +115,7 @@ pub trait ScanIterator: Send {
     async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>>;
 
     /// Skip to position (for range scans)
-    async fn seek(&mut self, key: &str) -> Result<()> {
+    async fn seek(&mut self, _key: &str) -> Result<()> {
         Err(anyhow::anyhow!("Seek not supported by this iterator"))
     }
 
@@ -289,7 +289,7 @@ pub mod scan_helpers {
     /// From RAPTOR: Estimate row group selectivity
     pub fn estimate_rowgroup_selectivity(
         predicates: &[FilterExpression],
-        statistics: &RowGroupStatistics,
+        _statistics: &RowGroupStatistics,
     ) -> f32 {
         // Based on RAPTOR's statistics-based pruning
         if predicates.is_empty() {

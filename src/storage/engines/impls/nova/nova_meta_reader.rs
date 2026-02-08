@@ -258,7 +258,7 @@ impl NovaMetaReader {
         &self,
         metadata: &NovaMetadata,
         query_vector: &[f32],
-        top_k: usize,
+        _top_k: usize,
     ) -> QueryOptimizationHints {
         // Prune row groups
         let all_row_groups: Vec<usize> = (0..metadata.row_group_stats.len()).collect();

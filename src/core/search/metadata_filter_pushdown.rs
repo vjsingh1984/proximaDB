@@ -472,7 +472,7 @@ impl MetadataFilterPushdown {
     /// Build column index
     fn build_column_index(
         &self,
-        column_name: &str,
+        _column_name: &str,
         values: &[Option<Value>],
         records: &[VectorRecord],
     ) -> ColumnIndex {
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
-        use crate::proto::proximadb_v1::{MetadataItem, VectorRecord, metadata_item::Value};
+        use crate::proto::proximadb_v1::VectorRecord;
 
         let mut builder = MetadataBloomBuilder::new(1000);
 

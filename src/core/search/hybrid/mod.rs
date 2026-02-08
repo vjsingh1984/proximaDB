@@ -1,0 +1,301 @@
+//! Hybrid Search - BM25 + Vector Similarity Fusion
+//!
+//! This module implements fusion strategies for combining full-text
+//! BM25 search with vector similarity search.
+//!
+//! # Architecture
+//!
+//! ## Fusion Strategies
+//!
+//! ### Reciprocal Rank Fusion (RRF)
+//! - Formula: `score = 1/(k + rank_bm25) + 1/(k + rank_vector)`
+//! - Robust to score scale differences
+//! - Recommended k: 60 (default)
+//!
+//! ### Weighted Linear Fusion
+//! - Formula: `score = alpha * bm25 + (1-alpha) * vector`
+//! - Requires score normalization
+//! - alpha=0.5 gives equal weight
+//!
+//! ### Rank Biased Precision (RBP)
+//! - Formula: `score = (1-p) * p^(rank-1)`
+//! - Emphasizes top ranks
+//! - Higher persistence = more emphasis on early ranks
+//!
+//! # Usage
+//!
+//! ```rust,no_run
+//! use proxima::core::search::hybrid::{
+//!     FusionStrategy, HybridFusionEngine, BM25Result, VectorResult,
+//! };
+//!
+//! let bm25_results = vec![/* ... */];
+//! let vector_results = vec![/* ... */];
+//!
+//! let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+//! let fused = engine.fuse(bm25_results, vector_results)?;
+//! ```
+
+pub mod fusion;
+pub mod coordinator;
+pub mod bm25_wrapper;
+pub mod reranker;
+
+pub use fusion::{
+    FusionStrategy, HybridFusionEngine, FusedSearchResult,
+    BM25Result, VectorResult, TextHighlight,
+};
+
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+
+/// Fusion strategies for combining BM25 and vector scores
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FusionStrategy {
+    /// Reciprocal Rank Fusion
+    ///
+    /// Formula: `score = 1/(k + rank_bm25) + 1/(k + rank_vector)`
+    ///
+    /// # Arguments
+    /// * `k` - Ranking constant (default: 60)
+    ///
+    /// # Example
+    /// ```
+    /// use proxima::core::search::hybrid::FusionStrategy;
+    ///
+    /// let strategy = FusionStrategy::ReciprocalRank { k: 60 };
+    /// ```
+    ReciprocalRank { k: usize },
+
+    /// Weighted linear combination
+    ///
+    /// Formula: `score = alpha * bm25 + (1-alpha) * vector`
+    ///
+    /// # Arguments
+    /// * `alpha` - Weight for BM25 (0.0 to 1.0)
+    /// * `bm25_normalize` - Whether to normalize BM25 scores to [0,1]
+    /// * `vector_normalize` - Whether to normalize vector scores to [0,1]
+    ///
+    /// # Example
+    /// ```
+    /// // Equal weight: 50% BM25, 50% vector
+    /// let strategy = FusionStrategy::WeightedLinear {
+    ///     alpha: 0.5,
+    ///     bm25_normalize: true,
+    ///     vector_normalize: true,
+    /// };
+    /// ```
+    WeightedLinear {
+        alpha: f64,
+        bm25_normalize: bool,
+        vector_normalize: bool,
+    },
+
+    /// Rank Biased Precision (RBP)
+    ///
+    /// Formula: `score = (1-p) * p^(rank-1)`
+    ///
+    /// # Arguments
+    /// * `persistence` - Persistence parameter (0.0 to 1.0)
+    ///   - Higher values emphasize top ranks more
+    ///   - Typical values: 0.8 to 0.99
+    ///
+    /// # Example
+    /// ```
+    /// // Strong emphasis on top ranks
+    /// let strategy = FusionStrategy::RankBiasedPrecision {
+    ///     persistence: 0.95,
+    /// };
+    /// ```
+    RankBiasedPrecision { persistence: f64 },
+
+    /// Conditional Normalization
+    ///
+    /// Normalizes both scores to [0,1] and averages them
+    ConditionalNormalization,
+}
+
+impl std::fmt::Display for FusionStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FusionStrategy::ReciprocalRank { k } => {
+                write!(f, "RRF(k={})", k)
+            }
+            FusionStrategy::WeightedLinear {
+                alpha,
+                bm25_normalize,
+                vector_normalize,
+            } => {
+                write!(
+                    f,
+                    "Weighted(alpha={:.2}, bm25_norm={}, vector_norm={})",
+                    alpha, bm25_normalize, vector_normalize
+                )
+            }
+            FusionStrategy::RankBiasedPrecision { persistence } => {
+                write!(f, "RBP(p={:.2})", persistence)
+            }
+            FusionStrategy::ConditionalNormalization => {
+                write!(f, "CCF")
+            }
+        }
+    }
+}
+
+/// BM25 search result with text highlighting
+#[derive(Debug, Clone, PartialEq)]
+pub struct BM25Result {
+    /// Document ID
+    pub doc_id: String,
+
+    /// BM25 score (higher = better)
+    pub score: f64,
+
+    /// Text highlights (if available)
+    pub highlights: Option<Vec<TextHighlight>>,
+
+    /// Document metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Vector search result
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorResult {
+    /// Document ID
+    pub doc_id: String,
+
+    /// Similarity score (higher = better)
+    pub score: f64,
+
+    /// Distance metric (lower = closer)
+    pub distance: f64,
+
+    /// Document metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Fused search result from both BM25 and vector search
+#[derive(Debug, Clone)]
+pub struct FusedSearchResult {
+    /// Document ID
+    pub doc_id: String,
+
+    /// BM25 score
+    pub bm25_score: f64,
+
+    /// Vector similarity score
+    pub vector_score: f64,
+
+    /// Fused/reranked score
+    pub fused_score: f64,
+
+    /// Rank in BM25 results (1-based)
+    pub bm25_rank: usize,
+
+    /// Rank in vector results (1-based)
+    pub vector_rank: usize,
+
+    /// Text highlights (from BM25)
+    pub highlights: Option<Vec<TextHighlight>>,
+
+    /// Combined metadata
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Text highlight for search result display
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextHighlight {
+    /// Field name containing the highlight
+    pub field: String,
+
+    /// Highlighted text
+    pub text: String,
+
+    /// Start offset in original text
+    pub start_offset: usize,
+
+    /// End offset in original text
+    pub end_offset: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fusion_strategy_display() {
+        let strategies = vec![
+            FusionStrategy::ReciprocalRank { k: 60 },
+            FusionStrategy::WeightedLinear {
+                alpha: 0.5,
+                bm25_normalize: true,
+                vector_normalize: false,
+            },
+            FusionStrategy::RankBiasedPrecision { persistence: 0.9 },
+            FusionStrategy::ConditionalNormalization,
+        ];
+
+        for strategy in strategies {
+            let display = format!("{}", strategy);
+            println!("Strategy: {}", display);
+            assert!(!display.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_bm25_result_creation() {
+        let result = BM25Result {
+            doc_id: "doc1".to_string(),
+            score: 2.5,
+            highlights: None,
+            metadata: HashMap::new(),
+        };
+
+        assert_eq!(result.doc_id, "doc1");
+        assert_eq!(result.score, 2.5);
+    }
+
+    #[test]
+    fn test_vector_result_creation() {
+        let result = VectorResult {
+            doc_id: "doc2".to_string(),
+            score: 0.95,
+            distance: 0.15,
+            metadata: HashMap::new(),
+        };
+
+        assert_eq!(result.doc_id, "doc2");
+        assert_eq!(result.score, 0.95);
+        assert_eq!(result.distance, 0.15);
+    }
+
+    #[test]
+    fn test_fused_result_creation() {
+        let result = FusedSearchResult {
+            doc_id: "doc3".to_string(),
+            bm25_score: 2.0,
+            vector_score: 0.8,
+            fused_score: 1.4,
+            bm25_rank: 1,
+            vector_rank: 2,
+            highlights: None,
+            metadata: HashMap::new(),
+        };
+
+        assert_eq!(result.doc_id, "doc3");
+        assert_eq!(result.fused_score, 1.4);
+    }
+
+    #[test]
+    fn test_text_highlight_creation() {
+        let highlight = TextHighlight {
+            field: "content".to_string(),
+            text: "machine learning".to_string(),
+            start_offset: 10,
+            end_offset: 26,
+        };
+
+        assert_eq!(highlight.field, "content");
+        assert_eq!(highlight.text, "machine learning");
+    }
+}

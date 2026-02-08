@@ -1419,8 +1419,6 @@ mod planner_tests {
     #[tokio::test]
     async fn test_query_plan_caching() {
         use crate::graph::GraphOperationsService;
-        use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 
         // Create mock services (simplified for testing)
         let _graph_service = Arc::new(GraphOperationsService::new());
@@ -1431,7 +1429,6 @@ mod planner_tests {
     #[tokio::test]
     async fn test_set_operation_planning() {
         use crate::graph::GraphOperationsService;
-        use crate::services::operations::vectors::VectorOperationsService;
 
         // Create simple test planner
         let _graph_service = Arc::new(GraphOperationsService::new());
@@ -1442,7 +1439,6 @@ mod planner_tests {
     #[tokio::test]
     async fn test_cache_key_generation() {
         use crate::graph::GraphOperationsService;
-        use crate::services::operations::vectors::VectorOperationsService;
 
         let _graph_service = Arc::new(GraphOperationsService::new());
         // Skip test - requires complex VectorOperationsService setup

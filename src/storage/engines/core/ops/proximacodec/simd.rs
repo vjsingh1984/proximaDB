@@ -659,7 +659,7 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
         result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
 
         if bits_in_first_byte < bits as usize {
-            let remaining_bits = bits as usize - bits_in_first_byte;
+            let _remaining_bits = bits as usize - bits_in_first_byte;
             let next_byte_value = (masked_value >> bits_in_first_byte) as u8;
             if byte_offset + 1 < result.len() {
                 result[byte_offset + 1] |= next_byte_value;

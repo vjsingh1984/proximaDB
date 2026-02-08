@@ -157,7 +157,7 @@ impl OpenTelemetryManager {
 
     /// Export current metrics to OpenTelemetry
     pub async fn export_metrics(&self, metrics: &crate::metrics::SystemMetrics) -> Result<()> {
-        let exporter = match &self.metrics_exporter {
+        let _exporter = match &self.metrics_exporter {
             Some(exp) => exp,
             None => {
                 debug!("Metrics export not enabled");

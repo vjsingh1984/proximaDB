@@ -130,7 +130,7 @@ impl ZoneMap {
     }
 
     /// Calculate pruning score for a query
-    pub fn pruning_score(&self, query_vector: &[f32], radius: f32) -> f32 {
+    pub fn pruning_score(&self, query_vector: &[f32], _radius: f32) -> f32 {
         if query_vector.len() != self.dim_min.len() {
             return f32::INFINITY;
         }

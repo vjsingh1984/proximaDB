@@ -674,7 +674,7 @@ impl StreamingParquetWriter {
     fn update_bloom_filters(&mut self, records: &[VectorRecord]) -> Result<()> {
         // Ensure we have a bloom filter for current row group
         while self.id_bloom_filters.len() <= self.current_row_group {
-            let estimated_items = self.config.bloom_filter_ndv.max(100000);
+            let _estimated_items = self.config.bloom_filter_ndv.max(100000);
             // BloomFilter::new expects different parameters
             // Using default configuration for now
             let bloom =

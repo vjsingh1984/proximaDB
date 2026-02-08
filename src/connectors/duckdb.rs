@@ -456,7 +456,7 @@ impl DuckDBVectorSearch {
     /// Execute vector search
     pub fn search(
         &self,
-        params: &DuckDBVectorSearchParams,
+        _params: &DuckDBVectorSearchParams,
     ) -> Result<Vec<RecordBatch>, DuckDBError> {
         // TODO: Implement actual vector search via ProximaDB
         Ok(Vec::new())

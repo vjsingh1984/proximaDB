@@ -320,7 +320,7 @@ impl NodeRef {
             NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                let disk_info = DiskNodeInfo {
+                let _disk_info = DiskNodeInfo {
                     file_path: format!("btree_page_{}.node", page_id),
                     offset: 0,
                     size: 4096, // Default page size
@@ -339,7 +339,7 @@ impl NodeRef {
             NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                let disk_info = DiskNodeInfo {
+                let _disk_info = DiskNodeInfo {
                     file_path: format!("btree_page_{}.node", page_id),
                     offset: 0,
                     size: 4096, // Default page size

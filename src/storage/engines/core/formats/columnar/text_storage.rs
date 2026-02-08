@@ -720,7 +720,7 @@ impl TextChunker {
         let mut byte_start = 0;
         let mut byte_end = 0;
 
-        for (i, c) in chars.iter().enumerate() {
+        for (i, _c) in chars.iter().enumerate() {
             if i == char_start {
                 byte_start = text[..].chars().take(i).map(|c| c.len_utf8()).sum();
             }

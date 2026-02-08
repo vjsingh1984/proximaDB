@@ -289,7 +289,7 @@ async fn test_bincode_memory_management() {
 
     // Skip stats for now - method not yet implemented
     // TODO: Implement stats() method on BincodeSerializationStrategy
-    let initial_memory = 0;
+    let _initial_memory = 0;
 
     // Add vectors and track memory growth
     for batch_num in 0..5 {

@@ -932,8 +932,8 @@ impl SharedSstFormatReader {
     /// Search for key in data block
     fn find_in_block(
         &self,
-        block_data: &[u8],
-        key: &[u8],
+        _block_data: &[u8],
+        _key: &[u8],
     ) -> Result<Option<Vec<u8>>, ProximaDBError> {
         // Binary search in sorted block
         Ok(None) // Placeholder

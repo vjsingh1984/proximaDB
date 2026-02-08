@@ -354,7 +354,6 @@ impl QueryPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::unified::ast::DataModel;
 
     #[test]
     fn test_planner_creation() {

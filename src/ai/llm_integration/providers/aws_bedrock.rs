@@ -151,7 +151,7 @@ impl AWSBedrockClient {
     /// Invoke Bedrock model (placeholder for actual AWS SDK implementation)
     async fn invoke_bedrock_model(
         &self,
-        request: &BedrockRequest,
+        _request: &BedrockRequest,
     ) -> Result<BedrockResponse, LLMError> {
         // PLACEHOLDER: In a real implementation, this would use AWS SDK:
         //

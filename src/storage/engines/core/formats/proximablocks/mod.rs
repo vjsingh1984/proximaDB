@@ -604,7 +604,7 @@ pub mod utils {
     /// Recommend engine configuration based on workload
     pub fn recommend_config_for_workload(
         dimension: usize,
-        expected_scale: u64,
+        _expected_scale: u64,
         workload_type: WorkloadType,
     ) -> RowBasedConfig {
         let mut config = RowBasedConfig::default();

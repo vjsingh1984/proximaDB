@@ -583,7 +583,7 @@ impl LicenseManager {
     }
 
     /// Validate online license (for SaaS with connectivity)
-    async fn validate_online_license(&self, license: &LicenseInfo) -> Result<LicenseStatus> {
+    async fn validate_online_license(&self, _license: &LicenseInfo) -> Result<LicenseStatus> {
         if !self.config.enable_phone_home {
             return Ok(LicenseStatus::Valid); // Default to valid for air-gapped
         }

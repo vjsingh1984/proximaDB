@@ -105,10 +105,9 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///    - k<100: Use 1000-2000 vectors/rowgroup (balance)
 ///    - k>100: Use 2000-5000 vectors/rowgroup (maximize throughput)
 ///    - Can be configured per collection based on workload
-
+///
 // Old optimization structures removed - now using UniversalPerformanceOptimizer
 // The universal optimizer provides all these capabilities through a unified interface
-
 pub struct RaptorEngine {
     /// **Engine Configuration**
     ///
@@ -724,7 +723,7 @@ impl RaptorEngine {
     async fn optimize_storage_tier(
         &self,
         file_path: &str,
-        access_frequency: f32,
+        _access_frequency: f32,
     ) -> Result<FileStorageTier> {
         // Estimate file size for tier optimization decision
         let estimated_size = 1024 * 1024; // Default 1MB if size unknown
@@ -822,7 +821,7 @@ impl RaptorEngine {
 
             // Update rowgroup centroid for fast pruning
             drop(rowgroup_manager);
-            let rowgroup_manager = self.rowgroup_manager.write().await;
+            let _rowgroup_manager = self.rowgroup_manager.write().await;
             // Note: We'd need to add a method to update centroid in RowGroups
             // For now, just skip this as it's an optimization
         }
@@ -1231,7 +1230,7 @@ impl RaptorEngine {
             debug!("SELECT_ROWGROUPS: No clusters found, using centroid-based selection");
             for rg_id in rowgroup_manager.row_group_ids() {
                 if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id) {
-                    if let Some(centroid) = &rowgroup.centroid {
+                    if let Some(_centroid) = &rowgroup.centroid {
                         // Calculate distance using distance computation engine
                         let distance = 0.0; // TODO: Use distance computation engine
                         if distance < 0.5 {
@@ -1428,7 +1427,7 @@ impl RaptorEngine {
         }
     }
 
-    fn deserialize_proxima_batch(&self, data: &[u8], marker: u8) -> Result<RecordBatch> {
+    fn deserialize_proxima_batch(&self, data: &[u8], _marker: u8) -> Result<RecordBatch> {
         use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
         use std::io::Read;
@@ -1787,7 +1786,7 @@ impl RaptorEngine {
         &self,
         dense_vectors: Vec<f32>,
         num_vectors: usize,
-        dimension: usize,
+        _dimension: usize,
     ) -> Result<RecordBatch> {
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
 
@@ -1988,8 +1987,8 @@ impl RaptorEngine {
 
     async fn matches_filter(
         &self,
-        result: &VectorSearchResult,
-        filter: &HashMap<String, String>,
+        _result: &VectorSearchResult,
+        _filter: &HashMap<String, String>,
     ) -> bool {
         // Simple filter matching - can be extended
         true
@@ -2233,7 +2232,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     }
 
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-        let collection_id = self.get_collection_id_from_compaction_params(params)?;
+        let _collection_id = self.get_collection_id_from_compaction_params(params)?;
         let start_time = std::time::Instant::now();
 
         // Get collection config dimension - required for proper compaction
@@ -2574,13 +2573,13 @@ impl UnifiedStorageEngine for RaptorEngine {
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
         let k = ctx.top_k();
-        let dimension = ctx.dimension();
+        let _dimension = ctx.dimension();
         let distance_metric = ctx.distance_metric();
         let performance_tier = ctx.performance_tier();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
         // These fields are no longer in search_params, default to true
-        let include_vectors = true;
-        let include_metadata = true;
+        let _include_vectors = true;
+        let _include_metadata = true;
 
         // Log search with enhanced context info
         debug!(

@@ -1096,7 +1096,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_columnar_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
@@ -1126,7 +1126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_similarity_search_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 

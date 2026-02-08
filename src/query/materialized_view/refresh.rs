@@ -485,7 +485,7 @@ impl RefreshScheduler {
 
     /// Flush pending debounced changes
     pub async fn flush_pending_changes(&self) -> MaterializedViewResult<()> {
-        let now = Instant::now();
+        let _now = Instant::now();
         let mut to_flush = Vec::new();
 
         for entry in self.pending_changes.iter() {

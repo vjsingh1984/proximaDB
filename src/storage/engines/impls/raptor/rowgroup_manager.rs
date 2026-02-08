@@ -206,7 +206,7 @@ impl RowGroups {
         }
 
         // Process vectors and prepare metadata before getting mutable reference
-        let metadata_maps: Vec<_> = vectors
+        let _metadata_maps: Vec<_> = vectors
             .iter()
             .map(|record| record.metadata.clone())
             .collect();
@@ -636,7 +636,7 @@ impl RowGroups {
             }
 
             // Apply quantization
-            let quantized = quantization_engine.quantize_batch(&vectors, None).await?;
+            let _quantized = quantization_engine.quantize_batch(&vectors, None).await?;
 
             // Store quantized data in columnar format
             // Note: quantized is Vec<StorageQuantizedData>, need to extract data appropriately

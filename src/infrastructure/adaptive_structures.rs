@@ -1357,7 +1357,7 @@ where
     async fn keys(&self) -> Vec<K> {
         if let Some(ref index) = self.index_storage {
             index.iter().map(|entry| entry.key().clone()).collect()
-        } else if let Some(ref cache) = self.cache_storage {
+        } else if let Some(ref _cache) = self.cache_storage {
             // Cache doesn't support iteration, return empty
             Vec::new()
         } else {

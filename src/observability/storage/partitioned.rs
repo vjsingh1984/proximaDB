@@ -157,7 +157,7 @@ impl PartitionedStorage {
         let start_key = self.partition_key(start_ns);
         let end_key = self.partition_key(end_ns);
 
-        for (key, partition) in partitions.range(start_key..=end_key) {
+        for (_key, partition) in partitions.range(start_key..=end_key) {
             let entries = partition.entries.read().await;
 
             for entry in entries.iter() {

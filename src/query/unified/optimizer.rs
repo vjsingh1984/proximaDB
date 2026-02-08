@@ -384,8 +384,8 @@ impl QueryOptimizer {
 
     /// Estimate selectivity for graph traversal
     fn estimate_graph_selectivity(&self, expr: &GraphTraversalExpr) -> SelectivityEstimate {
-        let mut selectivity = 1.0;
         let mut confidence = 0.3;
+        let mut selectivity;
 
         // Number of start nodes affects result size
         match &expr.start_nodes {

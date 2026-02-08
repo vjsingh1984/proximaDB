@@ -648,7 +648,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         &self,
         _collection_id: &str,
         _strategy: crate::storage::unified_scan_strategy::ScanStrategy,
-        collection_config: Option<&Collection>,
+        _collection_config: Option<&Collection>,
     ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
         // Default implementation - engines should override with their specific implementation
         Err(anyhow::anyhow!(

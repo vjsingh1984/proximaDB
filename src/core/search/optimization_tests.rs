@@ -146,13 +146,13 @@ mod tests {
     async fn test_metadata_filter_pushdown() {
         init_test_environment();
 
-        let filter_pushdown = MetadataFilterPushdown::new();
+        let _filter_pushdown = MetadataFilterPushdown::new();
 
         // Test basic creation - the advanced methods tested here don't exist yet
         // TODO: Implement add_column_bloom_filter, update_column_stats methods
 
         // Test basic filter creation and selectivity estimation
-        let filter = FilterExpression::Comparison {
+        let _filter = FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
             value: serde_json::json!("electronics"),

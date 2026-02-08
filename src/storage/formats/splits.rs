@@ -611,7 +611,7 @@ pub trait SplitGenerator: Send + Sync {
     fn generate_splits_with_target(
         &self,
         file_path: &str,
-        target_count: usize,
+        _target_count: usize,
     ) -> anyhow::Result<Vec<FileSplit>> {
         // Default: just generate all splits
         self.generate_splits(file_path)

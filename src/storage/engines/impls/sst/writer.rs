@@ -1012,7 +1012,7 @@ impl SstableWriter {
 
         // ✅ STEP 3: Add only SST-specific enhancements to Proxima capabilities
         // Create SST-specific metadata that composes with Proxima
-        let sst_metadata = SstBlockMetadata {
+        let _sst_metadata = SstBlockMetadata {
             proxima_metadata: proxima_metadata.clone(), // ✅ Reuse ALL auto-generated stats!
             sst_specific_data: SstSpecificData {
                 three_stage_filtering: true,
@@ -1094,11 +1094,11 @@ impl SstableWriter {
     /// ❌ REMOVED: Manual bloom filter building - Proxima provides this automatically!
     /// Proxima automatically generates optimized bloom filters for every block.
     /// No need for manual implementation - just use block.bloom_filter and block.block_bloom_filter
-
+    ///
     /// ❌ REMOVED: Manual key bloom filter - Proxima generates optimal bloom filters automatically!
-
+    ///
     /// ❌ REMOVED: Manual metadata bloom filter - Proxima generates comprehensive metadata bloom filters automatically!
-
+    ///
     /// Analyze vector format for VectorRecord block
     fn analyze_vector_block_format(&self, block_records: &[VectorRecord]) -> super::VectorFormat {
         if block_records.is_empty() {
@@ -1276,7 +1276,7 @@ impl SstableWriter {
             let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::default();
             let num_keys = sorted_records.len();
             let optimal_size = adaptive_config.optimal_size(num_keys);
-            let optimal_hash_count = adaptive_config.optimal_hash_count(optimal_size, num_keys);
+            let _optimal_hash_count = adaptive_config.optimal_hash_count(optimal_size, num_keys);
 
             // Convert to bits_per_key for existing BloomFilterConfig
             let bits_per_key = if num_keys > 0 {
@@ -1308,7 +1308,7 @@ impl SstableWriter {
         file_content.extend_from_slice(&0u32.to_le_bytes()); // Index length = 0
 
         // Write data blocks (simplified - just serialize records)
-        for (key, record) in sorted_records {
+        for (_key, record) in sorted_records {
             let record_data = serde_json::to_vec(&record)?;
             let record_len = record_data.len() as u32;
             file_content.extend_from_slice(&record_len.to_le_bytes());
@@ -1488,11 +1488,11 @@ impl SstableWriter {
     }
 
     /// ❌ REMOVED: Manual block bloom filters - Proxima generates optimized bloom filters automatically!
-
+    ///
     /// ❌ REMOVED: Manual key bloom filter building - Proxima provides optimal bloom filters automatically!
-
+    ///
     /// ❌ REMOVED: Manual metadata bloom filter building - Proxima provides comprehensive metadata bloom filters automatically!
-
+    ///
     /// NEW: Analyze vector format across the entire file
     fn analyze_file_vector_format(
         &self,
@@ -1700,7 +1700,7 @@ mod tests {
     async fn test_sstable_writer_basic() {
         // Note: This test would need a mock filesystem for full testing
         // For now, just test the data structure building
-        let temp_file = NamedTempFile::new().unwrap();
+        let _temp_file = NamedTempFile::new().unwrap();
 
         // Create test records
         let mut records = BTreeMap::new();

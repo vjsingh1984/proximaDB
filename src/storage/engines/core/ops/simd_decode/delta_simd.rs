@@ -62,6 +62,7 @@ pub fn delta_decode_f32(deltas: &[i64], base: f32, output: &mut [f32]) -> Result
         if is_x86_feature_detected!("avx2") {
             unsafe { return delta_decode_f32_avx2(deltas, base_bits, output, count) }
         }
+        return delta_decode_f32_scalar(deltas, base_bits, output, count);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -73,9 +74,6 @@ pub fn delta_decode_f32(deltas: &[i64], base: f32, output: &mut [f32]) -> Result
     {
         return delta_decode_f32_scalar(deltas, base_bits, output, count);
     }
-
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    delta_decode_f32_scalar(deltas, base_bits, output, count)
 }
 
 /// Delta decode i64 values with prefix sum
@@ -102,6 +100,7 @@ pub fn delta_decode_i64_prefix_sum(deltas: &[i64], base: i64, output: &mut [i64]
         if is_x86_feature_detected!("avx2") {
             unsafe { return prefix_sum_i64_avx2(deltas, base, output, count) }
         }
+        return prefix_sum_i64_scalar(deltas, base, output, count);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -109,8 +108,10 @@ pub fn delta_decode_i64_prefix_sum(deltas: &[i64], base: i64, output: &mut [i64]
         return unsafe { prefix_sum_i64_neon(deltas, base, output, count) };
     }
 
-    // Scalar fallback
-    prefix_sum_i64_scalar(deltas, base, output, count)
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return prefix_sum_i64_scalar(deltas, base, output, count);
+    }
 }
 
 /// Delta decode i32 values with prefix sum
@@ -126,6 +127,7 @@ pub fn delta_decode_i32_prefix_sum(deltas: &[i32], base: i32, output: &mut [i32]
         if is_x86_feature_detected!("avx2") {
             unsafe { return prefix_sum_i32_avx2(deltas, base, output, count) }
         }
+        return prefix_sum_i32_scalar(deltas, base, output, count);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -133,8 +135,10 @@ pub fn delta_decode_i32_prefix_sum(deltas: &[i32], base: i32, output: &mut [i32]
         return unsafe { prefix_sum_i32_neon(deltas, base, output, count) };
     }
 
-    // Scalar fallback
-    prefix_sum_i32_scalar(deltas, base, output, count)
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return prefix_sum_i32_scalar(deltas, base, output, count);
+    }
 }
 
 // ============================================================================

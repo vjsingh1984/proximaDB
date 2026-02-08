@@ -337,7 +337,7 @@ fn dequantize_int8(data: &[i8], scale: f32, zero_point: i8) -> Vec<f32> {
         .collect()
 }
 
-fn compute_hamming_distance(query: &[f32], binary: &[u8]) -> u32 {
+fn compute_hamming_distance(_query: &[f32], binary: &[u8]) -> u32 {
     // Simple hamming distance - in production would use SIMD
     let mut distance = 0u32;
     for byte in binary {

@@ -559,7 +559,7 @@ impl OptimizationPipeline {
     /// Select next configuration for Bayesian optimization
     fn select_next_config(
         &self,
-        observations: &[(Configuration, f64)],
+        _observations: &[(Configuration, f64)],
         config_space: &ConfigurationSpace,
     ) -> Result<Configuration> {
         // Simplified - would use acquisition function

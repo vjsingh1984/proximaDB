@@ -1192,23 +1192,23 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
 
 /// Create VectorOperationsService with custom storage for testing
 pub async fn create_test_vector_operations_service_with_storage(
-    storage: Arc<SstEngine>,
+    _storage: Arc<SstEngine>,
 ) -> Result<VectorOperationsService> {
     setup_hardware_capabilities();
 
     // Create WAL manager
-    let wal_config = WALConfig::default();
-    let filesystem_factory =
+    let _wal_config = WALConfig::default();
+    let _filesystem_factory =
         Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
     let strategy_type = WriteBufferStrategyType::AvroBatch;
-    let strategy = WALBatchFactory::create_batch_serialization_strategy(
+    let _strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
-        &wal_config,
-        filesystem_factory.clone(),
+        &_wal_config,
+        _filesystem_factory.clone(),
     )
     .await?;
-    let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
-    let axis_manager = Arc::new(
+    let _wal_manager = Arc::new(WriteAheadLogManager::new(_strategy, _wal_config).await?);
+    let _axis_manager = Arc::new(
         proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default())
             .await?,
     );

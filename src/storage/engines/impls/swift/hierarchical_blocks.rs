@@ -512,7 +512,7 @@ impl MetadataIndex {
             let mut result = BitSet::new(self.table_stats.total_blocks as usize);
 
             // With proper type-aware ordering, we can directly use the range
-            for (value, bitset) in tree.range(min_ordered..=max_ordered) {
+            for (_value, bitset) in tree.range(min_ordered..=max_ordered) {
                 result = result.union(bitset);
             }
             Ok(result)
@@ -521,7 +521,7 @@ impl MetadataIndex {
         }
     }
 
-    fn find_blocks_without_column(&self, column: &str) -> Result<BitSet> {
+    fn find_blocks_without_column(&self, _column: &str) -> Result<BitSet> {
         // This would track which blocks don't have the column
         // For simplicity, returning empty set
         Ok(BitSet::new(self.table_stats.total_blocks as usize))

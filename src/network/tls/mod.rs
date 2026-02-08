@@ -428,7 +428,7 @@ mod tests {
         let tls_config = TlsConfig::new(true)
             .with_certificate_manager(manager)
             .with_mtls();
-        let server_config = tls_config.build_server_config().await.unwrap();
+        let _server_config = tls_config.build_server_config().await.unwrap();
 
         // Config should be valid - verify by checking it's not empty
         // Note: modern rustls doesn't expose client_auth_mandatory() directly

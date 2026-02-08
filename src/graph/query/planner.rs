@@ -874,7 +874,7 @@ impl QueryPlanner {
         parameters: &HashMap<String, serde_json::Value>,
         algorithm: TraversalAlgorithm,
     ) -> QueryResult<QueryPlan> {
-        let start_node = parameters
+        let _start_node = parameters
             .get("start_node")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {

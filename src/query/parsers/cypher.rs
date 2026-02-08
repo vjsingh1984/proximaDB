@@ -464,7 +464,7 @@ impl CypherLexer {
                 let saved_pos = self.position;
                 let saved_col = self.column;
                 self.consume_whitespace(chars);
-                let next_start = self.position;
+                let _next_start = self.position;
                 let mut next_word = String::new();
                 while self.position < chars.len() && chars[self.position].is_alphabetic() {
                     next_word.push(chars[self.position]);

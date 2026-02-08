@@ -58,7 +58,7 @@ impl AlertingService {
         // Check for duplicate/aggregation
         {
             let alerts = self.active_alerts.read().await;
-            if let Some(existing) = alerts.get(&alert_key) {
+            if let Some(_existing) = alerts.get(&alert_key) {
                 // Update existing alert
                 debug!("Alert already active: {}", alert_key);
                 return Ok(());

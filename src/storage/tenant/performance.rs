@@ -121,7 +121,7 @@ impl TenantPerformanceMonitor {
     pub async fn check_operation_sla(
         &self,
         tenant_id: &str,
-        operation_type: &str,
+        _operation_type: &str,
     ) -> Result<SLACheckResult> {
         let metrics = self.get_tenant_metrics(tenant_id).await?;
         let sla = self.get_tenant_sla(tenant_id).await?;

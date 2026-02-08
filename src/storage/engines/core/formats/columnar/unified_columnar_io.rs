@@ -628,7 +628,7 @@ impl UnifiedColumnarWriter {
     }
 
     /// Create schema for Parquet
-    fn create_parquet_schema(&self, records: &[VectorRecord]) -> Result<Schema> {
+    fn create_parquet_schema(&self, _records: &[VectorRecord]) -> Result<Schema> {
         // TODO: Implement schema creation based on records
         Ok(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -644,7 +644,7 @@ impl UnifiedColumnarWriter {
     }
 
     /// Convert records to Arrow RecordBatch
-    fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
+    fn records_to_batch(&self, _records: &[VectorRecord]) -> Result<RecordBatch> {
         // TODO: Implement conversion
         Err(anyhow::anyhow!(
             "Record to batch conversion not implemented"

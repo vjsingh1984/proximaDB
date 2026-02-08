@@ -384,7 +384,7 @@ impl ProgressiveSearchStage for PqStage {
     ) -> Result<Vec<ScoredCandidate>> {
         // For PQ, we use asymmetric distance computation
         // The query is kept in FP32, and we use codebook lookup for candidates
-        let subvector_dim = query.len() / self.num_subvectors;
+        let _subvector_dim = query.len() / self.num_subvectors;
 
         for candidate in &mut candidates {
             if let Some(ref pq_codes) = candidate.pq_codes {

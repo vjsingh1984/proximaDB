@@ -184,7 +184,7 @@ impl OIDCIntegration {
     pub async fn exchange_code_for_tokens(
         &self,
         code: &str,
-        state: Option<&str>,
+        _state: Option<&str>,
     ) -> Result<OIDCTokenResponse> {
         // In a real implementation, this would:
         // 1. POST to token endpoint with authorization code

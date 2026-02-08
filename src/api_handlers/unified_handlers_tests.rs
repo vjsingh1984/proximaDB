@@ -465,7 +465,7 @@ mod tests {
         ];
 
         for timeout in timeouts {
-            let request = VectorBatchRequest {
+            let _request = VectorBatchRequest {
                 collection_id: "timeout_test".to_string(),
                 vectors: vec![create_test_vector_record("test", 64)],
             };

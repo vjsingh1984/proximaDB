@@ -99,6 +99,7 @@ pub fn fused_decode_binary_to_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return fused_decode_binary_avx2(input, output, count, bipolar) }
         }
+        return fused_decode_binary_scalar(input, output, count, bipolar);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -106,7 +107,10 @@ pub fn fused_decode_binary_to_f32(
         return unsafe { fused_decode_binary_neon(input, output, count, bipolar) };
     }
 
-    fused_decode_binary_scalar(input, output, count, bipolar)
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return fused_decode_binary_scalar(input, output, count, bipolar);
+    }
 }
 
 /// Fused decode: INT4 -> FP32
@@ -138,6 +142,7 @@ pub fn fused_decode_int4_to_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return fused_decode_int4_avx2(input, output, count, params) }
         }
+        return fused_decode_int4_scalar(input, output, count, params);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -145,7 +150,10 @@ pub fn fused_decode_int4_to_f32(
         return unsafe { fused_decode_int4_neon(input, output, count, params) };
     }
 
-    fused_decode_int4_scalar(input, output, count, params)
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return fused_decode_int4_scalar(input, output, count, params);
+    }
 }
 
 /// Fused decode: INT8 -> FP32
@@ -176,6 +184,7 @@ pub fn fused_decode_int8_to_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return fused_decode_int8_avx2(input, output, count, params) }
         }
+        return fused_decode_int8_scalar(input, output, count, params);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -183,7 +192,10 @@ pub fn fused_decode_int8_to_f32(
         return unsafe { fused_decode_int8_neon(input, output, count, params) };
     }
 
-    fused_decode_int8_scalar(input, output, count, params)
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return fused_decode_int8_scalar(input, output, count, params);
+    }
 }
 
 /// Progressive decode pipeline: Binary -> INT8 -> FP32
@@ -221,6 +233,7 @@ pub fn progressive_decode_binary_int8_f32(
         if is_x86_feature_detected!("avx2") {
             unsafe { return progressive_decode_avx2(input, output, count, params, bipolar) }
         }
+        return progressive_decode_scalar(input, output, count, params, bipolar);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -228,7 +241,10 @@ pub fn progressive_decode_binary_int8_f32(
         return unsafe { progressive_decode_neon(input, output, count, params, bipolar) };
     }
 
-    progressive_decode_scalar(input, output, count, params, bipolar)
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return progressive_decode_scalar(input, output, count, params, bipolar);
+    }
 }
 
 // ============================================================================

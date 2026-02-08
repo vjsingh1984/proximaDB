@@ -385,7 +385,7 @@ impl SmartExecutionStrategy {
         &self,
         metadata: &CollectionMetadata,
         query: &QueryAnalysis,
-        axis_manager: Option<&AxisManager>,
+        _axis_manager: Option<&AxisManager>,
     ) -> ExecutionStrategy {
         // Choose best index type based on query
         let index_type = if query.has_filters && metadata.index_types.contains(&"IVF".to_string()) {
@@ -477,7 +477,7 @@ impl SmartExecutionStrategy {
         &self,
         strategy: &ExecutionStrategy,
         metadata: &CollectionMetadata,
-        query: &QueryAnalysis,
+        _query: &QueryAnalysis,
     ) {
         // Record decision for adaptive learning
         trace!(

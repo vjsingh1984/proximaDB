@@ -948,7 +948,7 @@ impl Drop for TransactionHandle {
 mod tests {
     use super::*;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::proto::proximadb_v1::{Edge, Node};
+    use crate::proto::proximadb_v1::Node;
     use std::collections::HashMap as StdHashMap;
 
     #[tokio::test]

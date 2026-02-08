@@ -196,7 +196,7 @@ impl ProximaEntityStore {
                 let parts: Vec<&str> = k.split('/').collect();
                 if parts.len() >= 4 {
                     let model_id = parts[2].to_string();
-                    let modality = parts[3].to_string();
+                    let _modality = parts[3].to_string();
                     out.push(EmbeddingVersion {
                         model_id,
                         model_version: "v1".to_string(),
@@ -867,7 +867,7 @@ impl ProximaEntityStore {
 
         stream::iter(0..num_batches).then(move |batch_idx| async move {
             let start_idx = batch_idx * batch_size;
-            let end_idx = std::cmp::min(start_idx + batch_size, total_count);
+            let _end_idx = std::cmp::min(start_idx + batch_size, total_count);
 
             let mut results = Vec::with_capacity(batch_size);
             let mut count = 0;

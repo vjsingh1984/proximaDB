@@ -166,7 +166,7 @@ pub trait IncrementalAlgorithm: GraphAlgorithm {
     /// # Returns
     ///
     /// true if incremental update is expected to be faster than recomputation
-    fn is_incremental_beneficial(&self, change: &GraphChange) -> bool {
+    fn is_incremental_beneficial(&self, _change: &GraphChange) -> bool {
         // Default: always use incremental updates
         // Algorithms can override this with smarter logic
         true

@@ -144,7 +144,7 @@ impl NovaFlushOperations {
         );
         debug!("📂 NOVA flush: full_path={}", full_path);
 
-        let (stats, collector) = match HybridParquetWriter::write_with_cache(
+        let (stats, _collector) = match HybridParquetWriter::write_with_cache(
             &records,
             dimension,
             hybrid_config,
@@ -247,7 +247,7 @@ impl NovaFlushOperations {
             .map(|cfg| cfg.filterable_columns.clone());
 
         // Delegate to write_nova_file_to_disk
-        let (path, bytes_written, metadata) = self
+        let (path, bytes_written, _metadata) = self
             .write_nova_file_to_disk(
                 params.collection_id.as_deref().unwrap_or("default"),
                 params.vector_records.clone(),

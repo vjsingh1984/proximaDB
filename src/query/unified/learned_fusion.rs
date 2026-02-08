@@ -496,7 +496,7 @@ impl FusionModel for GradientBoostingModel {
         Ok(scores)
     }
 
-    fn update(&mut self, sample: &TrainingSample) -> Result<()> {
+    fn update(&mut self, _sample: &TrainingSample) -> Result<()> {
         // Gradient boosting typically updates in batches, not online
         // For online learning, we accumulate samples
         Ok(())
@@ -787,7 +787,7 @@ impl LearnedFusion {
                 scores.insert(record_id.clone(), target);
                 scores
             }
-            FeedbackSignal::Rating { score } => {
+            FeedbackSignal::Rating { score: _score } => {
                 HashMap::new() // Global rating doesn't map to specific records
             }
             FeedbackSignal::QueryRefinement => {

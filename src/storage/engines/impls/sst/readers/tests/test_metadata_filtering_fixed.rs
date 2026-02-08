@@ -42,9 +42,9 @@ async fn test_metadata_filtering_with_sstable_reader() {
 
     // Create temp directory and filesystem
     let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path();
+    let _temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
+    let _filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Instead of creating an SSTable, we'll test the metadata filtering logic directly
     // This avoids the bincode serialization issue

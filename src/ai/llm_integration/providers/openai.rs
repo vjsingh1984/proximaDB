@@ -258,7 +258,7 @@ impl LLMClient for OpenAIClient {
             .map_err(|e| LLMError::NetworkError(format!("Request failed: {}", e)))?;
 
         let status = response.status();
-        let response_headers = response.headers().clone();
+        let _response_headers = response.headers().clone();
 
         // Get response body
         let response_body = response

@@ -1398,7 +1398,7 @@ impl HybridQueryEngine {
     /// Fallback vector search using graph nodes when VOS is unavailable
     async fn fallback_graph_vector_search(
         &self,
-        vector_comp: &VectorQueryComponent,
+        _vector_comp: &VectorQueryComponent,
         threshold: f32,
         max_results: usize,
     ) -> QueryResult<Vec<VectorCandidate>> {
@@ -1745,7 +1745,7 @@ impl HybridQueryEngine {
         end_node_id: &NodeId,
         parent: &HashMap<NodeId, (NodeId, EdgeId)>,
     ) -> QueryResult<Vec<PathStep>> {
-        let path: Vec<PathStep> = Vec::new();
+        let _path: Vec<PathStep> = Vec::new();
         let mut current_id = end_node_id.clone();
 
         // Build path backwards
@@ -1799,8 +1799,6 @@ impl HybridQueryEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphMemoryPool;
-    use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
 
     #[test]
     fn test_hybrid_config_default() {

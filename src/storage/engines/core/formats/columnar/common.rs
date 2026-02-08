@@ -675,7 +675,6 @@ impl CommonColumnarOperations {
         Ok(records)
     }
 
-    /// Compute distance with quantized optimization
     // Distance computation methods removed - use compute module directly
     // Engines (NOVA, VIPER) should use:
     // - crate::compute::distance_computation::engine::UnifiedDistanceCompute
@@ -1358,7 +1357,6 @@ pub fn map_core_to_parquet_compression(
                 Compression::BROTLI(parquet::basic::BrotliLevel::default())
             }
         }
-        CompressionAlgorithm::Lz4 => Compression::LZ4,
         CompressionAlgorithm::Lzo => Compression::LZO,
         // Map unsupported algorithms to fallbacks
         CompressionAlgorithm::Deflate | CompressionAlgorithm::Zlib => {

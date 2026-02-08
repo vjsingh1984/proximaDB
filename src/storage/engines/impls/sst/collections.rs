@@ -325,7 +325,7 @@ impl SstEngine {
     pub async fn compact_collection(
         &self,
         collection_id: &str,
-        target_level: Option<u8>,
+        _target_level: Option<u8>,
     ) -> Result<CompactionResult> {
         info!(
             "🔄 SST: Starting compaction for collection {}",

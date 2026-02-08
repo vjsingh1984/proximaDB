@@ -599,11 +599,11 @@ mod tests {
     async fn test_coordinator_isolation_levels() {
         let coordinator = TransactionCoordinator::new(TransactionConfig::default());
 
-        let txn1 = coordinator
+        let _txn1 = coordinator
             .begin(Some(IsolationLevel::ReadCommitted))
             .await
             .unwrap();
-        let txn2 = coordinator
+        let _txn2 = coordinator
             .begin(Some(IsolationLevel::Serializable))
             .await
             .unwrap();

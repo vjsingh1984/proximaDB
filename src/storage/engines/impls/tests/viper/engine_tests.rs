@@ -18,15 +18,9 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::debug;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
-use crate::storage::transaction_coordinator::{
-    TransactionCoordinator, ViperTransactionalOperations,
-};
-use crate::utils::StoragePath;
 
 // ============================================================================
 // ENGINE CREATION & INITIALIZATION TESTS (2 tests)
@@ -134,7 +128,7 @@ async fn test_single_vector_operations() {
     assert!(file_count > 0, "No files were created after flush");
 
     // Try to retrieve vector through search
-    let storage_url = format!(
+    let _storage_url = format!(
         "file://{}/{}/data",
         temp_dir.path().to_str().unwrap(),
         collection_id

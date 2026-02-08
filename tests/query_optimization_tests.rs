@@ -36,7 +36,7 @@ fn test_cost_model_selectivity() {
 
     #[allow(unreachable_code)]
     {
-        let cost_model = panic!("UnifiedCostModel::new() is private");
+        let _cost_model = panic!("UnifiedCostModel::new() is private");
 
         let _equals = FilterCondition::Equals {
             column: "id".to_string(),

@@ -1331,7 +1331,7 @@ impl UnifiedSstableReader {
             blocks.len()
         );
         if let Some(first_block) = blocks.first() {
-            if let Some(first_rec) = first_block.records.first() {}
+            if let Some(_first_rec) = first_block.records.first() {}
         }
 
         // Step 4: Process blocks and compute distances
@@ -1579,12 +1579,12 @@ impl UnifiedSstableReader {
         };
 
         // Apply bandwidth optimizer decisions if available
-        if let Some(optimizer) = bandwidth_optimizer {
+        if let Some(_optimizer) = bandwidth_optimizer {
             // Create query context for bandwidth decisions
             // TODO: Replace with UnifiedCachingFilesystem query context
             use std::collections::HashMap;
 
-            let query_context = (
+            let _query_context = (
                 params.top_k,
                 HashMap::<String, String>::new(), // metadata_filters
                 self.collection_id.clone(),
@@ -1634,12 +1634,12 @@ impl UnifiedSstableReader {
         };
 
         // Apply bandwidth optimizer decisions if available
-        if let Some(optimizer) = bandwidth_optimizer {
+        if let Some(_optimizer) = bandwidth_optimizer {
             // Create compaction query context
             use std::collections::HashMap;
 
             // TODO: Replace with UnifiedCachingFilesystem context
-            let query_context = (
+            let _query_context = (
                 self.collection_id.clone(),
                 HashMap::<String, String>::new(), // metadata_filters
                 1.0,                              // selectivity_hint for full scan
@@ -1727,7 +1727,7 @@ impl UnifiedSstableReader {
             // UnifiedCachingFilesystem handles caching internally
             // Try to get metadata (will use cache if available)
             match self.unified_filesystem.metadata(file_path).await {
-                Ok(metadata) => {
+                Ok(_metadata) => {
                     debug!("✅ Got metadata for file: {}", file_path);
                     // Convert FileMetadata to the format needed here
                     // For now, we'll need to load the file to get SSTable metadata
@@ -1876,23 +1876,6 @@ impl UnifiedSstableReader {
                         *enable_bloom_filters,
                         *enable_cache_lookup,
                         *enable_metadata_cache,
-                    )
-                    .await
-                }
-                SstableReadingStrategy::CompactionFullRead {
-                    skip_bloom_filters,
-                    skip_indexes,
-                    bypass_write_cache,
-                    use_disk_cache_if_exists,
-                    sequential_io,
-                } => {
-                    self.compaction_full_read_strategy(
-                        context,
-                        *skip_bloom_filters,
-                        *skip_indexes,
-                        *bypass_write_cache,
-                        *use_disk_cache_if_exists,
-                        *sequential_io,
                     )
                     .await
                 }
@@ -2549,7 +2532,7 @@ impl UnifiedSstableReader {
                     );
                 }
 
-                let sstable_index =
+                let _sstable_index =
                     crate::storage::cache::specialized::index_node_cache::SstableIndex {
                         file_path: file_path.clone(),
                         entries: cache_entries,
@@ -2752,7 +2735,7 @@ impl UnifiedSstableReader {
         if let Some(block) = block.as_ref() {
             // Cache the block's vectors in central cache
             // Convert SstRecord to VectorRecord for caching
-            let vector_records: Vec<VectorRecord> = block
+            let _vector_records: Vec<VectorRecord> = block
                 .records
                 .iter()
                 .map(|r| VectorRecord {
@@ -3539,7 +3522,7 @@ impl UnifiedSstableReader {
                 .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32));
             bitmap.insert(file_hash);
 
-            let cached_filter =
+            let _cached_filter =
                 crate::storage::cache::specialized::bitmap_filter_cache::CachedFilterResult {
                     bitmap,
                     filter_expr: format!("sstable:bloom:{}", file_path),
@@ -4172,7 +4155,7 @@ impl UnifiedSstableReader {
             data[offset + 2],
             data[offset + 3],
         ]) as usize;
-        offset += 4 + index_len;
+        let _offset = offset + 4 + index_len;
 
         // Convert ReadStrategy to block_filter QueryType
         let block_query_type = match search_strategy {
@@ -4384,7 +4367,7 @@ impl UnifiedSstableReader {
     async fn full_scan_strategy_modular(
         &self,
         context: &CollectionContext,
-        use_cache: bool,
+        _use_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         debug!(
             "🔍 Full scan modular strategy for {} files",
@@ -4405,7 +4388,7 @@ impl UnifiedSstableReader {
                 let entries = block_reader.read_index_blocks(&header).await?;
 
                 // Convert to cache's SstableIndex type
-                let cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                let _cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
                     file_path: file_path.to_string(),
                     entries: entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
                         key: e.key.clone(),

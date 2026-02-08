@@ -544,7 +544,7 @@ mod tests {
         ];
 
         // Cloud storage uses larger threshold (256KB)
-        let result = coalescer.coalesce(ranges.clone(), 0);
+        let _result = coalescer.coalesce(ranges.clone(), 0);
         // With 0 threshold, should not merge (gaps are not considered)
         // Need to use the calculated threshold
         let optimal_threshold = coalescer.calculate_optimal_threshold(&ranges);

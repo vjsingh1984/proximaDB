@@ -573,7 +573,7 @@ impl CompactionCoordinator {
 
         // Process collections that are now ready
         for (collection_id, defer_count) in ready_collections {
-            if let Some((_, deferred)) = self.deferred_compactions.remove(&collection_id) {
+            if let Some((_, _deferred)) = self.deferred_compactions.remove(&collection_id) {
                 let message = format!(
                     "Resuming deferred compaction for {} (was deferred {} times, indexes now hydrated)",
                     collection_id, defer_count

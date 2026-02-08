@@ -35,7 +35,7 @@ mod tests {
         );
 
         // Create hybrid query
-        let hybrid_query = HybridQuery {
+        let _hybrid_query = HybridQuery {
             collection_id: "test_collection".to_string(),
             vector_query: Some(VectorQuery::Dense {
                 vector: vec![0.5; 768],

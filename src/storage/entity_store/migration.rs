@@ -125,7 +125,7 @@ pub async fn migrate_to_graph_first(
 
 /// Validate that migration was successful
 async fn validate_migration(
-    legacy_store: &ProximaEntityStore,
+    _legacy_store: &ProximaEntityStore,
     graph_store: &OrionBackedEntityStore,
     collection_id: &str,
     entities: &[Entity],

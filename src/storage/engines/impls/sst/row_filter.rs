@@ -45,7 +45,7 @@ impl SSTRowFilterEvaluator {
 
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
-            let formatted_key = format!("idx_{}", index);
+            let _formatted_key = format!("idx_{}", index);
             let cache_key = record.id.as_str();
             let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
 
@@ -79,7 +79,7 @@ impl SSTRowFilterEvaluator {
 
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
-            let formatted_key = format!("idx_{}", index);
+            let _formatted_key = format!("idx_{}", index);
             let cache_key = record.id.as_str();
             let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
 

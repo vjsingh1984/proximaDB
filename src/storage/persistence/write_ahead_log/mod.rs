@@ -1277,7 +1277,7 @@ impl WriteAheadLogManager {
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
-        let filesystem_factory = Arc::new(
+        let _filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
         );
 
@@ -1371,7 +1371,7 @@ impl WriteAheadLogManager {
         let strategy_type = config.strategy_type.clone();
 
         // Create filesystem factory for per-collection disk managers
-        let filesystem_factory = Arc::new(
+        let _filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
         );
 
@@ -1444,7 +1444,7 @@ impl WriteAheadLogManager {
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
-        let filesystem_factory = Arc::new(
+        let _filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
         );
 
@@ -1491,7 +1491,7 @@ impl WriteAheadLogManager {
     }
 
     /// Set storage engine for delegated flush/compaction operations
-    pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
+    pub fn set_storage_engine(&self, _storage_engine: Arc<dyn UnifiedStorageEngine>) {
         // Storage engine setting moved to config level
         tracing::info!("🏗️ Storage engine attached to WAL manager for delegated operations");
     }
@@ -1879,10 +1879,10 @@ impl WriteAheadLogManager {
     }
 
     /// Force flush to disk
-    pub async fn flush(&self, collection_id: Option<&String>) -> Result<FlushResult> {
+    pub async fn flush(&self, _collection_id: Option<&String>) -> Result<FlushResult> {
         // Use shared WAL behavior for flush
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         // WALBehaviorWrapper doesn't handle flushing directly - that's done by the flush coordinator
         let result = FlushResult::default();
 
@@ -1894,7 +1894,7 @@ impl WriteAheadLogManager {
     }
 
     /// Compact collection (clean up old MVCC versions)
-    pub async fn compact(&self, collection_id: &str) -> Result<u64> {
+    pub async fn compact(&self, _collection_id: &str) -> Result<u64> {
         // Compaction not directly available in shared WAL behavior
         // Return 0 for now as compaction is handled at storage layer
         Ok(0)
@@ -1991,7 +1991,7 @@ impl WriteAheadLogManager {
 
         // Get basic stats from the shared WAL behavior
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
 
         // Create stats based on available information
         let stats = WALStats {
@@ -2023,9 +2023,9 @@ impl WriteAheadLogManager {
     }
 
     /// Flush collection using modern batch operations
-    pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
+    pub async fn flush_collection(&self, _collection_id: &str) -> Result<FlushResult> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         // WALBehaviorWrapper doesn't handle flushing directly - that's done by the flush coordinator
         Ok(FlushResult::default())
     }
@@ -2932,7 +2932,7 @@ impl WriteAheadLogManager {
     pub async fn register_storage_engine(
         &self,
         engine_name: &str,
-        engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
+        _engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
     ) -> Result<()> {
         // Set the storage engine on the strategy
         // Storage engine setting moved to shared behavior initialization

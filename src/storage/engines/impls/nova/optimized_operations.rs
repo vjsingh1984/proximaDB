@@ -296,7 +296,7 @@ impl OptimizedNovaOperations {
         Ok(vectors)
     }
     /// Select optimal computation mode based on data size
-    fn select_compute_mode(&self, vectors: &[Vec<f32>]) -> DistanceMode {
+    fn select_compute_mode(&self, _vectors: &[Vec<f32>]) -> DistanceMode {
         // DistanceMode is about value normalization, not hardware selection
         // Hardware selection is handled internally by UnifiedDistanceCompute
         // Return normalized mode for consistency

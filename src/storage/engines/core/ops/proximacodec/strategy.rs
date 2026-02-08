@@ -343,7 +343,7 @@ impl CodecSelectionStrategy for IntegerAnalysisStrategy {
         "IntegerAnalysis"
     }
 
-    fn select(&self, analysis: &DataAnalysis, context: &SelectionContext) -> ProximaScheme {
+    fn select(&self, analysis: &DataAnalysis, _context: &SelectionContext) -> ProximaScheme {
         // Constant data → RunLength
         if analysis.is_constant() {
             return ProximaScheme::RunLength;
@@ -422,7 +422,7 @@ impl CodecSelectionStrategy for MlEmbeddingStrategy {
         }
     }
 
-    fn supports_type(&self, type_id: TypeId) -> bool {
+    fn supports_type(&self, _type_id: TypeId) -> bool {
         // Primarily for floating point, but supports all
         true
     }

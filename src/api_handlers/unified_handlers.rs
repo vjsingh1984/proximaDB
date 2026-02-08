@@ -1669,7 +1669,7 @@ impl UnifiedHandlers {
         &self,
         sql: String,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
-        collection: Option<String>,
+        _collection: Option<String>,
     ) -> Result<SqlQueryResult> {
         let start_time = std::time::Instant::now();
 

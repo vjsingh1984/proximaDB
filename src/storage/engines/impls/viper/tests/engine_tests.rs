@@ -349,7 +349,7 @@ async fn test_single_vector_operations() {
     assert!(file_count > 0, "No files were created after flush");
 
     // Try to retrieve vector through search
-    let storage_url = format!(
+    let _storage_url = format!(
         "file://{}/{}/data",
         temp_dir.path().to_str().unwrap(),
         collection_id
@@ -1076,7 +1076,7 @@ async fn test_search_vectors_unified() {
     {
         let base_path = temp_dir.path().to_str().unwrap();
         let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
-        let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
+        let _wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
         if tokio::fs::metadata(&data_dir).await.is_ok() {
             debug!("Data directory exists: {}", data_dir);
 

@@ -28,7 +28,7 @@
 //! scheduler.stop().await?;
 //! ```
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;

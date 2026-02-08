@@ -168,7 +168,7 @@ impl PropertyIndex {
 
         let mut results = Vec::new();
 
-        for (value, ids) in self.btree_index.range(min_str..=max_str) {
+        for (_value, ids) in self.btree_index.range(min_str..=max_str) {
             results.extend(ids.iter().cloned());
         }
 

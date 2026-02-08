@@ -522,8 +522,8 @@ mod tests {
 
         // Now should prefer the rewarded action
         let new_action = planner.select_action(&state);
-        let good_id = good_action.to_action_id();
-        let new_id = new_action.to_action_id();
+        let _good_id = good_action.to_action_id();
+        let _new_id = new_action.to_action_id();
 
         // The good action should have high expected value
         let stats = planner.get_action_stats();

@@ -81,7 +81,7 @@ async fn test_atomic_write_with_sync() {
     assert!(result.is_ok());
 
     // Verify data exists at final location
-    let final_path = format!("{}/test_data.bin", storage_url);
+    let _final_path = format!("{}/test_data.bin", storage_url);
     // In a real test, we'd verify the file exists at the final location
 }
 

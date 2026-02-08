@@ -63,7 +63,7 @@ pub async fn search_sstable(
     filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     sstable: &SStableMetadata,
     query_vector: &[f32],
-    query_hilbert_key: Option<u64>,
+    _query_hilbert_key: Option<u64>,
     k: usize,
     distance_metric: &DistanceMetric,
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
@@ -95,7 +95,7 @@ pub async fn search_sstable(
         filesystem,
         &sstable.path,
         query_vector,
-        query_hilbert_key, // Pass Hilbert key for spatial pruning (80-90% block reduction!)
+        _query_hilbert_key, // Pass Hilbert key for spatial pruning (80-90% block reduction!)
         k,
         distance_metric,
         distance_compute,
@@ -396,7 +396,7 @@ pub async fn search_sstable_quantized(
     filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     sstable: &SStableMetadata,
     query_vector: &[f32],
-    query_hilbert_key: Option<u64>,
+    _query_hilbert_key: Option<u64>,
     k: usize,
     use_binary: bool, // true for binary (Stage 2), false for INT8 (Stage 3)
 ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -436,7 +436,7 @@ pub async fn search_sstable_quantized(
     };
 
     // Read blocks and compute quantized distances
-    for block_idx in 0..num_blocks {
+    for _block_idx in 0..num_blocks {
         // Read block size
         let mut size_bytes = [0u8; 4];
         std::io::Read::read_exact(&mut cursor, &mut size_bytes)?;

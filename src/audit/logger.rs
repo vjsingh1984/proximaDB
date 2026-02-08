@@ -571,7 +571,7 @@ impl AuditLogger {
     }
 
     /// Calculate data access risk score
-    async fn calculate_data_access_risk(&self, user_id: &str, action: &str) -> Option<f64> {
+    async fn calculate_data_access_risk(&self, _user_id: &str, action: &str) -> Option<f64> {
         let mut risk_score: f64 = 0.0;
 
         // Higher risk for bulk operations

@@ -48,7 +48,7 @@ async fn test_reader_creation() {
 #[tokio::test]
 async fn test_strategy_selection_basic() {
     let _reader = create_test_reader().await;
-    let context = create_test_context();
+    let _context = create_test_context();
 
     let params = SearchParams {
         query_vectors: Some(vec![vec![0.1; 128]]),
@@ -65,7 +65,7 @@ async fn test_strategy_selection_basic() {
 #[tokio::test]
 async fn test_strategy_with_filters() {
     let _reader = create_test_reader().await;
-    let context = create_test_context();
+    let _context = create_test_context();
 
     let params = SearchParams {
         query_vectors: Some(vec![vec![0.1; 128]]),
@@ -89,7 +89,7 @@ async fn test_strategy_with_quantization() {
     let context = create_test_context();
     // Note: quantization_columns field removed from CollectionContext
 
-    let params = SearchParams {
+    let _params = SearchParams {
         query_vectors: Some(vec![vec![0.1; 128]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Cosine),
@@ -298,6 +298,9 @@ async fn test_search_vectors_basic() -> Result<()> {
         timeout_ms: None,
         search_mode: crate::core::search::SearchMode::default(),
         block_prune: crate::core::search::BlockPruneConfig::default(),
+        text_query: None,
+        hybrid_mode: crate::core::search::HybridSearchMode::default(),
+        vector_weight: None,
     };
 
     // Create collection context
@@ -486,7 +489,7 @@ async fn test_empty_collection_search() {
     // Note: CollectionContext structure may differ from source
     let context = create_test_context();
 
-    let params = SearchParams {
+    let _params = SearchParams {
         query_vectors: Some(vec![vec![0.1; 128]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Cosine),
@@ -860,7 +863,7 @@ async fn test_concurrent_reader_access() {
 
     // Spawn multiple concurrent searches
     for i in 0..10 {
-        let reader_clone = reader.clone();
+        let _reader_clone = reader.clone();
         tasks.spawn(async move {
             let params = SearchParams {
                 query_vectors: Some(vec![vec![i as f32 / 10.0; 128]]),

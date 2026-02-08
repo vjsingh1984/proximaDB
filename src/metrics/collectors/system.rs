@@ -209,7 +209,7 @@ impl SystemMetricsCollector {
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run vm_stat: {}", e))?;
 
-            let output_str = String::from_utf8_lossy(&output.stdout);
+            let _output_str = String::from_utf8_lossy(&output.stdout);
 
             // Parse memory from vm_stat (simplified)
             // In production, you'd parse the actual values

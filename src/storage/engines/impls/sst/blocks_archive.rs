@@ -30,8 +30,6 @@
 //! Last used: 2025-12-25
 //! Archived by: TD-001 ProximaBlocks migration
 
-#![allow(dead_code)]
-
 use crate::proto::proximadb_v1::VectorRecord;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

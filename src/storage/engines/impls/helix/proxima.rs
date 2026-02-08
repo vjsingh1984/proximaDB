@@ -546,7 +546,7 @@ pub async fn write_helix_sstable(
 
     // Write bloom filter
     let bloom_bytes = global_bloom.serialize()?;
-    let bloom_offset = file_data.len() as u64;
+    let _bloom_offset = file_data.len() as u64;
     file_data.put_u32_le(bloom_bytes.len() as u32);
     file_data.put_slice(&bloom_bytes);
 
@@ -833,7 +833,7 @@ pub async fn search_helix_sstable(
     let _num_blocks = header.block_metadata.len();
     let mut results = Vec::new();
     let mut _blocks_pruned = 0;
-    let mut blocks_searched = 0;
+    let mut _blocks_searched = 0;
 
     // Centroid-based pruning (sqrt heuristic) to reduce block reads
     let centroid_selected =
@@ -884,7 +884,7 @@ pub async fn search_helix_sstable(
 
         // CLOUD-OPTIMIZED: Read block with EXACT size from header
         // Single API call with exact size = perfect read, zero waste
-        blocks_searched += 1;
+        _blocks_searched += 1;
 
         // Use exact block size from header
         let exact_size = header.block_sizes[block_idx];

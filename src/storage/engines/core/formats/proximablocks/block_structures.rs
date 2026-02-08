@@ -1352,7 +1352,7 @@ impl ProximaDataBlock {
     pub fn new_with_engine_profile(
         records: Vec<VectorRecord>,
         compression_config: BlockCompressionConfig,
-        engine_profile: EngineProfile,
+        _engine_profile: EngineProfile,
     ) -> Self {
         let record_count = records.len() as u32;
         let block_id = 0u32;
@@ -1799,8 +1799,8 @@ impl ProximaDataBlock {
     /// Helper to serialize vectors directly to buffer
     fn serialize_vectors_to_buffer(
         &self,
-        buffer: &mut Vec<u8>,
-        config: &BlockCompressionConfig,
+        _buffer: &mut Vec<u8>,
+        _config: &BlockCompressionConfig,
     ) -> anyhow::Result<()> {
         // This would contain the vector serialization logic from serialize_with_config
         // but writing directly to the buffer instead of creating intermediate buffers
@@ -1808,7 +1808,7 @@ impl ProximaDataBlock {
     }
 
     /// Helper to serialize metadata directly to buffer
-    fn serialize_metadata_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
+    fn serialize_metadata_to_buffer(&self, _buffer: &mut Vec<u8>) -> anyhow::Result<()> {
         // This would contain the metadata serialization logic
         // but writing directly to the buffer instead of creating intermediate buffers
         Ok(())
@@ -1916,8 +1916,8 @@ impl ProximaDataBlock {
 
         // ============ STEP 1: Encode vectors using Proxima dual-mode encoding ============
         // Use ProximaCodec for encoding
-        let codec = ProximaCodec::global();
-        let scheme = ProximaScheme::Delta { base: 0 }; // Default scheme
+        let _codec = ProximaCodec::global();
+        let _scheme = ProximaScheme::Delta { base: 0 }; // Default scheme
 
         // Collect vectors from records
         let vectors: Vec<Vec<f32>> = self.records.iter().map(|r| r.vector.clone()).collect();
@@ -5045,7 +5045,7 @@ impl ProximaDataBlock {
     /// Decode existing TransposeFieldEncodedAndCompressed (columnar) format
     fn decode_existing_columnar_format(
         data: &[u8],
-        encoding_marker: u8,
+        _encoding_marker: u8,
     ) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
 
@@ -5066,7 +5066,7 @@ impl ProximaDataBlock {
         // Read all dimension data
         let mut all_dimensions = Vec::with_capacity(dimension);
 
-        for dim_idx in 0..dimension {
+        for _dim_idx in 0..dimension {
             // Read length of this dimension's encoded data
             let mut len_bytes = [0u8; 4];
             cursor.read_exact(&mut len_bytes)?;

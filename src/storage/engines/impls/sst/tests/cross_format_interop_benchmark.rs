@@ -803,7 +803,7 @@ mod tests {
 
         let num_vectors = 1000;
         let dimension = 128;
-        let vectors = generate_test_vectors(num_vectors, dimension);
+        let _vectors = generate_test_vectors(num_vectors, dimension);
 
         // Calculate raw size (uncompressed)
         let raw_vector_size = num_vectors * dimension * 4; // f32 = 4 bytes

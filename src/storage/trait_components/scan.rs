@@ -38,9 +38,9 @@ pub trait StorageScan: Send + Sync {
     /// Default implementation returns an error - engines should override.
     async fn create_scan(
         &self,
-        collection_id: &str,
-        strategy: ScanStrategy,
-        collection_config: Option<&Collection>,
+        _collection_id: &str,
+        _strategy: ScanStrategy,
+        _collection_config: Option<&Collection>,
     ) -> Result<Box<dyn ScanIterator>> {
         Err(anyhow::anyhow!(
             "Scan not implemented for this engine. Use search_vectors_unified for now."

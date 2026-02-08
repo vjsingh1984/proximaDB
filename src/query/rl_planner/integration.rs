@@ -43,7 +43,7 @@ impl RLPlannerIntegration {
     pub fn extract_state(&self, context: &UnifiedQueryContext<'_>) -> PlannerState {
         let storage_engine = self.infer_storage_engine(context);
         let has_filter = context.filter_params.is_some();
-        let filter_selectivity = if has_filter { 0.3 } else { 1.0 }; // Conservative estimate
+        let _filter_selectivity = if has_filter { 0.3 } else { 1.0 }; // Conservative estimate
 
         // Use EngineCapabilities to get supported indexes and quantization
         let capabilities_engine = self.to_capabilities_engine(storage_engine);
@@ -304,7 +304,7 @@ impl RLPlannerIntegration {
         action: &ExecutionAction,
         latency_ms: f64,
         recall: f32,
-        stages: Vec<StageLog>,
+        _stages: Vec<StageLog>,
         reward: f32,
     ) {
         let log = ExecutionLog::builder(query_id, collection_id)

@@ -1761,7 +1761,7 @@ impl EmbeddedProximaDB {
         // Explicitly typed as Result<u64, E> to capture bytes written for metrics
         let result: Result<u64, Box<dyn std::error::Error + Send + Sync>> = self.runtime.block_on(async {
             use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
-            use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+            use crate::storage::traits::FlushParameters;
             use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment};
 
             tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");

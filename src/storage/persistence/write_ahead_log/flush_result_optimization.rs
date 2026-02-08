@@ -408,7 +408,7 @@ mod tests {
         assert!(result.base.success);
 
         // Test cache hit
-        let result2 = coordinator
+        let _result2 = coordinator
             .execute_optimized_flush("test_collection", vectors)
             .await
             .unwrap();

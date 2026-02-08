@@ -2988,7 +2988,7 @@ impl CrossModelOptimizer {
     /// Marks independent subqueries that can run concurrently.
     fn identify_parallelism(&self, plan: PlanNode) -> Result<PlanNode> {
         // Collect parallel stages
-        let parallel_stages = self.find_parallel_stages(&plan);
+        let _parallel_stages = self.find_parallel_stages(&plan);
 
         // For now, we just mark the plan with parallelism info
         // The actual parallel execution would be done by the executor

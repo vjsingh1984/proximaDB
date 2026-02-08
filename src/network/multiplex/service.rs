@@ -184,7 +184,7 @@ impl Service<Request<Body>> for MultiplexService {
     fn call(&mut self, request: Request<Body>) -> Self::Future {
         // Create a minimal request for protocol detection (without consuming the body)
         // We build a new Request with just the headers and URI we need for detection
-        let detection_request = Request::builder()
+        let _detection_request = Request::builder()
             .method(request.method().clone())
             .uri(request.uri().clone())
             .version(request.version())

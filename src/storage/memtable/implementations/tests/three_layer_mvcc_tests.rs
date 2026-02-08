@@ -39,7 +39,7 @@ fn create_wal_batch(
     vectors: Vec<VectorRecord>,
 ) -> WALVectorBatch {
     let vector_count = vectors.len() as u64;
-    let end_sequence = if vector_count > 0 {
+    let _end_sequence = if vector_count > 0 {
         sequence + vector_count - 1
     } else {
         sequence

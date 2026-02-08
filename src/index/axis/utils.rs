@@ -471,7 +471,6 @@ mod tests {
 
     #[test]
     fn test_concurrent_vector_store() {
-        use crate::proto::proximadb_v1::MetadataItem;
         use crate::proto::proximadb_v1::VectorRecord;
 
         let store = IndexVectorStore::new(3);

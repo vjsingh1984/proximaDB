@@ -130,7 +130,7 @@ impl OptimizedSwiftOperations {
     async fn binary_filter_simd(
         &self,
         sst: &SwiftFile,
-        query: &[f32],
+        _query: &[f32],
         n_candidates: usize,
     ) -> Result<Vec<SearchCandidate>> {
         // Get a pooled buffer for candidates
@@ -224,7 +224,7 @@ impl OptimizedSwiftOperations {
 
         // Use distance compute with appropriate mode
         // Hardware-specific optimizations are handled internally by the distance engine
-        let mode = DistanceMode::RankOptimized;
+        let _mode = DistanceMode::RankOptimized;
 
         // Get vectors from candidates (would load from blocks)
         let vectors: Vec<Vec<f32>> = candidates

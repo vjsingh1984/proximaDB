@@ -483,7 +483,7 @@ impl SamlAuthProvider {
         }
     }
 
-    fn decode_saml_response(&self, credentials: &str) -> Result<SamlResponse, AuthError> {
+    fn decode_saml_response(&self, _credentials: &str) -> Result<SamlResponse, AuthError> {
         // TODO: Implement SAML response decoding
         Ok(SamlResponse {
             user_id: "placeholder_user".to_string(),

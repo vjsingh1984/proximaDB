@@ -343,7 +343,7 @@ impl UniversalDistanceAdapter {
         self.validate_request(&request)?;
 
         // Get storage engine adapter
-        let engine_adapter = self.get_engine_adapter(&request.engine_type).await?;
+        let _engine_adapter = self.get_engine_adapter(&request.engine_type).await?;
 
         // Convert storage format if needed
         let converted_candidates = self

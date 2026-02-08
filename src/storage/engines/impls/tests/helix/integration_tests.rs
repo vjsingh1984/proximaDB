@@ -357,7 +357,7 @@ async fn test_progressive_search() {
         storage_config,
     )));
 
-    let coordinator =
+    let _coordinator =
         ProgressiveSearchCoordinator::new(config, distance_compute, quantization_engine);
 
     // Create test SSTables metadata
@@ -395,7 +395,7 @@ async fn test_progressive_search() {
     ];
 
     // Test progressive search with Hilbert pruning
-    let query_vector = vec![1.0; 128];
+    let _query_vector = vec![1.0; 128];
     let query_hilbert = Some(500u64); // Close to first SSTable
 
     let _temp_dir = TempDir::new().unwrap();
@@ -1309,8 +1309,8 @@ mod clustering_tests {
         use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
         let curve = HilbertCurve::new(2, 16);
         let key00 = curve.encode(&[0, 0]);
-        let key01 = curve.encode(&[0, u32::MAX >> 16]);
-        let key10 = curve.encode(&[u32::MAX >> 16, 0]);
+        let _key01 = curve.encode(&[0, u32::MAX >> 16]);
+        let _key10 = curve.encode(&[u32::MAX >> 16, 0]);
         let key11 = curve.encode(&[u32::MAX >> 16, u32::MAX >> 16]);
 
         // Basic ordering test
@@ -1860,7 +1860,7 @@ async fn test_varying_block_sizes() {
     // Last block (116 vectors) should generally be smaller or similar size
     // Note: With compression, smaller blocks can compress disproportionately better
     let last_size = header.block_sizes[3];
-    let expected_ratio = 116.0 / 128.0; // ~90%
+    let _expected_ratio = 116.0 / 128.0; // ~90%
     let actual_ratio = last_size as f32 / avg_size as f32;
 
     // Allow very wide range (0.1% to 200%) due to compression variability

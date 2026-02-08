@@ -12,10 +12,10 @@ async fn test_viper_predicate_pushdown() {
     use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
+    let _evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Simple equality filter
-    let filter = FilterExpression::Comparison {
+    let _filter = FilterExpression::Comparison {
         field: "category".to_string(),
         operator: ComparisonOperator::Equals,
         value: serde_json::json!("electronics"),
@@ -33,10 +33,10 @@ async fn test_parallel_column_evaluation() {
     use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
+    let _evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Complex AND/OR filter
-    let filter = FilterExpression::And(vec![
+    let _filter = FilterExpression::And(vec![
         FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
@@ -62,7 +62,7 @@ fn test_reconstructor_creation() {
     };
 
     let config = ReconstructorConfig::default();
-    let reconstructor = ParquetReconstructor::new(config);
+    let _reconstructor = ParquetReconstructor::new(config);
 
     // Cannot access private config field
     // assert!(reconstructor.config.enable_schema_validation);

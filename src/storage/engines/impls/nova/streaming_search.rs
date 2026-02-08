@@ -181,7 +181,7 @@ impl StreamingSearchEngine {
                 Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
             ),
         );
-        let quantization_engine = Arc::new(
+        let _quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                 unified_quantization_engine.clone(),
                 distance_compute.clone(),
@@ -222,7 +222,10 @@ impl StreamingSearchEngine {
         parquet_metadata: &parquet::file::metadata::ParquetMetaData,
     ) -> Result<StreamingSearchResult> {
         let overall_start = Instant::now();
-        let query_id = format!("query_{}", chrono::Utc::now().timestamp_nanos());
+        let query_id = format!(
+            "query_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
 
         info!(
             "Starting unified streaming search: query_id={}, dim={}, top_k={}, superblocks={}, row_groups={}",
@@ -718,7 +721,7 @@ impl PerformanceTracker {
     fn update_workload_stats(
         &mut self,
         characteristics: &QueryCharacteristics,
-        performance: &ActualPerformance,
+        _performance: &ActualPerformance,
     ) {
         // Update moving averages
         let alpha = 0.1; // Learning rate

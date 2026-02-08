@@ -102,7 +102,7 @@ impl MatrixBuilder {
     /// Uses GPU acceleration (Metal MPS) when available for significant speedup
     /// on large rowgroups. Falls back to CPU SIMD for small rowgroups or when
     /// GPU is not available.
-    pub fn build_p2_matrix(&self, vectors: &[Vec<f32>], dimension: usize) -> Result<P2Matrix> {
+    pub fn build_p2_matrix(&self, vectors: &[Vec<f32>], _dimension: usize) -> Result<P2Matrix> {
         let num_vectors = vectors.len();
         if num_vectors == 0 {
             return Ok(P2Matrix {

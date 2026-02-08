@@ -1040,7 +1040,7 @@ impl PostgresProtocol {
     }
 
     /// Execute a graph query
-    async fn execute_graph_query(&mut self, table_name: &str, query: &str) -> Result<()> {
+    async fn execute_graph_query(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Executing graph query on table: {}", table_name);
 
         // For now, return basic graph info
@@ -1068,7 +1068,7 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
 
         // Look for BETWEEN ... AND ...
-        if let Some(between_pos) = upper.find("BETWEEN") {
+        if let Some(_between_pos) = upper.find("BETWEEN") {
             // Complex parsing - for now use defaults
             return (default_start - default_range, default_start);
         }
@@ -1309,7 +1309,7 @@ impl PostgresProtocol {
 
         use crate::proto::proximadb_v1::DocumentCollectionConfig;
 
-        let config = DocumentCollectionConfig {
+        let _config = DocumentCollectionConfig {
             name: table_name.to_string(),
             enable_fulltext: true,
             ..Default::default()
@@ -2051,7 +2051,6 @@ impl PostgresProtocol {
         format: &CopyFormat,
     ) -> Result<usize> {
         let mut all_data = Vec::new();
-        let mut row_count = 0;
 
         loop {
             // Read message type
@@ -2089,7 +2088,7 @@ impl PostgresProtocol {
         }
 
         // Process the collected data based on format
-        row_count = match format {
+        let row_count = match format {
             CopyFormat::Arrow => {
                 self.process_arrow_copy_data(table_name, store_type, &all_data)
                     .await?

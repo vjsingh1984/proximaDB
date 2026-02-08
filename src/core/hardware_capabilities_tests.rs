@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::core::hardware_capabilities::{GpuBackend, HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
+    use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
 
     #[test]
     fn test_hardware_config_defaults() {
@@ -179,8 +178,8 @@ mod tests {
         let _ = initialize_hardware_capabilities_default();
         
         // Test HardwareQuery static methods
-        let has_avx512 = HardwareQuery::has_avx512();
-        let has_gpu = HardwareQuery::has_gpu();
+        let _has_avx512 = HardwareQuery::has_avx512();
+        let _has_gpu = HardwareQuery::has_gpu();
         let cpu_cores = HardwareQuery::cpu_cores();
         let thread_pool_size = HardwareQuery::recommended_thread_pool_size();
         let cache_size = HardwareQuery::recommended_cache_size();
@@ -236,7 +235,7 @@ mod tests {
         assert!(!cpu.model_name.is_empty());
         
         // SIMD capabilities should be detected
-        let simd = cpu.simd;
+        let _simd = cpu.simd;
         // At least one should be available on modern systems (platform-dependent)
         // Just verify detection doesn't crash
     }
@@ -299,7 +298,6 @@ mod tests {
     
     #[test]
     fn test_concurrent_initialization() {
-        use std::sync::Arc;
         use std::thread;
         
         // Test that concurrent initialization doesn't cause issues

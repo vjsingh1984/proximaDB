@@ -182,8 +182,8 @@ impl InMemoryProvenanceRegistry {
     }
 
     /// Persist provenance to storage
-    async fn persist_provenance(&self, entity_id: &str, provenance: &Provenance) -> Result<()> {
-        let key = Self::provenance_key(entity_id);
+    async fn persist_provenance(&self, entity_id: &str, _provenance: &Provenance) -> Result<()> {
+        let _key = Self::provenance_key(entity_id);
         // TODO: Serialize and store provenance
         // self.storage_engine.put(&key, serialize(provenance)?).await?;
         Ok(())

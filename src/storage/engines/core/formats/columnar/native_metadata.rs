@@ -379,7 +379,7 @@ impl NativeMetadataHandler {
     /// Build typed array from values
     fn build_typed_array(
         &self,
-        field: &str,
+        _field: &str,
         field_type: &MetadataFieldType,
         values: &[Option<&JsonValue>],
     ) -> Result<ArrayRef> {

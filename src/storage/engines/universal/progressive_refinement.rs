@@ -399,7 +399,7 @@ impl ProgressiveRefinementPipeline {
         &self,
         query_vector: &[f32],
         candidates: &[CandidateVector],
-        distance_metric: &DistanceMetric,
+        _distance_metric: &DistanceMetric,
         target_count: usize,
     ) -> AdapterResult<StageResult> {
         trace!("Executing binary filtering stage");

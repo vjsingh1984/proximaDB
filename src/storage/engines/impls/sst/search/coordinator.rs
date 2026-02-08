@@ -249,7 +249,7 @@ impl SearchCoordinator {
     /// Estimate search cost for a given strategy
     pub async fn estimate_search_cost(
         &self,
-        ctx: &StorageQueryContext,
+        _ctx: &StorageQueryContext,
         strategy: &SearchStrategy,
     ) -> Result<f64> {
         match strategy {
@@ -359,6 +359,9 @@ mod tests {
             optimization_hint: None,
             search_mode: crate::core::search::SearchMode::default(),
             block_prune: crate::core::search::BlockPruneConfig::default(),
+            text_query: None,
+            hybrid_mode: crate::core::search::HybridSearchMode::default(),
+            vector_weight: None,
         });
 
         let collection = Arc::new(crate::proto::proximadb_v1::Collection {

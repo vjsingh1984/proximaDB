@@ -308,7 +308,7 @@ impl UniversalPerformanceOptimizer {
         }
 
         // Use filesystem factory to handle local/cloud storage seamlessly
-        let filesystem = self.filesystem_factory.get_filesystem(file_url)?;
+        let _filesystem = self.filesystem_factory.get_filesystem(file_url)?;
 
         // Try local file memory mapping first (works for file:// URLs)
         if file_url.starts_with("file://") {

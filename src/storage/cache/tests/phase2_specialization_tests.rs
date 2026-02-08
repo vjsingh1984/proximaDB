@@ -16,7 +16,7 @@ async fn test_vector_data_cache_specialization() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let cache = VectorStore::new(1024 * 1024); // 1MB
+    let _cache = VectorStore::new(1024 * 1024); // 1MB
 
     // Test similarity-based operations
     let base_vector = vec![1.0, 0.0, 0.0];
@@ -24,7 +24,7 @@ async fn test_vector_data_cache_specialization() {
     let different_vector = vec![0.0, 1.0, 0.0];
 
     // Cache vectors
-    let record1 = VectorRecord {
+    let _record1 = VectorRecord {
         id: "vec1".to_string(),
         vector: base_vector.clone(),
         metadata: std::collections::HashMap::new(),
@@ -35,7 +35,7 @@ async fn test_vector_data_cache_specialization() {
         source: None,
     };
 
-    let record2 = VectorRecord {
+    let _record2 = VectorRecord {
         id: "vec2".to_string(),
         vector: similar_vector.clone(),
         metadata: std::collections::HashMap::new(),
@@ -46,7 +46,7 @@ async fn test_vector_data_cache_specialization() {
         source: None,
     };
 
-    let record3 = VectorRecord {
+    let _record3 = VectorRecord {
         id: "vec3".to_string(),
         vector: different_vector.clone(),
         metadata: std::collections::HashMap::new(),
@@ -88,10 +88,10 @@ async fn test_query_result_cache_specialization() {
     let cache = QueryCache::new(1024); // 1024 MB
 
     // Create query key
-    let query_key = QueryKey::new("test_collection".to_string(), &vec![1.0, 0.0], 10, None);
+    let _query_key = QueryKey::new("test_collection".to_string(), &vec![1.0, 0.0], 10, None);
 
     // Create cached query result
-    let query_result = CachedQueryResult {
+    let _query_result = CachedQueryResult {
         results: vec![ProtoSearchResult {
             results: vec![
                 SearchVectorRecord {
@@ -140,7 +140,7 @@ async fn test_query_result_cache_specialization() {
 
     // Test approximate matching
     let similar_query = vec![0.99, 0.01]; // Slightly different
-    let approx_key = cache.find_approximate_match(&similar_query, 10, 0.95).await;
+    let _approx_key = cache.find_approximate_match(&similar_query, 10, 0.95).await;
     // Would check if approximate match is found
 
     // Test staleness detection

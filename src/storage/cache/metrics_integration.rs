@@ -127,7 +127,7 @@ impl CacheMetricsCollector {
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
             let stats = query_cache.statistics().await;
             let total_requests = stats.hit_count + stats.miss_count;
-            let hit_rate = if total_requests > 0 {
+            let _hit_rate = if total_requests > 0 {
                 stats.hit_count as f64 / total_requests as f64
             } else {
                 0.0

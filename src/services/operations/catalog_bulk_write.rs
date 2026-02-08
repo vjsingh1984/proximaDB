@@ -168,7 +168,7 @@ impl CatalogBulkWriteService {
         &self,
         table_fqn: &str,
         batches: &[RecordBatch],
-        write_mode: BulkWriteMode,
+        _write_mode: BulkWriteMode,
     ) -> Result<(Vec<VectorRecord>, CatalogBulkWriteResult)> {
         let start = std::time::Instant::now();
         let mut result = CatalogBulkWriteResult {

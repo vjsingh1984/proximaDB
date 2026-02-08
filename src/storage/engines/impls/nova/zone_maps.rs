@@ -276,7 +276,7 @@ impl AdvancedZoneMap {
     /// Create a comprehensive zone map from vectors and metadata
     pub fn from_row_group(
         vectors: &[Vec<f32>],
-        metadata: &RowGroupMetaData,
+        _metadata: &RowGroupMetaData,
         config: &ZoneMapConfig,
     ) -> Result<Self> {
         let base_zone_map = ZoneMap::from_vectors(vectors)?;
@@ -569,7 +569,7 @@ impl AdvancedZoneMap {
         &self,
         query: &[f32],
         distance_metric: DistanceMetric,
-        max_similarity: f32,
+        _max_similarity: f32,
         result: &mut AdvancedIntersectionResult,
     ) {
         if let Some(adaptive_zone) = &self.adaptive_zone {

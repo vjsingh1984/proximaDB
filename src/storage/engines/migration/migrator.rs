@@ -190,42 +190,47 @@ impl EngineMigrator {
         };
 
         let start_time = std::time::Instant::now();
-        let mut migrated_collections = Vec::new();
-        let mut total_records_migrated = 0u64;
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
 
         // Execute based on strategy
-        match self.config.strategy {
-            MigrationStrategy::CopyThenSwitch => {
-                let result = self.execute_copy_then_switch(&plan.collections).await?;
-                migrated_collections = result.migrated_collections;
-                total_records_migrated = result.total_records;
-                errors = result.errors;
-                warnings = result.warnings;
-            }
-            MigrationStrategy::GradualWithDualWrite => {
-                let result = self.execute_gradual_migration(&plan.collections).await?;
-                migrated_collections = result.migrated_collections;
-                total_records_migrated = result.total_records;
-                errors = result.errors;
-                warnings = result.warnings;
-            }
-            MigrationStrategy::InPlace => {
-                let result = self.execute_in_place_migration(&plan.collections).await?;
-                migrated_collections = result.migrated_collections;
-                total_records_migrated = result.total_records;
-                errors = result.errors;
-                warnings = result.warnings;
-            }
-            MigrationStrategy::BlueGreen => {
-                let result = self.execute_blue_green_migration(&plan.collections).await?;
-                migrated_collections = result.migrated_collections;
-                total_records_migrated = result.total_records;
-                errors = result.errors;
-                warnings = result.warnings;
-            }
-        }
+        let (migrated_collections, total_records_migrated, errors, warnings) =
+            match self.config.strategy {
+                MigrationStrategy::CopyThenSwitch => {
+                    let result = self.execute_copy_then_switch(&plan.collections).await?;
+                    (
+                        result.migrated_collections,
+                        result.total_records,
+                        result.errors,
+                        result.warnings,
+                    )
+                }
+                MigrationStrategy::GradualWithDualWrite => {
+                    let result = self.execute_gradual_migration(&plan.collections).await?;
+                    (
+                        result.migrated_collections,
+                        result.total_records,
+                        result.errors,
+                        result.warnings,
+                    )
+                }
+                MigrationStrategy::InPlace => {
+                    let result = self.execute_in_place_migration(&plan.collections).await?;
+                    (
+                        result.migrated_collections,
+                        result.total_records,
+                        result.errors,
+                        result.warnings,
+                    )
+                }
+                MigrationStrategy::BlueGreen => {
+                    let result = self.execute_blue_green_migration(&plan.collections).await?;
+                    (
+                        result.migrated_collections,
+                        result.total_records,
+                        result.errors,
+                        result.warnings,
+                    )
+                }
+            };
 
         let total_time = start_time.elapsed().as_millis() as u64;
         let average_throughput = if total_time > 0 {

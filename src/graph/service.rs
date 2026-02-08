@@ -1025,7 +1025,7 @@ impl GraphOperationsService {
         property: &str,
     ) -> Result<()> {
         // Get the graph engine to ensure it exists
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let _engine = self.get_or_create_graph_engine(graph_id).await?;
 
         // Remove constraint using graph-specific key
         let key = (
@@ -1048,7 +1048,7 @@ impl GraphOperationsService {
 
     // update_edge moved to service_edge_ops.rs
 
-    /// Enforce schema constraints for a node if schema is defined
+    // /// Enforce schema constraints for a node if schema is defined
     /* moved to service_schema_validation.rs
     async fn enforce_schema_on_node(&self, graph_id: &str, node: &Node) -> Result<()> {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
@@ -1107,7 +1107,7 @@ impl GraphOperationsService {
     }
     */
 
-    /// Enforce schema constraints for an edge if schema is defined
+    // /// Enforce schema constraints for an edge if schema is defined
     /* moved to service_schema_validation.rs
     async fn enforce_schema_on_edge(
         &self,
@@ -1487,7 +1487,7 @@ impl GraphOperationsService {
                                     continue;
                                 };
                                 let mut matched = std::collections::HashSet::new();
-                                for (k, ids) in map
+                                for (_k, ids) in map
                                     .range(prefix.to_string()..)
                                     .take_while(|(k, _)| k.starts_with(prefix))
                                 {
@@ -2550,7 +2550,7 @@ mod tests {
 
     #[test]
     fn test_node_operations() {
-        let service = GraphOperationsService::new();
+        let _service = GraphOperationsService::new();
 
         // Create a test node
         let node = Node {

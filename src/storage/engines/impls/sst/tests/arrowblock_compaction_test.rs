@@ -809,7 +809,7 @@ mod tests {
         // Create first version of vectors
         let mut vectors_v1 = Vec::new();
         for i in 0..10 {
-            let mut values = vec![1.0f32; dimension]; // All 1.0 for v1
+            let values = vec![1.0f32; dimension]; // All 1.0 for v1
             vectors_v1.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: values,

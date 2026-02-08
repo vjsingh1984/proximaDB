@@ -172,7 +172,7 @@ impl IntelligentBlockFilter {
         }
 
         // Check range query with min/max
-        if let Some((ref min_id, ref max_id)) = filter.id_range {
+        if let Some((ref _min_id, ref max_id)) = filter.id_range {
             if self.search_strategy.use_min_max_stats {
                 // Block's minimum key is after our max range
                 if &index_entry.key > max_id {
@@ -259,7 +259,7 @@ impl IntelligentBlockFilter {
 
             MetadataFilter::NotNull => {
                 // Check if all values are null
-                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
+                if let Some(_null_count) = index_entry.metadata_null_counts.get(column) {
                     // This would require knowing total records in block
                     // For now, we can't skip based on this alone
                 }

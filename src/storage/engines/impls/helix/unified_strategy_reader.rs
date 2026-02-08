@@ -164,7 +164,7 @@ impl UnifiedHELIXReader {
     async fn read_with_hilbert_pruning(
         &self,
         file_path: &str,
-        query_hilbert: Option<HilbertKey>,
+        _query_hilbert: Option<HilbertKey>,
     ) -> Result<Vec<VectorRecord>> {
         let cached_fs = self
             .cached_filesystem
@@ -311,7 +311,7 @@ impl CachedHELIXReader {
     pub async fn read_with_spatial_pruning(
         &self,
         file_path: &str,
-        query_hilbert: Option<HilbertKey>,
+        _query_hilbert: Option<HilbertKey>,
         _range_filter: Option<(f64, f64)>, // (min_value, max_value) for any dimension
     ) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;

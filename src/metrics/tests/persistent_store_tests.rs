@@ -60,7 +60,7 @@ mod tests {
 
         debug!("🧪 TEST: MetricsPersistenceLayer creation and initialization");
 
-        let store = create_test_store().await.unwrap();
+        let _store = create_test_store().await.unwrap();
 
         // Verify store was created successfully
         // Note: filesystem_factory and config are private fields

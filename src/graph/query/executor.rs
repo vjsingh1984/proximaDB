@@ -126,9 +126,7 @@ impl QueryExecutor {
 mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
-    use crate::graph::query::planner::{
-        CostEstimate, PlanStep, PlanStepType, QueryPlan, TraversalAlgorithm,
-    };
+    use crate::graph::query::planner::{CostEstimate, PlanStep, PlanStepType, QueryPlan};
     use crate::utils::Uuid;
     use std::time::SystemTime;
 

@@ -6,13 +6,12 @@ mod tests {
         MetricsConfig,
         store::MetricsPersistenceLayer,
         updater::{
-            CompactionMetricsUpdate, FlushMetricsUpdate, InternalMetricsUpdater,
+            FlushMetricsUpdate, InternalMetricsUpdater,
             MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
         },
     };
     use crate::compute::distance_computation::DistanceMetric;
     use crate::proto::proximadb_v1::VectorRecord;
-    use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -25,11 +24,9 @@ mod tests {
         CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
     };
     use anyhow::Result;
-    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
-    use tracing::{debug, error, info};
 
     /// Mock storage engine for integration testing
     #[derive(Debug, Clone)]

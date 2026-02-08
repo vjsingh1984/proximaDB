@@ -8,7 +8,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_circuit_breaker_with_retry() {
     // Test combining circuit breaker with retry policy
-    let cb = CircuitBreaker::new(CircuitBreakerConfig {
+    let _cb = CircuitBreaker::new(CircuitBreakerConfig {
         failure_threshold: 5,
         success_threshold: 2,
         timeout_secs: 1,
@@ -83,7 +83,7 @@ fn test_retry_with_condition() {
         NonRetryable,
     }
 
-    let is_retryable = |e: &TestError| matches!(e, TestError::Retryable);
+    let _is_retryable = |e: &TestError| matches!(e, TestError::Retryable);
 
     // This would typically be an async test, but we're just testing the config logic
     let config = RetryConfig::default();

@@ -24,7 +24,7 @@ async fn test_end_to_end_cache_system() {
     let total_memory = config.total_memory_bytes();
 
     // Create coordinator
-    let orchestrator = Arc::new(CrossCacheOrchestrator::new(total_memory));
+    let _orchestrator = Arc::new(CrossCacheOrchestrator::new(total_memory));
 
     // Create specialized caches
     let vector_cache = Arc::new(MetadataStore::new(
@@ -143,8 +143,8 @@ async fn test_cache_under_memory_pressure() {
     // Create caches with limited memory (values in MB, not bytes!)
     // For small caches, use 1 MB minimum since the API takes MB
     let vector_cache = Arc::new(MetadataStore::new(1)); // 1MB (smallest unit)
-    let query_cache = Arc::new(QueryCache::new(1)); // 1MB
-    let filter_cache = Arc::new(BitmapFilterCache::new(1)); // 1MB
+    let _query_cache = Arc::new(QueryCache::new(1)); // 1MB
+    let _filter_cache = Arc::new(BitmapFilterCache::new(1)); // 1MB
 
     // Fill caches to capacity
     for i in 0..1000 {
@@ -243,7 +243,7 @@ async fn test_config_hot_reload() {
 
     // Load and create system
     let loaded_config = CacheConfig::from_file(path).unwrap();
-    let orchestrator = Arc::new(CrossCacheOrchestrator::new(
+    let _orchestrator = Arc::new(CrossCacheOrchestrator::new(
         loaded_config.total_memory_bytes(),
     ));
 

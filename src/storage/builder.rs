@@ -651,7 +651,7 @@ impl StorageSystemBuilder {
             max_queue_wait: std::time::Duration::from_secs(300), // 5 minutes
             urgency_threshold: 0.8,
         };
-        let compaction_orchestrator = Arc::new(
+        let _compaction_orchestrator = Arc::new(
             crate::storage::common::compaction_orchestrator::CompactionOrchestrator::new(
                 filesystem.clone(),
                 compaction_config,

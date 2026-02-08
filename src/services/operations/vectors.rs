@@ -668,7 +668,7 @@ impl VectorOperationsService {
         {
             Ok(_) => {
                 let duration = start_time.elapsed();
-                let vectors_per_sec = if duration.as_secs_f64() > 0.0 {
+                let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
                     (vector_count as f64 / duration.as_secs_f64()) as u64
                 } else {
                     vector_count as u64
@@ -1428,7 +1428,7 @@ impl VectorOperationsService {
         );
 
         // Create search parameters with progressive settings
-        let search_params = crate::core::search::SearchParams {
+        let _search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
             filter_expression: filter.clone(),
             requires_ordering: Some(true),
@@ -1769,7 +1769,7 @@ impl VectorOperationsService {
     /// Apply filter pushdown to storage layer - NEW optimization!
     async fn apply_filter_pushdown(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         pushdown_op: crate::query::unified_query_optimizer::FilterPushdownOperation,
     ) -> Result<()> {
         use crate::query::unified_query_optimizer::FilterPushdownOperation;
@@ -1834,7 +1834,7 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
-        quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
+        _quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
@@ -2224,7 +2224,7 @@ impl VectorOperationsService {
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
         _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
+        _input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "🔍 Executing metadata filter for collection {}",
@@ -2478,7 +2478,7 @@ impl VectorOperationsService {
 
         // Write vectors to WAL
         let start = std::time::Instant::now();
-        let batch_result = self
+        let _batch_result = self
             .wal_manager
             .write_vector_batch_native_arc(collection_id, vectors.clone())
             .await?;
@@ -2850,7 +2850,7 @@ impl VectorOperationsService {
     }
 
     pub async fn health_check(&self) -> Result<serde_json::Value> {
-        let status = "healthy";
+        let _status = "healthy";
         let issues: Vec<String> = Vec::new();
 
         // Check WAL health
@@ -2943,7 +2943,7 @@ impl VectorOperationsService {
     /// Debug method to list unflushed vectors
     pub async fn debug_list_all_unflushed_vectors(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         // Get all unflushed vectors from WAL
         // TODO: Implement list_unflushed_vectors in WAL manager

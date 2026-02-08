@@ -275,7 +275,6 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
-    use super::super::cache::QueryResultCacheConfig;
     use super::*;
 
     #[test]

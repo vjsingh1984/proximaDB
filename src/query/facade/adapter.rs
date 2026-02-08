@@ -190,7 +190,7 @@ impl QueryFacadeAdapter {
         debug!("Explaining query via adapter");
 
         // Create a federated query request to analyze
-        let query_request = QueryRequest::federated(sql);
+        let _query_request = QueryRequest::federated(sql);
 
         // Find which strategy would handle this query
         let strategy_name = self

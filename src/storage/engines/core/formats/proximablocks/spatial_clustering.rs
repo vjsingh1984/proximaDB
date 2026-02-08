@@ -340,7 +340,7 @@ impl ZOrderEncoder {
 
         // Process 4 bits at a time when possible
         let full_iters = bits / 4;
-        let remaining = bits % 4;
+        let _remaining = bits % 4;
 
         for iter in 0..full_iters {
             let base_bit = iter * 4;
@@ -816,7 +816,7 @@ impl AdaCurve {
             .unwrap_or(0);
 
         // Encode as u64 with fine-grained positioning
-        let segment_bits = 48; // Upper bits for segment
+        let _segment_bits = 48; // Upper bits for segment
         let offset_bits = 16; // Lower bits for offset within segment
 
         let segment_code = (curve_position as u64) << offset_bits;

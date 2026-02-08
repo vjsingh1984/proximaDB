@@ -259,7 +259,7 @@ impl DomainEntityStore {
 }
 
 impl DomainLogicEngine {
-    fn new(domain_id: String, business_context: &BusinessContext) -> Self {
+    fn new(domain_id: String, _business_context: &BusinessContext) -> Self {
         Self {
             domain_id,
             business_rules: Vec::new(), // Will be populated based on business context

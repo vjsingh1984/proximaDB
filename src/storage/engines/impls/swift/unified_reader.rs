@@ -944,7 +944,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_range_coalescing() {
-        let config = SwiftReaderConfig::default();
+        let _config = SwiftReaderConfig::default();
         // Test that nearby reads are coalesced
         // Implementation depends on test infrastructure
     }

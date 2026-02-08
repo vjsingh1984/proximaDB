@@ -364,7 +364,7 @@ impl RequantizationManager {
     async fn collect_distribution_snapshot(
         &self,
         collection_id: &str,
-        engine_type: StorageEngineType,
+        _engine_type: StorageEngineType,
     ) -> Result<DataDistributionSnapshot> {
         debug!(
             "📊 Collecting data distribution snapshot for collection: {}",
@@ -392,7 +392,7 @@ impl RequantizationManager {
         &self,
         collection_id: &str,
         quantization_type: QuantizationType,
-        engine_type: StorageEngineType,
+        _engine_type: StorageEngineType,
         operation_id: &str,
     ) -> Result<RequantizationResult> {
         let mut codebooks_updated = Vec::new();

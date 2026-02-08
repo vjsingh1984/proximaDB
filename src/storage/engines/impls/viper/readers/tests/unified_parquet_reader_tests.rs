@@ -5,15 +5,13 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;
     use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
-    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use anyhow::Result;
-    use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
+    use arrow_array::{Float32Array, Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
@@ -593,6 +591,9 @@ mod tests {
             timeout_ms: None,
             search_mode: crate::core::search::SearchMode::default(),
             block_prune: crate::core::search::BlockPruneConfig::default(),
+            text_query: None,
+            hybrid_mode: crate::core::search::HybridSearchMode::default(),
+            vector_weight: None,
         };
 
         // Create collection context

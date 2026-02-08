@@ -1176,7 +1176,6 @@ pub fn migrate_universal_filter(
     filter: &crate::core::search::FilterExpression,
 ) -> UnifiedMetadataFilter {
     let mut conditions = Vec::new();
-    let mut logic = FilterLogic::And;
 
     fn extract_conditions(
         expr: &crate::core::search::FilterExpression,
@@ -1289,17 +1288,13 @@ pub fn migrate_universal_filter(
     }
 
     // Determine the overall logic based on the top-level expression
-    match filter {
-        crate::core::search::FilterExpression::And(_) => {
-            logic = FilterLogic::And;
-        }
-        crate::core::search::FilterExpression::Or(_) => {
-            logic = FilterLogic::Or;
-        }
+    let logic = match filter {
+        crate::core::search::FilterExpression::And(_) => FilterLogic::And,
+        crate::core::search::FilterExpression::Or(_) => FilterLogic::Or,
         _ => {
-            logic = FilterLogic::And; // Default for single conditions
+            FilterLogic::And // Default for single conditions
         }
-    }
+    };
 
     // Extract all conditions
     extract_conditions(filter, &mut conditions);

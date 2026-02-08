@@ -149,7 +149,7 @@ impl LeaderElection {
         // Ensure directory exists
         if !data_path.exists() {
             std::fs::create_dir_all(data_path)
-                .map_err(|e| LeaderElectionError::DirectoryNotFound(data_path.to_path_buf()))?;
+                .map_err(|_e| LeaderElectionError::DirectoryNotFound(data_path.to_path_buf()))?;
         }
 
         let leader_info_path = data_path.join(Self::LEADER_INFO_FILE);

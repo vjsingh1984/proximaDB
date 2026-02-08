@@ -755,7 +755,7 @@ impl Flush {
         );
 
         // Check if we have UnifiedCachingFilesystem for optimal performance
-        if let Some(unified_fs) =
+        if let Some(_unified_fs) =
             fs.as_any()
                 .downcast_ref::<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>()
         {

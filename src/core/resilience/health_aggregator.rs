@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_register_dependency() {
         let aggregator = HealthAggregator::new();
-        let cb = aggregator.register_dependency("database", true, None);
+        let _cb = aggregator.register_dependency("database", true, None);
 
         assert!(aggregator.get_dependency("database").is_some());
         let info = aggregator.get_dependency("database").unwrap();

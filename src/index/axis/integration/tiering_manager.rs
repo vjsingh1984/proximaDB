@@ -518,7 +518,7 @@ impl AxisTieringManager {
     /// Get workload metrics for a collection from existing infrastructure
     async fn get_collection_workload_metrics(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> anyhow::Result<WorkloadMetrics> {
         // Query the IndexBackend for workload characteristics
         let workload_metrics = self.index_backend.workload_metrics().await;
@@ -651,7 +651,7 @@ impl AxisTieringManager {
     /// Apply index type specific preferences
     async fn apply_index_type_preferences(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         global_recommendation: &InfrastructureTier,
         workload_metrics: &WorkloadMetrics,
     ) -> anyhow::Result<Option<InfrastructureTier>> {

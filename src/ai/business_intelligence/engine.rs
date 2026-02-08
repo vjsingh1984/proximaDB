@@ -727,7 +727,6 @@ impl Default for BIEngineConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     #[ignore = "Requires async runtime and complex mocking setup"]

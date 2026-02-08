@@ -352,7 +352,7 @@ impl BandwidthOptimizer {
 
     async fn make_bandwidth_optimized_decision(
         &self,
-        file_path: &str,
+        _file_path: &str,
         file_size: u64,
         ranges: Vec<DataRange>,
         factors: &DecisionFactors,
@@ -615,7 +615,7 @@ impl BandwidthOptimizer {
     }
 
     /// Get latency-optimized request limit
-    fn get_latency_optimized_request_limit(&self, factors: &DecisionFactors) -> u32 {
+    fn get_latency_optimized_request_limit(&self, _factors: &DecisionFactors) -> u32 {
         let (latency_ms, _) = self.network_tracker.get_current_conditions();
         let base_limit = self.config.cost_optimization.max_range_requests;
 

@@ -111,7 +111,7 @@ impl MFAService {
     /// Check if MFA is required for user/operation
     pub async fn is_mfa_required(
         &self,
-        user_context: &UnifiedUserContext,
+        _user_context: &UnifiedUserContext,
         requested_permission: &UnifiedPermission,
     ) -> bool {
         if !self.config.enabled {

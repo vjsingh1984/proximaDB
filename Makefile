@@ -174,3 +174,81 @@ help:
 	@echo "  help               - Show this help"
 docs-update-gaps:
 	python3 tools/update_critical_gaps.py docs/09-roadmap/planned/graph_database_requirements_spec.adoc
+
+# ========================================
+# TDD (Test-Driven Development) Commands
+# ========================================
+
+# Run TDD-specific tests
+test-tdd:
+	@echo "🧪 Running TDD tests..."
+	cargo test --test tdd --verbose -- --test-threads=1 --nocapture
+
+test-tdd-unit:
+	@echo "🧪 Running TDD unit tests..."
+	RUST_LOG=info cargo test --lib --verbose -- --test-threads=1 --nocapture
+
+# Generate coverage report
+test-coverage:
+	@echo "📊 Generating coverage report..."
+	cargo llvm-cov --lib --html --output-dir coverage
+	@echo "📊 Coverage report: coverage/index.html"
+
+# Check TDD methodology compliance
+tdd-check:
+	@echo "🔍 Checking TDD methodology compliance..."
+	@echo "Test Count: $$(cargo test --lib --no-run --quiet 2>&1 | grep -o '[0-9]* tests' | grep -o '[0-9]*' || echo 0)"
+	@echo "unwrap() calls (production): $$(grep -r '\.unwrap()' src/ --include='*.rs' | grep -v 'test' | grep -v '// OK:' | grep -v '// SAFETY:' | wc -l | xargs)"
+	@echo "Target: <100"
+
+# Install TDD pre-commit hook
+install-tdd-hooks:
+	@echo "📦 Installing TDD pre-commit hook..."
+	@chmod +x .git/hooks/pre-commit.tdd
+	@cp .git/hooks/pre-commit.tdd .git/hooks/pre-commit
+	@echo "✓ TDD pre-commit hook installed"
+
+# Start TDD cycle for a new feature
+tdd-start:
+	@echo "Starting TDD cycle..."
+	@echo ""
+	@echo "1️⃣  Write failing test in tests/tdd/ or src/<module>/tests/"
+	@echo "2️⃣  Run: make test-tdd-unit (should fail)"
+	@echo "3️⃣  Implement feature to make test pass"
+	@echo "4️⃣  Run: make test-tdd-unit (should pass)"
+	@echo "5️⃣  Refactor while tests stay green"
+	@echo ""
+	@echo "Example workflow:"
+	@echo "  1. Write test in src/core/search/hybrid/tests/fusion_test.rs"
+	@echo "  2. Run: make test-tdd-unit core::search::hybrid"
+	@echo "  3. Implement in src/core/search/hybrid/fusion.rs"
+	@echo "  4. Run: make test-tdd-unit core::search::hybrid"
+	@echo "  5. Refactor while tests stay green"
+
+# Run TDD tests for specific module
+test-tdd-module:
+	@if [ -z "$(MODULE)" ]; then \
+		echo "Usage: make test-tdd-module MODULE=<module_name>"; \
+		echo "Example: make test-tdd-module MODULE=core::search::hybrid"; \
+		exit 1; \
+	fi
+	@echo "🧪 Running TDD tests for $(MODULE)..."
+	cargo test --lib $(MODULE) --verbose -- --test-threads=1 --nocapture
+
+# Watch mode for TDD (requires cargo-watch)
+test-watch:
+	@echo "🔍 Running tests in watch mode..."
+	@if command -v cargo-watch >/dev/null 2>&1; then \
+		cargo watch -x 'test --lib --verbose'; \
+	else \
+		echo "❌ cargo-watch not installed. Install with: cargo install cargo-watch"; \
+		exit 1; \
+	fi
+
+# TDD quality check (run before committing)
+tdd-precommit:
+	@echo "🔍 Running TDD pre-commit checks..."
+	@$(MAKE) fmt-check
+	@$(MAKE) clippy
+	@$(MAKE) test-tdd-unit
+	@echo "✅ All TDD pre-commit checks passed!"

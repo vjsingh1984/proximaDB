@@ -245,7 +245,7 @@ impl ColumnarIdIndex {
     }
 
     /// Extract ID range from column metadata
-    fn extract_id_range(&self, column: &ColumnChunkMetaData) -> Result<(String, String)> {
+    fn extract_id_range(&self, _column: &ColumnChunkMetaData) -> Result<(String, String)> {
         // In production, read from Parquet statistics
         // For now, return placeholder based on file path
         let file_stem = std::path::Path::new(&self.file_path)
@@ -260,7 +260,7 @@ impl ColumnarIdIndex {
     }
 
     /// Build page-level indexes
-    fn build_page_indexes(&self, column: &ColumnChunkMetaData) -> Result<Vec<PageIdIndex>> {
+    fn build_page_indexes(&self, _column: &ColumnChunkMetaData) -> Result<Vec<PageIdIndex>> {
         // In production, read page metadata from Parquet
         // For now, create synthetic pages
         let mut pages = Vec::new();

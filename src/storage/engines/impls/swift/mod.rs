@@ -1324,7 +1324,7 @@ impl SwiftFile {
             }
 
             // SIMD-optimized scheme selection based on hardware capabilities
-            let (marker, scheme) = if hw_caps.cpu.simd.has_avx512 {
+            let (marker, _scheme) = if hw_caps.cpu.simd.has_avx512 {
                 // AVX-512: 16x f32 SIMD operations
                 Self::select_avx512_scheme(&columnar_stats, vector_count)
             } else if hw_caps.cpu.simd.has_avx2 {
@@ -1339,7 +1339,7 @@ impl SwiftFile {
             };
 
             // Calculate global statistics for metadata
-            let (global_min, global_max) = columnar_stats.iter().fold(
+            let (_global_min, _global_max) = columnar_stats.iter().fold(
                 (f32::MAX, f32::MIN),
                 |(min_acc, max_acc), &(min_val, max_val, _, _)| {
                     (min_acc.min(min_val), max_acc.max(max_val))
@@ -1371,7 +1371,7 @@ impl SwiftFile {
     /// AVX-512 optimized scheme selection for 16-wide SIMD
     fn select_avx512_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
@@ -1411,7 +1411,7 @@ impl SwiftFile {
     /// AVX2 optimized scheme selection for 8-wide SIMD
     fn select_avx2_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
@@ -1451,7 +1451,7 @@ impl SwiftFile {
     /// SSE optimized scheme selection for 4-wide SIMD
     fn select_sse_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
@@ -1491,7 +1491,7 @@ impl SwiftFile {
     /// Scalar optimized scheme selection (no SIMD)
     fn select_scalar_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;

@@ -1093,7 +1093,7 @@ impl IvfClusteringBuilder {
         let mut idx = 0;
         for i in 0..k {
             lookup_table[i] = offset;
-            for j in (i + 1)..k {
+            for _j in (i + 1)..k {
                 let quantized = ((distances[idx] - min_distance) * scale_factor) as u16;
                 compressed_data.extend_from_slice(&quantized.to_le_bytes());
                 offset += 2;
@@ -1168,7 +1168,7 @@ impl IvfClusteringBuilder {
         let (storage_strategy, coverage_ratio) =
             self.determine_adaptive_pk_strategy(k_f32, dimension);
 
-        let coverage_percent = (coverage_ratio * 100.0) as u8;
+        let _coverage_percent = (coverage_ratio * 100.0) as u8;
 
         tracing::info!(
             "Building P×K matrices with strategy {:?} (K={}, D={}, ratio={:.2})",
@@ -1913,7 +1913,7 @@ impl RaptorWriter {
     }
 
     /// Find vector furthest from centroid (for diverse seed selection)
-    fn find_furthest_from_centroid(&self, candidates: &[usize], centroid: &Centroid) -> usize {
+    fn find_furthest_from_centroid(&self, candidates: &[usize], _centroid: &Centroid) -> usize {
         let mut max_dist = 0.0;
         let mut best_idx = 0;
 
@@ -1939,7 +1939,7 @@ impl RaptorWriter {
         let mut best_score = f32::INFINITY;
 
         // Get cluster centroid for boosting
-        let cluster_centroid = &self.ivf_builder.centroids[cluster_idx];
+        let _cluster_centroid = &self.ivf_builder.centroids[cluster_idx];
 
         // Step 1: Evaluate each candidate
         for (cand_idx, &candidate) in candidates.iter().enumerate() {
@@ -1965,7 +1965,7 @@ impl RaptorWriter {
                     // Estimate boosted distance using centroid distances
                     // Since both are in same cluster, use simplified formula
                     let d1 = candidate_node.centroid_distance;
-                    let d2 = 0.0; // Same cluster, so inter-centroid distance is 0
+                    let _d2 = 0.0; // Same cluster, so inter-centroid distance is 0
                     let d3 = member_node.centroid_distance;
 
                     // Simplified boosting for same-cluster vectors
@@ -2417,7 +2417,7 @@ impl RaptorWriter {
         let hardware = get_hardware_capabilities();
 
         // Initialize unified compression
-        let compression_algo = match &config.compression {
+        let _compression_algo = match &config.compression {
             RaptorCompressionCodec::None => CompressionAlgorithm::None,
             RaptorCompressionCodec::Lz4 => CompressionAlgorithm::Lz4,
             RaptorCompressionCodec::Zstd(_level) => CompressionAlgorithm::Zstd,
@@ -2519,7 +2519,7 @@ impl RaptorWriter {
 
         Ok(Self {
             file_path: file_path.clone(),
-            filesystem: filesystem,
+            filesystem,
             config,
             collection_id,
             dimension,
@@ -3058,7 +3058,7 @@ impl RaptorWriter {
     }
 
     /// Helper: Encode metadata column with dictionary encoding
-    fn encode_metadata_column(&self, key: &str, values: &[Option<Vec<u8>>]) -> Result<Vec<u8>> {
+    fn encode_metadata_column(&self, _key: &str, values: &[Option<Vec<u8>>]) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
 
         // Build dictionary of unique values
@@ -3191,7 +3191,7 @@ impl RaptorWriter {
             match quant_level {
                 1 => {
                     // Binary: pack bits columnar
-                    let bits_per_dim = 1;
+                    let _bits_per_dim = 1;
                     let packed_dims = (self.dimension + 7) / 8;
                     for dim_byte in 0..packed_dims {
                         let mut column = Vec::with_capacity(num_rows);
@@ -3345,7 +3345,7 @@ impl RaptorWriter {
         encoded.extend(&encoded_timestamps);
 
         // Updated_at column (optional)
-        let has_updated: Vec<bool> = page.rows.iter().map(|r| r.updated_at.is_some()).collect();
+        let _has_updated: Vec<bool> = page.rows.iter().map(|r| r.updated_at.is_some()).collect();
         let updated_values: Vec<u32> = page.rows.iter().filter_map(|r| r.updated_at).collect();
 
         encoded.push(if updated_values.len() == num_rows {
@@ -3850,7 +3850,7 @@ impl RaptorWriter {
         Ok(result)
     }
 
-    fn encode_batch_with_proxima(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
+    fn encode_batch_with_proxima(&self, batch: &RecordBatch, _marker: u8) -> Result<Vec<u8>> {
         use std::io::Write;
 
         // Extract vectors from RecordBatch
@@ -4034,7 +4034,7 @@ impl RaptorWriter {
         }
 
         // Write column projections for the current row group
-        let projections_offset = self.write_column_projections().await?;
+        let _projections_offset = self.write_column_projections().await?;
 
         // Compute centroid and cluster statistics before modifying row group
         let centroid = if !self.ivf_builder.vectors.is_empty() {
@@ -4426,7 +4426,7 @@ impl RaptorWriter {
         // Step 4: Create the columnar centroids structure
         let columnar_centroids = ColumnarCentroids {
             count: num_centroids as u32,
-            dimension: dimension,
+            dimension,
             rowgroup_ids,
             transposed_data,
             encoding_metadata,
@@ -4538,7 +4538,7 @@ impl RaptorWriter {
     }
 
     /// Update column projections for filtering
-    fn update_column_projections(&mut self, vector: &VectorRecord, location: RowLocation) {
+    fn update_column_projections(&mut self, vector: &VectorRecord, _location: RowLocation) {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
             for (key, value) in &vector.metadata {
@@ -5059,7 +5059,7 @@ impl RaptorWriter {
     }
 
     /// Pack indices with minimal bits
-    fn pack_indices(&self, indices: &[usize], bits: u8) -> Vec<u8> {
+    fn pack_indices(&self, indices: &[usize], _bits: u8) -> Vec<u8> {
         // Simplified bit packing - in production would use proper bit packing
         indices.iter().map(|&i| i as u8).collect()
     }
@@ -5089,10 +5089,10 @@ impl RaptorWriter {
         }
 
         // Create bloom filter structure
-        let bloom_filter = RowGroupBloomFilter {
+        let _bloom_filter = RowGroupBloomFilter {
             bits: vec![0u8; num_bytes],
             num_hashes: 7, // Optimal for 1% false positive
-            num_ids: num_ids,
+            num_ids,
             size_bits: num_bits,
             false_positive_rate: 0.01,
         };
@@ -5179,7 +5179,7 @@ impl RaptorWriter {
         self.filesystem.append(&self.file_path, &compressed).await?;
 
         // Create and store bloom filter metadata
-        let bloom_filter = RowGroupBloomFilter {
+        let _bloom_filter = RowGroupBloomFilter {
             bits: bloom_bits.clone(),
             num_hashes,
             num_ids,
@@ -5213,7 +5213,7 @@ impl RaptorWriter {
     }
 
     async fn flush_rowgroup(&mut self) -> Result<()> {
-        if let Some(rowgroup) = self.current_rowgroup.take() {
+        if let Some(_rowgroup) = self.current_rowgroup.take() {
             // Convert RecordBatch to row pages and flush
             // This is handled by flush_row_page() already
         }

@@ -774,9 +774,9 @@ impl ColumnarFactory {
     /// Create optimized Parquet reader for VIPER/NOVA engines
     /// Note: enable_id_less is optimization only, ID column is always kept
     pub async fn create_optimized_reader(
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         config: ColumnarConfig,
-        enable_id_less_optimization: bool,
+        _enable_id_less_optimization: bool,
     ) -> Result<UnifiedParquetReader> {
         // Note: UnifiedParquetReader now takes file_paths and dimension
         // This factory method needs to be updated based on actual usage

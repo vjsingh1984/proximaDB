@@ -128,11 +128,11 @@ fn test_memory_tracker() {
 #[tokio::test]
 async fn test_streaming_processor_creation() {
     use crate::storage::engines::impls::nova::streaming_processor::{
-        ProcessingStage, StreamingConfig, StreamingRowGroupProcessor,
+        StreamingConfig, StreamingRowGroupProcessor,
     };
 
     let config = StreamingConfig::default();
-    let processor = StreamingRowGroupProcessor::new(config);
+    let _processor = StreamingRowGroupProcessor::new(config);
 
     // Processor has private fields, but we can verify it was created
     // by checking its public behavior through the config
@@ -146,7 +146,6 @@ async fn test_streaming_processor_creation() {
 
 #[test]
 fn test_group_by_row_group() {
-    use crate::storage::engines::core::formats::columnar::ParquetLocation;
     use crate::storage::engines::impls::nova::batch_operations::*;
 
     // Function is private, test indirectly through BatchConfig
@@ -177,7 +176,7 @@ fn test_batch_stats() {
 fn test_vector_deserialization() {
     use crate::storage::engines::impls::nova::batch_operations::*;
 
-    let bytes = vec![
+    let _bytes = vec![
         0x00, 0x00, 0x80, 0x3f, // 1.0 in little-endian
         0x00, 0x00, 0x00, 0x40, // 2.0 in little-endian
         0x00, 0x00, 0x40, 0x40, // 3.0 in little-endian

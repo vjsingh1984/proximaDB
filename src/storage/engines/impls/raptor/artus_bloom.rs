@@ -287,7 +287,7 @@ impl ArtusBloomManager {
 
         // Read parameters
         let bits = u64::from_le_bytes(bytes[0..8].try_into()?);
-        let hash_functions = u64::from_le_bytes(bytes[8..16].try_into()?);
+        let _hash_functions = u64::from_le_bytes(bytes[8..16].try_into()?);
 
         // Create bloom with parameters
         // Note: This is simplified - actual implementation would restore bitmap

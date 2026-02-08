@@ -987,7 +987,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_complete_federated_delegation_creation() {
-        let delegation_system = CompleteFederatedIdentityDelegation::new().await.unwrap();
+        let _delegation_system = CompleteFederatedIdentityDelegation::new().await.unwrap();
         // Basic validation that complete delegation system was created
         assert!(true);
     }

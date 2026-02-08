@@ -133,7 +133,7 @@ impl SemanticCache {
         &self,
         question: &str,
         collection: &str,
-        question_embedding: &[f32],
+        _question_embedding: &[f32],
     ) -> Option<CachedResponse> {
         if !self.config.enabled {
             return None;

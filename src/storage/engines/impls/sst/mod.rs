@@ -324,7 +324,7 @@ mod sst_filename_tests {
 
     #[test]
     fn test_generate_filename() {
-        let collection_id = "test_collection";
+        let _collection_id = "test_collection";
         let level = 2;
 
         let filename = FilenameCodec::new().generate(level as u32, "sst");
@@ -412,7 +412,7 @@ mod sst_filename_tests {
 
     #[test]
     fn test_filename_uniqueness() {
-        let collection_id = "test";
+        let _collection_id = "test";
         let level = 1;
 
         // Generate multiple filenames and ensure they're unique
@@ -499,7 +499,7 @@ impl SstEntry {
     pub fn tombstone(id: String, sequence_number: u64, level: u8) -> Self {
         Self {
             record: VectorRecord {
-                id: id,
+                id,
                 vector: vec![], // Empty vector for tombstone
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(chrono::Utc::now().timestamp()),
@@ -1393,7 +1393,7 @@ mod compression_helpers {
         };
 
         // Create proto compression config to match the SST config (supports all algorithms)
-        let collection_compression = if config.compression.to_lowercase() != "none"
+        let _collection_compression = if config.compression.to_lowercase() != "none"
             && !config.compression.is_empty()
         {
             Some(crate::proto::proximadb_v1::CompressionConfig {
@@ -1881,11 +1881,11 @@ mod block_operations {
     /// Filter candidates using binary sketches (Stage 1: 95% reduction)
     pub fn filter_by_sketch(
         block: &ProximaDataBlock,
-        query_sketch: &[u8], // Binary sketch is just a byte array
-        threshold: f32,
+        _query_sketch: &[u8], // Binary sketch is just a byte array
+        _threshold: f32,
     ) -> Vec<usize> {
         // Check if quantized vectors exist
-        if let Some(ref qv) = block.quantized_vectors {
+        if let Some(ref _qv) = block.quantized_vectors {
             // Need to implement filter_by_sketch logic here
             vec![]
         } else {
@@ -1896,12 +1896,12 @@ mod block_operations {
     /// Rank candidates using PQ codes (Stage 2: Further refinement)
     pub fn rank_by_pq(
         block: &ProximaDataBlock,
-        query: &[f32],
-        codebook: &crate::compute::quantization::Codebook,
-        candidate_indices: &[usize],
+        _query: &[f32],
+        _codebook: &crate::compute::quantization::Codebook,
+        _candidate_indices: &[usize],
     ) -> Vec<(usize, f32)> {
         // Check if quantized vectors exist
-        if let Some(ref qv) = block.quantized_vectors {
+        if let Some(ref _qv) = block.quantized_vectors {
             // Need to implement rank_by_pq logic here
             vec![]
         } else {

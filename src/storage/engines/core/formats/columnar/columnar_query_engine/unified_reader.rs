@@ -2082,7 +2082,7 @@ impl UnifiedParquetReader {
         &self,
         bloom_filters: &BloomFilterCollection,
         column: &str,
-        value: &str,
+        _value: &str,
     ) -> bool {
         // In a real implementation, this would:
         // 1. Find the bloom filter for the specified column

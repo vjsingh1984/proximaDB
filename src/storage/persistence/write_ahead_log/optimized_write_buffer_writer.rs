@@ -534,7 +534,7 @@ impl OptimizedWriteBufferWriter {
 
     /// Optimized serialization
     fn serialize_vectors_optimized(
-        vectors: &[VectorRecord],
+        _vectors: &[VectorRecord],
         // TODO: Restore when OptimizedFormat is available
         // format: &OptimizedFormat,
     ) -> Result<Vec<u8>> {

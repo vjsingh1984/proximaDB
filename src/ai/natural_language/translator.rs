@@ -556,7 +556,7 @@ Your response should be a valid SQL query that safely retrieves the requested da
         &self,
         original_query: &str,
         sql: &str,
-        llm_response: &LLMResponse,
+        _llm_response: &LLMResponse,
     ) -> Result<String, TranslationError> {
         if !self.config.enable_explanation_generation {
             return Ok("Explanation generation disabled".to_string());

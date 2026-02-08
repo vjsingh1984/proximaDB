@@ -35,7 +35,7 @@ impl ZeroCopyReaderIntegration {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<EnhancedSstReader, ProximaDBError> {
         // 1. Create zero-copy I/O system with SST-optimized configuration
-        let io_system = ZeroCopyIOSystemBuilder::new()
+        let _io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(
                 crate::storage::engines::core::io::zero_copy::WorkloadType::HighThroughput,
             )
@@ -59,7 +59,7 @@ impl ZeroCopyReaderIntegration {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<EnhancedParquetReader, ProximaDBError> {
         // 1. Create zero-copy I/O system optimized for analytics workloads
-        let io_system = ZeroCopyIOSystemBuilder::new()
+        let _io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::Analytics)
             .with_filesystem(filesystem_factory.clone())
             .build()
@@ -84,7 +84,7 @@ impl ZeroCopyReaderIntegration {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<EnhancedSwiftReader, ProximaDBError> {
         // 1. Create zero-copy I/O system optimized for real-time workloads
-        let io_system = ZeroCopyIOSystemBuilder::new()
+        let _io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::RealTime)
             .with_filesystem(filesystem_factory.clone())
             .build()
@@ -124,7 +124,7 @@ impl ZeroCopyReaderIntegration {
             };
 
             // Create optimized I/O system for this engine type
-            let io_system = ZeroCopyIOSystemBuilder::new()
+            let _io_system = ZeroCopyIOSystemBuilder::new()
                 .for_workload(workload_type)
                 .with_filesystem(filesystem_factory.clone())
                 .build()

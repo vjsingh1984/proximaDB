@@ -916,7 +916,7 @@ impl NovaColumnarSearch {
         }
 
         // Check row group statistics against filter
-        if let Some(filter) = filter {
+        if let Some(_filter) = filter {
             // Implement row group pruning logic based on statistics
             // For now, return true (process all)
             Ok(true)

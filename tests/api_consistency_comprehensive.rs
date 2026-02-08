@@ -201,7 +201,7 @@ mod comprehensive_api_tests {
 
         // Step 5: Delete collection
         println!("Deleting collection...");
-        let delete_request = CollectionRequest {
+        let _delete_request = CollectionRequest {
             operation: CollectionOperation::CollectionDelete as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,

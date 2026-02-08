@@ -411,7 +411,7 @@ pub fn estimate_row_group_memory(row_group: &RowGroupMetaData, schema: &Schema) 
     let mut total = 0;
 
     for (idx, column) in row_group.columns().iter().enumerate() {
-        let field = &schema.fields()[idx];
+        let _field = &schema.fields()[idx];
         let uncompressed_size = column.uncompressed_size() as usize;
 
         // Add overhead for Arrow arrays

@@ -740,7 +740,7 @@ impl OrionBackedEntityStore {
             .clauses
             .iter()
             .filter_map(|clause| {
-                let operator = match ComparisonOp::from_i32(clause.op) {
+                let operator = match ComparisonOp::try_from(clause.op).ok() {
                     Some(ComparisonOp::Eq) => {
                         crate::index::axis::management::manager::FilterOperator::Equals
                     }
@@ -783,7 +783,7 @@ impl OrionBackedEntityStore {
             return true;
         };
 
-        let is_or = LogicalOp::from_i32(filter.op) == Some(LogicalOp::Or);
+        let is_or = LogicalOp::try_from(filter.op).ok() == Some(LogicalOp::Or);
         let mut any = false;
 
         for clause in &filter.clauses {

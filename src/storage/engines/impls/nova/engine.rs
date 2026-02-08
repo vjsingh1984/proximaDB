@@ -370,8 +370,6 @@ impl NovaEngine {
         collection_id: &str,
         storage_path: &str,
     ) -> Result<Vec<super::NovaFile>> {
-        use crate::storage::persistence::filesystem::FileSystem;
-
         // Get UnifiedCachingFilesystem for NOVA
         // This creates a collection-specific cache instance that:
         // - Downloads cloud files to local disk cache on first read
@@ -777,7 +775,7 @@ impl NovaEngine {
         nova_file: &NovaFile,
         file_path: &str,
         params: &FlushParameters,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<u64> {
         use super::nova_meta_collector::{NovaCollectorConfig, NovaMetadataCollector};
         use crate::storage::engines::core::formats::columnar::{

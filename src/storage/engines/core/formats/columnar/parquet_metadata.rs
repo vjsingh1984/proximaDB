@@ -282,7 +282,7 @@ impl ParquetMetadataSerializer {
     /// Parse Parquet footer to extract row group and schema information
     fn parse_parquet_footer(
         &self,
-        footer_data: &[u8],
+        _footer_data: &[u8],
     ) -> Result<(Vec<RowGroupInfo>, Vec<u8>), ProximaDBError> {
         // TODO: Implement actual Parquet footer parsing
         // This requires reading the actual Parquet file metadata structure

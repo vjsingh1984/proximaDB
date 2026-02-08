@@ -451,7 +451,7 @@ async fn test_clustering_integration() -> Result<()> {
 async fn test_cloud_io_optimization() -> Result<()> {
     use crate::storage::engines::impls::raptor::config::RaptorConfig;
 
-    let engine = create_test_engine().await?;
+    let _engine = create_test_engine().await?;
 
     // Test that cloud storage detection works
     // Note: is_cloud_storage() is private - removed assertion

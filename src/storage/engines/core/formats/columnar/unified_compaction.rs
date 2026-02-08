@@ -334,7 +334,7 @@ impl UnifiedColumnarCompaction {
         let mut engine = StorageQuantizationEngine::new_with_config(config);
 
         // Create unified memory pool for batch processing
-        let memory_pool = Arc::new(VectorMemoryPool::new());
+        let _memory_pool = Arc::new(VectorMemoryPool::new());
 
         // Use batch configuration for optimal performance
         let batch_config = crate::storage::strategy::BatchConfig {

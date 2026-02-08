@@ -514,7 +514,10 @@ impl SstEngine {
         }
 
         // For adaptive mode with small datasets, search all files
-        if let SearchMode::Adaptive { threshold: _threshold } = search_mode {
+        if let SearchMode::Adaptive {
+            threshold: _threshold,
+        } = search_mode
+        {
             if all_files.len() <= 3 {
                 return Ok(all_files);
             }

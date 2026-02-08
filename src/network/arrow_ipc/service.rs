@@ -17,7 +17,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
     flight_service_server::FlightService,
 };
-use futures::{Stream, StreamExt, stream};
+use futures::{Stream, stream};
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

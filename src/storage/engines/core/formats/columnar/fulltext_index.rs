@@ -309,7 +309,7 @@ impl Tokenizer {
     fn tokenize_standard(&self, text: &str) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut position = 0u32;
-        let start = 0;
+        let _start = 0;
         let mut in_token = false;
         let mut token_start = 0;
 
@@ -353,7 +353,7 @@ impl Tokenizer {
         let mut tokens = Vec::new();
         let mut position = 0u32;
 
-        for (i, word) in text.split_whitespace().enumerate() {
+        for (_i, word) in text.split_whitespace().enumerate() {
             let text_to_use = if self.config.lowercase {
                 word.to_lowercase()
             } else {

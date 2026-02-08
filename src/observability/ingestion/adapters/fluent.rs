@@ -180,13 +180,13 @@ impl FluentAdapter {
             .await
             .context("Failed to bind Fluent listener")?;
 
-        let sender = self.config.sender.clone();
+        let _sender = self.config.sender.clone();
         let batch_size = self.config.batch_size;
         let running = Arc::new(AtomicBool::new(true));
         let events = Arc::new(AtomicU64::new(0));
 
         tokio::spawn(async move {
-            let batch: Vec<crate::proto::proximadb_v1::LogEntry> = Vec::with_capacity(batch_size);
+            let _batch: Vec<crate::proto::proximadb_v1::LogEntry> = Vec::with_capacity(batch_size);
 
             while running.load(Ordering::Relaxed) {
                 match listener.accept().await {

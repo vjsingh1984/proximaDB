@@ -175,7 +175,7 @@ impl ProximaInputFormat {
     ///
     /// This maps to Arrow-native FileSplit generation and wraps them
     /// in HadoopInputSplit for compatibility.
-    pub fn get_splits(&self, num_splits_hint: usize) -> Vec<HadoopInputSplit> {
+    pub fn get_splits(&self, _num_splits_hint: usize) -> Vec<HadoopInputSplit> {
         // TODO: Query ProximaDB for actual splits
         // For now, return a placeholder split
         let file_split = FileSplit {

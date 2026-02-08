@@ -353,7 +353,7 @@ impl FileSystem for UnifiedCachingFilesystem {
         // Try metadata cache first (existence check is just metadata)
         let cache_key = self.cache_key(path);
 
-        if let Some(metadata) = self.metadata_cache.get(&cache_key).await {
+        if let Some(_metadata) = self.metadata_cache.get(&cache_key).await {
             self.metrics.record_cache_hit(CacheType::Metadata);
             return Ok(true); // If we have metadata, file exists
         }

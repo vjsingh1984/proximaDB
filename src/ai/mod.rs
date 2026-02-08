@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ai_intelligence_coordinator_creation() {
-        let coordinator = AIEnterpiseIntelligenceCoordinator::new().await.unwrap();
+        let _coordinator = AIEnterpiseIntelligenceCoordinator::new().await.unwrap();
         // Basic validation that AI coordinator was created
         assert!(true);
     }
