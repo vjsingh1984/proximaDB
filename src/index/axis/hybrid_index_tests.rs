@@ -10,10 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::ComparisonOperator;
-    use crate::index::axis::management::manager::{HybridQuery, VectorQuery};
+    use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification, ResultCombination};
-    use crate::storage::metadata::MetadataFilter;
     use tracing::debug;
 
     #[tokio::test]
@@ -45,7 +43,7 @@ mod tests {
             }),
             metadata_filters: vec![MetadataFilter {
                 field: "category".to_string(),
-                operator: ComparisonOperator::Eq,
+                operator: FilterOperator::Equals,
                 value: serde_json::json!("electronics"),
             }],
             id_filters: vec![],

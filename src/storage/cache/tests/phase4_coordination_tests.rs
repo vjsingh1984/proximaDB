@@ -1,14 +1,9 @@
 //! Phase 4: Cross-Cache Synergies Tests
 
 use super::super::orchestrator::*;
-use super::super::specialized::{
-    bitmap_filter_cache::BitmapFilterCache, index_node_cache::IndexNodeCache,
-    metadata_store::MetadataStore, query_cache::QueryCache,
-};
-use super::super::*;
-use std::collections::HashMap;
+use super::super::specialized::*;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 /// Test access pattern tracker for predictive prefetching
 #[tokio::test]

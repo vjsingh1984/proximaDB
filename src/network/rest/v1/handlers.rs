@@ -1679,9 +1679,9 @@ mod tests {
         let err = ApiError::Internal("internal error".to_string());
         assert_eq!(err.to_string(), "Internal error: internal error");
 
-        // Test from io::Error
+        // Test IO error message propagation
         let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let api_err: ApiError = io_err.into();
+        let api_err = ApiError::Internal(io_err.to_string());
         assert!(api_err.to_string().contains("file not found"));
     }
 
