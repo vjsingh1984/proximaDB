@@ -155,11 +155,17 @@ pub type ProtoVectorRecord = crate::proto::proximadb_v1::VectorRecord;
 /// This avoids the overhead of protobuf for the remaining fields
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 struct VectorRecordOtherFields {
+    /// Vector record ID
     pub id: Option<String>,
-    pub metadata: Vec<serde_json::Value>, // TODO: Fix MetadataItem serde implementation
+    /// Metadata items (TODO: Fix MetadataItem serde implementation)
+    pub metadata: Vec<serde_json::Value>,
+    /// Creation timestamp
     pub timestamp: u32,
+    /// Last update timestamp
     pub updated_at: Option<u32>,
+    /// Expiration timestamp
     pub expires_at: Option<u32>,
+    /// Version number
     pub version: Option<u32>,
 }
 
@@ -217,7 +223,7 @@ impl VectorRecordSerialization for VectorRecord {
             timestamp: self.timestamp.unwrap_or(0) as u32,
             updated_at: self.updated_at.map(|t| t as u32),
             expires_at: self.expires_at.map(|t| t as u32),
-            version: self.version.map(|v| v as u32),
+            version: self.version,
             // quantized_vector removed - internalized in storage
         };
         let bincode_data = bincode::serialize(&other_fields)?;
@@ -258,7 +264,7 @@ impl VectorRecordSerialization for VectorRecord {
 
         let vector_bytes = &data[offset..offset + vector_byte_len];
         let vector_slice: &[f32] = try_cast_slice(vector_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to cast bytes to f32 slice: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to cast bytes to f32 slice: {e}"))?;
         let vector = vector_slice.to_vec();
         offset += vector_byte_len;
 

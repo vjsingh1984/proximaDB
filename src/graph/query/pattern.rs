@@ -1020,7 +1020,7 @@ impl Default for PatternMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
+use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
 
     #[test]
     fn test_pattern_compiler_creation() {

@@ -394,7 +394,6 @@ pub fn asymmetric_distance_pq(
 
 #[cfg(test)]
 mod tests {
-
     #[tokio::test]
     async fn test_binary_quantization() {
         // Test will use unified quantization engine

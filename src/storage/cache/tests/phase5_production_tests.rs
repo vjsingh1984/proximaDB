@@ -6,7 +6,6 @@ use super::super::*;
 // // use super::super::optimization::*;  // TODO: Add optimization module
 use std::sync::Arc;
 use std::time::Duration;
-
 /// Test cache configuration loading and validation
 #[tokio::test]
 async fn test_cache_config_validation() {

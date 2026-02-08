@@ -17,7 +17,6 @@ mod tests {
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
     use crate::utils::uuid::Uuid;
-    use anyhow::Result;
     use async_trait::async_trait;
     use chrono::Utc;
     use std::collections::HashMap;

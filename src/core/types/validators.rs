@@ -449,10 +449,10 @@ impl TimestampValidator {
 
     pub fn validate_microseconds(&self, ts: i64) -> Result<()> {
         if ts < self.min_value {
-            return Err(anyhow!("Timestamp {} is before minimum", ts));
+            return Err(anyhow!("Timestamp {ts} is before minimum"));
         }
         if ts > self.max_value {
-            return Err(anyhow!("Timestamp {} exceeds maximum", ts));
+            return Err(anyhow!("Timestamp {ts} exceeds maximum"));
         }
         Ok(())
     }
@@ -469,7 +469,8 @@ impl TypeValidator for TimestampValidator {
         if value.len() != 8 {
             return Err(anyhow!("Timestamp must be 8 bytes"));
         }
-        let arr: [u8; 8] = value.try_into().unwrap();
+        let arr: [u8; 8] = value.try_into()
+            .map_err(|_| anyhow!("Failed to convert bytes to array"))?;
         let ts = i64::from_le_bytes(arr);
         self.validate_microseconds(ts)
     }
@@ -485,8 +486,8 @@ pub struct GeoPointValidator;
 impl GeoPointValidator {
     /// Validate latitude (-90 to 90)
     pub fn validate_latitude(lat: f64) -> Result<()> {
-        if lat < -90.0 || lat > 90.0 {
-            return Err(anyhow!("Latitude {} must be between -90 and 90", lat));
+        if !(-90.0..=90.0).contains(&lat) {
+            return Err(anyhow!("Latitude {lat} must be between -90 and 90"));
         }
         if lat.is_nan() || lat.is_infinite() {
             return Err(anyhow!("Latitude must be a finite number"));
@@ -496,8 +497,8 @@ impl GeoPointValidator {
 
     /// Validate longitude (-180 to 180)
     pub fn validate_longitude(lon: f64) -> Result<()> {
-        if lon < -180.0 || lon > 180.0 {
-            return Err(anyhow!("Longitude {} must be between -180 and 180", lon));
+        if !(-180.0..=180.0).contains(&lon) {
+            return Err(anyhow!("Longitude {lon} must be between -180 and 180"));
         }
         if lon.is_nan() || lon.is_infinite() {
             return Err(anyhow!("Longitude must be a finite number"));
@@ -518,8 +519,10 @@ impl TypeValidator for GeoPointValidator {
         if value.len() != 16 && value.len() != 24 {
             return Err(anyhow!("GeoPoint must be 16 or 24 bytes"));
         }
-        let lat = f64::from_le_bytes(value[0..8].try_into().unwrap());
-        let lon = f64::from_le_bytes(value[8..16].try_into().unwrap());
+        let lat = f64::from_le_bytes(value[0..8].try_into()
+            .map_err(|_| anyhow!("Failed to convert latitude bytes"))?);
+        let lon = f64::from_le_bytes(value[8..16].try_into()
+            .map_err(|_| anyhow!("Failed to convert longitude bytes"))?);
         Self::validate_point(lat, lon)
     }
 
@@ -530,6 +533,7 @@ impl TypeValidator for GeoPointValidator {
 
 /// Vector dimension validator
 pub struct VectorValidator {
+    /// Expected vector dimension
     expected_dimension: u32,
 }
 
@@ -554,10 +558,10 @@ impl VectorValidator {
     pub fn validate_values(&self, values: &[f32]) -> Result<()> {
         for (i, &v) in values.iter().enumerate() {
             if v.is_nan() {
-                return Err(anyhow!("Vector contains NaN at index {}", i));
+                return Err(anyhow!("Vector contains NaN at index {i}"));
             }
             if v.is_infinite() {
-                return Err(anyhow!("Vector contains infinite value at index {}", i));
+                return Err(anyhow!("Vector contains infinite value at index {i}"));
             }
         }
         Ok(())
@@ -574,13 +578,14 @@ impl TypeValidator for VectorValidator {
 
         // Validate individual values
         for i in 0..dimension {
-            let bytes: [u8; 4] = value[i * 4..(i + 1) * 4].try_into().unwrap();
+            let bytes: [u8; 4] = value[i * 4..(i + 1) * 4].try_into()
+                .map_err(|_| anyhow!("Failed to convert vector bytes at index {i}"))?;
             let v = f32::from_le_bytes(bytes);
             if v.is_nan() {
-                return Err(anyhow!("Vector contains NaN at index {}", i));
+                return Err(anyhow!("Vector contains NaN at index {i}"));
             }
             if v.is_infinite() {
-                return Err(anyhow!("Vector contains infinite value at index {}", i));
+                return Err(anyhow!("Vector contains infinite value at index {i}"));
             }
         }
 
@@ -594,6 +599,7 @@ impl TypeValidator for VectorValidator {
 
 /// Validator registry for efficient lookup
 pub struct ValidatorRegistry {
+    /// Map of validator name to validator instance
     validators: std::collections::HashMap<String, Arc<dyn TypeValidator>>,
 }
 

@@ -224,6 +224,7 @@ impl AcceleratedQuantization {
 
     /// AVX-512 implementation
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[allow(dead_code)]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         // AVX512 requires unstable features, use AVX2 implementation instead
         self.quantize_u8_avx2(values)
@@ -491,6 +492,7 @@ impl AcceleratedQuantization {
     }
 
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[allow(dead_code)]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
     }

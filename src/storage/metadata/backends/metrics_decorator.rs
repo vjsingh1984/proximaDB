@@ -108,7 +108,6 @@ impl<T: InternalCollectionProvider + Send + Sync> InternalCollectionProvider
 #[cfg(test)]
 mod tests {
     use super::*;
-
     // Mock implementation for testing
     struct MockProvider {
         fail_on_get: bool,

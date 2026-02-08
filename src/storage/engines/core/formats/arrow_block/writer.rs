@@ -50,10 +50,14 @@ pub struct ArrowBlockWriter {
     metadata: ArrowBlockMetadata,
 
     /// Global min/max ID
+    ///
+    /// Tracks the minimum and maximum vector IDs across all blocks for range queries.
     global_min_id: Option<String>,
     global_max_id: Option<String>,
 
     /// Global timestamp range
+    ///
+    /// Tracks the minimum and maximum timestamps across all records for time-based queries.
     global_min_timestamp: Option<i64>,
     global_max_timestamp: Option<i64>,
 
@@ -188,13 +192,17 @@ impl ArrowBlockWriter {
         let options = IpcWriteOptions::default();
 
         // Take ownership of inner writer temporarily
-        let inner = std::mem::replace(
-            &mut self.inner,
-            BufWriter::new(File::create("/dev/null").unwrap()),
-        );
+        // Note: We create a temp file as placeholder - it will be replaced immediately
+        let temp_file = File::create("/dev/null").map_err(|e| {
+            ArrowBlockError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create temp file: {e}"),
+            ))
+        })?;
+        let inner = std::mem::replace(&mut self.inner, BufWriter::new(temp_file));
 
         let writer = FileWriter::try_new_with_options(inner, &schema, options)
-            .map_err(|e| ArrowBlockError::Arrow(e))?;
+            .map_err(ArrowBlockError::Arrow)?;
 
         self.arrow_writer = Some(writer);
 
@@ -212,7 +220,7 @@ impl ArrowBlockWriter {
 
         // Finish Arrow writer - this writes the proper Arrow IPC footer
         let inner = if let Some(writer) = self.arrow_writer.take() {
-            writer.into_inner().map_err(|e| ArrowBlockError::Arrow(e))?
+            writer.into_inner().map_err(ArrowBlockError::Arrow)?
         } else {
             self.inner
         };
@@ -264,27 +272,37 @@ impl ArrowBlockWriter {
     }
 
     /// Get the path for the sidecar index file
+    ///
+    /// Constructs the index file path by appending `.idx` to the Arrow file path.
     pub fn index_path(arrow_path: &str) -> String {
-        format!("{}.idx", arrow_path)
+        format!("{arrow_path}.idx")
     }
 
     /// Update global ID and timestamp ranges
     fn update_global_ranges(&mut self, record: &VectorRecord) {
         // Update ID range
-        if self.global_min_id.is_none() || record.id < *self.global_min_id.as_ref().unwrap() {
-            self.global_min_id = Some(record.id.clone());
+        match &self.global_min_id {
+            None => self.global_min_id = Some(record.id.clone()),
+            Some(min_id) if record.id < *min_id => self.global_min_id = Some(record.id.clone()),
+            _ => {}
         }
-        if self.global_max_id.is_none() || record.id > *self.global_max_id.as_ref().unwrap() {
-            self.global_max_id = Some(record.id.clone());
+        match &self.global_max_id {
+            None => self.global_max_id = Some(record.id.clone()),
+            Some(max_id) if record.id > *max_id => self.global_max_id = Some(record.id.clone()),
+            _ => {}
         }
 
         // Update timestamp range
         if let Some(ts) = record.timestamp {
-            if self.global_min_timestamp.is_none() || ts < self.global_min_timestamp.unwrap() {
-                self.global_min_timestamp = Some(ts);
+            match self.global_min_timestamp {
+                None => self.global_min_timestamp = Some(ts),
+                Some(min_ts) if ts < min_ts => self.global_min_timestamp = Some(ts),
+                _ => {}
             }
-            if self.global_max_timestamp.is_none() || ts > self.global_max_timestamp.unwrap() {
-                self.global_max_timestamp = Some(ts);
+            match self.global_max_timestamp {
+                None => self.global_max_timestamp = Some(ts),
+                Some(max_ts) if ts > max_ts => self.global_max_timestamp = Some(ts),
+                _ => {}
             }
         }
     }

@@ -2,9 +2,7 @@
 //!
 //! Tests for VIPER metadata serialization and codebook sidecar storage.
 
-use std::collections::HashMap;
 
-// Tests from unified_metadata_serializer.rs
 
 #[test]
 fn test_viper_metadata_serialization() {

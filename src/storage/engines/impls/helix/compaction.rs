@@ -778,7 +778,6 @@ impl LeveledCompactor {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[tokio::test]
     async fn test_compactor_creation() {
         let config = HelixConfig::default();

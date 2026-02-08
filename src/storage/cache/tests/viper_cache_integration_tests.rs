@@ -5,7 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::cache::specialized::{
         MetadataStore,
         metadata_store::{ColumnStatistics, ParquetFileMetadata, ParquetSchemaMapping},
     };

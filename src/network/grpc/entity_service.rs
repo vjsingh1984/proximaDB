@@ -259,7 +259,6 @@ impl EntityService for EntityServiceImpl {
 
 #[cfg(test)]
 mod tests {
-
     // TODO: Add unit tests for EntityServiceImpl
 
     #[test]

@@ -12,7 +12,6 @@
 //!
 //! Total: 5 active tests (5 deferred for future)
 
-
 // ============================================================================
 // METADATA SERIALIZER TESTS (from unified_metadata_serializer.rs)
 // ============================================================================

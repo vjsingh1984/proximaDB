@@ -1,14 +1,11 @@
 //! Phase 2: Specialize Existing Cache Tests
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::specialized::*;
 
 // Type alias for VectorStore since it doesn't exist in the specialized module
 type VectorStore = BaseCacheImpl<String, VectorRecord>;
 
-/// Test specialized VectorStore
-#[tokio::test]
 async fn test_vector_data_cache_specialization() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();

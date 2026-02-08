@@ -16,7 +16,6 @@
 //! - SwiftFile manipulation
 //! - Search helpers
 
-use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;

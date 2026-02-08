@@ -617,7 +617,6 @@ fn test_memory_savings_with_centralized_footer() {
 
 #[test]
 fn test_centroid_distance_matrix_performance() {
-
     println!("\n=== Centroid Distance Matrix Performance Impact ===\n");
 
     // Test various collection sizes

@@ -526,14 +526,13 @@ impl RecordSchema {
     pub fn validate_value(&self, column_name: &str, value: &TypedValue) -> Result<()> {
         let column = self
             .get_column(column_name)
-            .ok_or_else(|| anyhow!("Column '{}' not found in schema", column_name))?;
+            .ok_or_else(|| anyhow!("Column '{column_name}' not found in schema"))?;
 
         // Check null
         if value.is_null() {
             if !column.nullable {
                 return Err(anyhow!(
-                    "Column '{}' does not allow null values",
-                    column_name
+                    "Column '{column_name}' does not allow null values"
                 ));
             }
             return Ok(());
@@ -542,8 +541,7 @@ impl RecordSchema {
         // Validate type match
         if !value.matches_type(&column.data_type) {
             return Err(anyhow!(
-                "Type mismatch for column '{}': expected {:?}, got {:?}",
-                column_name,
+                "Type mismatch for column '{column_name}': expected {:?}, got {:?}",
                 column.data_type,
                 value.type_name()
             ));
@@ -700,12 +698,10 @@ impl TypedValue {
                 }
                 if let Some(pattern) = &constraints.regex_pattern {
                     let re = regex::Regex::new(pattern)
-                        .map_err(|e| anyhow!("Invalid regex pattern: {}", e))?;
+                        .map_err(|e| anyhow!("Invalid regex pattern: {e}"))?;
                     if !re.is_match(s) {
                         return Err(anyhow!(
-                            "Value '{}' does not match pattern '{}'",
-                            s,
-                            pattern
+                            "Value '{s}' does not match pattern '{pattern}'"
                         ));
                     }
                 }
@@ -713,31 +709,31 @@ impl TypedValue {
             TypedValue::Integer(v) => {
                 if let Some(min) = constraints.min_value {
                     if *v < min {
-                        return Err(anyhow!("Value {} is less than minimum {}", v, min));
+                        return Err(anyhow!("Value {v} is less than minimum {min}"));
                     }
                 }
                 if let Some(max) = constraints.max_value {
                     if *v > max {
-                        return Err(anyhow!("Value {} exceeds maximum {}", v, max));
+                        return Err(anyhow!("Value {v} exceeds maximum {max}"));
                     }
                 }
             }
             TypedValue::Float(v) => {
                 if let Some(min) = constraints.min_float_value {
                     if *v < min {
-                        return Err(anyhow!("Value {} is less than minimum {}", v, min));
+                        return Err(anyhow!("Value {v} is less than minimum {min}"));
                     }
                 }
                 if let Some(max) = constraints.max_float_value {
                     if *v > max {
-                        return Err(anyhow!("Value {} exceeds maximum {}", v, max));
+                        return Err(anyhow!("Value {v} exceeds maximum {max}"));
                     }
                 }
             }
             TypedValue::Binary(b) => {
                 if let Some(max) = constraints.max_length {
                     if b.len() > max as usize {
-                        return Err(anyhow!("Binary length {} exceeds maximum {}", b.len(), max));
+                        return Err(anyhow!("Binary length {} exceeds maximum {max}", b.len()));
                     }
                 }
             }

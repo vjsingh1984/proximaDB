@@ -63,14 +63,17 @@ pub struct HardwareConfig {
     pub gpu_min_batch_size: usize,
 }
 
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn default_gpu_min_vector_size() -> usize {
     64
 }
 
+#[allow(dead_code)]
 fn default_gpu_min_batch_size() -> usize {
     100
 }
@@ -130,30 +133,37 @@ pub struct SksConfig {
     pub storage_backend: String,
 }
 
+#[allow(dead_code)]
 fn default_false_sks() -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn default_max_embedding_versions() -> usize {
     10
 }
 
+#[allow(dead_code)]
 fn default_max_traversal_depth() -> usize {
     5
 }
 
+#[allow(dead_code)]
 fn default_entity_cache_mb() -> usize {
     256
 }
 
+#[allow(dead_code)]
 fn default_relations_cache_mb() -> usize {
     128
 }
 
+#[allow(dead_code)]
 fn default_embedding_model() -> String {
     "openai/text-embedding-3-large".to_string()
 }
 
+#[allow(dead_code)]
 fn default_sks_backend() -> String {
     "sst".to_string()
 }
@@ -550,6 +560,7 @@ pub struct StorageLocation {
     pub tags: Vec<String>,
 }
 
+#[allow(dead_code)]
 fn default_weight() -> u32 {
     1
 }
@@ -1146,6 +1157,7 @@ impl Default for ViperConfig {
         }
     }
 }
+#[allow(dead_code)]
 fn default_compression_level() -> i32 {
     3 // Balanced compression level
 }
@@ -1392,14 +1404,17 @@ fn default_max_connections() -> usize {
     10000
 }
 
+#[allow(dead_code)]
 fn default_false() -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn default_compression_algorithm() -> String {
     "gzip".to_string()
 }
 
+#[allow(dead_code)]
 fn default_compression_level_api() -> i32 {
     6
 }
@@ -1430,6 +1445,7 @@ impl Default for ApiConfig {
     }
 }
 
+#[allow(dead_code)]
 fn default_ttl_sweep_interval() -> u64 {
     900
 }
@@ -1516,33 +1532,43 @@ impl Default for WalStorageConfig {
 }
 
 // Helper functions for serde defaults
+#[allow(dead_code)]
 fn default_collection_affinity() -> bool {
     true
 }
+#[allow(dead_code)]
 fn default_memory_flush_size() -> usize {
     2 * 1024 * 1024 // 2MB - reduced for faster recovery as per CLAUDE.md
 }
+#[allow(dead_code)]
 fn default_global_flush_threshold() -> usize {
     4 * 1024 * 1024 * 1024 // 4GB - recommended for global memory threshold
 }
+#[allow(dead_code)]
 fn default_strategy_type() -> Option<String> {
     None
 }
+#[allow(dead_code)]
 fn default_memtable_type() -> Option<String> {
     None
 }
+#[allow(dead_code)]
 fn default_sync_mode() -> Option<String> {
     None
 }
+#[allow(dead_code)]
 fn default_batch_threshold() -> Option<usize> {
     None
 }
+#[allow(dead_code)]
 fn default_write_buffer_size_mb() -> Option<usize> {
     None
 }
+#[allow(dead_code)]
 fn default_concurrent_flushes() -> Option<usize> {
     None
 }
+#[allow(dead_code)]
 fn default_global_shrink_factor() -> Option<f64> {
     Some(0.4) // 40% shrink factor - recommended for global threshold management
 }

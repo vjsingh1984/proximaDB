@@ -6,7 +6,6 @@ mod tests {
         MetricsConfig,
         store::MetricsPersistenceLayer,
         updater::{
-            MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
         },
     };
     use crate::compute::distance_computation::DistanceMetric;

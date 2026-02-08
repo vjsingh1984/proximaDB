@@ -10,7 +10,6 @@
 
 use anyhow::Result;
 use serde_json::json;
-use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::debug;
 
@@ -31,7 +30,6 @@ use parquet::file::properties::WriterProperties;
 
 // Use consolidated helpers
 
-// ============================================================================
 // SECTION 1: Basic Reader Tests (unified_parquet_reader_tests.rs)
 // 15 tests covering basic reader functionality and core operations
 // ============================================================================

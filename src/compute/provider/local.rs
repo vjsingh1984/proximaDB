@@ -194,6 +194,7 @@ impl ExecutionState {
         }
     }
 
+    #[allow(dead_code)]
     fn allocate_memory(&self, id: &str, bytes: u64) {
         self.memory_usage.fetch_add(bytes, Ordering::SeqCst);
         if let Some(info) = self.active_executions.write().get_mut(id) {
@@ -204,6 +205,7 @@ impl ExecutionState {
 
 #[derive(Debug)]
 struct ExecutionInfo {
+    #[allow(dead_code)]
     started_at: std::time::Instant,
     memory_allocated: u64,
 }

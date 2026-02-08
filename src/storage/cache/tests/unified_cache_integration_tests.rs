@@ -6,11 +6,9 @@
 //! NOTE: These tests have been temporarily simplified to ensure compilation.
 //! They need to be updated to work with the current cache implementation.
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::specialized::{IndexNodeCache, MetadataStore};
 use std::sync::Arc;
-
 // Type aliases for missing cache types
 type VectorStore = BaseCacheImpl<String, VectorRecord>;
 

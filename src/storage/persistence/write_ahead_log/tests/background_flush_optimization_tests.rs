@@ -5,7 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
@@ -23,7 +22,6 @@ use crate::proto::proximadb_v1::{MetadataItem};
     };
     use crate::storage::traits::{
         UnifiedStorageEngine,
-    };
 
     /// Mock storage engine for testing
     #[derive(Debug, Clone)]

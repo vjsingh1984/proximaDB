@@ -47,10 +47,13 @@ impl Default for BatchConfig {
 
 /// Row group cache for recently accessed data
 #[derive(Clone)]
-struct RowGroupCache {
-    cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
-    current_size: Arc<RwLock<usize>>,
-    max_size: usize,
+pub struct RowGroupCache {
+    /// LRU cache storing row groups by ID
+    pub cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
+    /// Current cache size in bytes
+    pub current_size: Arc<RwLock<usize>>,
+    /// Maximum cache size in bytes
+    pub max_size: usize,
 }
 
 impl RowGroupCache {

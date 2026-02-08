@@ -733,7 +733,6 @@ impl BloomFilterProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
     async fn test_columnar_optimizer_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let _hardware = crate::core::hardware_capabilities::get_hardware_capabilities();

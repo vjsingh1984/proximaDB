@@ -84,7 +84,7 @@ use crate::graph::canonical::{
 
 /// REST-compatible TraversalRequest wrapper for JSON deserialization
 #[derive(Debug, serde::Deserialize)]
-struct RestTraversalRequest {
+pub struct RestTraversalRequest {
     start_node_id: String,
     max_depth: u32,
     edge_types: Vec<String>,
@@ -95,7 +95,7 @@ struct RestTraversalRequest {
 
 /// REST-compatible NodeQuery wrapper for JSON deserialization
 #[derive(Debug, Clone, serde::Deserialize)]
-struct RestNodeQuery {
+pub struct RestNodeQuery {
     labels: Vec<String>,
     properties: HashMap<String, serde_json::Value>,
     limit: u32,
@@ -105,7 +105,7 @@ struct RestNodeQuery {
 
 /// REST-compatible EdgeQuery wrapper for JSON deserialization
 #[derive(Debug, Clone, serde::Deserialize)]
-struct RestEdgeQuery {
+pub struct RestEdgeQuery {
     edge_type: String,
     from_node_id: Option<String>,
     to_node_id: Option<String>,
@@ -227,7 +227,7 @@ struct RestEmbeddingVersion {
 
 /// REST input for creating/updating nodes
 #[derive(Debug, Deserialize)]
-struct RestNodeInput {
+pub struct RestNodeInput {
     id: String,
     labels: Vec<String>,
     properties: HashMap<String, serde_json::Value>,
@@ -236,7 +236,7 @@ struct RestNodeInput {
 
 /// REST input for creating/updating edges
 #[derive(Debug, Deserialize)]
-struct RestEdgeInput {
+pub struct RestEdgeInput {
     id: String,
     from_node_id: String,
     to_node_id: String,
@@ -312,26 +312,26 @@ struct RestEdgeTypeStats {
 
 /// Create node request
 #[derive(Debug, Deserialize)]
-struct CreateNodeRequest {
+pub struct CreateNodeRequest {
     node: RestNodeInput,
 }
 
 /// Create edge request
 #[derive(Debug, Deserialize)]
-struct CreateEdgeRequest {
+pub struct CreateEdgeRequest {
     edge: RestEdgeInput,
 }
 
 /// Batch create nodes request
 #[derive(Debug, Deserialize)]
-struct BatchCreateNodesRequest {
+pub struct BatchCreateNodesRequest {
     nodes: Vec<RestNodeInput>,
     if_exists: Option<String>, // "update" | "skip" | "error"
 }
 
 /// Batch create edges request
 #[derive(Debug, Deserialize)]
-struct BatchCreateEdgesRequest {
+pub struct BatchCreateEdgesRequest {
     edges: Vec<RestEdgeInput>,
     if_exists: Option<String>, // "update" | "skip" | "error"
 }
@@ -925,7 +925,7 @@ pub async fn create_edge(
 }
 
 #[derive(Debug, Deserialize)]
-struct ShortestPathRequest {
+pub struct ShortestPathRequest {
     start_node_id: String,
     target_node_id: String,
     max_depth: Option<u32>,
@@ -937,7 +937,7 @@ struct ShortestPathRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct UniqueConstraintRequest {
+pub struct UniqueConstraintRequest {
     label: String,
     property: String,
 }
@@ -1605,7 +1605,7 @@ pub async fn get_graph_stats_legacy(State(app_state): State<AppState>) -> impl I
 
 /// Input for creating a graph collection
 #[derive(Debug, Deserialize)]
-struct CreateGraphCollectionRequest {
+pub struct CreateGraphCollectionRequest {
     graph_id: String,
     name: Option<String>,
     description: Option<String>,
@@ -1805,7 +1805,7 @@ pub async fn update_graph_schema(
 
 /// Request body for executing a declarative graph query
 #[derive(Debug, Deserialize)]
-struct GraphQueryRequest {
+pub struct GraphQueryRequest {
     /// The Cypher query string
     query: String,
     /// Query language (currently only "cypher" is supported)

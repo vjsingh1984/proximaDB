@@ -2,7 +2,6 @@
 //!
 //! Tests for VIPER's atomic flush operations with staging pattern.
 
-use anyhow::Result;
 use tempfile::TempDir;
 use tokio::fs;
 

@@ -213,7 +213,6 @@ impl MemtableManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn create_test_config() -> MemtableConfig {
         MemtableConfig {
             max_size_bytes: 10 * 1024 * 1024,       // 10MB

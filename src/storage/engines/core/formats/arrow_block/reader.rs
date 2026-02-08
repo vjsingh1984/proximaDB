@@ -21,26 +21,45 @@ use super::index::ArrowBlockIndex;
 use super::{ARROW_BLOCK_MAGIC, ARROW_BLOCK_VERSION, ArrowBlockError, ArrowBlockResult};
 
 /// Reader for Arrow block files
+///
+/// Provides efficient read access to Arrow IPC formatted vector data files
+/// with optional memory-mapped I/O for zero-copy reads and B+ tree indexing
+/// for fast ID-based lookups.
 pub struct ArrowBlockReader {
     /// Memory-mapped file for zero-copy access
+    ///
+    /// When available, enables zero-copy reads directly from the file mapping.
+    /// Falls back to standard file I/O if memory mapping fails.
     mmap: Option<Mmap>,
 
     /// Fallback file reader
+    ///
+    /// Standard file handle used when memory mapping is not available.
     file: Option<File>,
 
     /// File path (for reopening if needed)
+    ///
+    /// Stored to allow reopening the file if needed for batch reads.
     path: String,
 
     /// Block index
+    ///
+    /// B+ tree index structure for fast ID-based lookups and range queries.
     index: ArrowBlockIndex,
 
     /// File metadata
+    ///
+    /// Contains file-level statistics like block count, total records, and dimension.
     metadata: ArrowBlockMetadata,
 
     /// VectorRecord bridge
+    ///
+    /// Handles conversion between Arrow RecordBatch and VectorRecord types.
     bridge: DefaultVectorRecordBridge,
 
     /// Cached Arrow schema
+    ///
+    /// lazily cached Arrow schema for type information.
     schema: Option<Arc<arrow_schema::Schema>>,
 }
 
@@ -58,7 +77,7 @@ impl ArrowBlockReader {
         let mmap = unsafe { Mmap::map(&file).ok() };
 
         // Read index and metadata from sidecar file
-        let index_path = format!("{}.idx", path_str);
+        let index_path = format!("{path_str}.idx");
         let (index, metadata) = Self::read_sidecar_index(&index_path)?;
 
         let schema = ProximaSchema::vector_record_schema(metadata.dimension);
@@ -119,8 +138,10 @@ impl ArrowBlockReader {
     }
 
     /// Get the sidecar index file path
+    ///
+    /// Constructs the index file path by appending `.idx` to the Arrow file path.
     pub fn index_path(arrow_path: &str) -> String {
-        format!("{}.idx", arrow_path)
+        format!("{arrow_path}.idx")
     }
 
     /// Get file metadata
@@ -176,12 +197,12 @@ impl ArrowBlockReader {
     fn read_batch_from_file(&self, batch_idx: usize) -> ArrowBlockResult<RecordBatch> {
         // Reopen file for Arrow reader
         let file = File::open(&self.path)?;
-        let reader = FileReader::try_new(file, None).map_err(|e| ArrowBlockError::Arrow(e))?;
+        let reader = FileReader::try_new(file, None).map_err(ArrowBlockError::Arrow)?;
 
         // Read specific batch
         for (i, batch_result) in reader.enumerate() {
             if i == batch_idx {
-                return batch_result.map_err(|e| ArrowBlockError::Arrow(e));
+                return batch_result.map_err(ArrowBlockError::Arrow);
             }
         }
 

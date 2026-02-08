@@ -238,7 +238,6 @@ impl Default for FlushOptimizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[tokio::test]
     async fn test_simple_sort() {
         let optimizer = FlushOptimizer::new();

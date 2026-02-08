@@ -9,8 +9,6 @@
 use super::super::super::swift::*;
 use crate::core::hardware_capabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-
-// =====================================================
 // TESTS FROM batch_operations.rs
 // =====================================================
 
@@ -125,7 +123,6 @@ use crate::core::memory::pool::VectorMemoryPool;
 async fn test_optimized_operations() {
     use optimized_operations::OptimizedSwiftOperations;
 
-    // Initialize hardware capabilities for testing
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
 
     let _ops = OptimizedSwiftOperations::new().unwrap();

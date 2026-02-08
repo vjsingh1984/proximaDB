@@ -1651,6 +1651,5 @@ impl DocumentStorageOperations for DocumentService {
 
 #[cfg(test)]
 mod tests {
-
     // TODO: Add unit tests with mock storage engine
 }

@@ -1098,17 +1098,11 @@ pub async fn hybrid_search(
                 .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
         };
 
-        // Convert to VectorSearchInput for RRF fusion
-        let mut vec_inputs = Vec::new();
-        if let Some(results) = response.results {
-            for result in &results.results {
-                vec_inputs.push(crate::core::search::hybrid::VectorSearchInput {
-                    id: result.id.clone(),
-                    score: result.score as f32,
-                });
-            }
-        }
-        vec_inputs
+        // Return the raw results - will be converted to VectorResult later
+        // NOTE: Old VectorSearchInput code removed (type doesn't exist)
+        response.results
+            .map(|r| r.results)
+            .unwrap_or_default()
     } else {
         Vec::new()
     };

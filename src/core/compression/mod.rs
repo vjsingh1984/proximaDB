@@ -1140,7 +1140,6 @@ mod tests {
 
     #[test]
     fn test_mixed_compression_strategy() {
-
         // Test column type detection
         let test_columns = vec![
             ("id".to_string(), ColumnData::Identifier),

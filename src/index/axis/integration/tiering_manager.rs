@@ -1237,7 +1237,6 @@ impl AxisTieringManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_axis_tiering_integration() {

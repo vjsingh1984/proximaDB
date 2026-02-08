@@ -18,7 +18,6 @@
 
 use super::*;
 use std::sync::Arc;
-
 #[tokio::test]
 async fn test_end_to_end_streaming() {
     let coordinator = Arc::new(StreamCoordinator::default());

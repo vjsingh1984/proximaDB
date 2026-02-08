@@ -40,7 +40,6 @@ use crate::storage::traits::{
 };
 
 // Import helpers from consolidated helpers module
-
 // =============================================================================
 // Section 1: Tests from tests/integration_tests.rs (12 tests)
 // =============================================================================

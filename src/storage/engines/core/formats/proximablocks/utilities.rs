@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
+use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::v1::VectorRecord;
 
 /// Row-based utilities collection
