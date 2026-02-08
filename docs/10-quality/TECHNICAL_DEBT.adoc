@@ -86,10 +86,10 @@ Technical debt items are prioritized based on their impact on the four developme
 | No hybrid search / BM25
 | P4
 | CRITICAL
-| Open
+| *Resolved*
 | Table stakes in 2026. 65% of Fortune 500 AI teams use hybrid search. Missing = losing deals.
 | 2 months
-| Integrate tantivy for BM25 scoring alongside vector search. RRF fusion.
+| *COMPLETED Feb 2025*: Implemented RRF fusion in `src/core/search/hybrid.rs`. REST endpoints in `src/network/rest/v1/handlers.rs`. 14 tests passing. Use `/api/v1/hybrid/search` with `text_query` + `vector` + `hybrid_mode`.
 
 | TD-009
 | No time-series engine
@@ -171,6 +171,33 @@ Technical debt items are prioritized based on their impact on the four developme
 | Documentation and feature dashboard advertise these as available. Erodes trust when users try them.
 | 1 week
 | *Resolved*: Gated behind `distributed-graph` / `tiered-graph` feature flags with warnings (commit `cd42e8db`).
+
+| TD-018
+| OTLP trace ingestion incomplete
+| P2
+| HIGH
+| Open
+| Cannot receive OpenTelemetry traces. Incomplete observability story vs. Splunk/Datadog/Loki.
+| 3-4 weeks
+| `src/observability/ingestion/adapters/otlp.rs` is stub. Need gRPC (4317) + HTTP (4318) servers. Trace storage in `src/observability/traces/` exists.
+
+| TD-019
+| Cypher query language partial
+| P2
+| MEDIUM
+| Open
+| Parser exists (`src/graph/query/parser.rs`) but incomplete engine integration. Not production-ready vs. Neo4j openCypher.
+| 2-3 months
+| Implement full openCypher grammar: MATCH, WHERE, RETURN, ORDER BY, SKIP/LIMIT, WITH, UNION. Integrate with ORION engine traversal.
+
+| TD-020
+| No ACID transactions across models
+| P2
+| HIGH
+| Open
+| Graph has WAL but no cross-model atomicity. Cannot guarantee consistency for vector+graph operations.
+| 4-6 weeks
+| Implement `CrossModelTransactionCoordinator` with two-phase commit. See Task #5 for details. Coordinated writes via WAL.
 |===
 
 == Debt by Category
@@ -184,8 +211,8 @@ Technical debt items are prioritized based on their impact on the four developme
 | Yes (TD-007 blocks "production-ready" claims). TD-013 resolved.
 
 | Missing Critical Features
-| TD-008, TD-009, TD-010, ~TD-011~
-| Yes (TD-008 is table stakes). TD-011 partially resolved (5/7 frameworks).
+| ~TD-008~, TD-009, TD-010, ~TD-011~, TD-018, TD-019, TD-020
+| Yes (TD-008 was table stakes, now resolved). TD-011 partially resolved (5/7 frameworks). TD-018, TD-019, TD-020 block enterprise adoption.
 
 | Security
 | TD-006, TD-016
