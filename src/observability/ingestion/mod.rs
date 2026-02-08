@@ -23,6 +23,13 @@ use super::IngestResult;
 use super::storage::ObservabilityStorage;
 
 /// Observability ingester with high-throughput processing
+///
+/// High-performance ingestion pipeline for observability data (logs, metrics).
+/// Features:
+/// - Lock-free ring buffer for back-pressure management
+/// - Multi-format parsing (OTLP, Syslog, Fluent, CEF/LEEF, OCSF)
+/// - Parallel processing workers
+/// - Alert rule evaluation during ingestion
 pub struct ObservabilityIngester {
     /// Ring buffer for buffering events
     buffer: Arc<RingBuffer>,
@@ -124,6 +131,9 @@ impl ObservabilityIngester {
 }
 
 /// Ingestion statistics
+///
+/// Provides real-time statistics about the ingestion pipeline,
+/// including buffer utilization and worker configuration.
 #[derive(Debug, Clone)]
 pub struct IngestionStats {
     /// Total buffer capacity

@@ -1058,15 +1058,17 @@ impl GraphOperationsService {
                 // Build quick lookup for node label schemas
                 for label in &node.labels {
                     let label_schema = schema.node_labels.iter().find(|ls| &ls.label == label);
-                    if label_schema.is_none() {
-                        if strict {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "Label '{}' is not allowed by schema", label
-                            )));
+                    let ls = match label_schema {
+                        Some(schema) => schema,
+                        None => {
+                            if strict {
+                                return Err(ProximaDBError::InvalidInput(format!(
+                                    "Label '{}' is not allowed by schema", label
+                                )));
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    let ls = label_schema.unwrap();
+                    };
                     // Required properties present
                     for req in &ls.required_properties {
                         if !node.properties.contains_key(req) {
@@ -1121,15 +1123,17 @@ impl GraphOperationsService {
             if let Some(schema) = &coll.schema {
                 let strict = schema.strict_mode;
                 let ets = schema.edge_types.iter().find(|et| et.edge_type == edge.edge_type);
-                if ets.is_none() {
-                    if strict {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Edge type '{}' is not allowed by schema", edge.edge_type
-                        )));
+                let ets = match ets {
+                    Some(edge_type_schema) => edge_type_schema,
+                    None => {
+                        if strict {
+                            return Err(ProximaDBError::InvalidInput(format!(
+                                "Edge type '{}' is not allowed by schema", edge.edge_type
+                            )));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
-                let ets = ets.unwrap();
+                };
                 // Required properties present
                 for req in &ets.required_properties {
                     if !edge.properties.contains_key(req) {
@@ -1225,9 +1229,13 @@ impl GraphOperationsService {
             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                 Op::Equals => {
                     // Look up index for this property
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue, // Skip filters without values
+                    };
                     if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key)
                     {
-                        let key = index_key_for_value(filter.value.as_ref().unwrap());
+                        let key = index_key_for_value(filter_value);
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -1245,12 +1253,18 @@ impl GraphOperationsService {
                     }
                 }
                 Op::StartsWith => {
-                    if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap())
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    if let Some(prefix) = extract_string_from_value(filter_value)
                     {
                         if let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            let map = map_lock.read().map_err(|_| {
+                                ProximaDBError::Internal("RwLock poisoned".to_string())
+                            })?;
                             let mut matched: HashSet<NodeId> = HashSet::new();
                             for (k, ids) in map
                                 .range(prefix.to_string()..)
@@ -1269,11 +1283,17 @@ impl GraphOperationsService {
                 | Op::GreaterEqual
                 | Op::LessThan
                 | Op::LessEqual => {
-                    if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap()) {
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    if let Some(num) = extract_number_from_value(filter_value) {
                         if let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            let map = map_lock.read().map_err(|_| {
+                                ProximaDBError::Internal("RwLock poisoned".to_string())
+                            })?;
                             let mut matched: HashSet<NodeId> = HashSet::new();
                             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                 Op::GreaterThan => {
@@ -1314,10 +1334,11 @@ impl GraphOperationsService {
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        let map = map_lock.read().unwrap();
+                        let map = map_lock.read().map_err(|_| {
+                            ProximaDBError::Internal("RwLock poisoned".to_string())
+                        })?;
                         let mut matched: HashSet<NodeId> = HashSet::new();
-                        let s =
-                            extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
+                        let s = extract_string_from_value(filter_value).unwrap_or("");
                         use std::ops::Bound::{Excluded, Included, Unbounded};
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
@@ -1362,32 +1383,36 @@ impl GraphOperationsService {
                 for filter in &query.filters {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue, // Skip filters without values
+                    };
                     let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
-                            Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                            Some(v) => v.value == filter_value.value,
                             None => false,
                         },
                         Op::NotEquals => match prop_val_opt {
-                            Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                            Some(v) => v.value != filter_value.value,
                             None => true,
                         },
                         Op::GreaterThan => {
-                            cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_gt(prop_val_opt, filter_value)
                         }
                         Op::GreaterEqual => {
-                            cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_ge(prop_val_opt, filter_value)
                         }
                         Op::LessThan => {
-                            cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_lt(prop_val_opt, filter_value)
                         }
                         Op::LessEqual => {
-                            cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_le(prop_val_opt, filter_value)
                         }
                         Op::StartsWith => {
-                            prop_starts_with(prop_val_opt, filter.value.as_ref().unwrap())
+                            prop_starts_with(prop_val_opt, filter_value)
                         }
                         Op::Contains => {
-                            prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
+                            prop_contains(prop_val_opt, filter_value)
                         }
                         _ => false,
                     };

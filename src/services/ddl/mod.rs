@@ -225,6 +225,7 @@ pub struct DdlResult {
 }
 
 impl DdlResult {
+    /// Create a successful DDL result
     pub fn success(message: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -234,6 +235,7 @@ impl DdlResult {
         }
     }
 
+    /// Create a result indicating an object already exists
     pub fn already_exists(object_type: &str, name: &str) -> Self {
         Self {
             success: true,
@@ -243,6 +245,7 @@ impl DdlResult {
         }
     }
 
+    /// Create a result indicating an object was not found
     pub fn not_found(object_type: &str, name: &str) -> Self {
         Self {
             success: true,
@@ -252,6 +255,7 @@ impl DdlResult {
         }
     }
 
+    /// Add a warning to this result
     pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
@@ -271,6 +275,9 @@ impl DdlService {
     }
 
     /// Execute a DDL statement
+    ///
+    /// This is the main entry point for DDL operations. It dispatches to the appropriate
+    /// handler based on the statement type.
     pub async fn execute(&self, statement: DdlStatement) -> Result<DdlResult> {
         match statement {
             DdlStatement::CreateTable {

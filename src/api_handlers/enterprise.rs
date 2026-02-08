@@ -139,7 +139,7 @@ impl EnterpriseAPIHandler {
             DomainKnowledgeGraph::new(domain_context.clone(), self.tenant_manager.clone()).await?;
 
         // Store knowledge graph
-        let kg_key = format!("{}::{}", tenant_id, domain_name);
+        let kg_key = format!("{tenant_id}::{domain_name}");
         let kg_key_clone = kg_key.clone();
         self.knowledge_graphs
             .insert(kg_key, Arc::new(knowledge_graph));
@@ -180,11 +180,11 @@ impl EnterpriseAPIHandler {
             .await?;
 
         // Get domain knowledge graph
-        let kg_key = format!("{}::{}", tenant_id, domain_name);
+        let kg_key = format!("{tenant_id}::{domain_name}");
         let knowledge_graph = self
             .knowledge_graphs
             .get(&kg_key)
-            .ok_or_else(|| anyhow!("Domain knowledge graph not found: {}", kg_key))?;
+            .ok_or_else(|| anyhow!("Domain knowledge graph not found: {kg_key}"))?;
 
         // Link collection to domain
         let bridge = knowledge_graph

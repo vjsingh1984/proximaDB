@@ -11,6 +11,9 @@ use crate::storage::cache::config::CacheConfig;
 use crate::storage::cache::{CacheType, CrossCacheOrchestrator};
 
 /// Cache monitoring dashboard for real-time insights
+///
+/// Provides comprehensive monitoring, alerting, and profiling capabilities
+/// for the cache system with historical metrics tracking.
 pub struct CacheMonitoringDashboard {
     /// Cache orchestrator reference
     orchestrator: Arc<CrossCacheOrchestrator>,
@@ -29,6 +32,8 @@ pub struct CacheMonitoringDashboard {
 }
 
 /// Historical metrics storage
+///
+/// Stores time-series data points with a maximum size limit.
 #[derive(Debug, Clone, Default)]
 struct MetricsHistory {
     /// Time series data points
@@ -39,16 +44,25 @@ struct MetricsHistory {
 }
 
 /// Point-in-time metrics snapshot
+///
+/// Captures cache metrics and system resource usage at a specific moment in time.
 #[derive(Debug, Clone)]
-struct MetricsSnapshot {
-    timestamp: SystemTime,
-    cache_metrics: CacheMetricsSnapshot,
-    memory_pressure: f64,
-    cpu_usage: f64,
-    io_wait: f64,
+pub struct MetricsSnapshot {
+    /// When the snapshot was taken
+    pub timestamp: SystemTime,
+    /// Cache performance metrics
+    pub cache_metrics: CacheMetricsSnapshot,
+    /// Memory pressure (0.0-1.0)
+    pub memory_pressure: f64,
+    /// CPU usage (0.0-1.0)
+    pub cpu_usage: f64,
+    /// I/O wait time (0.0-1.0)
+    pub io_wait: f64,
 }
 
 /// Alert manager for threshold monitoring
+///
+/// Monitors cache metrics and triggers alerts when thresholds are exceeded.
 pub struct AlertManager {
     /// Active alerts
     active_alerts: Arc<RwLock<Vec<Alert>>>,
@@ -61,59 +75,96 @@ pub struct AlertManager {
 }
 
 /// Individual alert
+///
+/// Represents a cache-related alert triggered when a threshold is exceeded.
 #[derive(Debug, Clone)]
 pub struct Alert {
+    /// Unique alert identifier
     pub id: String,
+    /// Alert severity level
     pub severity: AlertSeverity,
+    /// Human-readable alert message
     pub message: String,
+    /// When the alert was triggered
     pub triggered_at: SystemTime,
+    /// Which cache type triggered the alert
     pub cache_type: Option<CacheType>,
+    /// Current metric value
     pub metric_value: f64,
+    /// Threshold that was exceeded
     pub threshold: f64,
 }
 
+/// Alert severity levels
+///
+/// Indicates the urgency and impact of an alert.
 #[derive(Debug, Clone)]
 pub enum AlertSeverity {
+    /// Informational alert (no action required)
     Info,
+    /// Warning alert (monitoring recommended)
     Warning,
+    /// Critical alert (immediate action required)
     Critical,
 }
 
 /// Alert thresholds configuration
+///
+/// Defines threshold values for triggering cache alerts.
 #[derive(Debug, Clone)]
 pub struct AlertThresholds {
+    /// Minimum acceptable hit rate (0.0-1.0)
     min_hit_rate: f64,
+    /// Maximum memory usage (0.0-1.0)
     max_memory_usage: f64,
+    /// Maximum eviction rate (0.0-1.0)
     max_eviction_rate: f64,
+    /// Maximum cascade size
     max_cascade_size: usize,
+    /// Maximum prefetch queue size
     max_prefetch_queue: usize,
 }
 
 /// Alert handler trait
+///
+/// Defines the interface for handling cache alerts.
 trait AlertHandler: Send + Sync {
+    /// Handle an alert
     fn handle_alert(&self, alert: &Alert);
 }
 
 /// Performance profiler for detailed analysis
+///
+/// Profiles cache operations for performance analysis and optimization.
 pub struct PerformanceProfiler {
     /// Profiling data
     profiles: Arc<RwLock<Vec<PerformanceProfile>>>,
 
-    /// Sampling configuration
+    /// Sampling configuration (0.0-1.0)
     sampling_rate: f64,
 
     /// Output path for profiles
     output_path: String,
 }
 
+/// Performance profile data point
+///
+/// Records timing and metadata for a single cache operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PerformanceProfile {
+    /// Timestamp in milliseconds
     timestamp_ms: u64,
+    /// Operation name
     operation: String,
+    /// Duration in milliseconds
     duration_ms: f64,
+    /// Cache type
     cache_type: CacheType,
+    /// Cache tier
     tier: String,
+    /// Whether it was a cache hit
     hit: bool,
+    /// Size of the value
     value_size: usize,
 }
 
@@ -429,21 +480,34 @@ impl CacheMonitoringDashboard {
 }
 
 /// Dashboard state for API responses
+///
+/// Aggregates current metrics, alerts, and historical data for dashboard display.
 #[derive(Debug, Clone)]
 pub struct DashboardState {
+    /// Current cache metrics snapshot
     pub current_metrics: CacheMetricsSnapshot,
+    /// Currently active alerts
     pub active_alerts: Vec<Alert>,
+    /// Historical metrics data
     pub recent_history: Vec<MetricsSnapshot>,
+    /// Per-cache status information
     pub cache_status: HashMap<String, CacheStatus>,
+    /// Optimization suggestions
     pub optimization_suggestions: Vec<String>,
 }
 
 /// Individual cache status
+///
+/// Status information for a single cache instance.
 #[derive(Debug, Clone)]
 pub struct CacheStatus {
+    /// Whether the cache is enabled
     pub enabled: bool,
+    /// Memory allocated in MB
     pub memory_allocated_mb: usize,
+    /// Number of entries
     pub entries: usize,
+    /// Current hit rate (0.0-1.0)
     pub hit_rate: f64,
 }
 

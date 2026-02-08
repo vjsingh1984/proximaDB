@@ -33,9 +33,15 @@ pub fn has_hardware_crc32c() -> bool {
 }
 
 /// CRC32 calculator with precomputed tables for slicing-by-8
+///
+/// Provides IEEE 802.3 standard CRC32 checksum calculation with optimized
+/// lookup tables for better performance.
 pub struct Crc32 {
-    table: [u32; 256],        // Basic table for fallback
-    tables8: [[u32; 256]; 8], // 8 tables for slicing-by-8
+    /// Basic table for fallback
+    table: [u32; 256],
+    /// 8 tables for slicing-by-8
+    tables8: [[u32; 256]; 8],
+    /// Current CRC value
     value: u32,
 }
 
@@ -217,9 +223,14 @@ impl Checksum for Crc32 {
 }
 
 /// Fast CRC32C implementation (Castagnoli polynomial)
-/// Used in many modern systems for better error detection
+///
+/// Used in many modern systems for better error detection.
+/// Uses the Castagnoli polynomial (0x82F63B78) which provides
+/// better error detection capabilities than the standard CRC32.
 pub struct Crc32c {
+    /// Precomputed lookup table
     table: [u32; 256],
+    /// Current CRC value
     value: u32,
 }
 

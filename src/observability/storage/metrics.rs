@@ -43,6 +43,9 @@ pub struct MetricStorage {
 }
 
 /// Policy for metric data tiering and retention
+///
+/// Configures how long to keep data at each resolution level
+/// and when to automatically select each resolution for queries.
 #[derive(Debug, Clone)]
 pub struct MetricTieringPolicy {
     /// How long to keep raw data (nanoseconds)
@@ -84,6 +87,7 @@ impl Default for MetricTieringPolicy {
 
 impl MetricTieringPolicy {
     /// Create a new tiering policy with custom retention
+    #[must_use]
     pub fn new(raw_hours: u64, minute_days: u64, five_minute_days: u64, hour_days: u64) -> Self {
         Self {
             raw_retention_ns: raw_hours as i64 * NANOS_PER_HOUR,
@@ -109,6 +113,9 @@ impl MetricTieringPolicy {
 }
 
 /// A single metric time series
+///
+/// Represents a unique metric identified by name and labels.
+/// Stores raw data points and downsampled aggregates.
 struct MetricSeries {
     /// Metric name
     name: String,
@@ -121,6 +128,9 @@ struct MetricSeries {
 }
 
 /// Downsampled aggregates
+///
+/// Stores pre-aggregated data at multiple time resolutions
+/// for efficient querying of large time ranges.
 struct DownsampledData {
     /// 1-minute aggregates
     minute: BTreeMap<i64, AggregatedPoint>,
@@ -131,6 +141,9 @@ struct DownsampledData {
 }
 
 /// Aggregated data point
+///
+/// Represents aggregated statistics for a time bucket.
+/// Tracks min, max, sum, and count for calculating averages.
 #[derive(Debug, Clone)]
 struct AggregatedPoint {
     /// Minimum value
@@ -908,6 +921,9 @@ impl MetricStorage {
 }
 
 /// Result from flushing rollups to persistence
+///
+/// Contains statistics about a flush operation, including
+/// the number of aggregates flushed at each resolution level.
 #[derive(Debug, Default)]
 pub struct RollupFlushResult {
     /// Number of minute aggregates flushed
@@ -922,12 +938,16 @@ pub struct RollupFlushResult {
 
 impl RollupFlushResult {
     /// Total points flushed across all resolutions
+    #[must_use]
     pub fn total_flushed(&self) -> usize {
         self.minute_flushed + self.five_minute_flushed + self.hour_flushed
     }
 }
 
 /// Result from deleting old persisted rollups
+///
+/// Contains statistics about a deletion operation, including
+/// the number of aggregates deleted at each resolution level.
 #[derive(Debug, Default)]
 pub struct RollupDeleteResult {
     /// Number of minute aggregates deleted
@@ -940,12 +960,17 @@ pub struct RollupDeleteResult {
 
 impl RollupDeleteResult {
     /// Total points deleted across all resolutions
+    #[must_use]
     pub fn total_deleted(&self) -> usize {
         self.minute_deleted + self.five_minute_deleted + self.hour_deleted
     }
 }
 
 /// Result from automatic resolution query
+///
+/// Contains the results of a query with automatic resolution selection.
+/// May contain either raw samples or aggregated data depending on the
+/// selected resolution.
 #[derive(Debug)]
 pub struct QueryAutoResult {
     /// Resolution that was used
@@ -958,18 +983,23 @@ pub struct QueryAutoResult {
 
 impl QueryAutoResult {
     /// Get the number of data points returned
+    #[must_use]
     pub fn point_count(&self) -> usize {
         self.raw_samples.as_ref().map(|s| s.len()).unwrap_or(0)
             + self.aggregated.as_ref().map(|a| a.len()).unwrap_or(0)
     }
 
     /// Check if result is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.point_count() == 0
     }
 }
 
 /// Result from applying tiering policy
+///
+/// Contains statistics about a tiering policy application, including
+/// the number of points removed at each resolution level.
 #[derive(Debug, Default)]
 pub struct TieringResult {
     /// Number of raw points removed
@@ -984,12 +1014,16 @@ pub struct TieringResult {
 
 impl TieringResult {
     /// Total points removed across all tiers
+    #[must_use]
     pub fn total_removed(&self) -> usize {
         self.raw_removed + self.minute_removed + self.five_minute_removed + self.hour_removed
     }
 }
 
 /// Statistics about tiering storage
+///
+/// Provides statistics about metric storage across all resolution tiers.
+/// Used to monitor storage usage and compression ratios.
 #[derive(Debug, Default)]
 pub struct TieringStats {
     /// Number of series
@@ -1006,11 +1040,13 @@ pub struct TieringStats {
 
 impl TieringStats {
     /// Total points across all tiers
+    #[must_use]
     pub fn total_points(&self) -> usize {
         self.raw_points + self.minute_points + self.five_minute_points + self.hour_points
     }
 
     /// Compression ratio (raw points / aggregated points)
+    #[must_use]
     pub fn compression_ratio(&self) -> f64 {
         let aggregated = self.minute_points + self.five_minute_points + self.hour_points;
         if aggregated == 0 {
@@ -1022,6 +1058,10 @@ impl TieringStats {
 }
 
 /// Downsample resolution
+///
+/// Represents the time resolution of aggregated metric data.
+/// Raw data has no aggregation, while other resolutions represent
+/// time buckets of varying sizes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DownsampleResolution {
     /// Raw data points (no aggregation)
@@ -1036,6 +1076,7 @@ pub enum DownsampleResolution {
 
 impl DownsampleResolution {
     /// Get the bucket size in nanoseconds
+    #[must_use]
     pub fn bucket_size_ns(&self) -> i64 {
         match self {
             DownsampleResolution::Raw => 0, // No bucketing
@@ -1046,6 +1087,7 @@ impl DownsampleResolution {
     }
 
     /// Get display name
+    #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
             DownsampleResolution::Raw => "raw",
@@ -1057,6 +1099,9 @@ impl DownsampleResolution {
 }
 
 /// Aggregated metric result
+///
+/// Represents a single aggregated metric data point.
+/// Contains min, max, avg, sum, and count for a time bucket.
 #[derive(Debug, Clone)]
 pub struct AggregatedMetric {
     /// Metric name

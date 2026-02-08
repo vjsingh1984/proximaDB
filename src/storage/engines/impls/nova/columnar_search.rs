@@ -1050,25 +1050,6 @@ impl NovaColumnarSearch {
 
 // Helper functions for quantization stages
 
-fn compute_binary_sketch(vector: &[f32]) -> Vec<u8> {
-    let mut sketch = Vec::with_capacity(vector.len() / 8);
-    for chunk in vector.chunks(8) {
-        let mut byte = 0u8;
-        for (i, &val) in chunk.iter().enumerate() {
-            if val > 0.0 {
-                byte |= 1 << i;
-            }
-        }
-        sketch.push(byte);
-    }
-    sketch
-}
-
-fn _compute_hamming_distance(_query: &[u8], _column: &ArrayRef, _row_idx: usize) -> u32 {
-    // Simplified - would extract binary from column and compute Hamming distance
-    0
-}
-
 fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
     // Find min/max for scaling
     let min = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
@@ -1081,21 +1062,8 @@ fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
         .collect()
 }
 
-fn _compute_int8_distance(_query: &[i8], _column: &ArrayRef, _row_idx: usize) -> f32 {
-    // Simplified - would extract INT8 vector and compute distance
-    0.0
-}
-
-fn compute_pq_distance_table(_vector: &[f32], segments: usize, codes: usize) -> Vec<Vec<f32>> {
-    // Simplified - would compute actual PQ distance table
-    vec![vec![0.0; codes]; segments]
-}
-
-fn _compute_pq_distance(_table: &[Vec<f32>], _column: &ArrayRef, _row_idx: usize) -> f32 {
-    // Simplified - would extract PQ codes and compute distance using table
-    0.0
-}
-
+/// Extract a vector from an Arrow column at the specified row index
+/// Handles Float32Array and other vector representations
 fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f32>> {
     // Try Float32Array first
     if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>() {
@@ -1187,37 +1155,6 @@ impl ColumnarSearchConfig {
             Self::default()
         }
     }
-}
-
-// Helper function to build projection mask based on filter
-fn build_projection_mask(
-    config: &ColumnarSearchConfig,
-    filter: &Option<MetadataFilter>,
-) -> Vec<String> {
-    let mut projection = vec!["id".to_string(), "vector".to_string()];
-
-    // Add quantized columns if progressive search is enabled
-    if config.enable_progressive_search {
-        projection.push("vector_binary".to_string());
-        projection.push("vector_int8".to_string());
-        projection.push("vector_pq".to_string());
-    }
-
-    // Add columns referenced in filter
-    if let Some(filter) = filter {
-        for condition in &filter.conditions {
-            match condition {
-                FilterCondition::Equals(field, _) | FilterCondition::Range(field, _, _) => {
-                    if !projection.contains(field) {
-                        projection.push(field.clone());
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    projection
 }
 
 #[cfg(test)]

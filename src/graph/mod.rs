@@ -215,7 +215,7 @@ impl GraphMemoryPool {
         self.nodes.insert(node_id, Arc::clone(&node_arc));
 
         // Update indexes
-        self.update_node_indexes(&node_arc);
+        let _ = self.update_node_indexes(&node_arc);
 
         node_arc
     }
@@ -227,7 +227,7 @@ impl GraphMemoryPool {
         self.edges.insert(edge_id, Arc::clone(&edge_arc));
 
         // Update indexes
-        self.update_edge_indexes(&edge_arc);
+        let _ = self.update_edge_indexes(&edge_arc);
 
         edge_arc
     }
@@ -235,7 +235,7 @@ impl GraphMemoryPool {
     /// Remove a node
     pub fn remove_node(&self, id: &NodeId) -> Option<Arc<Node>> {
         if let Some((_, node)) = self.nodes.remove(id) {
-            self.remove_node_indexes(&node);
+            let _ = self.remove_node_indexes(&node);
             Some(node)
         } else {
             None
@@ -245,7 +245,7 @@ impl GraphMemoryPool {
     /// Remove an edge
     pub fn remove_edge(&self, id: &EdgeId) -> Option<Arc<Edge>> {
         if let Some((_, edge)) = self.edges.remove(id) {
-            self.remove_edge_indexes(&edge);
+            let _ = self.remove_edge_indexes(&edge);
             Some(edge)
         } else {
             None
@@ -253,7 +253,7 @@ impl GraphMemoryPool {
     }
 
     /// Update node indexes
-    fn update_node_indexes(&self, node: &Arc<Node>) {
+    fn update_node_indexes(&self, node: &Arc<Node>) -> Result<()> {
         // Update label indexes
         for label in &node.labels {
             self.label_indexes
@@ -281,7 +281,9 @@ impl GraphMemoryPool {
                     .node_property_str_ordered
                     .entry(key.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 map.entry(property_value_to_string(value))
                     .or_default()
                     .push(node.id.clone());
@@ -299,14 +301,17 @@ impl GraphMemoryPool {
                     .node_property_num_indexes
                     .entry(key.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 map.entry(num).or_default().push(node.id.clone());
             }
         }
+        Ok(())
     }
 
     /// Update edge indexes
-    fn update_edge_indexes(&self, edge: &Arc<Edge>) {
+    fn update_edge_indexes(&self, edge: &Arc<Edge>) -> Result<()> {
         // Update edge type indexes
         self.edge_type_indexes
             .entry(edge.edge_type.clone())
@@ -332,7 +337,9 @@ impl GraphMemoryPool {
                     .edge_property_str_ordered
                     .entry(key.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 map.entry(property_value_to_string(value))
                     .or_default()
                     .push(edge.id.clone());
@@ -350,7 +357,9 @@ impl GraphMemoryPool {
                     .edge_property_num_indexes
                     .entry(key.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 map.entry(num).or_default().push(edge.id.clone());
             }
         }
@@ -364,10 +373,11 @@ impl GraphMemoryPool {
             ),
             edge.id.clone(),
         );
+        Ok(())
     }
 
     /// Remove node from indexes
-    fn remove_node_indexes(&self, node: &Arc<Node>) {
+    fn remove_node_indexes(&self, node: &Arc<Node>) -> Result<()> {
         // Remove from label indexes
         for label in &node.labels {
             if let Some(mut entry) = self.label_indexes.get_mut(label) {
@@ -390,7 +400,9 @@ impl GraphMemoryPool {
                 Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
             ) && let Some(map_lock) = self.node_property_str_ordered.get(key)
             {
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
                     ids.retain(|id| id != &node.id);
                     if ids.is_empty() {
@@ -408,7 +420,9 @@ impl GraphMemoryPool {
                 _ => None,
             } && let Some(map_lock) = self.node_property_num_indexes.get(key)
             {
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 if let Some(ids) = map.get_mut(&num) {
                     ids.retain(|id| id != &node.id);
                     if ids.is_empty() {
@@ -417,10 +431,11 @@ impl GraphMemoryPool {
                 }
             }
         }
+        Ok(())
     }
 
     /// Remove edge from indexes
-    fn remove_edge_indexes(&self, edge: &Arc<Edge>) {
+    fn remove_edge_indexes(&self, edge: &Arc<Edge>) -> Result<()> {
         // Remove from edge type indexes
         if let Some(mut entry) = self.edge_type_indexes.get_mut(&edge.edge_type) {
             entry.retain(|id| id != &edge.id);
@@ -441,7 +456,9 @@ impl GraphMemoryPool {
                 Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
             ) && let Some(map_lock) = self.edge_property_str_ordered.get(key)
             {
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
                     ids.retain(|id| id != &edge.id);
                     if ids.is_empty() {
@@ -459,7 +476,9 @@ impl GraphMemoryPool {
                 _ => None,
             } && let Some(map_lock) = self.edge_property_num_indexes.get(key)
             {
-                let mut map = map_lock.write().unwrap();
+                let mut map = map_lock.write().map_err(|_| {
+                    crate::core::error::ProximaDBError::Internal("RwLock poisoned".to_string())
+                })?;
                 if let Some(ids) = map.get_mut(&num) {
                     ids.retain(|id| id != &edge.id);
                     if ids.is_empty() {
@@ -475,6 +494,7 @@ impl GraphMemoryPool {
             edge.to_node_id.clone(),
             edge.edge_type.clone(),
         ));
+        Ok(())
     }
 }
 

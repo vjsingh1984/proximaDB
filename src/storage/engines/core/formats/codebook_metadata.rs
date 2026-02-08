@@ -222,7 +222,7 @@ impl CodebookSerializer {
                 for subvectors in [8, 16, 32] {
                     let pq_key = QuantizationCacheKey::pq(collection_id, bits, subvectors);
                     if let Some(codebook) = cache.get_codebook(&pq_key).await {
-                        let key = format!("pq{}_{}", bits, subvectors);
+                        let key = format!("pq{bits}_{subvectors}");
                         metadata
                             .pq_codebooks
                             .insert(key, self.convert_to_pq_codebook(&codebook)?);
@@ -241,7 +241,7 @@ impl CodebookSerializer {
                         // Extract PQ parameters from ID
                         // Format: {collection_id}_pq_{bits}_{subvectors}
                         if let Some(codebook) = engine.get_cached_codebook(&codebook_id) {
-                            let key = codebook_id.replace(&format!("{}_", collection_id), "");
+                            let key = codebook_id.replace(&format!("{collection_id}_"), "");
                             metadata
                                 .pq_codebooks
                                 .insert(key, self.convert_cached_to_pq_codebook(&codebook)?);

@@ -28,25 +28,37 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{MetadataProvider, UnifiedMetricsCollector};
 
 /// Protobuf operation for incremental collection storage
+///
+/// Represents a single metadata operation in the WAL (Write-Ahead Log).
 #[derive(Clone, Message)]
 pub struct ProtoIncrementalOperation {
+    /// Sequence number for ordering
     #[prost(uint64, tag = "1")]
     pub sequence: u64,
+    /// Unix timestamp
     #[prost(int64, tag = "2")]
     pub timestamp: i64,
+    /// Operation type (ProtoOperationType as i32)
     #[prost(int32, tag = "3")]
-    pub operation_type: i32, // ProtoOperationType as i32
+    pub operation_type: i32,
+    /// Collection identifier
     #[prost(string, tag = "4")]
     pub collection_id: String,
+    /// Collection data (if applicable)
     #[prost(message, optional, tag = "5")]
     pub collection_data: Option<Collection>,
 }
 
 /// Operation types for protobuf storage
+///
+/// Defines the type of metadata operation being performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtoOperationType {
+    /// Create a new collection
     Create = 1,
+    /// Update an existing collection
     Update = 2,
+    /// Delete a collection
     Delete = 3,
 }
 use crate::storage::traits::InternalCollectionProvider;
@@ -55,6 +67,8 @@ use crate::storage::transaction_coordinator::{
 };
 
 /// Configuration for filestore metadata backend
+///
+/// Defines storage and behavior settings for the metadata backend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UniversalMetadataConfig {
     /// Storage URL (file://, s3://, gcs://, adls://)
@@ -104,32 +118,51 @@ impl Default for UniversalMetadataConfig {
 }
 
 /// Operation type for WAL-style logging
+///
+/// Defines the type of operation for write-ahead logging.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OperationType {
+    /// Create a new collection
     Create,
+    /// Update an existing collection
     Update,
+    /// Delete a collection
     Delete,
 }
 
 /// Incremental operation for WAL
+///
+/// Represents a single operation in the write-ahead log.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IncrementalOperation {
+    /// Sequence number
     pub sequence: u64,
+    /// Unix timestamp
     pub timestamp: i64,
+    /// Type of operation
     pub operation_type: OperationType,
+    /// Collection identifier
     pub collection_id: String,
+    /// Collection data (if applicable)
     pub collection_data: Option<Collection>,
 }
 
 /// Prepared write data for atomic operations
+///
+/// Holds data for an atomic write operation that can be committed or rolled back.
 #[derive(Debug)]
 struct PreparedWrite {
+    /// Temporary file path
     temp_path: PathBuf,
+    /// Final file path
     final_path: PathBuf,
+    /// Data to write
     data: Vec<u8>,
 }
 
 /// Filestore metadata backend implementation
+///
+/// A cloud-optimized metadata backend with WAL support, snapshots, and atomic operations.
 pub struct UniversalMetadataBackend {
     /// Configuration
     config: UniversalMetadataConfig,

@@ -11,10 +11,6 @@ pub use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
-fn default_vector_count() -> usize {
-    0
-}
-
 /// Primary RowGroup structure used throughout RAPTOR
 /// Unified RowGroup structure consolidating all variants
 ///

@@ -135,7 +135,7 @@ impl GraphError {
     pub fn not_found(entity_type: &str, entity_id: &str) -> Self {
         Self::new(
             ErrorCode::NotFound,
-            format!("{} '{}' not found", entity_type, entity_id),
+            format!("{entity_type} '{entity_id}' not found"),
         )
         .with_details(serde_json::json!({
             "entity_type": entity_type,
@@ -147,7 +147,7 @@ impl GraphError {
     pub fn already_exists(entity_type: &str, entity_id: &str) -> Self {
         Self::new(
             ErrorCode::AlreadyExists,
-            format!("{} '{}' already exists", entity_type, entity_id),
+            format!("{entity_type} '{entity_id}' already exists"),
         )
         .with_details(serde_json::json!({
             "entity_type": entity_type,

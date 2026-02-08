@@ -11,6 +11,9 @@ use std::collections::HashMap;
 use crate::proto::proximadb_v1::MetricSample;
 
 /// Metric query builder
+///
+/// Fluent builder for constructing metric queries with filters,
+/// aggregations, and time bucketing.
 pub struct MetricQueryBuilder {
     /// Metric name
     metric_name: Option<String>,
@@ -30,6 +33,7 @@ pub struct MetricQueryBuilder {
 
 impl MetricQueryBuilder {
     /// Create a new query builder
+    #[must_use]
     pub fn new() -> Self {
         Self {
             metric_name: None,
@@ -43,12 +47,14 @@ impl MetricQueryBuilder {
     }
 
     /// Set metric name
+    #[must_use]
     pub fn metric(mut self, name: &str) -> Self {
         self.metric_name = Some(name.to_string());
         self
     }
 
     /// Set time range
+    #[must_use]
     pub fn time_range(mut self, start_ns: i64, end_ns: i64) -> Self {
         self.start_time_ns = Some(start_ns);
         self.end_time_ns = Some(end_ns);
@@ -56,30 +62,35 @@ impl MetricQueryBuilder {
     }
 
     /// Add label filter
+    #[must_use]
     pub fn label(mut self, key: &str, value: &str) -> Self {
         self.labels.insert(key.to_string(), value.to_string());
         self
     }
 
     /// Set aggregation function
+    #[must_use]
     pub fn aggregate(mut self, agg: MetricAggregationFn) -> Self {
         self.aggregation = Some(agg);
         self
     }
 
     /// Set time bucket size
+    #[must_use]
     pub fn bucket(mut self, size_ns: i64) -> Self {
         self.bucket_size_ns = Some(size_ns);
         self
     }
 
     /// Add group by label
+    #[must_use]
     pub fn group_by(mut self, label: &str) -> Self {
         self.group_by.push(label.to_string());
         self
     }
 
     /// Build the query
+    #[must_use]
     pub fn build(self) -> MetricQuery {
         MetricQuery {
             metric_name: self.metric_name.unwrap_or_default(),
@@ -100,6 +111,9 @@ impl Default for MetricQueryBuilder {
 }
 
 /// Compiled metric query
+///
+/// A fully-specified metric query ready for execution.
+/// Contains metric name, time range, filters, and aggregation settings.
 #[derive(Debug, Clone)]
 pub struct MetricQuery {
     /// Metric name
@@ -119,6 +133,10 @@ pub struct MetricQuery {
 }
 
 /// Metric aggregation functions
+///
+/// Supported aggregation functions for metric queries.
+/// Includes basic stats (avg, sum, min, max), rate calculations,
+/// percentiles, and standard deviation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MetricAggregationFn {
     /// Average value
@@ -284,6 +302,9 @@ impl MetricQuery {
 }
 
 /// Group key for aggregation
+///
+/// Internal key used for grouping metric data points
+/// by time bucket and label set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GroupKey {
     /// Bucket timestamp
@@ -322,6 +343,9 @@ impl GroupKey {
 }
 
 /// Metric query result
+///
+/// A single aggregated metric data point resulting from a query.
+/// Contains timestamp, value, and labels.
 #[derive(Debug, Clone)]
 pub struct MetricResult {
     /// Timestamp (bucket start)
@@ -333,6 +357,9 @@ pub struct MetricResult {
 }
 
 /// Time series result
+///
+/// A time series consisting of multiple metric data points
+/// with the same label set.
 #[derive(Debug, Clone)]
 pub struct TimeSeries {
     /// Series labels

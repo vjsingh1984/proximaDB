@@ -1830,13 +1830,6 @@ mod block_utils {
 // Old deserialization helper functions removed - now handled by ProximaDataBlock internally
 // ProximaDataBlock handles all serialization/deserialization with compression support
 
-/// Delegates to ProximaDataBlock for proper deserialization
-/// This eliminates duplication and ensures consistent block handling
-fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<ProximaDataBlock> {
-    // FIXED: Delegate directly to ProximaDataBlock instead of duplicating logic
-    ProximaDataBlock::deserialize(data, None)
-}
-
 // Utility functions for ProximaDataBlock operations in SST
 mod block_operations {
     use super::*;

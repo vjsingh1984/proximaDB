@@ -158,6 +158,7 @@ pub struct DmlResult {
 }
 
 impl DmlResult {
+    /// Create a successful DML result
     pub fn success(rows_affected: u64, message: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -169,16 +170,19 @@ impl DmlResult {
         }
     }
 
+    /// Set the execution time for this result
     pub fn with_execution_time(mut self, time_us: u64) -> Self {
         self.execution_time_us = time_us;
         self
     }
 
+    /// Set the inserted IDs for this result
     pub fn with_inserted_ids(mut self, ids: Vec<String>) -> Self {
         self.inserted_ids = ids;
         self
     }
 
+    /// Add a warning to this result
     pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
@@ -285,10 +289,11 @@ impl DmlService {
             "Inserted rows"
         );
 
-        Ok(
-            DmlResult::success(num_records as u64, format!("Inserted {num_records} rows"))
-                .with_inserted_ids(inserted_ids),
+        Ok(DmlResult::success(
+            num_records as u64,
+            format!("Inserted {} rows", num_records),
         )
+        .with_inserted_ids(inserted_ids))
     }
 
     /// Execute UPDATE statement
@@ -363,7 +368,7 @@ impl DmlService {
 
         Ok(DmlResult::success(
             deleted_count as u64,
-            format!("Delete of {deleted_count} rows requested"),
+            format!("Delete of {} rows requested", deleted_count),
         )
         .with_warning("Full DELETE implementation pending - records marked for deletion"))
     }
@@ -411,10 +416,11 @@ impl DmlService {
             "Upserted rows"
         );
 
-        Ok(
-            DmlResult::success(num_records as u64, format!("Upserted {num_records} rows"))
-                .with_inserted_ids(inserted_ids),
+        Ok(DmlResult::success(
+            num_records as u64,
+            format!("Upserted {} rows", num_records),
         )
+        .with_inserted_ids(inserted_ids))
     }
 
     // ========================

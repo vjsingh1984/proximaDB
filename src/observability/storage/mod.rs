@@ -30,6 +30,14 @@ use crate::storage::persistence::write_ahead_log::unified_operations::{
 };
 
 /// Observability storage service
+///
+/// Manages storage for logs, metrics, and traces across multiple namespaces.
+/// Features:
+/// - WAL-backed durability for all writes
+/// - Time-partitioned log storage
+/// - Time-series metric storage with downsampling
+/// - Trace storage with span assembly
+/// - Namespace isolation
 pub struct ObservabilityStorage {
     /// Namespace configurations
     namespaces: RwLock<HashMap<String, NamespaceStorage>>,
@@ -42,6 +50,9 @@ pub struct ObservabilityStorage {
 }
 
 /// Storage for a single namespace
+///
+/// Isolated storage for a single observability namespace.
+/// Contains separate storage engines for logs, metrics, and traces.
 struct NamespaceStorage {
     /// Configuration
     config: ObservabilityNamespaceConfig,
@@ -407,6 +418,9 @@ impl ObservabilityStorage {
 }
 
 /// Storage statistics
+///
+/// Provides statistics about a namespace's storage usage,
+/// including counts of logs, metric series, and traces.
 #[derive(Debug, Clone)]
 pub struct StorageStats {
     /// Number of log entries

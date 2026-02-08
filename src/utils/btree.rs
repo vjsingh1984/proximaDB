@@ -30,10 +30,15 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 /// Information about a node stored on disk
+///
+/// Contains metadata about the physical storage location of a B+ tree node.
 #[derive(Debug, Clone)]
 pub struct DiskNodeInfo {
+    /// Path to the file containing the node
     pub file_path: String,
+    /// Offset within the file where the node starts
     pub offset: u64,
+    /// Size of the node in bytes
     pub size: u64,
 }
 
@@ -394,12 +399,14 @@ pub struct BTreeStats {
 }
 
 /// Range query result iterator
+///
+/// Provides iteration over key-value pairs in a B+ tree within a specified range.
 pub struct BTreeIterator {
     /// Current leaf node being iterated
     current_leaf: Option<NodeRef>,
     /// Current position within the leaf
     current_index: usize,
-    /// End key for range queries
+    /// End key for range queries (exclusive)
     end_key: Option<Vec<u8>>,
     /// Direction of iteration
     forward: bool,
@@ -487,6 +494,9 @@ impl Iterator for BTreeIterator {
 }
 
 /// High-performance B+ tree implementation
+///
+/// A disk-friendly B+ tree with configurable node size, optimized for
+/// vector database operations like vector ID indexing and range queries.
 pub struct BPlusTree {
     /// Root node of the tree
     root: Option<NodeRef>,

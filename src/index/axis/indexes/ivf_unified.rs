@@ -207,10 +207,14 @@ struct CentroidStore {
     cluster_stats: Vec<ClusterStats>,
 }
 
+/// Statistics for a single cluster
 #[derive(Debug, Clone, Default)]
-struct ClusterStats {
+pub struct ClusterStats {
+    /// Number of vectors in this cluster
     pub vector_count: usize,
+    /// When this cluster was last updated
     pub last_updated: Option<Instant>,
+    /// Variance of vectors in this cluster
     pub variance: f32,
 }
 
