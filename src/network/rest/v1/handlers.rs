@@ -38,6 +38,8 @@ pub struct AppState {
     /// Query facade adapter for unified query execution
     /// Optional for backward compatibility during feature flag transition
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
+    /// Per-collection full-text indices for hybrid BM25+vector search
+    pub fulltext_indexes: Option<FullTextIndexMap>,
 }
 
 /// Parse search request from JSON, supporting both proto and simple formats
@@ -854,6 +856,331 @@ pub async fn explain_sql(
 
 // Note: EXPLAIN now uses QueryEngine::explain_sql() for real plans/hints.
 
+// =============================================================================
+// Hybrid Search (BM25 + Vector with RRF Fusion)
+// =============================================================================
+
+/// Request body for hybrid search
+#[derive(Debug, Deserialize)]
+pub struct HybridSearchRequest {
+    /// Collection to search
+    pub collection: String,
+    /// Query vector for similarity search (optional if keyword-only)
+    pub vector: Option<Vec<f32>>,
+    /// Text query for BM25 keyword search (optional if vector-only)
+    pub text_query: Option<String>,
+    /// Number of results to return
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    /// Weight for vector results (0.0-1.0). BM25 weight = 1.0 - vector_weight.
+    #[serde(default = "default_vector_weight")]
+    pub vector_weight: f32,
+    /// RRF constant k (default 60)
+    #[serde(default = "default_rrf_k")]
+    pub rrf_k: u32,
+    /// Minimum BM25 score threshold
+    #[serde(default)]
+    pub min_bm25_score: f64,
+}
+
+fn default_top_k() -> usize {
+    10
+}
+fn default_vector_weight() -> f32 {
+    0.5
+}
+fn default_rrf_k() -> u32 {
+    60
+}
+
+/// Request body for indexing text documents for hybrid search
+#[derive(Debug, Deserialize)]
+pub struct HybridIndexRequest {
+    /// Collection name
+    pub collection: String,
+    /// Documents to index: list of {id, text}
+    pub documents: Vec<HybridDocument>,
+}
+
+/// A text document for hybrid search indexing
+#[derive(Debug, Deserialize)]
+pub struct HybridDocument {
+    /// Document/vector ID
+    pub id: String,
+    /// Text content to index
+    pub text: String,
+}
+
+/// Response for hybrid search
+#[derive(Debug, Serialize)]
+pub struct HybridSearchResponse {
+    pub success: bool,
+    pub results: Vec<HybridSearchHit>,
+    pub total: usize,
+    pub processing_time_us: u64,
+    /// Search mode used
+    pub mode: String,
+}
+
+/// A single hybrid search result hit
+#[derive(Debug, Serialize)]
+pub struct HybridSearchHit {
+    pub id: String,
+    pub combined_score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bm25_score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_rank: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bm25_rank: Option<usize>,
+    pub matched_terms: Vec<String>,
+}
+
+/// Response for hybrid index operations
+#[derive(Debug, Serialize)]
+pub struct HybridIndexResponse {
+    pub success: bool,
+    pub collection: String,
+    pub documents_indexed: usize,
+    pub total_documents: usize,
+}
+
+/// Shared state for per-collection full-text indices
+pub type FullTextIndexMap = Arc<
+    std::sync::RwLock<
+        std::collections::HashMap<
+            String,
+            crate::storage::engines::core::formats::columnar::fulltext_index::FullTextIndex,
+        >,
+    >,
+>;
+
+/// Index text documents for hybrid search
+///
+/// POST /api/v1/hybrid/index
+/// Body: { "collection": "...", "documents": [{"id": "...", "text": "..."}] }
+pub async fn hybrid_index(
+    State(state): State<AppState>,
+    Json(request): Json<HybridIndexRequest>,
+) -> ApiResult<JsonResponse<HybridIndexResponse>> {
+    if request.collection.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection name is required".to_string(),
+        ));
+    }
+    if request.documents.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "At least one document is required".to_string(),
+        ));
+    }
+
+    let fulltext_indexes = state
+        .fulltext_indexes
+        .as_ref()
+        .ok_or_else(|| ApiError::Internal("Hybrid search not initialized".to_string()))?;
+
+    let mut indexes = fulltext_indexes
+        .write()
+        .map_err(|e| ApiError::Internal(format!("Lock error: {}", e)))?;
+
+    let index = indexes
+        .entry(request.collection.clone())
+        .or_insert_with(|| {
+            use crate::storage::engines::core::formats::columnar::fulltext_index::{
+                FullTextIndex, TokenizerConfig,
+            };
+            FullTextIndex::new(TokenizerConfig::for_keyword_search())
+        });
+
+    let mut indexed = 0;
+    for doc in &request.documents {
+        // Skip if document already exists (idempotent)
+        if index.contains_document(&doc.id) {
+            continue;
+        }
+        if let Err(e) = index.add_document(&doc.id, &doc.text) {
+            debug!("Skipping document {}: {}", doc.id, e);
+            continue;
+        }
+        indexed += 1;
+    }
+
+    let total = index.document_count();
+
+    info!(
+        "Hybrid index: collection='{}', indexed={}, total={}",
+        request.collection, indexed, total
+    );
+
+    Ok(JsonResponse(HybridIndexResponse {
+        success: true,
+        collection: request.collection,
+        documents_indexed: indexed,
+        total_documents: total,
+    }))
+}
+
+/// Perform hybrid BM25 + vector search with RRF fusion
+///
+/// POST /api/v1/hybrid/search
+/// Body: { "collection": "...", "vector": [...], "text_query": "...", "top_k": 10 }
+pub async fn hybrid_search(
+    State(state): State<AppState>,
+    Json(request): Json<HybridSearchRequest>,
+) -> ApiResult<JsonResponse<HybridSearchResponse>> {
+    let start_time = std::time::Instant::now();
+
+    if request.collection.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection name is required".to_string(),
+        ));
+    }
+    if request.vector.is_none() && request.text_query.is_none() {
+        return Err(ApiError::InvalidArgument(
+            "At least one of 'vector' or 'text_query' is required".to_string(),
+        ));
+    }
+
+    let has_vector = request.vector.is_some();
+    let has_text = request.text_query.is_some();
+
+    // Determine search mode
+    let mode = match (has_vector, has_text) {
+        (true, true) => "hybrid",
+        (true, false) => "vector_only",
+        (false, true) => "keyword_only",
+        (false, false) => unreachable!(), // checked above
+    };
+
+    debug!(
+        "Hybrid search: collection='{}', mode={}, top_k={}, vector_weight={}",
+        request.collection, mode, request.top_k, request.vector_weight
+    );
+
+    // --- Vector search side ---
+    let vector_results = if let Some(ref vector) = request.vector {
+        // Build a VectorSearchRequest and execute through existing pipeline
+        let search_query = proximadb_v1::SearchQuery {
+            vector: vector.clone(),
+            filters: std::collections::HashMap::new(),
+            advanced_filter: None,
+        };
+        let search_request = VectorSearchRequest {
+            collection_id: request.collection.clone(),
+            queries: vec![search_query],
+            top_k: request.top_k as u32,
+            include_fields: None,
+            search_params: None,
+            distance_metric_override: None,
+            search_optimization: None,
+        };
+
+        // Use query adapter if available, else legacy handlers
+        let response = if let Some(ref adapter) = state.query_adapter {
+            adapter
+                .vector_search(search_request)
+                .await
+                .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
+        } else {
+            state
+                .unified_handlers
+                .handle_vector_search_v1(search_request)
+                .await
+                .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
+        };
+
+        // Convert to VectorSearchInput for RRF fusion
+        let mut vec_inputs = Vec::new();
+        if let Some(results) = response.results {
+            for result in &results.results {
+                vec_inputs.push(crate::core::search::hybrid::VectorSearchInput {
+                    id: result.id.clone(),
+                    score: result.score as f32,
+                });
+            }
+        }
+        vec_inputs
+    } else {
+        Vec::new()
+    };
+
+    // --- BM25 search side ---
+    let bm25_results = if let Some(ref text_query) = request.text_query {
+        let fulltext_indexes = state.fulltext_indexes.as_ref().ok_or_else(|| {
+            ApiError::InvalidArgument(
+                "No text index available. POST to /api/v1/hybrid/index first.".to_string(),
+            )
+        })?;
+
+        let indexes = fulltext_indexes
+            .read()
+            .map_err(|e| ApiError::Internal(format!("Lock error: {}", e)))?;
+
+        if let Some(index) = indexes.get(&request.collection) {
+            use crate::core::search::hybrid::BM25Result;
+            let search_results = index.search(text_query, request.top_k);
+            search_results
+                .into_iter()
+                .map(|r| BM25Result {
+                    id: r.doc_id,
+                    score: r.score,
+                    matched_terms: r.matched_terms,
+                })
+                .collect()
+        } else {
+            // No text index for this collection — return empty BM25 results
+            debug!(
+                "No text index for collection '{}', using vector-only results",
+                request.collection
+            );
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // --- RRF Fusion ---
+    let engine = crate::core::search::hybrid::HybridSearchEngine::new();
+    let config = crate::core::search::hybrid::HybridFusionConfig {
+        rrf_k: request.rrf_k,
+        vector_weight: request.vector_weight,
+        min_bm25_score: request.min_bm25_score,
+    };
+
+    let fused = engine.fuse_results(&bm25_results, &vector_results, &config, request.top_k);
+
+    let hits: Vec<HybridSearchHit> = fused
+        .into_iter()
+        .map(|r| HybridSearchHit {
+            id: r.id,
+            combined_score: r.combined_score,
+            vector_score: r.vector_score,
+            bm25_score: r.bm25_score,
+            vector_rank: r.vector_rank,
+            bm25_rank: r.bm25_rank,
+            matched_terms: r.matched_terms,
+        })
+        .collect();
+
+    let total = hits.len();
+    let elapsed = start_time.elapsed().as_micros() as u64;
+
+    info!(
+        "Hybrid search complete: collection='{}', mode={}, results={}, time={}us",
+        request.collection, mode, total, elapsed
+    );
+
+    Ok(JsonResponse(HybridSearchResponse {
+        success: true,
+        results: hits,
+        total,
+        processing_time_us: elapsed,
+        mode: mode.to_string(),
+    }))
+}
+
 /// Create router with all REST endpoints
 pub fn create_router(state: AppState) -> axum::Router {
     use axum::routing::{delete, get, post};
@@ -917,6 +1244,9 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
+        // Hybrid search endpoints (BM25 + Vector with RRF fusion)
+        .route("/api/v1/hybrid/search", post(hybrid_search))
+        .route("/api/v1/hybrid/index", post(hybrid_index))
         // With metadata endpoints
         .route(
             "/api/v1/search/with_metadata",
@@ -1093,6 +1423,8 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("   GET    /api/v1/collections (list_collections)");
     info!("   GET    /api/v1/collections/:id (get_collection)");
     info!("   DELETE /api/v1/collections/:id (delete_collection)");
+    info!("   POST   /api/v1/hybrid/search (hybrid_search)");
+    info!("   POST   /api/v1/hybrid/index (hybrid_index)");
 
     router
 }
@@ -1143,5 +1475,129 @@ mod tests {
         let response = ProtoApiResponse::<()>::error(err);
         assert!(!response.success);
         assert!(response.error.is_some());
+    }
+
+    #[test]
+    fn test_hybrid_search_request_deserialization() {
+        let json = serde_json::json!({
+            "collection": "test_col",
+            "vector": [0.1, 0.2, 0.3],
+            "text_query": "machine learning",
+            "top_k": 5,
+            "vector_weight": 0.7
+        });
+        let req: HybridSearchRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.collection, "test_col");
+        assert_eq!(req.vector.unwrap().len(), 3);
+        assert_eq!(req.text_query.unwrap(), "machine learning");
+        assert_eq!(req.top_k, 5);
+        assert!((req.vector_weight - 0.7).abs() < 0.001);
+        assert_eq!(req.rrf_k, 60); // default
+    }
+
+    #[test]
+    fn test_hybrid_search_request_defaults() {
+        let json = serde_json::json!({
+            "collection": "test_col",
+            "text_query": "hello"
+        });
+        let req: HybridSearchRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.top_k, 10);
+        assert!((req.vector_weight - 0.5).abs() < 0.001);
+        assert_eq!(req.rrf_k, 60);
+        assert!(req.vector.is_none());
+    }
+
+    #[test]
+    fn test_hybrid_index_request_deserialization() {
+        let json = serde_json::json!({
+            "collection": "test_col",
+            "documents": [
+                {"id": "doc1", "text": "The quick brown fox"},
+                {"id": "doc2", "text": "jumps over the lazy dog"}
+            ]
+        });
+        let req: HybridIndexRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.collection, "test_col");
+        assert_eq!(req.documents.len(), 2);
+        assert_eq!(req.documents[0].id, "doc1");
+        assert_eq!(req.documents[1].text, "jumps over the lazy dog");
+    }
+
+    #[test]
+    fn test_fulltext_index_map_operations() {
+        use crate::storage::engines::core::formats::columnar::fulltext_index::{
+            FullTextIndex, TokenizerConfig,
+        };
+
+        let map: FullTextIndexMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+
+        // Add an index
+        {
+            let mut indexes = map.write().unwrap();
+            let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
+            index
+                .add_document("doc1", "machine learning neural networks")
+                .unwrap();
+            index
+                .add_document("doc2", "deep learning transformers")
+                .unwrap();
+            index
+                .add_document("doc3", "database systems query optimization")
+                .unwrap();
+            indexes.insert("test_col".to_string(), index);
+        }
+
+        // Search
+        {
+            let indexes = map.read().unwrap();
+            let index = indexes.get("test_col").unwrap();
+            let results = index.search("learning", 10);
+            assert_eq!(results.len(), 2);
+            // doc1 and doc2 both contain "learning"
+            let ids: Vec<&str> = results.iter().map(|r| r.doc_id.as_str()).collect();
+            assert!(ids.contains(&"doc1"));
+            assert!(ids.contains(&"doc2"));
+        }
+    }
+
+    #[test]
+    fn test_hybrid_search_response_serialization() {
+        let response = HybridSearchResponse {
+            success: true,
+            results: vec![
+                HybridSearchHit {
+                    id: "doc1".to_string(),
+                    combined_score: 0.05,
+                    vector_score: Some(0.95),
+                    bm25_score: Some(3.2),
+                    vector_rank: Some(1),
+                    bm25_rank: Some(2),
+                    matched_terms: vec!["learning".to_string()],
+                },
+                HybridSearchHit {
+                    id: "doc2".to_string(),
+                    combined_score: 0.03,
+                    vector_score: None,
+                    bm25_score: Some(5.1),
+                    vector_rank: None,
+                    bm25_rank: Some(1),
+                    matched_terms: vec!["machine".to_string(), "learning".to_string()],
+                },
+            ],
+            total: 2,
+            processing_time_us: 1234,
+            mode: "hybrid".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"mode\":\"hybrid\""));
+        // doc2 should NOT have vector_score/vector_rank (skip_serializing_if = None)
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let doc2 = &parsed["results"][1];
+        assert!(doc2.get("vector_score").is_none());
+        assert!(doc2.get("vector_rank").is_none());
     }
 }

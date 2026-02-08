@@ -298,10 +298,10 @@ _Category Leadership: Time-series, event sourcing, hybrid search, and framework 
 |===
 | Feature | Status | Phase | Notes
 
-| LangChain VectorStore | Planned | P4 | VectorStore, Retriever, ChatMessageHistory
+| LangChain VectorStore | ✅ Complete | P4 | VectorStore adapter + LangGraph retriever tool
 | LlamaIndex Integration | Planned | P4 | VectorStoreIndex, StorageContext
 | Haystack Integration | Planned | P4 | DocumentStore adapter
-| CrewAI Integration | Planned | P4 | Agent memory backend
+| CrewAI Integration | ✅ Complete | P4 | SearchTool + KnowledgeSource + DSPy RM + AutoGen VectorDB
 |===
 
 === ibkrtrading Dogfood Milestones [Cross-Cutting]

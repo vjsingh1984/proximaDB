@@ -324,6 +324,9 @@ impl RestServer {
             security_coordinator: security_coordinator.clone(),
             data_dir,
             query_adapter,
+            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            ))),
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -522,6 +525,9 @@ impl RestServer {
             security_coordinator: security_coordinator.clone(),
             data_dir,
             query_adapter,
+            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            ))),
         };
 
         // Create metrics router if metrics collector is available
