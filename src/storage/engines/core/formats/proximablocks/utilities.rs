@@ -130,10 +130,10 @@ impl RowBasedUtilities {
             // Check for NaN or infinite values
             for (i, &value) in record.vector.iter().enumerate() {
                 if value.is_nan() {
-                    record_issues.push(format!("NaN value at position {}", i));
+                    record_issues.push(format!("NaN value at position {i}"));
                 }
                 if value.is_infinite() {
-                    record_issues.push(format!("Infinite value at position {}", i));
+                    record_issues.push(format!("Infinite value at position {i}"));
                 }
             }
 
@@ -370,7 +370,7 @@ impl PathResolver {
     pub fn resolve_backup_path(collection_path: &Path, timestamp: i64) -> PathBuf {
         collection_path
             .join("backups")
-            .join(format!("backup_{}", timestamp))
+            .join(format!("backup_{timestamp}"))
     }
 }
 
