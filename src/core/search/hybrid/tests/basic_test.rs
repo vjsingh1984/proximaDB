@@ -9,7 +9,7 @@ mod hybrid_search_basic_tests {
 
     #[test]
     fn test_fusion_strategy_types() {
-        use proxima::core::search::hybrid::FusionStrategy;
+        use crate::core::search::hybrid::FusionStrategy;
 
         // Create different fusion strategies
         let rrf = FusionStrategy::ReciprocalRank { k: 60 };
@@ -29,7 +29,7 @@ mod hybrid_search_basic_tests {
 
     #[test]
     fn test_result_types() {
-        use proxima::core::search::hybrid::{BM25Result, VectorResult, FusedSearchResult};
+        use crate::core::search::hybrid::{BM25Result, VectorResult, FusedSearchResult};
         use std::collections::HashMap;
 
         // Create BM25 result

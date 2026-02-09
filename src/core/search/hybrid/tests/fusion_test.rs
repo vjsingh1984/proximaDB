@@ -10,11 +10,9 @@
 
 #[cfg(test)]
 mod fusion_tests {
-    // Test utilities will be imported once implemented
-    // use proxima::core::search::hybrid::{
-    //     FusionStrategy, HybridFusionEngine, BM25Result, VectorResult, FusedSearchResult,
-    // };
-    // use crate::tdd::test_utils::{AssertApprox, MockData};
+    use crate::core::search::hybrid::{
+        FusionStrategy, HybridFusionEngine, BM25Result, VectorResult, FusedSearchResult,
+    };
 
     mod reciprocal_rank_fusion {
         use super::*;

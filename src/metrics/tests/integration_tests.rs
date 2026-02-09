@@ -17,6 +17,7 @@ mod tests {
         CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
     };
     use anyhow::Result;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
