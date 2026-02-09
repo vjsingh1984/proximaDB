@@ -17,6 +17,8 @@ mod tests {
     use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
     use crate::proto::proximadb_v1::SqlValue;
     use crate::proto::proximadb_v1::VectorRecord;
+    use crate::storage::engines::core::formats::columnar::FIELD_ID;
+    use crate::storage::engines::core::formats::columnar::FIELD_TIMESTAMP;
     use crate::storage::engines::impls::viper::ViperEngine;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};

@@ -5,6 +5,7 @@
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::info;
 

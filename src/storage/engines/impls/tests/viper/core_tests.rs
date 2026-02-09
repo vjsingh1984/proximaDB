@@ -72,6 +72,10 @@ fn test_reconstructor_creation() {
 #[test]
 #[ignore = "accesses private method `detect_compression`"]
 fn test_compression_detection() {
+    use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
+        FileSeekRange, ParquetReconstructor, ReconstructorConfig,
+    };
+
     let _reconstructor = ParquetReconstructor::new(ReconstructorConfig::default());
     let _range = FileSeekRange {
         offset: 0,

@@ -105,6 +105,7 @@ mod tests {
             }),
             ("deflate", {
                 use flate2::write::DeflateEncoder;
+                let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
                 encoder.write_all(&vector_data).unwrap();
                 encoder.finish().unwrap()
             }),

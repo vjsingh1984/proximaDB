@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric,
     StorageAssignment, StorageEngine, VectorRecord,

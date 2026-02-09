@@ -6,6 +6,9 @@
 //! - Similarity search operations
 //! - Memory management and flush operations
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
@@ -13,7 +16,6 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, BincodeSerializationStrategy, WALBatchStrategy, WALConfig,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info};
 
 /// Counter for generating unique test paths

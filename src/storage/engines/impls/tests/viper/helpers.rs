@@ -15,6 +15,7 @@ use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::utils::StoragePath;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 // ============================================================================
 // Engine Creation Utilities

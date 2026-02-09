@@ -1,8 +1,13 @@
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::storage::engines::universal::adapter::HardwareAccelerationManager;
-    use crate::storage::engines::universal::adapter::UniversalDistanceAdapter;
+    use crate::storage::engines::universal::adapter::{
+        CandidateVector, DistanceComputationRequest, HardwareAccelerationManager,
+        UniversalDistanceAdapter,
+    };
     use crate::storage::engines::universal::config::StorageEngineConfig;
     use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
     use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
@@ -10,7 +15,6 @@ mod tests {
         EngineType, NOVAAdapter, PRISMAdapter,
     };
     use crate::utils::uuid::Uuid;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_universal_adapter_creation() {

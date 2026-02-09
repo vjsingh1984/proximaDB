@@ -13,6 +13,11 @@
 //! - src/storage/engines/impls/nova/streaming_processor.rs (3 tests)
 //! - src/storage/engines/impls/nova/batch_operations.rs (3 tests)
 
+use crate::storage::engines::impls::nova::batch_operations::BatchConfig;
+use crate::storage::engines::impls::nova::streaming_processor::{
+    StreamingConfig, StreamingRowGroupProcessor,
+};
+
 // ============================================================================
 // Tests from streaming_search.rs
 // ============================================================================

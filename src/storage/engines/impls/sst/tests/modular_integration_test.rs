@@ -26,6 +26,7 @@
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;

@@ -8,6 +8,7 @@ fn test_viper_metadata_serialization() {
         ClusterInfo, RowGroupMetadata, ViperCachedMetadata, ViperMetadataSerializer,
     };
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+    use std::collections::HashMap;
 
     let metadata = ViperCachedMetadata {
         file_path: "/data/viper/collection1.parquet".to_string(),

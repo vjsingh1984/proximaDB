@@ -28,6 +28,7 @@ use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistan
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use crate::storage::engines::impls::raptor::common::VectorCentroidStorageStrategy;
+use crate::storage::engines::impls::raptor::consolidated_reader::IntraRowgroupMatrix;
 use crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder;
 
 // ============================================================================
