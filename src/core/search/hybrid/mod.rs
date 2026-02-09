@@ -297,3 +297,6 @@ mod tests {
         assert_eq!(highlight.text, "machine learning");
     }
 }
+
+#[cfg(test)]
+mod standalone_test;

@@ -14,6 +14,7 @@
 //! - id_index.rs (1 test)
 
 use crate::storage::engines::impls::swift::id_index::{BlockLocation, IdIndex};
+use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 
 // ============================================================================
