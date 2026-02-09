@@ -521,7 +521,7 @@ impl ColumnarSerializer {
             .into_iter()
             .enumerate()
             .map(|(i, vector)| VectorRecord {
-                id: format!("record_{}", i), // Placeholder - would come from ID column
+                id: format!("record_{i}"), // Placeholder - would come from ID column
                 vector,
                 timestamp: Some(chrono::Utc::now().timestamp()),
                 ..Default::default()
@@ -618,7 +618,7 @@ impl ColumnarSerializer {
     ) -> Result<Vec<StorageQuantizedData>> {
         // Convert vector slices to owned vectors and create IDs
         let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
-        let ids: Vec<String> = (0..vectors.len()).map(|i| format!("temp_{}", i)).collect();
+        let ids: Vec<String> = (0..vectors.len()).map(|i| format!("temp_{i}")).collect();
 
         // Quantize all vectors at once
         let quantized_data = engine

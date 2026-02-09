@@ -248,7 +248,7 @@ fn test_p2_matrix_memory_scaling() {
 async fn test_p2_matrix_search_integration() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::storage::engines::impls::raptor::consolidated_reader::{
+    // use crate::storage::engines::impls::raptor::consolidated_reader::{  // Unclosed delimiter - commented out
 
     // Create test P² matrix
     let p2_matrix = P2Matrix {

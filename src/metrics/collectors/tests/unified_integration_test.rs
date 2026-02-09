@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests {
     use crate::metrics::collectors::{
+        AccessPatternMetricsCollector, FilesystemMetricsCollector,
         MetricsCollector as MetricsCollectorTrait, UnifiedMetricsCollector,
     };
     use std::sync::Arc;

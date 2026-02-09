@@ -3462,7 +3462,7 @@ impl ProximaDataBlock {
                     id_dict_index,
                     id_dictionary.len()
                 );
-                record.id = format!("corrupted_id_{}", i);
+                record.id = format!("corrupted_id_{i}");
             }
 
             // Set the correct source from dictionary
@@ -5651,7 +5651,7 @@ mod tests {
                     .map(|d| ((i as f32 * 0.1) + (d as f32 * 0.01)).sin())
                     .collect();
                 VectorRecord {
-                    id: format!("vec_{}", i),
+                    id: format!("vec_{i}"),
                     vector,
                     metadata: std::collections::HashMap::new(),
                     expires_at: None,
@@ -5725,7 +5725,7 @@ mod tests {
         // Create constant vectors (all 42.0)
         let records: Vec<VectorRecord> = (0..count)
             .map(|i| VectorRecord {
-                id: format!("const_{}", i),
+                id: format!("const_{i}"),
                 vector: vec![42.0; dimension],
                 metadata: HashMap::new(),
                 expires_at: None,
@@ -5787,7 +5787,7 @@ mod tests {
         // Create random vectors
         let records: Vec<VectorRecord> = (0..count)
             .map(|i| VectorRecord {
-                id: format!("random_{}", i),
+                id: format!("random_{i}"),
                 vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
                 metadata: HashMap::new(),
                 expires_at: None,
@@ -5894,7 +5894,7 @@ mod tests {
                 };
 
                 VectorRecord {
-                    id: format!("mixed_{}", i),
+                    id: format!("mixed_{i}"),
                     vector,
                     metadata: HashMap::new(),
                     expires_at: None,
@@ -6130,7 +6130,7 @@ mod tests {
                         _ => vec![0.0; dims],
                     };
                     VectorRecord {
-                        id: format!("vec_{}", i),
+                        id: format!("vec_{i}"),
                         vector,
                         metadata: std::collections::HashMap::new(),
                         expires_at: None,

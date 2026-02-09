@@ -8,6 +8,7 @@
 
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::specialized::{IndexNodeCache, MetadataStore};
+use crate::proto::proximadb_v1::VectorRecord;
 use std::sync::Arc;
 // Type aliases for missing cache types
 type VectorStore = BaseCacheImpl<String, VectorRecord>;

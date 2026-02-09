@@ -166,7 +166,7 @@ impl ColumnarOptimizer {
             for (col_idx, column) in row_group.columns().iter().enumerate() {
                 if self.extract_bloom_filter(column)?.is_some() {
                     let filter_info = BloomFilterInfo {
-                        field: format!("col_{}", col_idx),
+                        field: format!("col_{col_idx}"),
                         size_bytes: 1024,  // Default size estimate for bloom filter
                         hash_functions: 3, // Default value
                         num_items: 1000,   // Default value
@@ -179,7 +179,7 @@ impl ColumnarOptimizer {
 
             if !column_filters.is_empty() {
                 file_filters.insert(
-                    format!("rg_{}", rg_idx),
+                    format!("rg_{rg_idx}"),
                     RowGroupBloomFilters {
                         row_group_id: rg_idx,
                         column_filters,

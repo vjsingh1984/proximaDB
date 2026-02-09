@@ -812,7 +812,7 @@ impl LocalDiskCache {
             .replace(':', "_")
             .replace("\\", "_");
 
-        self.cache_dir.join(format!("{}_rg_{}", safe_name, rg_idx))
+        self.cache_dir.join(format!("{safe_name}_rg_{rg_idx}"))
     }
 }
 

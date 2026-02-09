@@ -908,7 +908,10 @@ impl MongoDBParser {
                     ));
                 }
 
-                let (op, value) = obj.iter().next().unwrap();
+                // Safe to unwrap because we just verified obj.len() == 1
+                let (op, value) = obj.iter()
+                    .next()
+                    .ok_or_else(|| anyhow!("Pipeline stage object is empty"))?;
 
                 match op.as_str() {
                     "$match" => {

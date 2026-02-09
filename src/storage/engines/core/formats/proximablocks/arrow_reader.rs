@@ -92,7 +92,7 @@ impl ProximaBlocksArrowReader {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut file =
-            File::open(&path).context(format!("Failed to open SST file: {}", path_str))?;
+            File::open(&path).context(format!("Failed to open SST file: {path_str}"))?;
 
         // Read and validate magic marker
         let mut magic = [0u8; 4];
@@ -333,7 +333,7 @@ impl ProximaBlocksArrowReader {
 
         // Deserialize block
         ProximaDataBlock::deserialize(&block_data, None)
-            .context(format!("Failed to deserialize block {}", block_idx))
+            .context(format!("Failed to deserialize block {block_idx}"))
     }
 
     /// Convert a ProximaDataBlock to an Arrow RecordBatch
@@ -611,7 +611,7 @@ mod tests {
                 );
 
                 VectorRecord {
-                    id: format!("vec_{}", i),
+                    id: format!("vec_{i}"),
                     vector: (0..dimension).map(|d| (i + d) as f32 * 0.01).collect(),
                     metadata,
                     timestamp: Some(1700000000 + i as i64),
@@ -734,7 +734,7 @@ mod tests {
         assert_eq!(records.len(), 10);
 
         for (i, record) in records.iter().enumerate() {
-            assert_eq!(record.id, format!("vec_{}", i));
+            assert_eq!(record.id, format!("vec_{i}"));
             assert_eq!(record.vector.len(), 64);
             assert!(record.metadata.contains_key("category"));
             assert!(record.metadata.contains_key("score"));

@@ -17,7 +17,7 @@ mod tests {
         // Create simple test data without metadata to avoid MapArray issues
         let test_records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
-                id: format!("id_{}", i),
+                id: format!("id_{i}"),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(), // Empty to avoid MapArray
                 timestamp: Some(i as i64),

@@ -7,6 +7,7 @@ use super::super::global_partitioned::GlobalPartitionedMemtable;
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::write_ahead_log::BatchId;
+use crate::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
 use std::sync::Arc;
 

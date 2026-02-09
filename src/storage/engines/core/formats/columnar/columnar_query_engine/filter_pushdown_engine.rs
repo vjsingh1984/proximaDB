@@ -84,24 +84,24 @@ impl PredicateBuilder {
         let predicate = match condition {
             FilterCondition::Equals(field, value) => {
                 let value_str = self.format_value(value)?;
-                format!("{} = {}", field, value_str)
+                format!("{field} = {value_str}")
             }
             FilterCondition::Range(field, min, max) => {
                 let min_str = self.format_value(min)?;
                 let max_str = self.format_value(max)?;
-                format!("{} >= {} AND {} <= {}", field, min_str, field, max_str)
+                format!("{field} >= {min_str} AND {field} <= {max_str}")
             }
             FilterCondition::In(field, values) => {
                 let value_strs: Result<Vec<String>> =
                     values.iter().map(|v| self.format_value(v)).collect();
                 let values_list = value_strs?.join(", ");
-                format!("{} IN ({})", field, values_list)
+                format!("{field} IN ({values_list})")
             }
             FilterCondition::IsNull(field) => {
-                format!("{} IS NULL", field)
+                format!("{field} IS NULL")
             }
             FilterCondition::IsNotNull(field) => {
-                format!("{} IS NOT NULL", field)
+                format!("{field} IS NOT NULL")
             }
         };
 
@@ -111,11 +111,11 @@ impl PredicateBuilder {
     /// Format a serde_json::Value for SQL
     fn format_value(&self, value: &serde_json::Value) -> Result<String> {
         match value {
-            serde_json::Value::String(s) => Ok(format!("'{}'", s)),
+            serde_json::Value::String(s) => Ok(format!("'{s}'")),
             serde_json::Value::Number(n) => Ok(n.to_string()),
             serde_json::Value::Bool(b) => Ok(b.to_string()),
             serde_json::Value::Null => Ok("NULL".to_string()),
-            _ => Err(anyhow!("Unsupported value type: {:?}", value)),
+            _ => Err(anyhow!("Unsupported value type: {value:?}")),
         }
     }
 

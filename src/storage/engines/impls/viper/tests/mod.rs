@@ -14,6 +14,7 @@ pub mod compaction_tests;
 pub mod debug_compaction_test;
 
 // Include pipeline tests in the module structure
-#[cfg(test)]
-pub mod pipeline_tests;
+// Note: pipeline_tests.rs doesn't exist - commented out
+// #[cfg(test)]
+// pub mod pipeline_tests;
 

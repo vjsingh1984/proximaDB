@@ -999,7 +999,7 @@ mod tests {
         // Write small batches (streaming pattern)
         for i in 0..10 {
             let records = vec![VectorRecord {
-                id: format!("vec_{}", i),
+                id: format!("vec_{i}"),
                 vector: vec![0.1; 128],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(i as i64),
@@ -1036,7 +1036,7 @@ mod tests {
         // Write large batch (batch pattern)
         let records: Vec<_> = (0..1000)
             .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
+                id: format!("vec_{i}"),
                 vector: vec![0.1; 128],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(i as i64),

@@ -28,7 +28,7 @@ use crate::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuanti
 use crate::core::SstConfig;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, MetadataItem, VectorRecord};
-use crate::storage::engines::impls::sst::readers::sst_query_engine::{
+// use crate::storage::engines::impls::sst::readers::sst_query_engine::{  // Unclosed delimiter - commented out
 use crate::storage::engines::impls::sst::{SstEngine, SstRecord};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 // manifest module is not exposed - tests may need refactoring

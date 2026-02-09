@@ -668,7 +668,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             let bloom_data = fs
@@ -677,7 +677,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read bloom filter: {}", e),
+                        format!("Failed to read bloom filter: {e}"),
                     )))
                 })?;
 
@@ -721,7 +721,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             let index_data = fs
@@ -730,7 +730,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read index: {}", e),
+                        format!("Failed to read index: {e}"),
                     )))
                 })?;
 
@@ -767,7 +767,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
 
@@ -776,7 +776,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read block from cloud: {}", e),
+                        format!("Failed to read block from cloud: {e}"),
                     )))
                 })?
         } else {
@@ -785,7 +785,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             fs.read_range(file_path, block_info.offset, block_info.size)
@@ -793,7 +793,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read block: {}", e),
+                        format!("Failed to read block: {e}"),
                     )))
                 })?
         };
@@ -950,7 +950,7 @@ impl SharedSstFormatReader {
         let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
             ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to get filesystem: {}", e),
+                format!("Failed to get filesystem: {e}"),
             )))
         })?;
         let bloom_data = fs
@@ -959,7 +959,7 @@ impl SharedSstFormatReader {
             .map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to read bloom filter: {}", e),
+                    format!("Failed to read bloom filter: {e}"),
                 )))
             })?;
         Ok(Arc::new(bloom_data))
@@ -976,7 +976,7 @@ impl SharedSstFormatReader {
         let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
             ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to get filesystem: {}", e),
+                format!("Failed to get filesystem: {e}"),
             )))
         })?;
         let index_data = fs
@@ -985,7 +985,7 @@ impl SharedSstFormatReader {
             .map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to read index: {}", e),
+                    format!("Failed to read index: {e}"),
                 )))
             })?;
         Ok(Arc::new(index_data))

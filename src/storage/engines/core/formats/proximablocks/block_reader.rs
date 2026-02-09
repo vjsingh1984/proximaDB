@@ -368,7 +368,7 @@ impl ProximaBlockReader {
             FilterExpression::Comparison { field, value, .. } => {
                 // Check if the field-value combination might exist
                 // Bloom filters typically store record IDs or field keys
-                let _check_key = format!("{}:{}", field, value);
+                let _check_key = format!("{field}:{value}");
                 // SstableBloomFilter doesn't have proper implementation yet
                 // TODO: Implement once bloom filter strategies are fixed
                 true

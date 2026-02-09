@@ -4,6 +4,7 @@ mod tests {
     use flate2::read::GzDecoder;
     use flate2::write::GzEncoder;
     use std::io::{Read, Write};
+    use tracing::debug;
 
     #[test]
     fn test_gzip_compression() {

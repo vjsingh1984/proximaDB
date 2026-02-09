@@ -268,7 +268,7 @@ impl ColumnarSchema {
                     ) {
                         compatibility
                             .breaking_changes
-                            .push(format!("Incompatible type change: {}", change));
+                            .push(format!("Incompatible type change: {change}"));
                         compatibility.is_compatible = false;
                     }
                 }

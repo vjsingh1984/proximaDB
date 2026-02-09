@@ -5,6 +5,7 @@ mod tests {
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
+    use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
 use tracing::{debug, info};
     #[tokio::test]

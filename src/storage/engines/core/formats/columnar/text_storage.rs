@@ -894,7 +894,7 @@ impl SidecarRef {
         }
 
         let sidecar_path = String::from_utf8(data[4..4 + path_len].to_vec()).map_err(|e| {
-            TextStorageError::InvalidChunkReference(format!("Invalid path encoding: {}", e))
+            TextStorageError::InvalidChunkReference(format!("Invalid path encoding: {e}"))
         })?;
 
         let offset_start = 4 + path_len;
@@ -1424,7 +1424,7 @@ impl TextColumnWriter {
 
         // Also store a reference in inline buffer for the main record
         self.inline_buffer
-            .push(Some(format!("__chunked__:{}", chunk_count)));
+            .push(Some(format!("__chunked__:{chunk_count}")));
 
         Ok(())
     }
@@ -1452,7 +1452,7 @@ impl TextColumnWriter {
 
         // Store reference in inline buffer
         self.inline_buffer
-            .push(Some(format!("__sidecar__:{}", record_id)));
+            .push(Some(format!("__sidecar__:{record_id}")));
 
         Ok(())
     }
@@ -1483,7 +1483,7 @@ impl TextColumnWriter {
             let end = (start + chunk_size).min(chars.len());
             let chunk_content: String = chars[start..end].iter().collect();
 
-            let chunk_id = format!("{}_{}", record_id, chunk_index);
+            let chunk_id = format!("{record_id}_{chunk_index}");
             let chunk = TextChunk::new(chunk_id, record_id.to_string(), chunk_index, chunk_content)
                 .with_offsets(start, end);
 
@@ -1758,7 +1758,7 @@ impl TextColumnReader {
         };
 
         String::from_utf8(content)
-            .map_err(|e| TextStorageError::SerializationError(format!("Invalid UTF-8: {}", e)))
+            .map_err(|e| TextStorageError::SerializationError(format!("Invalid UTF-8: {e}")))
     }
 
     /// Clear the sidecar cache

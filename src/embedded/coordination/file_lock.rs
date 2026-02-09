@@ -374,6 +374,7 @@ unsafe impl Sync for FileLockManager {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_exclusive_lock_basic() {

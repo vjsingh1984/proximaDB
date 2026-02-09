@@ -257,7 +257,7 @@ impl ColumnarBatchOperations {
 
         Ok(SingleBatchWriteResult {
             bytes_written: estimated_size,
-            row_groups: vec![format!("{}:rg_{}", target_file, batch_idx)],
+            row_groups: vec![format!("{target_file}:rg_{batch_idx}")],
         })
     }
 
@@ -518,7 +518,7 @@ mod tests {
         // Create test vectors
         let vectors: Vec<VectorRecord> = (0..25000)
             .map(|i| VectorRecord {
-                id: format!("test_{}", i),
+                id: format!("test_{i}"),
                 vector: vec![i as f32; 768],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(0),

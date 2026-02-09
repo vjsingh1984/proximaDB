@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
+use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, GpuBackend, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
 
     #[test]
     fn test_hardware_config_defaults() {

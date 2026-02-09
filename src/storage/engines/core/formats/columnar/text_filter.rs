@@ -375,7 +375,7 @@ impl TextColumnFilterEvaluator {
         let regex_pattern = if self.case_sensitive {
             pattern.to_string()
         } else {
-            format!("(?i){}", pattern)
+            format!("(?i){pattern}")
         };
 
         let regex =

@@ -1,5 +1,7 @@
 //! Unit tests for AXIS Strategy Selection
 
+use std::collections::HashMap;
+
 use super::management::strategy::{CollectionStatistics, IndexStrategyBuilder, QueryPatterns};
 use super::types::*;
 

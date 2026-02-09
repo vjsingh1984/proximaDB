@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_predict_selectivity() {
-
+        let characteristics = SelectivityCharacteristics {
             norm: 1.0,
             sparsity: 0.5,
             dominant_dimensions: vec![0, 1, 2],

@@ -819,7 +819,7 @@ mod tests {
     //     // let batch_ops =
     //     //     RowBasedBatchOperations::new(hardware, memory_pool, quantization_adapter, config);
 
-    //     let ids: Vec<String> = (0..250).map(|i| format!("id_{}", i)).collect();
+    //     let ids: Vec<String> = (0..250).map(|i| format!("id_{i}")).collect();
     //     // let batches = batch_ops.split_into_batches(&ids);
 
     //     // assert_eq!(batches.len(), 3); // 100, 100, 50

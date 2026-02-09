@@ -7,7 +7,7 @@ use tokio::fs;
 
 /// Test the atomic flush pattern with __flush staging directory
 #[tokio::test]
-async fn test_atomic_flush_staging_pattern() -> Result<()> {
+async fn test_atomic_flush_staging_pattern() -> Result<(), anyhow::Error> {
     // Setup temporary directory structure
     let temp_dir = TempDir::new()?;
     let storage_path = temp_dir.path().join("storage");
@@ -71,7 +71,7 @@ async fn test_atomic_flush_staging_pattern() -> Result<()> {
 
 /// Test that search operations ignore __flush directories
 #[tokio::test]
-async fn test_search_ignores_flush_directories() -> Result<()> {
+async fn test_search_ignores_flush_directories() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let collection_path = temp_dir.path().join("storage/test_collection");
 
@@ -121,7 +121,7 @@ async fn test_search_ignores_flush_directories() -> Result<()> {
 
 /// Test concurrent flush operations don't conflict
 #[tokio::test]
-async fn test_concurrent_flush_operations() -> Result<()> {
+async fn test_concurrent_flush_operations() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let collection_path = temp_dir.path().join("storage/test_collection");
     fs::create_dir_all(&collection_path).await?;
@@ -183,7 +183,7 @@ async fn test_concurrent_flush_operations() -> Result<()> {
 
 /// Test filesystem error handling during atomic operations
 #[tokio::test]
-async fn test_atomic_flush_error_handling() -> Result<()> {
+async fn test_atomic_flush_error_handling() -> Result<(), anyhow::Error> {
     let temp_dir = TempDir::new()?;
     let collection_path = temp_dir.path().join("storage/test_collection");
     fs::create_dir_all(&collection_path).await?;

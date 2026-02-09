@@ -521,7 +521,7 @@ impl ParquetReader {
                             } else {
                                 "null".to_string()
                             };
-                            format!("{}={}", k, val_str)
+                            format!("{k}={val_str}")
                         })
                         .collect::<Vec<_>>()
                 );
