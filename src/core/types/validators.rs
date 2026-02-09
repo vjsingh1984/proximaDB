@@ -469,7 +469,8 @@ impl TypeValidator for TimestampValidator {
         if value.len() != 8 {
             return Err(anyhow!("Timestamp must be 8 bytes"));
         }
-        let arr: [u8; 8] = value.try_into()
+        let arr: [u8; 8] = value
+            .try_into()
             .map_err(|_| anyhow!("Failed to convert bytes to array"))?;
         let ts = i64::from_le_bytes(arr);
         self.validate_microseconds(ts)
@@ -519,10 +520,16 @@ impl TypeValidator for GeoPointValidator {
         if value.len() != 16 && value.len() != 24 {
             return Err(anyhow!("GeoPoint must be 16 or 24 bytes"));
         }
-        let lat = f64::from_le_bytes(value[0..8].try_into()
-            .map_err(|_| anyhow!("Failed to convert latitude bytes"))?);
-        let lon = f64::from_le_bytes(value[8..16].try_into()
-            .map_err(|_| anyhow!("Failed to convert longitude bytes"))?);
+        let lat = f64::from_le_bytes(
+            value[0..8]
+                .try_into()
+                .map_err(|_| anyhow!("Failed to convert latitude bytes"))?,
+        );
+        let lon = f64::from_le_bytes(
+            value[8..16]
+                .try_into()
+                .map_err(|_| anyhow!("Failed to convert longitude bytes"))?,
+        );
         Self::validate_point(lat, lon)
     }
 
@@ -578,7 +585,8 @@ impl TypeValidator for VectorValidator {
 
         // Validate individual values
         for i in 0..dimension {
-            let bytes: [u8; 4] = value[i * 4..(i + 1) * 4].try_into()
+            let bytes: [u8; 4] = value[i * 4..(i + 1) * 4]
+                .try_into()
                 .map_err(|_| anyhow!("Failed to convert vector bytes at index {i}"))?;
             let v = f32::from_le_bytes(bytes);
             if v.is_nan() {

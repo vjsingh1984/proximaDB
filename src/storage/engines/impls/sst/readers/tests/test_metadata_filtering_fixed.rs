@@ -234,7 +234,7 @@ async fn test_metadata_bloom_filter_functionality() {
     // Test the composite bloom filter with metadata support
     use crate::core::bloom::strategies::composite::CompositeBloomFilter;
     use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
-use tracing::{error, info};
+    use tracing::{error, info};
 
     let config = BloomFilterConfig {
         bits_per_key: 10,

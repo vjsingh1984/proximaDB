@@ -472,7 +472,7 @@ async fn test_cloud_io_optimization() -> Result<()> {
 
 #[tokio::test]
 async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
-use crate::storage::engines::impls::raptor::common::{ColumnarCentroids};
+    use crate::storage::engines::impls::raptor::common::ColumnarCentroids;
     use crate::storage::engines::impls::raptor::writer::RaptorWriter;
     use tempfile::TempDir;
 

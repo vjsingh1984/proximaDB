@@ -289,11 +289,10 @@ impl DmlService {
             "Inserted rows"
         );
 
-        Ok(DmlResult::success(
-            num_records as u64,
-            format!("Inserted {} rows", num_records),
+        Ok(
+            DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
+                .with_inserted_ids(inserted_ids),
         )
-        .with_inserted_ids(inserted_ids))
     }
 
     /// Execute UPDATE statement
@@ -416,11 +415,10 @@ impl DmlService {
             "Upserted rows"
         );
 
-        Ok(DmlResult::success(
-            num_records as u64,
-            format!("Upserted {} rows", num_records),
+        Ok(
+            DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
+                .with_inserted_ids(inserted_ids),
         )
-        .with_inserted_ids(inserted_ids))
     }
 
     // ========================

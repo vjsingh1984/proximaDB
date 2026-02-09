@@ -1163,10 +1163,7 @@ fn build_projection_mask(
     _config: &ColumnarSearchConfig,
     filter: &Option<MetadataFilter>,
 ) -> Vec<String> {
-    let mut projection = vec![
-        "id".to_string(),
-        "vector".to_string(),
-    ];
+    let mut projection = vec!["id".to_string(), "vector".to_string()];
 
     // Add quantized columns if enabled
     if _config.enable_projection {

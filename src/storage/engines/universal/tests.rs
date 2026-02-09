@@ -2,9 +2,7 @@
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::HardwareAccelerationManager;
-    use crate::storage::engines::universal::adapter::{
-        UniversalDistanceAdapter,
-    };
+    use crate::storage::engines::universal::adapter::UniversalDistanceAdapter;
     use crate::storage::engines::universal::config::StorageEngineConfig;
     use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
     use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;

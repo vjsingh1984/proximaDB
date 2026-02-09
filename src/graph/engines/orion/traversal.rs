@@ -1750,7 +1750,7 @@ pub async fn page_rank(
 mod tests {
     use super::*;
     use crate::graph::engines::orion::OrionGraphEngine;
-use crate::graph::{Edge, Node};
+    use crate::graph::{Edge, Node};
     // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]

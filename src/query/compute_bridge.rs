@@ -890,8 +890,6 @@ impl BridgeStatistics {
 mod tests {
     use super::*;
     use crate::compute::provider::LocalComputeProvider;
-    use crate::query::unified_query_optimizer::{
-    };
 
     fn create_test_bridge() -> ComputeBridge {
         let provider = LocalComputeProvider::new().unwrap();

@@ -2,12 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::{
-        MetricsConfig,
-        store::MetricsPersistenceLayer,
-        updater::{
-        },
-    };
+    use super::super::super::{MetricsConfig, store::MetricsPersistenceLayer};
     use crate::compute::distance_computation::DistanceMetric;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::background_flush_context::{

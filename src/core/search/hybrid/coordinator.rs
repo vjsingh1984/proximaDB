@@ -2,7 +2,7 @@
 //!
 //! Orchestrates parallel BM25 and vector search execution.
 
-use super::{FusionStrategy, FusedSearchResult, BM25Result, VectorResult};
+use super::{BM25Result, FusedSearchResult, FusionStrategy, VectorResult};
 
 /// Hybrid search coordinator
 ///

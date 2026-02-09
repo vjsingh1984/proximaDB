@@ -36,16 +36,16 @@
 //! let fused = engine.fuse(bm25_results, vector_results)?;
 //! ```
 
-pub mod fusion;
-pub mod coordinator;
 pub mod bm25_wrapper;
+pub mod coordinator;
+pub mod fusion;
 pub mod reranker;
 
 // Export fusion engine and error from fusion module
-pub use fusion::{HybridFusionEngine, FusionError};
+pub use fusion::{FusionError, HybridFusionEngine};
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Fusion strategies for combining BM25 and vector scores
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -297,6 +297,3 @@ mod tests {
         assert_eq!(highlight.text, "machine learning");
     }
 }
-
-#[cfg(test)]
-mod standalone_test;

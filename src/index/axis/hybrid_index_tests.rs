@@ -9,9 +9,11 @@
 
 #[cfg(test)]
 mod tests {
-use crate::index::axis::management::manager::{FilterOperator, HybridQuery, MetadataFilter, VectorQuery};
-use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
-use tracing::debug;
+    use crate::index::axis::management::manager::{
+        FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+    };
+    use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
+    use tracing::debug;
 
     #[tokio::test]
     async fn test_hybrid_vector_metadata_search() {

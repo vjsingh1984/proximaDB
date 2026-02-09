@@ -119,8 +119,9 @@ impl ParquetRangePrunedProvider {
     async fn get_metadata(&self, file_path: &str) -> Result<Arc<ParquetMetaData>> {
         // Check cache first
         {
-            let cache = self.footer_cache.read()
-                .map_err(|e| anyhow::anyhow!("Failed to acquire read lock for footer cache: {}", e))?;
+            let cache = self.footer_cache.read().map_err(|e| {
+                anyhow::anyhow!("Failed to acquire read lock for footer cache: {}", e)
+            })?;
             if let Some(metadata) = cache.get(file_path) {
                 return Ok(Arc::clone(metadata));
             }
@@ -136,8 +137,9 @@ impl ParquetRangePrunedProvider {
 
         // Cache it
         {
-            let mut cache = self.footer_cache.write()
-                .map_err(|e| anyhow::anyhow!("Failed to acquire write lock for footer cache: {}", e))?;
+            let mut cache = self.footer_cache.write().map_err(|e| {
+                anyhow::anyhow!("Failed to acquire write lock for footer cache: {}", e)
+            })?;
             cache.insert(file_path.to_string(), Arc::clone(&metadata));
         }
 
@@ -438,7 +440,9 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
 
         // Update statistics
         {
-            let mut stats = self.stats.write()
+            let mut stats = self
+                .stats
+                .write()
                 .map_err(|e| anyhow::anyhow!("Failed to acquire write lock for stats: {}", e))?;
             stats.blocks_scanned = total_blocks_scanned;
             stats.blocks_pruned = total_blocks_pruned;
@@ -557,7 +561,8 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
     }
 
     fn get_stats(&self) -> ColumnarAccessStats {
-        self.stats.read()
+        self.stats
+            .read()
             .map(|stats| stats.clone())
             .unwrap_or_else(|_| ColumnarAccessStats::default())
     }

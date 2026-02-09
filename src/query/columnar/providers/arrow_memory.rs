@@ -367,7 +367,9 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
 
         // Update statistics
         {
-            let mut stats = self.stats.write()
+            let mut stats = self
+                .stats
+                .write()
                 .map_err(|e| anyhow::anyhow!("Failed to acquire write lock for stats: {}", e))?;
             stats.rows_after_pruning = rows_matched;
             stats.cache_hits += 1;
@@ -451,7 +453,9 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
     async fn estimate_row_count(&self, _filter: Option<&FilterExpression>) -> Result<u64> {
         // For in-memory, we know exact count
         // TODO: Could apply filter estimation for more accuracy
-        let stats = self.stats.read()
+        let stats = self
+            .stats
+            .read()
             .map_err(|e| anyhow::anyhow!("Failed to acquire read lock for stats: {}", e))?;
         Ok(stats.total_rows)
     }
@@ -459,15 +463,14 @@ impl ColumnarReadProvider for ArrowInMemoryProvider {
     fn get_stats(&self) -> ColumnarAccessStats {
         // In production code, RwLock poisoning is extremely rare and indicates a serious bug
         // Using unwrap here is acceptable as it's a stats accessor in a non-critical path
-        self.stats.read()
+        self.stats
+            .read()
             .map(|stats| stats.clone())
             .unwrap_or_else(|_| ColumnarAccessStats::default())
     }
 
     fn reset_stats(&mut self) {
-        let total_rows = self.stats.read()
-            .map(|stats| stats.total_rows)
-            .unwrap_or(0);
+        let total_rows = self.stats.read().map(|stats| stats.total_rows).unwrap_or(0);
         if let Ok(mut stats) = self.stats.write() {
             *stats = ColumnarAccessStats {
                 total_rows,
@@ -531,9 +534,8 @@ mod tests {
     #[tokio::test]
     async fn test_arrow_memory_provider_basic() {
         let batch = create_test_batch();
-        let provider =
-            ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
-                .expect("Failed to create ArrowInMemoryProvider");
+        let provider = ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
+            .expect("Failed to create ArrowInMemoryProvider");
 
         assert_eq!(provider.name(), "arrow_memory");
         assert!(provider.capabilities().is_in_memory);
@@ -543,12 +545,13 @@ mod tests {
     #[tokio::test]
     async fn test_read_all_batches() {
         let batch = create_test_batch();
-        let provider =
-            ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
-                .expect("Failed to create ArrowInMemoryProvider");
+        let provider = ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
+            .expect("Failed to create ArrowInMemoryProvider");
 
         let config = PredicatePushdownConfig::default();
-        let results = provider.read_batches(config).await
+        let results = provider
+            .read_batches(config)
+            .await
             .expect("Failed to read batches");
 
         assert_eq!(results.len(), 1);
@@ -558,15 +561,16 @@ mod tests {
     #[tokio::test]
     async fn test_projection() {
         let batch = create_test_batch();
-        let provider =
-            ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
-                .expect("Failed to create ArrowInMemoryProvider");
+        let provider = ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
+            .expect("Failed to create ArrowInMemoryProvider");
 
         let config = PredicatePushdownConfig {
             projection: Some(vec!["id".to_string()]),
             ..Default::default()
         };
-        let results = provider.read_batches(config).await
+        let results = provider
+            .read_batches(config)
+            .await
             .expect("Failed to read batches with projection");
 
         assert_eq!(results[0].num_columns(), 1);
@@ -576,16 +580,17 @@ mod tests {
     #[tokio::test]
     async fn test_limit_offset() {
         let batch = create_test_batch();
-        let provider =
-            ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
-                .expect("Failed to create ArrowInMemoryProvider");
+        let provider = ArrowInMemoryProvider::new(vec![batch], "test_collection".to_string())
+            .expect("Failed to create ArrowInMemoryProvider");
 
         let config = PredicatePushdownConfig {
             offset: Some(1),
             limit: Some(2),
             ..Default::default()
         };
-        let results = provider.read_batches(config).await
+        let results = provider
+            .read_batches(config)
+            .await
             .expect("Failed to read batches with limit/offset");
 
         let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();

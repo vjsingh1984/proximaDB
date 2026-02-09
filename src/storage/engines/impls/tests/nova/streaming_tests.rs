@@ -125,9 +125,6 @@ fn test_memory_tracker() {
 
 #[tokio::test]
 async fn test_streaming_processor_creation() {
-    use crate::storage::engines::impls::nova::streaming_processor::{
-    };
-
     let config = StreamingConfig::default();
     let _processor = StreamingRowGroupProcessor::new(config);
 
@@ -143,7 +140,6 @@ async fn test_streaming_processor_creation() {
 
 #[test]
 fn test_group_by_row_group() {
-
     // Function is private, test indirectly through BatchConfig
     let config = BatchConfig::default();
     assert_eq!(config.max_concurrent_row_groups, 4);

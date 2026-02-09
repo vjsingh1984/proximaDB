@@ -2,8 +2,6 @@
 //!
 //! Tests for VIPER metadata serialization and codebook sidecar storage.
 
-
-
 #[test]
 fn test_viper_metadata_serialization() {
     use crate::storage::engines::impls::viper::unified_metadata_serializer::{

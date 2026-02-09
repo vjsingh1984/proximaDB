@@ -91,8 +91,7 @@ impl ProximaBlocksArrowReader {
     /// A ProximaBlocksArrowReader ready to read records
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        let mut file =
-            File::open(&path).context(format!("Failed to open SST file: {path_str}"))?;
+        let mut file = File::open(&path).context(format!("Failed to open SST file: {path_str}"))?;
 
         // Read and validate magic marker
         let mut magic = [0u8; 4];

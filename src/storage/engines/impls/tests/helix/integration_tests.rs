@@ -33,7 +33,7 @@ use crate::proto::proximadb_v1::{
     StorageEngine,
 };
 use crate::storage::engines::impls::helix::*;
-use crate::storage::persistence::filesystem::{FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
     CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
     StorageQueryMetadata, UnifiedStorageEngine,
@@ -428,7 +428,7 @@ async fn test_progressive_search() {
 /// Test zone maps for dimension-level pruning
 #[tokio::test]
 async fn test_zone_maps() {
-use crate::storage::engines::impls::helix::zone_maps::{ZoneMap, ZoneMapBuilder};
+    use crate::storage::engines::impls::helix::zone_maps::{ZoneMap, ZoneMapBuilder};
 
     // Create test vectors with known patterns
     let vectors = create_test_vectors(500, 32);

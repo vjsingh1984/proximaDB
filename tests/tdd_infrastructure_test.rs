@@ -29,8 +29,7 @@ mod infrastructure_tests {
         // Verify Makefile has TDD targets
         // (This is a basic check - in real implementation we'd parse Makefile)
 
-        let makefile_content = std::fs::read_to_string("Makefile")
-            .expect("Makefile should exist");
+        let makefile_content = std::fs::read_to_string("Makefile").expect("Makefile should exist");
 
         assert!(makefile_content.contains("test-tdd"));
         assert!(makefile_content.contains("test-coverage"));

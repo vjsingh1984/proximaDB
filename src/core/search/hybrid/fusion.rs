@@ -2,7 +2,7 @@
 //!
 //! Implements various algorithms for combining BM25 and vector search results.
 
-use super::{FusionStrategy, FusedSearchResult, BM25Result, VectorResult};
+use super::{BM25Result, FusedSearchResult, FusionStrategy, VectorResult};
 use std::collections::HashMap;
 
 /// Errors that can occur during fusion
@@ -170,10 +170,7 @@ impl HybridFusionEngine {
     ) -> Result<Vec<FusedSearchResult>, FusionError> {
         // Find max scores for normalization
         let bm25_max = if bm25_normalize {
-            bm25_results
-                .iter()
-                .map(|r| r.score)
-                .fold(0.0_f64, f64::max)
+            bm25_results.iter().map(|r| r.score).fold(0.0_f64, f64::max)
         } else {
             1.0
         };
@@ -424,8 +421,8 @@ mod tests {
 
     #[test]
     fn test_engine_with_top_k() {
-        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 })
-            .with_top_k(20);
+        let engine =
+            HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 }).with_top_k(20);
         assert_eq!(engine.default_top_k, 20);
     }
 

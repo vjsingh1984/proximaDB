@@ -779,8 +779,8 @@ impl UnifiedColumnarCompaction {
         }
 
         // Create and write with ArrowWriter
-        let file = File::create(local_path)
-            .with_context(|| format!("Failed to create: {local_path}"))?;
+        let file =
+            File::create(local_path).with_context(|| format!("Failed to create: {local_path}"))?;
 
         let mut writer = ArrowWriter::try_new(file, schema, Some(writer_properties))?;
 

@@ -335,9 +335,15 @@ impl CollectionService {
         // NEW: Add tenant metadata to collection if tenant context is provided
         if let Some(tenant_ctx) = tenant_context {
             // Add tenant ID to collection tags for tenant isolation (metadata field doesn't exist)
-            enriched_config.tags.push(format!("tenant:{}", tenant_ctx.tenant_id));
-            enriched_config.tags.push("tenant_isolated:true".to_string());
-            enriched_config.tags.push(format!("created_at:{}", chrono::Utc::now().to_rfc3339()));
+            enriched_config
+                .tags
+                .push(format!("tenant:{}", tenant_ctx.tenant_id));
+            enriched_config
+                .tags
+                .push("tenant_isolated:true".to_string());
+            enriched_config
+                .tags
+                .push(format!("created_at:{}", chrono::Utc::now().to_rfc3339()));
 
             // Set owner field if available
             enriched_config.owner = Some(tenant_ctx.tenant_id.clone());

@@ -20,7 +20,7 @@ use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::core::formats::columnar::CollectionContext;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
-use crate::storage::persistence::filesystem::{FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 // Arrow imports for parquet file creation
 use arrow_array::{Int64Array, RecordBatch, StringArray};

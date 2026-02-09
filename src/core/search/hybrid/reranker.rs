@@ -2,7 +2,7 @@
 //!
 //! Applies filters, metadata constraints, and reranking after fusion.
 
-use super::{FusedSearchResult};
+use super::FusedSearchResult;
 
 /// Result reranker
 pub struct Reranker {

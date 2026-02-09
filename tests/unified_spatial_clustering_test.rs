@@ -8,8 +8,6 @@ use proximadb::storage::engines::core::formats::proximablocks::spatial_encoding:
 use proximadb::storage::engines::core::formats::proximablocks::spatial_pruning::{
     BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
 };
-use proximadb::storage::engines::core::formats::proximablocks::spatial_traits::{
-};
 use proximadb::storage::engines::core::pca::{
     BlockInfo, ClusteringConfig, EnhancedPCAModel, SpatialClusteringPipeline,
 };

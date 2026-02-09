@@ -5,8 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::transaction_coordinator::{
-    };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
         SystemMetadata, VersionedCollectionMetadata,
@@ -175,7 +173,10 @@ mod tests {
             }
         }
 
-        async fn commit_transaction(&self, transaction_id: &TransactionId) -> Result<(), anyhow::Error> {
+        async fn commit_transaction(
+            &self,
+            transaction_id: &TransactionId,
+        ) -> Result<(), anyhow::Error> {
             let mut transactions = self.transactions.write().await;
             match transactions.get_mut(transaction_id) {
                 Some(tx) if tx.state == TransactionState::Active => {
@@ -228,7 +229,10 @@ mod tests {
             }
         }
 
-        async fn abort_transaction(&self, transaction_id: &TransactionId) -> Result<(), anyhow::Error> {
+        async fn abort_transaction(
+            &self,
+            transaction_id: &TransactionId,
+        ) -> Result<(), anyhow::Error> {
             if let Some(tx) = self.transactions.write().await.get_mut(transaction_id) {
                 tx.state = TransactionState::Aborted;
             }
@@ -372,7 +376,10 @@ mod tests {
             Ok(())
         }
 
-        async fn batch_operations(&self, operations: Vec<MetadataOperation>) -> Result<(), anyhow::Error> {
+        async fn batch_operations(
+            &self,
+            operations: Vec<MetadataOperation>,
+        ) -> Result<(), anyhow::Error> {
             for op in operations {
                 match op {
                     MetadataOperation::CreateCollection(metadata) => {
@@ -405,7 +412,10 @@ mod tests {
             Ok(SystemMetadata::default())
         }
 
-        async fn update_system_metadata(&self, _metadata: SystemMetadata) -> Result<(), anyhow::Error> {
+        async fn update_system_metadata(
+            &self,
+            _metadata: SystemMetadata,
+        ) -> Result<(), anyhow::Error> {
             Ok(())
         }
 

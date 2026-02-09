@@ -531,9 +531,7 @@ impl RecordSchema {
         // Check null
         if value.is_null() {
             if !column.nullable {
-                return Err(anyhow!(
-                    "Column '{column_name}' does not allow null values"
-                ));
+                return Err(anyhow!("Column '{column_name}' does not allow null values"));
             }
             return Ok(());
         }
@@ -700,9 +698,7 @@ impl TypedValue {
                     let re = regex::Regex::new(pattern)
                         .map_err(|e| anyhow!("Invalid regex pattern: {e}"))?;
                     if !re.is_match(s) {
-                        return Err(anyhow!(
-                            "Value '{s}' does not match pattern '{pattern}'"
-                        ));
+                        return Err(anyhow!("Value '{s}' does not match pattern '{pattern}'"));
                     }
                 }
             }

@@ -4,7 +4,7 @@ use proximadb::proto::proximadb_v1::{
 };
 use proximadb::storage::engines::factory::StorageEngineFactory;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb::storage::traits::{FlushParameters};
+use proximadb::storage::traits::FlushParameters;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;

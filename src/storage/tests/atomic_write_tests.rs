@@ -16,7 +16,7 @@
 
 //! Integration tests for atomic write patterns with TransactionCoordinator
 
-use crate::core::{VectorRecord};
+use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemConfig;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{
