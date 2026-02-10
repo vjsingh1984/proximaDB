@@ -83,6 +83,9 @@ use crate::query::unified::executor::ParallelExecutor;
 use crate::query::unified::{
     DataModel, FusionStrategy, QueryDecomposer, ResultFuser, UnifiedQueryConfig,
 };
+use crate::security::unified_rbac::{
+    ConsolidatedRBACManager, UnifiedPermission,
+};
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -118,6 +121,12 @@ pub struct UnifiedQueryApiState {
     /// When set, all queries route through this adapter, making the legacy
     /// fields below unnecessary. This is the preferred mode.
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
+
+    // =========================================================================
+    // SECURITY - RBAC Manager for permission validation
+    // =========================================================================
+    /// RBAC manager for validating query permissions
+    pub rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
 
     // =========================================================================
     // PREPARED STATEMENTS - Thread-safe statement cache
@@ -175,6 +184,7 @@ impl UnifiedQueryApiState {
         let config = UnifiedQueryConfig::default();
         Self {
             query_adapter: Some(adapter),
+            rbac_manager: None, // RBAC manager can be added later
             // Prepared statement cache with default configuration
             prepared_statement_cache: Arc::new(PreparedStatementCache::new(
                 PreparedStatementConfig::default(),
@@ -217,6 +227,7 @@ impl UnifiedQueryApiState {
         let config = UnifiedQueryConfig::default();
         Self {
             query_adapter: Some(adapter),
+            rbac_manager: None,
             prepared_statement_cache: Arc::new(PreparedStatementCache::new(prepared_config)),
             document_service,
             storage_engine,
@@ -230,6 +241,12 @@ impl UnifiedQueryApiState {
             federated_context: None,
             federated_parser: Arc::new(FederatedParser::new()),
         }
+    }
+
+    /// Set RBAC manager for permission validation
+    pub fn with_rbac_manager(mut self, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
+        self.rbac_manager = Some(rbac_manager);
+        self
     }
 }
 

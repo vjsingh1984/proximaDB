@@ -278,8 +278,10 @@ mod performance_comparison_tests {
             let ctx = StorageQueryContext {
                 search_params,
                 collection,
-                metadata,
-            };
+                metadata
+            user_context: None,
+        tenant_context: None,
+    };
 
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
 
@@ -744,7 +746,9 @@ mod performance_comparison_tests {
                 search_params,
                 collection,
                 metadata: StorageQueryMetadata::default(),
-            };
+            user_context: None,
+        tenant_context: None,
+    };
 
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
             let elapsed = start.elapsed();
@@ -1013,7 +1017,9 @@ mod performance_comparison_tests {
                             search_params,
                             collection,
                             metadata: StorageQueryMetadata::default(),
-                        };
+            user_context: None,
+        tenant_context: None,
+    };
                         engine_clone.search_vectors_unified(&ctx).await
                     });
                     handles.push(handle);

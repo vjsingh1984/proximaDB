@@ -211,6 +211,8 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             use_axis_indexes: false,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let search_results = sst_engine.search_vectors_unified(&query_context).await?;
@@ -258,6 +260,8 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             use_axis_indexes: false,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let filtered_results = sst_engine

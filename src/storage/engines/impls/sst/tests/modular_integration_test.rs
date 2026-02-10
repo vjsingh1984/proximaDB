@@ -240,7 +240,9 @@ mod tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
-        };
+            user_context: None,
+        tenant_context: None,
+    };
 
         let search_result = engine.search_vectors_unified(&ctx).await;
         // Should handle empty query vector gracefully

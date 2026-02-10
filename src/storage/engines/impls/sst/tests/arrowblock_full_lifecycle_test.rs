@@ -302,8 +302,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let search_results = engine.search_vectors_unified(&ctx).await?;
 
             // Verify we got results
@@ -365,8 +366,9 @@ mod tests {
                 collection_id: collection_id.to_string(),
                 ..Default::default()
             },
-        };
-
+                user_context: None,
+                tenant_context: None,
+            };
         let cross_batch_results = engine.search_vectors_unified(&cross_batch_ctx).await?;
 
         assert!(
@@ -450,8 +452,9 @@ mod tests {
                 collection_id: collection_id.to_string(),
                 ..Default::default()
             },
-        };
-
+                user_context: None,
+                tenant_context: None,
+            };
         let persistence_results = engine2.search_vectors_unified(&persistence_ctx).await?;
 
         assert!(
@@ -559,8 +562,9 @@ mod tests {
                 collection_id: collection_id.to_string(),
                 ..Default::default()
             },
-        };
-
+                user_context: None,
+                tenant_context: None,
+            };
         let results = engine.search_vectors_unified(&ctx).await?;
 
         assert!(!results.is_empty(), "Should return results");
@@ -646,8 +650,9 @@ mod tests {
                 collection_id: "empty_collection".to_string(),
                 ..Default::default()
             },
-        };
-
+                user_context: None,
+                tenant_context: None,
+            };
         let results = engine.search_vectors_unified(&ctx).await?;
 
         assert!(

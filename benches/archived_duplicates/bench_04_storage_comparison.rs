@@ -367,8 +367,10 @@ fn bench_all_engines_search(c: &mut Criterion) {
                         let ctx = StorageQueryContext {
                             search_params,
                             collection,
-                            metadata,
-                        };
+                            metadata
+            user_context: None,
+        tenant_context: None,
+    };
 
                         let results = engine.search_vectors_unified(&ctx).await;
                         match results {

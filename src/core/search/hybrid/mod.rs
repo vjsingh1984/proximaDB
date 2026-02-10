@@ -41,7 +41,8 @@ pub mod coordinator;
 pub mod fusion;
 pub mod reranker;
 
-// Export fusion engine and error from fusion module
+// Export fusion engine, error, and coordinator
+pub use coordinator::HybridCoordinator;
 pub use fusion::{FusionError, HybridFusionEngine};
 
 use serde::{Deserialize, Serialize};
@@ -111,6 +112,90 @@ pub enum FusionStrategy {
     ///
     /// Normalizes both scores to [0,1] and averages them
     ConditionalNormalization,
+
+    /// Borda Count
+    ///
+    /// Rank-based voting method where each document gets points based on its rank
+    /// Formula: `score = (N - rank_bm25) + (N - rank_vector)`
+    /// where N is the total number of documents in both result sets
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::BordaCount;
+    /// ```
+    BordaCount,
+
+    /// CombSUM
+    ///
+    /// Simple summation of normalized scores
+    /// Formula: `score = bm25_normalized + vector_normalized`
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::CombSum;
+    /// ```
+    CombSum,
+
+    /// CombMIN
+    ///
+    /// Minimum score selection (pessimistic)
+    /// Formula: `score = min(bm25_normalized, vector_normalized)`
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::CombMin;
+    /// ```
+    CombMin,
+
+    /// CombMAX
+    ///
+    /// Maximum score selection (optimistic)
+    /// Formula: `score = max(bm25_normalized, vector_normalized)`
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::CombMax;
+    /// ```
+    CombMax,
+
+    /// Condorcet Fusion
+    ///
+    /// Pairwise comparison method - document wins if it outranks the other in both lists
+    /// Formula: Binary wins, losses summed across all comparisons
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::Condorcet;
+    /// ```
+    Condorcet,
+
+    /// Dempster-Shafer
+    ///
+    /// Evidence theory combination - treats scores as belief functions
+    /// Formula: Combines evidence using Dempster's rule of combination
+    ///
+    /// # Arguments
+    /// * `alpha` - Weighting parameter (0.0 to 1.0)
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::DempsterShafer { alpha: 0.5 };
+    /// ```
+    DempsterShafer { alpha: f64 },
+
+    /// Adaptive Fusion
+    ///
+    /// Dynamically selects strategy based on query characteristics and result overlap
+    /// Chooses between RRF, WeightedLinear, and CombSum based on:
+    /// - Result set overlap (Jaccard similarity)
+    /// - Score variance
+    /// - Rank correlation
+    ///
+    /// # Example
+    /// ```
+    /// let strategy = FusionStrategy::Adaptive;
+    /// ```
+    Adaptive,
 }
 
 impl std::fmt::Display for FusionStrategy {
@@ -135,6 +220,27 @@ impl std::fmt::Display for FusionStrategy {
             }
             FusionStrategy::ConditionalNormalization => {
                 write!(f, "CCF")
+            }
+            FusionStrategy::BordaCount => {
+                write!(f, "BordaCount")
+            }
+            FusionStrategy::CombSum => {
+                write!(f, "CombSUM")
+            }
+            FusionStrategy::CombMin => {
+                write!(f, "CombMIN")
+            }
+            FusionStrategy::CombMax => {
+                write!(f, "CombMAX")
+            }
+            FusionStrategy::Condorcet => {
+                write!(f, "Condorcet")
+            }
+            FusionStrategy::DempsterShafer { alpha } => {
+                write!(f, "DempsterShafer(alpha={:.2})", alpha)
+            }
+            FusionStrategy::Adaptive => {
+                write!(f, "Adaptive")
             }
         }
     }

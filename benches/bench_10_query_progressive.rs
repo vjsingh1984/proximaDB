@@ -123,6 +123,8 @@ async fn progressive_search_real(
         search_params,
         collection,
         metadata: StorageQueryMetadata::default(),
+            user_context: None,
+        tenant_context: None,
     };
 
     // Execute real progressive search

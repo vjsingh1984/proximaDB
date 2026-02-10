@@ -120,7 +120,9 @@ async fn main() -> anyhow::Result<()> {
     let ctx = StorageQueryContext {
         search_params: search_params.clone(),
         collection: Arc::new(collection.clone()),
-        metadata,
+        metadata
+            user_context: None,
+        tenant_context: None,
     };
 
     let results = sst_engine.search_vectors_unified(&ctx).await?;
@@ -153,7 +155,9 @@ async fn main() -> anyhow::Result<()> {
     let ctx_filtered = StorageQueryContext {
         search_params: search_params_filtered,
         collection: Arc::new(collection.clone()),
-        metadata,
+        metadata
+            user_context: None,
+        tenant_context: None,
     };
 
     let filtered_results = sst_engine.search_vectors_unified(&ctx_filtered).await?;

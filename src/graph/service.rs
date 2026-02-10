@@ -79,6 +79,7 @@ pub use service_transactions::{
 };
 
 use crate::core::error::ProximaDBError;
+use crate::security::unified_rbac::{ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext};
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     engines::{GraphEngine, orion::OrionGraphEngine},
@@ -119,6 +120,8 @@ pub struct GraphOperationsService {
     graph_settings: crate::core::context::GraphTraversalSettings,
     /// Transaction manager for ACID transaction support
     transaction_manager: Arc<service_transactions::TransactionManager>,
+    /// RBAC manager for permission validation
+    rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
 }
 
 impl GraphOperationsService {
@@ -149,6 +152,7 @@ impl GraphOperationsService {
             edge_type_counts: Arc::new(DashMap::new()),
             graph_settings: default_settings,
             transaction_manager,
+            rbac_manager: None,
         };
 
         // Register lightweight graph cache providers with orchestrator
@@ -223,6 +227,7 @@ impl GraphOperationsService {
             edge_type_counts: Arc::new(DashMap::new()),
             graph_settings: default_settings,
             transaction_manager,
+            rbac_manager: None,
         };
 
         // Register cache providers
@@ -269,6 +274,57 @@ impl GraphOperationsService {
         let mut service = Self::new();
         service.base_storage_url = base_storage_url;
         service
+    }
+
+    /// Create a new GraphOperationsService with RBAC enabled
+    pub fn with_rbac(mut self, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
+        self.rbac_manager = Some(rbac_manager);
+        self
+    }
+
+    /// Validate graph operation permission
+    async fn validate_graph_permission(
+        &self,
+        user_ctx: &UnifiedUserContext,
+        graph_id: &str,
+        operation: &str,
+    ) -> Result<()> {
+        let rbac_manager = self.rbac_manager.as_ref().ok_or_else(|| {
+            ProximaDBError::Internal(format!(
+                "Graph operation: {} on {} - RBAC manager not configured",
+                operation, graph_id
+            ))
+        })?;
+
+        let permission = match operation {
+            "read" | "traverse" => UnifiedPermission::GraphTraverse(graph_id.to_string()),
+            "create_node" | "create_edge" | "create_relations" => {
+                UnifiedPermission::GraphCreateRelations(graph_id.to_string())
+            }
+            "delete_node" | "delete_edge" | "delete_relations" => {
+                UnifiedPermission::GraphDeleteRelations(graph_id.to_string())
+            }
+            _ => UnifiedPermission::GraphTraverse(graph_id.to_string()),
+        };
+
+        let allowed = rbac_manager
+            .check_permission_cached(&user_ctx.user_id, &permission)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Internal(format!(
+                    "Graph operation: {} on {} - Failed to check permission: {}",
+                    operation, graph_id, e
+                ))
+            })?;
+
+        if !allowed {
+            return Err(ProximaDBError::Internal(format!(
+                "Graph operation: {} on {} - Insufficient permissions",
+                operation, graph_id
+            )));
+        }
+
+        Ok(())
     }
 
     // get_or_create_graph_engine moved to service_engine_factory.rs

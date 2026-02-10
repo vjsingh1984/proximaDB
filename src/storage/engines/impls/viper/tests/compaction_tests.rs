@@ -1612,6 +1612,8 @@ async fn test_compaction_with_metadata_filtering() {
             storage_path: temp_dir.path().to_str().unwrap().to_string(), // base_location, not full path
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     // Debug: check if ANY vectors are returned using unified search

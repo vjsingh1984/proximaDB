@@ -1233,6 +1233,8 @@ impl NovaEngine {
                 storage_path: base_location, // Use base_location, not full path
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let internal_results = self.search_vectors_unified(&ctx).await?;

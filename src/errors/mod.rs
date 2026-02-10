@@ -32,6 +32,10 @@ pub enum ApiError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    /// Forbidden - insufficient permissions
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     /// Operation not implemented
     #[error("Not implemented: {0}")]
     NotImplemented(String),
@@ -81,6 +85,7 @@ impl From<ApiError> for tonic::Status {
             ApiError::Internal(msg) => tonic::Status::internal(msg),
             ApiError::ResourceExhausted(msg) => tonic::Status::resource_exhausted(msg),
             ApiError::Unauthorized(msg) => tonic::Status::unauthenticated(msg),
+            ApiError::Forbidden(msg) => tonic::Status::permission_denied(msg),
             ApiError::NotImplemented(msg) => tonic::Status::unimplemented(msg),
             ApiError::DeadlineExceeded(msg) => tonic::Status::deadline_exceeded(msg),
             ApiError::AlreadyExists(msg) => tonic::Status::already_exists(msg),
@@ -109,6 +114,7 @@ impl IntoResponse for ApiError {
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
             ApiError::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "resource_exhausted"),
             ApiError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             ApiError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             ApiError::DeadlineExceeded(_) => (StatusCode::REQUEST_TIMEOUT, "deadline_exceeded"),
             ApiError::AlreadyExists(_) => (StatusCode::CONFLICT, "already_exists"),

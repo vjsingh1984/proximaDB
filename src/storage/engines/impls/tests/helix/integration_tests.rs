@@ -570,6 +570,8 @@ async fn test_end_to_end_search() {
         search_params,
         collection,
         metadata: crate::storage::traits::StorageQueryMetadata::default(),
+        user_context: None,
+        tenant_context: None,
     };
 
     // Execute search
@@ -914,6 +916,8 @@ async fn test_vector_search() {
         search_params: Arc::new(search_params),
         collection,
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await.unwrap();

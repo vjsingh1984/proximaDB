@@ -794,6 +794,8 @@ pub mod operations {
                 compression_enabled: false,
                 quantization_enabled: false,
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         // Direct production call using unified search
@@ -863,6 +865,8 @@ pub mod operations {
                 compression_enabled: false,
                 quantization_enabled: false,
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         // Direct production call using VIPER's unified search

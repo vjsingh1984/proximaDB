@@ -419,8 +419,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let search_results = engine.search_vectors_unified(&ctx).await?;
 
             // Verify we got results
@@ -535,8 +536,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let results = engine.search_vectors_unified(&ctx).await?;
 
             if !results.is_empty() && results[0].id == original_vector.id {
@@ -738,8 +740,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let results = engine.search_vectors_unified(&ctx).await?;
 
             assert!(
@@ -925,8 +928,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let results = engine.search_vectors_unified(&ctx).await?;
 
             if !results.is_empty() {

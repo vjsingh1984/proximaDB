@@ -184,6 +184,8 @@ async fn test_sst_with_bge_768_embeddings() -> anyhow::Result<()> {
             collection_id: collection_config.id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;
@@ -313,6 +315,8 @@ async fn test_sst_with_openai_1536_embeddings() -> anyhow::Result<()> {
             collection_id: collection_config.id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;

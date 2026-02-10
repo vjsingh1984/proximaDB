@@ -1421,6 +1421,16 @@ pub fn create_router(state: AppState) -> axum::Router {
     router = router.nest("/api/v1/unified", unified_query_router);
     info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
 
+    // Hybrid Search API endpoints
+    let hybrid_router = {
+        use crate::network::rest::v1::hybrid::{self, HybridSearchApiState};
+
+        let hybrid_state = HybridSearchApiState::new();
+        hybrid::create_router().with_state(hybrid_state)
+    };
+    router = router.nest("/api/v1/hybrid", hybrid_router);
+    info!("✅ Hybrid Search API endpoints enabled at /api/v1/hybrid");
+
     // Convert to Router<()> by providing state
     let router = router.with_state(state);
 

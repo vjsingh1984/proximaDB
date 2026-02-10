@@ -144,6 +144,8 @@ async fn test_single_vector_operations() {
         search_params: std::sync::Arc::new(search_params),
         collection: std::sync::Arc::new(collection),
         metadata: crate::storage::traits::StorageQueryMetadata::default(),
+        user_context: None,
+        tenant_context: None,
     };
     let results = engine
         .search_vectors_unified(&query_context)

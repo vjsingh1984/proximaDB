@@ -418,6 +418,8 @@ impl StorageEngineBenchmark {
                 has_quantization: enable_quantization,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         }
     }
 
@@ -433,7 +435,7 @@ impl StorageEngineBenchmark {
         let filter = crate::core::search::FilterExpression::Comparison {
             field: "category".to_string(),
             operator: crate::core::search::ComparisonOperator::Equals,
-            value: serde_json::Value::String("test".to_string()),
+            value: serde_json::Value::String("test".to_string())
         };
 
         Arc::get_mut(&mut ctx.search_params)

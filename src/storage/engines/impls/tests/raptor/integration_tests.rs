@@ -231,6 +231,8 @@ async fn test_search_vectors() -> Result<()> {
         search_params,
         collection: collection_arc,
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
     println!("Calling search_vectors_unified...");
     let results = engine.search_vectors_unified(&query_context).await?;
@@ -779,6 +781,8 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
         search_params: search_params.clone(),
         collection: collection_arc.clone(),
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;

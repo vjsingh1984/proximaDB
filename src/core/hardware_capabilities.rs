@@ -1249,10 +1249,15 @@ impl HardwareCapabilities {
         let available_memory = sys.available_memory(); // Already in bytes
 
         // Recommend cache size as 10% of available memory, capped at 8GB
-        let recommended_cache_size = std::cmp::min(
-            available_memory / 10,
-            8 * 1024 * 1024 * 1024, // 8GB max
-        );
+        // Ensure minimum of 1GB if detection returns 0 (environment-specific issue)
+        let recommended_cache_size = if available_memory > 0 {
+            std::cmp::min(
+                available_memory / 10,
+                8 * 1024 * 1024 * 1024, // 8GB max
+            )
+        } else {
+            1024 * 1024 * 1024 // 1GB fallback when detection fails
+        };
 
         Ok(MemoryInfo {
             total_memory,

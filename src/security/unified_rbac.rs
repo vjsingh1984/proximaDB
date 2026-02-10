@@ -11,7 +11,31 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tracing::info;
+use std::time::Duration;
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
+
+// Re-export types from Enhanced RBAC for compatibility
+pub use crate::storage::tenant::rbac::{
+    CollectionOperation as EnhancedCollectionOperation,
+    Permission as EnhancedPermission,
+};
+
+/// Data model enum for cross-model permission validation
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataModel {
+    Vector,
+    Document,
+    Graph,
+    Observability,
+}
+
+/// Permission cache entry with TTL
+#[derive(Debug, Clone)]
+struct PermissionCacheEntry {
+    allowed: bool,
+    cached_at: DateTime<Utc>,
+}
 
 /// Unified permission model consolidating all permission types
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +161,12 @@ pub struct ConsolidatedRBACManager {
 
     /// Configuration
     config: RBACConfig,
+
+    /// Permission cache for performance (user_id -> permission -> entry)
+    permission_cache: Arc<RwLock<HashMap<String, HashMap<UnifiedPermission, PermissionCacheEntry>>>>,
+
+    /// Reference to Enhanced RBAC Manager for multi-tenant operations
+    enhanced_rbac: Option<Arc<crate::storage::tenant::rbac::EnhancedRBACManager>>,
 }
 
 /// Collection permissions with unified model
@@ -230,6 +260,8 @@ impl ConsolidatedRBACManager {
             user_role_assignments: Arc::new(DashMap::new()),
             audit_logger: None,
             config,
+            permission_cache: Arc::new(RwLock::new(HashMap::new())),
+            enhanced_rbac: None,
         };
 
         // Initialize default system roles
@@ -237,9 +269,258 @@ impl ConsolidatedRBACManager {
         manager
     }
 
+    /// Create new consolidated RBAC manager with Enhanced RBAC integration
+    pub fn with_enhanced_rbac(
+        config: RBACConfig,
+        enhanced_rbac: Arc<crate::storage::tenant::rbac::EnhancedRBACManager>,
+    ) -> Self {
+        let manager = Self {
+            tenant_roles: Arc::new(DashMap::new()),
+            system_roles: Arc::new(DashMap::new()),
+            collection_permissions: Arc::new(DashMap::new()),
+            user_role_assignments: Arc::new(DashMap::new()),
+            audit_logger: None,
+            config,
+            permission_cache: Arc::new(RwLock::new(HashMap::new())),
+            enhanced_rbac: Some(enhanced_rbac),
+        };
+
+        manager.initialize_default_system_roles();
+        manager
+    }
+
     /// Set audit logger for RBAC events
     pub fn set_audit_logger(&mut self, logger: Arc<dyn RBACEventLogger + Send + Sync>) {
         self.audit_logger = Some(logger);
+    }
+
+    /// Check permission with caching support
+    pub async fn check_permission_cached(
+        &self,
+        user_id: &str,
+        permission: &UnifiedPermission,
+    ) -> Result<bool> {
+        if !self.config.cache_permissions {
+            return self.check_permission_with_context(user_id, permission).await;
+        }
+
+        // Check cache first
+        {
+            let cache = self.permission_cache.read().await;
+            if let Some(user_cache) = cache.get(user_id) {
+                if let Some(entry) = user_cache.get(permission) {
+                    let now = Utc::now();
+                    let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
+
+                    if now.signed_duration_since(entry.cached_at).to_std().unwrap_or(Duration::ZERO) < ttl {
+                        debug!("Cache hit for user '{}': {:?}", user_id, permission);
+                        return Ok(entry.allowed);
+                    }
+                }
+            }
+        }
+
+        // Cache miss - perform actual check
+        let allowed = self.check_permission_with_context(user_id, permission).await?;
+
+        // Update cache
+        {
+            let mut cache = self.permission_cache.write().await;
+            let user_cache = cache.entry(user_id.to_string()).or_insert_with(HashMap::new);
+            user_cache.insert(
+                permission.clone(),
+                PermissionCacheEntry {
+                    allowed,
+                    cached_at: Utc::now(),
+                },
+            );
+        }
+
+        Ok(allowed)
+    }
+
+    /// Validate collection access across data models
+    pub async fn validate_collection_access_cross_model(
+        &self,
+        user_ctx: &UnifiedUserContext,
+        collection_id: &str,
+        operation: EnhancedCollectionOperation,
+        data_model: DataModel,
+    ) -> Result<AuthorizationResult> {
+        let permission = match (data_model.clone(), &operation) {
+            (DataModel::Vector, EnhancedCollectionOperation::Read) => {
+                UnifiedPermission::CollectionRead(collection_id.to_string())
+            }
+            (DataModel::Vector, EnhancedCollectionOperation::Write) => {
+                UnifiedPermission::CollectionWrite(collection_id.to_string())
+            }
+            (DataModel::Graph, EnhancedCollectionOperation::Read) => {
+                UnifiedPermission::CollectionRead(collection_id.to_string())
+            }
+            (DataModel::Graph, EnhancedCollectionOperation::Delete) => {
+                UnifiedPermission::CollectionDelete(collection_id.to_string())
+            }
+            (DataModel::Graph, EnhancedCollectionOperation::Admin) => {
+                UnifiedPermission::CollectionAdmin(collection_id.to_string())
+            }
+            (DataModel::Document, EnhancedCollectionOperation::Read) => {
+                UnifiedPermission::CollectionRead(collection_id.to_string())
+            }
+            (DataModel::Document, EnhancedCollectionOperation::Write) => {
+                UnifiedPermission::CollectionWrite(collection_id.to_string())
+            }
+            (DataModel::Document, EnhancedCollectionOperation::Delete) => {
+                UnifiedPermission::CollectionDelete(collection_id.to_string())
+            }
+            (DataModel::Document, EnhancedCollectionOperation::Admin) => {
+                UnifiedPermission::CollectionAdmin(collection_id.to_string())
+            }
+            _ => {
+                return Ok(AuthorizationResult {
+                    allowed: false,
+                    permissions: HashSet::new(),
+                    tenant_context: None,
+                    reason: Some(format!(
+                        "Unsupported operation {:?} for data model {:?}",
+                        operation, data_model
+                    )),
+                });
+            }
+        };
+
+        let allowed = self.check_permission_cached(&user_ctx.user_id, &permission).await?;
+
+        let mut permissions = HashSet::new();
+        permissions.insert(permission.clone());
+
+        Ok(AuthorizationResult {
+            allowed,
+            permissions,
+            tenant_context: user_ctx.tenant_id.as_ref().map(|tid| TenantContext {
+                tenant_id: tid.clone(),
+                tenant_name: tid.clone(),
+                security_policy: "default".to_string(),
+                compliance_frameworks: Vec::new(),
+            }),
+            reason: if allowed { None } else { Some("Insufficient permissions".to_string()) },
+        })
+    }
+
+    /// Bridge to Enhanced RBAC for tenant-level operations
+    pub async fn validate_bridge_enhanced_rbac(
+        &self,
+        user_context: &crate::storage::tenant::UserContext,
+        collection_id: &str,
+        operation: EnhancedCollectionOperation,
+    ) -> Result<crate::storage::tenant::rbac::AccessValidationResult> {
+        if let Some(enhanced) = &self.enhanced_rbac {
+            return enhanced
+                .validate_collection_access(
+                    &user_context.tenant_id,
+                    collection_id,
+                    operation,
+                    user_context,
+                )
+                .await;
+        }
+
+        // Fallback to internal validation if no Enhanced RBAC
+        let user_ctx = UnifiedUserContext {
+            user_id: user_context.user_id.clone(),
+            tenant_id: Some(user_context.tenant_id.clone()),
+            roles: user_context.roles.clone(),
+            effective_permissions: HashSet::new(),
+            auth_method: AuthMethod::Internal,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            expires_at: None,
+            created_at: Utc::now(),
+            metadata: HashMap::new(),
+        };
+
+        let auth_result = self
+            .validate_collection_access_cross_model(
+                &user_ctx,
+                collection_id,
+                operation,
+                DataModel::Vector,
+            )
+            .await?;
+
+        Ok(crate::storage::tenant::rbac::AccessValidationResult {
+            granted: auth_result.allowed,
+            user_context: user_context.clone(),
+            collection_context: crate::storage::tenant::rbac::CollectionContext {
+                tenant_id: user_context.tenant_id.clone(),
+                collection_id: collection_id.to_string(),
+                operation: crate::storage::tenant::rbac::CollectionOperation::Read,
+            },
+            validation_metadata: crate::storage::tenant::rbac::ValidationMetadata {
+                validated_at: Utc::now(),
+                permissions_checked: HashSet::new(),
+                validation_reason: auth_result.reason.unwrap_or_default(),
+            },
+        })
+    }
+
+    /// Clear permission cache for a specific user
+    pub async fn clear_user_cache(&self, user_id: &str) {
+        let mut cache = self.permission_cache.write().await;
+        cache.remove(user_id);
+        debug!("Cleared permission cache for user '{}'", user_id);
+    }
+
+    /// Clear entire permission cache
+    pub async fn clear_all_cache(&self) {
+        let mut cache = self.permission_cache.write().await;
+        cache.clear();
+        debug!("Cleared entire permission cache");
+    }
+
+    /// Check permission with full context (internal method)
+    async fn check_permission_with_context(
+        &self,
+        user_id: &str,
+        permission: &UnifiedPermission,
+    ) -> Result<bool> {
+        // Get user role assignment
+        let assignment = self.user_role_assignments.get(user_id);
+
+        if let Some(assignment) = assignment {
+            let effective_permissions = self
+                .get_effective_permissions_for_assignment(&assignment)
+                .await?;
+
+            let has_permission = effective_permissions.contains(permission)
+                || self.check_wildcard_permissions(&effective_permissions, permission);
+
+            Ok(has_permission)
+        } else {
+            // No assignment found - deny unless default_deny is false
+            Ok(!self.config.default_deny)
+        }
+    }
+
+    /// Get effective permissions for a user assignment
+    async fn get_effective_permissions_for_assignment(
+        &self,
+        assignment: &UserRoleAssignment,
+    ) -> Result<HashSet<UnifiedPermission>> {
+        let mut effective_permissions = HashSet::new();
+
+        // Add direct permissions
+        effective_permissions.extend(assignment.direct_permissions.clone());
+
+        // Add role-based permissions
+        for role_name in &assignment.roles {
+            if let Some(permissions) = self
+                .get_role_permissions(role_name, assignment.tenant_id.as_deref())
+                .await?
+            {
+                effective_permissions.extend(permissions);
+            }
+        }
+
+        Ok(effective_permissions)
     }
 
     /// Check if user has specific permission
@@ -465,6 +746,39 @@ impl ConsolidatedRBACManager {
             "Assigned role '{}' to user '{}' in tenant '{:?}'",
             role_name, user_id, tenant_id
         );
+
+        Ok(())
+    }
+
+    /// Grant a direct permission to a user (bypassing roles)
+    pub async fn grant_permission(
+        &self,
+        user_id: &str,
+        permission: &UnifiedPermission,
+    ) -> Result<()> {
+        // Get or create user role assignment
+        let mut assignment = self
+            .user_role_assignments
+            .get(user_id)
+            .map(|a| a.clone())
+            .unwrap_or_else(|| UserRoleAssignment {
+                user_id: user_id.to_string(),
+                tenant_id: None,
+                roles: HashSet::new(),
+                direct_permissions: HashSet::new(),
+                assigned_at: Utc::now(),
+                assigned_by: "system".to_string(),
+                expires_at: None,
+            });
+
+        // Add the direct permission
+        assignment.direct_permissions.insert(permission.clone());
+
+        // Update the assignment
+        self.user_role_assignments
+            .insert(user_id.to_string(), assignment);
+
+        info!("Granted permission {:?} to user '{}'", permission, user_id);
 
         Ok(())
     }

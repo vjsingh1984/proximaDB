@@ -45,6 +45,7 @@
 
 use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
+use crate::security::unified_rbac::{TenantContext, UnifiedUserContext};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -1475,6 +1476,14 @@ pub struct StorageQueryContext {
     /// Additional context that might be needed during search
     /// (can be extended without breaking existing code)
     pub metadata: StorageQueryMetadata,
+
+    /// User context for RBAC authorization checks
+    /// Optional for backward compatibility with existing code
+    pub user_context: Option<UnifiedUserContext>,
+
+    /// Tenant context for multi-tenant operations
+    /// Optional for backward compatibility with existing code
+    pub tenant_context: Option<TenantContext>,
 }
 
 /// Parsed quantization configuration for efficient progressive search
@@ -1733,6 +1742,8 @@ impl StorageQueryContext {
             search_params: Arc::new(adjusted_params),
             collection,
             metadata,
+            user_context: None,
+            tenant_context: None,
         }
     }
 

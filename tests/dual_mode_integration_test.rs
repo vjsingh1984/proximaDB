@@ -364,6 +364,8 @@ mod tests {
             search_params: Arc::new(search_params),
             collection: Arc::new(collection),
             metadata,
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = fixture
@@ -490,6 +492,8 @@ mod tests {
                 search_params: Arc::new(sst_search_params),
                 collection: Arc::new(sst_collection.clone()),
                 metadata: StorageQueryMetadata::default(),
+                user_context: None,
+                tenant_context: None,
             };
 
             let mut viper_search_params = SearchParams::single_vector(target_vector);
@@ -500,6 +504,8 @@ mod tests {
                 search_params: Arc::new(viper_search_params),
                 collection: Arc::new(viper_collection.clone()),
                 metadata: StorageQueryMetadata::default(),
+                user_context: None,
+                tenant_context: None,
             };
 
             let sst_results = fixture

@@ -13037,6 +13037,655 @@ impl BatchOperation {
         }
     }
 }
+/// Fusion strategy parameters
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct FusionStrategyParams {
+    #[prost(oneof = "fusion_strategy_params::Params", tags = "1, 2, 3, 4")]
+    pub params: ::core::option::Option<fusion_strategy_params::Params>,
+}
+/// Nested message and enum types in `FusionStrategyParams`.
+pub mod fusion_strategy_params {
+    #[derive(Clone, Copy, PartialEq, ::prost::Oneof)]
+    pub enum Params {
+        /// RRF parameter: ranking constant (default: 60)
+        #[prost(uint32, tag = "1")]
+        RrfK(u32),
+        /// Weighted Linear parameters
+        #[prost(message, tag = "2")]
+        WeightedLinear(super::WeightedLinearParams),
+        /// Rank Biased Precision parameter
+        #[prost(double, tag = "3")]
+        RbpPersistence(f64),
+        /// Dempster-Shafer alpha parameter
+        #[prost(double, tag = "4")]
+        DsAlpha(f64),
+    }
+}
+/// Parameters for weighted linear fusion
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct WeightedLinearParams {
+    /// Weight for BM25 (0.0 = all vector, 1.0 = all BM25)
+    #[prost(double, tag = "1")]
+    pub alpha: f64,
+    /// Whether to normalize BM25 scores
+    #[prost(bool, tag = "2")]
+    pub bm25_normalize: bool,
+    /// Whether to normalize vector scores
+    #[prost(bool, tag = "3")]
+    pub vector_normalize: bool,
+}
+/// Text highlight for search results
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TextHighlight {
+    /// Field name containing the highlight
+    #[prost(string, tag = "1")]
+    pub field: ::prost::alloc::string::String,
+    /// Highlighted text with markers
+    #[prost(string, tag = "2")]
+    pub text: ::prost::alloc::string::String,
+    /// Start offset in original text
+    #[prost(uint32, tag = "3")]
+    pub start_offset: u32,
+    /// End offset in original text
+    #[prost(uint32, tag = "4")]
+    pub end_offset: u32,
+}
+/// Single hybrid search result
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridSearchResult {
+    /// Document ID
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Fused score (higher is better)
+    #[prost(double, tag = "2")]
+    pub fused_score: f64,
+    /// BM25 score
+    #[prost(double, tag = "3")]
+    pub bm25_score: f64,
+    /// Vector similarity score
+    #[prost(double, tag = "4")]
+    pub vector_score: f64,
+    /// Rank in BM25 results (1-based, max uint64 if not in BM25 results)
+    #[prost(uint64, tag = "5")]
+    pub bm25_rank: u64,
+    /// Rank in vector results (1-based, max uint64 if not in vector results)
+    #[prost(uint64, tag = "6")]
+    pub vector_rank: u64,
+    /// Text highlights from BM25 (if available)
+    #[prost(message, repeated, tag = "7")]
+    pub highlights: ::prost::alloc::vec::Vec<TextHighlight>,
+    /// Document metadata
+    #[prost(map = "string, string", tag = "8")]
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Execution metrics for hybrid search
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct HybridSearchMetrics {
+    /// BM25 search time in milliseconds
+    #[prost(double, tag = "1")]
+    pub bm25_search_time_ms: f64,
+    /// Vector search time in milliseconds
+    #[prost(double, tag = "2")]
+    pub vector_search_time_ms: f64,
+    /// Fusion time in milliseconds
+    #[prost(double, tag = "3")]
+    pub fusion_time_ms: f64,
+    /// Total execution time in milliseconds
+    #[prost(double, tag = "4")]
+    pub total_time_ms: f64,
+}
+/// Hybrid search request (BM25 + Vector fusion)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridFusionSearchRequest {
+    /// Collection name to search
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    /// Text query for BM25 full-text search
+    #[prost(string, tag = "2")]
+    pub text_query: ::prost::alloc::string::String,
+    /// Query vector for vector similarity search
+    #[prost(float, repeated, tag = "3")]
+    pub query_vector: ::prost::alloc::vec::Vec<f32>,
+    /// Fusion strategy to use
+    #[prost(enumeration = "FusionStrategy", tag = "4")]
+    pub fusion_strategy: i32,
+    /// Optional fusion strategy parameters
+    #[prost(message, optional, tag = "5")]
+    pub fusion_params: ::core::option::Option<FusionStrategyParams>,
+    /// Maximum number of results to return
+    #[prost(uint32, tag = "6")]
+    pub top_k: u32,
+    /// Optional filters
+    #[prost(map = "string, message", tag = "7")]
+    pub filters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost_types::Value,
+    >,
+}
+/// Hybrid search response (BM25 + Vector fusion)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridFusionSearchResponse {
+    /// Fused search results
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<HybridSearchResult>,
+    /// Number of results returned
+    #[prost(uint32, tag = "2")]
+    pub results_count: u32,
+    /// Fusion strategy used
+    #[prost(enumeration = "FusionStrategy", tag = "3")]
+    pub fusion_strategy: i32,
+    /// Execution metrics
+    #[prost(message, optional, tag = "4")]
+    pub metrics: ::core::option::Option<HybridSearchMetrics>,
+}
+/// Fusion strategy info
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FusionStrategyInfo {
+    /// Strategy identifier
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Display name
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// Description
+    #[prost(string, tag = "3")]
+    pub description: ::prost::alloc::string::String,
+    /// Default parameters (if applicable)
+    #[prost(message, optional, tag = "4")]
+    pub default_params: ::core::option::Option<FusionStrategyParams>,
+}
+/// List fusion strategies request
+///
+/// Empty request
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListFusionStrategiesRequest {}
+/// List fusion strategies response
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListFusionStrategiesResponse {
+    /// Available fusion strategies
+    #[prost(message, repeated, tag = "1")]
+    pub strategies: ::prost::alloc::vec::Vec<FusionStrategyInfo>,
+}
+/// Fusion strategies for combining BM25 and vector search results
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FusionStrategy {
+    /// Unspecified strategy (will default to RRF)
+    Unspecified = 0,
+    /// Reciprocal Rank Fusion: score = 1/(k+rank_bm25) + 1/(k+rank_vector)
+    Rrf = 1,
+    /// Weighted Linear Fusion: score = alpha\*bm25 + (1-alpha)\*vector
+    WeightedLinear = 2,
+    /// Rank Biased Precision: score = (1-p)\*p^(rank-1)
+    RankBiasedPrecision = 3,
+    /// Borda Count: rank-based voting method
+    BordaCount = 4,
+    /// CombSUM: sum of normalized scores
+    CombSum = 5,
+    /// CombMIN: minimum of normalized scores (pessimistic)
+    CombMin = 6,
+    /// CombMAX: maximum of normalized scores (optimistic)
+    CombMax = 7,
+    /// Condorcet: pairwise comparison fusion
+    Condorcet = 8,
+    /// Dempster-Shafer: evidence theory combination
+    DempsterShafer = 9,
+    /// Adaptive: dynamically selects strategy based on result overlap
+    Adaptive = 10,
+}
+impl FusionStrategy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "FUSION_STRATEGY_UNSPECIFIED",
+            Self::Rrf => "FUSION_STRATEGY_RRF",
+            Self::WeightedLinear => "FUSION_STRATEGY_WEIGHTED_LINEAR",
+            Self::RankBiasedPrecision => "FUSION_STRATEGY_RANK_BIASED_PRECISION",
+            Self::BordaCount => "FUSION_STRATEGY_BORDA_COUNT",
+            Self::CombSum => "FUSION_STRATEGY_COMB_SUM",
+            Self::CombMin => "FUSION_STRATEGY_COMB_MIN",
+            Self::CombMax => "FUSION_STRATEGY_COMB_MAX",
+            Self::Condorcet => "FUSION_STRATEGY_CONDORCET",
+            Self::DempsterShafer => "FUSION_STRATEGY_DEMPSTER_SHAFER",
+            Self::Adaptive => "FUSION_STRATEGY_ADAPTIVE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FUSION_STRATEGY_UNSPECIFIED" => Some(Self::Unspecified),
+            "FUSION_STRATEGY_RRF" => Some(Self::Rrf),
+            "FUSION_STRATEGY_WEIGHTED_LINEAR" => Some(Self::WeightedLinear),
+            "FUSION_STRATEGY_RANK_BIASED_PRECISION" => Some(Self::RankBiasedPrecision),
+            "FUSION_STRATEGY_BORDA_COUNT" => Some(Self::BordaCount),
+            "FUSION_STRATEGY_COMB_SUM" => Some(Self::CombSum),
+            "FUSION_STRATEGY_COMB_MIN" => Some(Self::CombMin),
+            "FUSION_STRATEGY_COMB_MAX" => Some(Self::CombMax),
+            "FUSION_STRATEGY_CONDORCET" => Some(Self::Condorcet),
+            "FUSION_STRATEGY_DEMPSTER_SHAFER" => Some(Self::DempsterShafer),
+            "FUSION_STRATEGY_ADAPTIVE" => Some(Self::Adaptive),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod hybrid_search_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Hybrid Search Service
+    ///
+    /// Provides gRPC endpoints for hybrid search combining BM25 full-text
+    /// search with vector similarity search using configurable fusion strategies.
+    #[derive(Debug, Clone)]
+    pub struct HybridSearchServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl HybridSearchServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> HybridSearchServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> HybridSearchServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            HybridSearchServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Execute hybrid search combining BM25 and vector search
+        ///
+        /// Combines full-text BM25 search with vector similarity search using
+        /// the specified fusion strategy.
+        pub async fn hybrid_search(
+            &mut self,
+            request: impl tonic::IntoRequest<super::HybridFusionSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HybridFusionSearchResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.HybridSearchService/HybridSearch",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.HybridSearchService", "HybridSearch"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// List all available fusion strategies
+        ///
+        /// Returns information about all supported fusion strategies including
+        /// their parameters and descriptions.
+        pub async fn list_fusion_strategies(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListFusionStrategiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListFusionStrategiesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.HybridSearchService/ListFusionStrategies",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.HybridSearchService",
+                        "ListFusionStrategies",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod hybrid_search_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with HybridSearchServiceServer.
+    #[async_trait]
+    pub trait HybridSearchService: std::marker::Send + std::marker::Sync + 'static {
+        /// Execute hybrid search combining BM25 and vector search
+        ///
+        /// Combines full-text BM25 search with vector similarity search using
+        /// the specified fusion strategy.
+        async fn hybrid_search(
+            &self,
+            request: tonic::Request<super::HybridFusionSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HybridFusionSearchResponse>,
+            tonic::Status,
+        >;
+        /// List all available fusion strategies
+        ///
+        /// Returns information about all supported fusion strategies including
+        /// their parameters and descriptions.
+        async fn list_fusion_strategies(
+            &self,
+            request: tonic::Request<super::ListFusionStrategiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListFusionStrategiesResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Hybrid Search Service
+    ///
+    /// Provides gRPC endpoints for hybrid search combining BM25 full-text
+    /// search with vector similarity search using configurable fusion strategies.
+    #[derive(Debug)]
+    pub struct HybridSearchServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> HybridSearchServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for HybridSearchServiceServer<T>
+    where
+        T: HybridSearchService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v1.HybridSearchService/HybridSearch" => {
+                    #[allow(non_camel_case_types)]
+                    struct HybridSearchSvc<T: HybridSearchService>(pub Arc<T>);
+                    impl<
+                        T: HybridSearchService,
+                    > tonic::server::UnaryService<super::HybridFusionSearchRequest>
+                    for HybridSearchSvc<T> {
+                        type Response = super::HybridFusionSearchResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::HybridFusionSearchRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as HybridSearchService>::hybrid_search(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = HybridSearchSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.HybridSearchService/ListFusionStrategies" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListFusionStrategiesSvc<T: HybridSearchService>(pub Arc<T>);
+                    impl<
+                        T: HybridSearchService,
+                    > tonic::server::UnaryService<super::ListFusionStrategiesRequest>
+                    for ListFusionStrategiesSvc<T> {
+                        type Response = super::ListFusionStrategiesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListFusionStrategiesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as HybridSearchService>::list_fusion_strategies(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListFusionStrategiesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for HybridSearchServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v1.HybridSearchService";
+    impl<T> tonic::server::NamedService for HybridSearchServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
 /// Catalog configuration
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CatalogConfig {
@@ -16532,6 +17181,1508 @@ pub mod catalog_service_server {
     /// Generated gRPC service name
     pub const SERVICE_NAME: &str = "proximadb.v1.CatalogService";
     impl<T> tonic::server::NamedService for CatalogServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
+/// RBAC role definition
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Role {
+    /// Unique role identifier
+    #[prost(string, tag = "1")]
+    pub role_id: ::prost::alloc::string::String,
+    /// Human-readable role name
+    #[prost(string, tag = "2")]
+    pub role_name: ::prost::alloc::string::String,
+    /// Tenant ID (empty for system-wide roles)
+    #[prost(string, tag = "3")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// List of permissions granted to this role
+    #[prost(string, repeated, tag = "4")]
+    pub permissions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Role description
+    #[prost(string, tag = "5")]
+    pub description: ::prost::alloc::string::String,
+    /// True if this is a system role (cannot be deleted)
+    #[prost(bool, tag = "6")]
+    pub is_system_role: bool,
+    /// Creation timestamp
+    #[prost(message, optional, tag = "7")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    /// Creator user ID
+    #[prost(string, tag = "8")]
+    pub created_by: ::prost::alloc::string::String,
+}
+/// Create or update a role
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateRoleRequest {
+    /// Role details
+    #[prost(message, optional, tag = "1")]
+    pub role: ::core::option::Option<Role>,
+    /// Caller authentication context
+    #[prost(message, optional, tag = "2")]
+    pub auth_context: ::core::option::Option<AuthContext>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CreateRoleResponse {
+    /// Created role
+    #[prost(message, optional, tag = "1")]
+    pub role: ::core::option::Option<Role>,
+}
+/// List roles in a tenant
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListRolesRequest {
+    /// Tenant ID (empty for system-wide roles)
+    #[prost(string, tag = "1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Include system roles
+    #[prost(bool, tag = "2")]
+    pub include_system_roles: bool,
+    /// Pagination
+    #[prost(int32, tag = "3")]
+    pub page_size: i32,
+    #[prost(string, tag = "4")]
+    pub page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListRolesResponse {
+    /// List of roles
+    #[prost(message, repeated, tag = "1")]
+    pub roles: ::prost::alloc::vec::Vec<Role>,
+    /// Next page token
+    #[prost(string, tag = "2")]
+    pub next_page_token: ::prost::alloc::string::String,
+}
+/// Delete a role
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteRoleRequest {
+    /// Role ID to delete
+    #[prost(string, tag = "1")]
+    pub role_id: ::prost::alloc::string::String,
+    /// Caller authentication context
+    #[prost(message, optional, tag = "2")]
+    pub auth_context: ::core::option::Option<AuthContext>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteRoleResponse {
+    /// True if role was deleted
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+/// User role assignment
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UserRoleAssignment {
+    /// User ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "2")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// List of role IDs assigned to user
+    #[prost(string, repeated, tag = "3")]
+    pub roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Assignment timestamp
+    #[prost(int64, tag = "4")]
+    pub assigned_at: i64,
+    /// Who made the assignment
+    #[prost(string, tag = "5")]
+    pub assigned_by: ::prost::alloc::string::String,
+    /// Optional expiration timestamp
+    #[prost(message, optional, tag = "6")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Assign role to user
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AssignRoleRequest {
+    /// User ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "2")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Role IDs to assign
+    #[prost(string, repeated, tag = "3")]
+    pub roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Caller authentication context
+    #[prost(message, optional, tag = "4")]
+    pub auth_context: ::core::option::Option<AuthContext>,
+    /// Optional expiration
+    #[prost(message, optional, tag = "5")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AssignRoleResponse {
+    /// Updated role assignment
+    #[prost(message, optional, tag = "1")]
+    pub assignment: ::core::option::Option<UserRoleAssignment>,
+}
+/// Remove role from user
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeRoleRequest {
+    /// User ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "2")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Role IDs to revoke
+    #[prost(string, repeated, tag = "3")]
+    pub roles: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Caller authentication context
+    #[prost(message, optional, tag = "4")]
+    pub auth_context: ::core::option::Option<AuthContext>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RevokeRoleResponse {
+    /// True if roles were revoked
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+/// List user roles
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListUserRolesRequest {
+    /// User ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "2")]
+    pub tenant_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListUserRolesResponse {
+    /// User role assignments
+    #[prost(message, repeated, tag = "1")]
+    pub assignments: ::prost::alloc::vec::Vec<UserRoleAssignment>,
+}
+/// RBAC validation request
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ValidateAccessRequest {
+    /// User ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "2")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Resource type (collection, graph, system, etc.)
+    #[prost(string, tag = "3")]
+    pub resource_type: ::prost::alloc::string::String,
+    /// Resource ID (collection_id, graph_id, etc.)
+    #[prost(string, tag = "4")]
+    pub resource_id: ::prost::alloc::string::String,
+    /// Operation (read, write, delete, admin, vector_search, etc.)
+    #[prost(string, tag = "5")]
+    pub operation: ::prost::alloc::string::String,
+    /// Data model (vector, graph, document, observability)
+    #[prost(string, tag = "6")]
+    pub data_model: ::prost::alloc::string::String,
+}
+/// RBAC validation response
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ValidateAccessResponse {
+    /// True if access is allowed
+    #[prost(bool, tag = "1")]
+    pub allowed: bool,
+    /// Reason for denial (if not allowed)
+    #[prost(string, tag = "2")]
+    pub reason: ::prost::alloc::string::String,
+    /// Missing permissions (if not allowed)
+    #[prost(string, repeated, tag = "3")]
+    pub missing_permissions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Effective permissions checked
+    #[prost(string, repeated, tag = "4")]
+    pub checked_permissions: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Batch permission validation
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchValidateAccessRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub requests: ::prost::alloc::vec::Vec<ValidateAccessRequest>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchValidateAccessResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub responses: ::prost::alloc::vec::Vec<ValidateAccessResponse>,
+}
+/// RBAC audit event
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RbacAuditEvent {
+    /// Event timestamp (nanoseconds since epoch)
+    #[prost(int64, tag = "1")]
+    pub timestamp_ns: i64,
+    /// User ID who performed the action
+    #[prost(string, tag = "2")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "3")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Operation performed
+    #[prost(string, tag = "4")]
+    pub operation: ::prost::alloc::string::String,
+    /// Resource type
+    #[prost(string, tag = "5")]
+    pub resource_type: ::prost::alloc::string::String,
+    /// Resource ID
+    #[prost(string, tag = "6")]
+    pub resource_id: ::prost::alloc::string::String,
+    /// True if access was allowed
+    #[prost(bool, tag = "7")]
+    pub allowed: bool,
+    /// Reason for denial (if not allowed)
+    #[prost(string, tag = "8")]
+    pub denial_reason: ::prost::alloc::string::String,
+    /// Session ID
+    #[prost(string, tag = "9")]
+    pub session_id: ::prost::alloc::string::String,
+    /// IP address
+    #[prost(string, tag = "10")]
+    pub ip_address: ::prost::alloc::string::String,
+    /// User agent
+    #[prost(string, tag = "11")]
+    pub user_agent: ::prost::alloc::string::String,
+}
+/// List audit events request
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListAuditEventsRequest {
+    /// Tenant ID
+    #[prost(string, tag = "1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Filter by user ID
+    #[prost(string, optional, tag = "2")]
+    pub user_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Filter by resource type
+    #[prost(string, optional, tag = "3")]
+    pub resource_type: ::core::option::Option<::prost::alloc::string::String>,
+    /// Filter by resource ID
+    #[prost(string, optional, tag = "4")]
+    pub resource_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Time range (start)
+    #[prost(int64, tag = "5")]
+    pub start_time_ns: i64,
+    /// Time range (end)
+    #[prost(int64, tag = "6")]
+    pub end_time_ns: i64,
+    /// Only show denied access
+    #[prost(bool, tag = "7")]
+    pub denied_only: bool,
+    /// Pagination
+    #[prost(int32, tag = "8")]
+    pub page_size: i32,
+    #[prost(string, tag = "9")]
+    pub page_token: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListAuditEventsResponse {
+    /// List of audit events
+    #[prost(message, repeated, tag = "1")]
+    pub events: ::prost::alloc::vec::Vec<RbacAuditEvent>,
+    /// Next page token
+    #[prost(string, tag = "2")]
+    pub next_page_token: ::prost::alloc::string::String,
+    /// Total count
+    #[prost(int64, tag = "3")]
+    pub total_count: i64,
+}
+/// Authentication context for requests
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AuthContext {
+    /// User ID
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    /// Tenant ID
+    #[prost(string, tag = "2")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Session ID
+    #[prost(string, tag = "3")]
+    pub session_id: ::prost::alloc::string::String,
+    /// Authentication method (jwt, sso, api_key, etc.)
+    #[prost(string, tag = "4")]
+    pub auth_method: ::prost::alloc::string::String,
+    /// Token expiration
+    #[prost(message, optional, tag = "5")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+    /// Client IP address
+    #[prost(string, tag = "6")]
+    pub ip_address: ::prost::alloc::string::String,
+    /// User agent
+    #[prost(string, tag = "7")]
+    pub user_agent: ::prost::alloc::string::String,
+}
+/// Security policy for a tenant
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TenantSecurityPolicy {
+    /// Tenant ID
+    #[prost(string, tag = "1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    /// Require MFA for all operations
+    #[prost(bool, tag = "2")]
+    pub require_mfa: bool,
+    /// IP whitelist (CIDR ranges)
+    #[prost(string, repeated, tag = "3")]
+    pub allowed_ip_ranges: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Session timeout in seconds
+    #[prost(int32, tag = "4")]
+    pub session_timeout_seconds: i32,
+    /// Require password for sensitive operations
+    #[prost(bool, tag = "5")]
+    pub require_password_confirmation: bool,
+    /// Audit all operations
+    #[prost(bool, tag = "6")]
+    pub audit_all_operations: bool,
+    /// Data encryption requirements
+    #[prost(message, optional, tag = "7")]
+    pub encryption_policy: ::core::option::Option<DataEncryptionPolicy>,
+}
+/// Data encryption policy
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DataEncryptionPolicy {
+    /// Encrypt data at rest
+    #[prost(bool, tag = "3")]
+    pub encrypt_at_rest: bool,
+    /// Encrypt data in transit
+    #[prost(bool, tag = "4")]
+    pub encrypt_in_transit: bool,
+    /// Encryption key ID
+    #[prost(string, tag = "5")]
+    pub key_id: ::prost::alloc::string::String,
+    /// Key rotation interval in days
+    #[prost(int32, tag = "6")]
+    pub key_rotation_days: i32,
+}
+/// Get tenant security policy
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTenantSecurityPolicyRequest {
+    #[prost(string, tag = "1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub auth_context: ::core::option::Option<AuthContext>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTenantSecurityPolicyResponse {
+    #[prost(message, optional, tag = "1")]
+    pub policy: ::core::option::Option<TenantSecurityPolicy>,
+}
+/// Set tenant security policy
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetTenantSecurityPolicyRequest {
+    #[prost(message, optional, tag = "1")]
+    pub policy: ::core::option::Option<TenantSecurityPolicy>,
+    #[prost(message, optional, tag = "2")]
+    pub auth_context: ::core::option::Option<AuthContext>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetTenantSecurityPolicyResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+/// Generated client implementations.
+pub mod security_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Security service for RBAC operations
+    #[derive(Debug, Clone)]
+    pub struct SecurityServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl SecurityServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> SecurityServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> SecurityServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            SecurityServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Permission validation
+        pub async fn validate_access(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ValidateAccessRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ValidateAccessResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/ValidateAccess",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.SecurityService", "ValidateAccess"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn batch_validate_access(
+            &mut self,
+            request: impl tonic::IntoRequest<super::BatchValidateAccessRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BatchValidateAccessResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/BatchValidateAccess",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.SecurityService",
+                        "BatchValidateAccess",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Role management
+        pub async fn create_role(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateRoleResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/CreateRole",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.SecurityService", "CreateRole"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_roles(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListRolesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRolesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/ListRoles",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.SecurityService", "ListRoles"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_role(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteRoleResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/DeleteRole",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.SecurityService", "DeleteRole"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// User role assignments
+        pub async fn assign_role(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AssignRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AssignRoleResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/AssignRole",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.SecurityService", "AssignRole"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn revoke_role(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RevokeRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RevokeRoleResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/RevokeRole",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.SecurityService", "RevokeRole"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_user_roles(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListUserRolesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListUserRolesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/ListUserRoles",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.SecurityService", "ListUserRoles"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Audit and compliance
+        pub async fn list_audit_events(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListAuditEventsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListAuditEventsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/ListAuditEvents",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.SecurityService", "ListAuditEvents"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Tenant security
+        pub async fn get_tenant_security_policy(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTenantSecurityPolicyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTenantSecurityPolicyResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/GetTenantSecurityPolicy",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.SecurityService",
+                        "GetTenantSecurityPolicy",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn set_tenant_security_policy(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SetTenantSecurityPolicyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetTenantSecurityPolicyResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SecurityService/SetTenantSecurityPolicy",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.SecurityService",
+                        "SetTenantSecurityPolicy",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod security_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with SecurityServiceServer.
+    #[async_trait]
+    pub trait SecurityService: std::marker::Send + std::marker::Sync + 'static {
+        /// Permission validation
+        async fn validate_access(
+            &self,
+            request: tonic::Request<super::ValidateAccessRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ValidateAccessResponse>,
+            tonic::Status,
+        >;
+        async fn batch_validate_access(
+            &self,
+            request: tonic::Request<super::BatchValidateAccessRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BatchValidateAccessResponse>,
+            tonic::Status,
+        >;
+        /// Role management
+        async fn create_role(
+            &self,
+            request: tonic::Request<super::CreateRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CreateRoleResponse>,
+            tonic::Status,
+        >;
+        async fn list_roles(
+            &self,
+            request: tonic::Request<super::ListRolesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRolesResponse>,
+            tonic::Status,
+        >;
+        async fn delete_role(
+            &self,
+            request: tonic::Request<super::DeleteRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteRoleResponse>,
+            tonic::Status,
+        >;
+        /// User role assignments
+        async fn assign_role(
+            &self,
+            request: tonic::Request<super::AssignRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AssignRoleResponse>,
+            tonic::Status,
+        >;
+        async fn revoke_role(
+            &self,
+            request: tonic::Request<super::RevokeRoleRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RevokeRoleResponse>,
+            tonic::Status,
+        >;
+        async fn list_user_roles(
+            &self,
+            request: tonic::Request<super::ListUserRolesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListUserRolesResponse>,
+            tonic::Status,
+        >;
+        /// Audit and compliance
+        async fn list_audit_events(
+            &self,
+            request: tonic::Request<super::ListAuditEventsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListAuditEventsResponse>,
+            tonic::Status,
+        >;
+        /// Tenant security
+        async fn get_tenant_security_policy(
+            &self,
+            request: tonic::Request<super::GetTenantSecurityPolicyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTenantSecurityPolicyResponse>,
+            tonic::Status,
+        >;
+        async fn set_tenant_security_policy(
+            &self,
+            request: tonic::Request<super::SetTenantSecurityPolicyRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SetTenantSecurityPolicyResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Security service for RBAC operations
+    #[derive(Debug)]
+    pub struct SecurityServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> SecurityServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for SecurityServiceServer<T>
+    where
+        T: SecurityService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v1.SecurityService/ValidateAccess" => {
+                    #[allow(non_camel_case_types)]
+                    struct ValidateAccessSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::ValidateAccessRequest>
+                    for ValidateAccessSvc<T> {
+                        type Response = super::ValidateAccessResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ValidateAccessRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::validate_access(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ValidateAccessSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/BatchValidateAccess" => {
+                    #[allow(non_camel_case_types)]
+                    struct BatchValidateAccessSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::BatchValidateAccessRequest>
+                    for BatchValidateAccessSvc<T> {
+                        type Response = super::BatchValidateAccessResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::BatchValidateAccessRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::batch_validate_access(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = BatchValidateAccessSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/CreateRole" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateRoleSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::CreateRoleRequest>
+                    for CreateRoleSvc<T> {
+                        type Response = super::CreateRoleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateRoleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::create_role(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateRoleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/ListRoles" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRolesSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::ListRolesRequest>
+                    for ListRolesSvc<T> {
+                        type Response = super::ListRolesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListRolesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::list_roles(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRolesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/DeleteRole" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteRoleSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::DeleteRoleRequest>
+                    for DeleteRoleSvc<T> {
+                        type Response = super::DeleteRoleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteRoleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::delete_role(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteRoleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/AssignRole" => {
+                    #[allow(non_camel_case_types)]
+                    struct AssignRoleSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::AssignRoleRequest>
+                    for AssignRoleSvc<T> {
+                        type Response = super::AssignRoleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AssignRoleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::assign_role(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AssignRoleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/RevokeRole" => {
+                    #[allow(non_camel_case_types)]
+                    struct RevokeRoleSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::RevokeRoleRequest>
+                    for RevokeRoleSvc<T> {
+                        type Response = super::RevokeRoleResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RevokeRoleRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::revoke_role(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RevokeRoleSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/ListUserRoles" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListUserRolesSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::ListUserRolesRequest>
+                    for ListUserRolesSvc<T> {
+                        type Response = super::ListUserRolesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListUserRolesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::list_user_roles(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListUserRolesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/ListAuditEvents" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListAuditEventsSvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::ListAuditEventsRequest>
+                    for ListAuditEventsSvc<T> {
+                        type Response = super::ListAuditEventsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListAuditEventsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::list_audit_events(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListAuditEventsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/GetTenantSecurityPolicy" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTenantSecurityPolicySvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::GetTenantSecurityPolicyRequest>
+                    for GetTenantSecurityPolicySvc<T> {
+                        type Response = super::GetTenantSecurityPolicyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::GetTenantSecurityPolicyRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::get_tenant_security_policy(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTenantSecurityPolicySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.SecurityService/SetTenantSecurityPolicy" => {
+                    #[allow(non_camel_case_types)]
+                    struct SetTenantSecurityPolicySvc<T: SecurityService>(pub Arc<T>);
+                    impl<
+                        T: SecurityService,
+                    > tonic::server::UnaryService<super::SetTenantSecurityPolicyRequest>
+                    for SetTenantSecurityPolicySvc<T> {
+                        type Response = super::SetTenantSecurityPolicyResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<
+                                super::SetTenantSecurityPolicyRequest,
+                            >,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SecurityService>::set_tenant_security_policy(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SetTenantSecurityPolicySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for SecurityServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v1.SecurityService";
+    impl<T> tonic::server::NamedService for SecurityServiceServer<T> {
         const NAME: &'static str = SERVICE_NAME;
     }
 }

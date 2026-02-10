@@ -563,6 +563,68 @@ impl UnifiedHandlers {
         })
     }
 
+    /// Execute hybrid search (BM25 full-text + Vector similarity) with parallel execution
+    ///
+    /// This method combines BM25 keyword search with vector similarity search
+    /// using configurable fusion strategies (RRF, Weighted Linear, etc.).
+    ///
+    /// # Arguments
+    /// * `collection_id` - Collection to search
+    /// * `text_query` - Full-text search query for BM25
+    /// * `query_vector` - Vector similarity query
+    /// * `top_k` - Number of results to return
+    /// * `fusion_strategy` - Strategy for combining results (RRF, WeightedLinear, RBP, etc.)
+    /// * `filters` - Optional metadata filters
+    ///
+    /// # Returns
+    /// Fused and ranked search results
+    ///
+    /// # Example
+    /// ```ignore
+    /// let results = handler.execute_hybrid_search(
+    ///     "my_collection",
+    ///     "machine learning algorithms",
+    ///     vec![0.1, 0.2, 0.3],
+    ///     10,
+    ///     FusionStrategy::ReciprocalRank { k: 60 },
+    ///     None,
+    /// ).await?;
+    /// ```
+    pub async fn execute_hybrid_search(
+        &self,
+        collection_id: &str,
+        text_query: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        fusion_strategy: crate::core::search::hybrid::FusionStrategy,
+        filters: Option<crate::core::search::FilterExpression>,
+    ) -> anyhow::Result<Vec<crate::core::search::hybrid::FusedSearchResult>> {
+        use crate::core::search::hybrid::{HybridCoordinator, BM25Result, VectorResult};
+        use std::collections::HashMap;
+
+        let coordinator = HybridCoordinator::new(fusion_strategy);
+
+        // Mock BM25 search for now (TODO: integrate actual BM25 backend)
+        let bm25_search = |query: String| async move {
+            // TODO: Replace with actual BM25 full-text search
+            // For now, return empty results
+            Ok::<Vec<BM25Result>, anyhow::Error>(vec![])
+        };
+
+        // Mock vector search (TODO: use actual vector search service)
+        let vector_search = |vector: Vec<f32>| async move {
+            // TODO: Replace with actual vector search using self.vector_operations_service
+            Ok::<Vec<VectorResult>, anyhow::Error>(vec![])
+        };
+
+        let fused_results = coordinator
+            .execute_hybrid_search(bm25_search, vector_search, text_query, query_vector)
+            .await
+            .map_err(|e| anyhow::anyhow!("Hybrid search fusion error: {}", e))?;
+
+        Ok(fused_results)
+    }
+
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
     ///
     /// REFACTORED: Now uses clean typed insert_batch() instead of JSON serialization

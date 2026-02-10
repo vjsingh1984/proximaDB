@@ -70,6 +70,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "QuantizationLevel",
             "#[derive(serde::Serialize, serde::Deserialize)]",
         )
+        .type_attribute(
+            "FusionStrategy",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // Add serde to array/object types needed by custom serde implementations
         .type_attribute(
             "SqlArray",
@@ -817,6 +821,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "proximadb.streaming.v1.SessionStats",
             "#[derive(serde::Serialize, serde::Deserialize)]",
         )
+        // Security and RBAC types
+        // Note: Only derive Serialize for types with Timestamp fields (prost_types::Timestamp doesn't support Deserialize)
+        .type_attribute(
+            "ValidateAccessRequest",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "ValidateAccessResponse",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
         // NOTE: ProximaRecord v2 proto types are defined in proto/proximadb/v2/record.proto
         // and are now compiled for gRPC API versioning.
         .compile_protos(
@@ -836,12 +850,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/document.proto",
                 "proto/proximadb/v1/observability.proto",
                 "proto/proximadb/v1/unified.proto",
+                // Hybrid search
+                "proto/proximadb/v1/hybrid.proto",
                 // Catalog system
                 "proto/proximadb/v1/catalog.proto",
                 // Real-time streaming
                 "proto/proximadb/v1/streaming.proto",
                 // Cluster RPC services
                 "proto/proximadb/v1/cluster.proto",
+                // Security and RBAC
+                "proto/proximadb/v1/security.proto",
                 // V2 API - ProximaRecord with rich type system
                 "proto/proximadb/v2/record.proto",
             ],
@@ -860,10 +878,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto/proximadb/v1/document.proto");
     println!("cargo:rerun-if-changed=proto/proximadb/v1/observability.proto");
     println!("cargo:rerun-if-changed=proto/proximadb/v1/unified.proto");
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/hybrid.proto");
     // Catalog system
     println!("cargo:rerun-if-changed=proto/proximadb/v1/catalog.proto");
     // Real-time streaming
     println!("cargo:rerun-if-changed=proto/proximadb/v1/streaming.proto");
+    // Security and RBAC
+    println!("cargo:rerun-if-changed=proto/proximadb/v1/security.proto");
     // ProximaRecord v2 (NEW - rich type system)
     println!("cargo:rerun-if-changed=proto/proximadb/v2/record.proto");
     Ok(())
