@@ -112,6 +112,7 @@ impl MetadataTransaction {
 ///
 /// Stores metadata version information for multi-version concurrency control.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct VersionInfo {
     /// Version number
     version: u64,
@@ -127,6 +128,7 @@ struct VersionInfo {
 ///
 /// Tracks locks held by transactions on metadata keys.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct LockInfo {
     /// Transaction holding the lock
     transaction_id: TransactionId,
@@ -138,6 +140,7 @@ struct LockInfo {
 
 /// Lock types for concurrent access control
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum LockType {
     /// Shared lock (allows reads)
     Shared,
@@ -188,6 +191,7 @@ impl std::fmt::Debug for AtomicMetadataStore {
 ///
 /// Tracks operational statistics for the atomic metadata store.
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct AtomicStoreStats {
     /// Total transactions started
     transactions_started: u64,

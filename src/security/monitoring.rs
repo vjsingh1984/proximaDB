@@ -24,6 +24,7 @@ pub struct SecurityMonitoringService {
     alert_manager: Arc<SecurityAlertManager>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: SecurityMonitoringConfig,
 }
 
@@ -49,6 +50,7 @@ pub struct SecurityMetricsCollector {
     authz_metrics: Arc<DashMap<String, AuthorizationMetrics>>,
 
     /// Security event counters
+    #[allow(dead_code)]
     security_counters: Arc<DashMap<String, u64>>,
 
     /// Configuration
@@ -245,9 +247,11 @@ impl SecurityMetricsSummary {
 /// Threat detection engine
 pub struct ThreatDetectionEngine {
     /// Security event history for pattern analysis
+    #[allow(dead_code)]
     event_history: Arc<DashMap<String, VecDeque<SecurityEvent>>>,
 
     /// Threat detection rules
+    #[allow(dead_code)]
     detection_rules: Vec<ThreatDetectionRule>,
 
     /// Configuration
@@ -320,12 +324,15 @@ pub enum AlertSeverity {
 /// Security alert manager
 pub struct SecurityAlertManager {
     /// Active alerts
+    #[allow(dead_code)]
     active_alerts: Arc<DashMap<String, ThreatAlert>>,
 
     /// Alert configuration
+    #[allow(dead_code)]
     config: SecurityAlertConfig,
 
     /// Webhook clients for external notifications
+    #[allow(dead_code)]
     webhook_clients: Vec<String>,
 }
 

@@ -128,7 +128,7 @@ struct DocumentMetricsAccumulator {
     collections_deleted: u64,
 
     // Last reset timestamp
-    last_reset: Option<Instant>,
+    _last_reset: Option<Instant>,
 }
 
 impl DocumentMetricsCollector {

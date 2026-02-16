@@ -755,38 +755,43 @@ pub enum OptimizationStrategy {
 // Placeholder implementations for probabilistic data structures
 #[derive(Debug, Clone)]
 pub struct CountMinSketch {
-    width: usize,
-    depth: usize,
+    _width: usize,
+    _depth: usize,
 }
 
 impl CountMinSketch {
     fn new(width: usize, depth: usize) -> Self {
-        Self { width, depth }
+        Self {
+            _width: width,
+            _depth: depth,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct HyperLogLog {
-    precision: u8,
+    _precision: u8,
 }
 
 impl HyperLogLog {
     fn new(precision: u8) -> Self {
-        Self { precision }
+        Self {
+            _precision: precision,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct BloomFilter {
-    expected_items: usize,
-    false_positive_rate: f64,
+    _expected_items: usize,
+    _false_positive_rate: f64,
 }
 
 impl BloomFilter {
     fn new(expected_items: usize, false_positive_rate: f64) -> Self {
         Self {
-            expected_items,
-            false_positive_rate,
+            _expected_items: expected_items,
+            _false_positive_rate: false_positive_rate,
         }
     }
 }

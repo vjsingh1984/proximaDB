@@ -249,6 +249,7 @@ pub enum Index {
 pub struct BloomFilterMetadata {
     pub filter_type: BloomFilter,
     pub false_positive_rate: f64,
+    #[allow(dead_code)]
     pub expected_items: u64,
     pub actual_items: u64,
     pub hash_functions: u32,

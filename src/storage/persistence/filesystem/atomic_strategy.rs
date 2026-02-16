@@ -205,6 +205,7 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
 
 /// Same-mount temp executor - robust for local filesystems
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SameMountTempExecutor {
     temp_suffix: String,
     config: AtomicWriteConfig,
@@ -363,6 +364,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
 }
 
 /// Cloud-optimized executor - local staging + cloud flush
+#[allow(dead_code)]
 pub struct CloudOptimizedExecutor {
     local_temp_dir: PathBuf,
     compression: bool,

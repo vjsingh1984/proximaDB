@@ -611,10 +611,10 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         let ctx = StorageQueryContext {
                             search_params,
                             collection,
-                            metadata
-            user_context: None,
-        tenant_context: None,
-    };
+                            metadata,
+                            user_context: None,
+                            tenant_context: None,
+                        };
 
                         engine.search_vectors_unified(&ctx).await
                     });
@@ -740,10 +740,10 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         let ctx = StorageQueryContext {
                             search_params,
                             collection,
-                            metadata
-            user_context: None,
-        tenant_context: None,
-    };
+                            metadata,
+                            user_context: None,
+                            tenant_context: None,
+                        };
 
                         engine.search_vectors_unified(&ctx).await
                     });
@@ -1057,10 +1057,10 @@ fn bench_large_scale_search(c: &mut Criterion) {
                             let ctx = StorageQueryContext {
                                 search_params,
                                 collection,
-                                metadata
-            user_context: None,
-        tenant_context: None,
-    };
+                                metadata,
+                                user_context: None,
+                                tenant_context: None,
+                            };
 
                             let result = engine.search_vectors_unified(&ctx).await;
                             black_box(result)

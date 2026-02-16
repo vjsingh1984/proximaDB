@@ -366,6 +366,7 @@ impl SchemaAuditLogger {
     }
 
     /// Clear all records
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.records.clear();
     }

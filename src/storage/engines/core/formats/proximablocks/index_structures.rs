@@ -25,6 +25,7 @@ pub struct RowBasedIdIndex {
     /// Bloom filter builders for existence checks (built during construction)
     bloom_filter_builders: Vec<BloomFilterBuilder>,
     /// Final bloom filters (created after construction)
+    #[allow(dead_code)]
     bloom_filters: Vec<SstableBloomFilter>,
 
     /// Index statistics
@@ -80,7 +81,9 @@ pub struct DenseIndex {
     config: DenseIndexConfig,
 
     /// Current capacity and growth
+    #[allow(dead_code)]
     current_capacity: u64,
+    #[allow(dead_code)]
     next_id: u64,
 }
 
@@ -224,17 +227,22 @@ pub struct EntryMetadata {
 #[derive(Debug)]
 pub struct HierarchicalIndex {
     /// All levels in the hierarchy
+    #[allow(dead_code)]
     levels: Vec<HierarchicalLevel>,
 
     /// Configuration
     config: HierarchicalConfig,
 
     /// Current state
+    #[allow(dead_code)]
     current_height: u8,
+    #[allow(dead_code)]
     total_entries: u64,
 
     /// Maintenance state
+    #[allow(dead_code)]
     last_rebalance: i64,
+    #[allow(dead_code)]
     needs_rebalancing: bool,
 }
 
@@ -251,6 +259,7 @@ pub struct MultiLevelIndex {
     hierarchical_index: Option<HierarchicalIndex>,
 
     /// Bloom filters at each level
+    #[allow(dead_code)]
     bloom_filters: Vec<SstableBloomFilter>,
 
     /// Index selection statistics

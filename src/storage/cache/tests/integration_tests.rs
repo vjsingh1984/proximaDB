@@ -121,7 +121,10 @@ async fn test_cache_metrics_integration() {
     // For now, just verify the metrics components can be created
     use crate::metrics::MetricsConfig;
     let metrics_config = MetricsConfig::default();
-    assert!(!metrics_config.storage_path.is_empty(), "Default storage path should be set");
+    assert!(
+        !metrics_config.storage_path.is_empty(),
+        "Default storage path should be set"
+    );
 
     // Verify base metrics can be instantiated
     let base_metrics = Arc::new(CacheMetrics::new());

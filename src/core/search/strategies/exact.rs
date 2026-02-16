@@ -58,6 +58,7 @@ impl ExactSearchStrategy {
     }
 
     /// Compute distance between two vectors
+    #[allow(dead_code)]
     fn compute_distance(&self, query: &[f32], candidate: &[f32], metric: DistanceMetric) -> f32 {
         let distance_compute = UnifiedDistanceCompute::new(metric);
         distance_compute.distance_with_metric(query, candidate, &metric)

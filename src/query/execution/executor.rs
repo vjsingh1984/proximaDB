@@ -91,6 +91,7 @@ impl VectorPool {
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
     graph_service: Arc<GraphOperationsService>,
+    #[allow(dead_code)]
     memory_pool: VectorPool,
 }
 

@@ -18,7 +18,7 @@ pub struct CacheMetrics {
     puts: Arc<AtomicU64>,
     invalidations: Arc<AtomicU64>,
     evictions: Arc<AtomicU64>,
-    promotions: Arc<AtomicU64>,
+    _promotions: Arc<AtomicU64>,
     invalidation_cascades: Arc<AtomicU64>,
 
     // Size metrics
@@ -46,7 +46,7 @@ impl CacheMetrics {
             puts: Arc::new(AtomicU64::new(0)),
             invalidations: Arc::new(AtomicU64::new(0)),
             evictions: Arc::new(AtomicU64::new(0)),
-            promotions: Arc::new(AtomicU64::new(0)),
+            _promotions: Arc::new(AtomicU64::new(0)),
             invalidation_cascades: Arc::new(AtomicU64::new(0)),
             total_entries: Arc::new(AtomicUsize::new(0)),
             total_bytes: Arc::new(AtomicUsize::new(0)),

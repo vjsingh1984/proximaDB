@@ -577,6 +577,7 @@ impl MemoryTracker {
         usage_ratio > threshold
     }
 
+    #[allow(dead_code)]
     fn get_memory_stats(&self) -> (usize, usize, usize) {
         (self.current_usage, self.max_usage, self.peak_usage)
     }

@@ -379,6 +379,7 @@ struct MetricsData {
     latencies_ms: std::collections::VecDeque<u64>,
     cache_hits: u64,
     cache_misses: u64,
+    #[allow(dead_code)]
     started_at: chrono::DateTime<chrono::Utc>,
     last_reset: chrono::DateTime<chrono::Utc>,
 }

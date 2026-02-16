@@ -169,13 +169,16 @@ impl EnterpriseAuditCoordinator {
 /// Compliance reporting engine
 #[derive(Debug, Clone)]
 pub struct ComplianceReportingEngine {
+    #[allow(dead_code)]
     frameworks: Vec<String>,
+    #[allow(dead_code)]
     config: ReportingConfig,
 }
 
 /// Audit analytics engine
 #[derive(Debug, Clone)]
 pub struct AuditAnalyticsEngine {
+    #[allow(dead_code)]
     analytics_config: AnalyticsConfig,
 }
 

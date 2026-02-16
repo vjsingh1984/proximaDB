@@ -45,6 +45,7 @@ impl Default for FusionStrategy {
 /// Result fuser that combines sub-query results
 pub struct ResultFuser {
     /// Default fusion strategy
+    #[allow(dead_code)]
     default_strategy: FusionStrategy,
 }
 

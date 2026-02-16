@@ -39,6 +39,7 @@ pub struct AvroSerializationStrategy {
     storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
 
     /// Flush coordinator
+    #[allow(dead_code)]
     flush_coordinator: Arc<WALFlushCoordinator>,
 
     /// Configuration

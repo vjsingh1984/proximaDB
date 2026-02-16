@@ -151,12 +151,15 @@ pub struct EngineBenchmarkResults {
 /// Main benchmarking executor for storage engines
 pub struct StorageEngineBenchmark {
     /// Configuration for benchmarks
+    #[allow(dead_code)]
     config: BenchmarkConfig,
 
     /// Hardware profile detected
+    #[allow(dead_code)]
     hardware_profile: HardwareProfile,
 
     /// Storage profile detected
+    #[allow(dead_code)]
     storage_profile: StorageProfile,
 }
 
@@ -435,7 +438,7 @@ impl StorageEngineBenchmark {
         let filter = crate::core::search::FilterExpression::Comparison {
             field: "category".to_string(),
             operator: crate::core::search::ComparisonOperator::Equals,
-            value: serde_json::Value::String("test".to_string())
+            value: serde_json::Value::String("test".to_string()),
         };
 
         Arc::get_mut(&mut ctx.search_params)

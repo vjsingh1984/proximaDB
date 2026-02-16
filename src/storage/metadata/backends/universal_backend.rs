@@ -93,12 +93,15 @@ pub struct UniversalMetadataConfig {
     pub temp_dir: Option<String>,
 }
 
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
+#[allow(dead_code)]
 fn default_snapshot_threshold() -> u64 {
     1000
 }
+#[allow(dead_code)]
 fn default_keep_snapshots() -> usize {
     3
 }
@@ -192,7 +195,7 @@ pub struct UniversalMetadataBackend {
     atomic_coordinator: Arc<TransactionCoordinator>,
 
     /// Optional unified metrics collector (injected)
-    metrics_collector: Option<UnifiedMetricsCollector>,
+    _metrics_collector: Option<UnifiedMetricsCollector>,
 }
 
 impl UniversalMetadataBackend {
@@ -234,7 +237,7 @@ impl UniversalMetadataBackend {
             ops_since_snapshot: AtomicU64::new(0),
             atomic_operations_enabled: true,
             atomic_coordinator,
-            metrics_collector: None, // Metrics are optional and injected
+            _metrics_collector: None, // Metrics are optional and injected
         };
 
         // Initialize storage directories
@@ -299,7 +302,7 @@ impl UniversalMetadataBackend {
             ops_since_snapshot: AtomicU64::new(0),
             atomic_operations_enabled: false, // Disabled for testing
             atomic_coordinator,
-            metrics_collector: None, // Metrics are optional
+            _metrics_collector: None, // Metrics are optional
         };
 
         // Initialize storage directories
@@ -839,6 +842,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Execute atomic write across memtable, secondary index, and filestore
+    #[allow(dead_code)]
     async fn execute_atomic_write(
         &self,
         operation: &IncrementalOperation,
@@ -893,6 +897,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Check if we should create a checkpoint at restart
+    #[allow(dead_code)]
     async fn maybe_checkpoint_at_restart(&self) -> Result<()> {
         // Count operation files in the current directory
         let fs = self.get_fs()?;
@@ -955,6 +960,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Clean up operation files after successful snapshot
+    #[allow(dead_code)]
     async fn cleanup_operation_files(&self) -> Result<()> {
         let fs = self.get_fs()?;
         let ops_dir = self.base_path.join("current");
@@ -1104,6 +1110,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Convert protobuf collection to core Collection for fast in-memory index
+    #[allow(dead_code)]
     fn convert_proto_to_core(&self, proto: &Collection) -> Collection {
         // Proto Collection is already the core type - no conversion needed
         proto.clone()
@@ -1211,6 +1218,7 @@ impl UniversalMetadataBackend {
     }
     */
     /// Serialize record to bytes for rollback
+    #[allow(dead_code)]
     fn serialize_record(&self, record: &Collection) -> Result<Vec<u8>> {
         // Proto-first: serialize directly to protobuf
         let mut buf = Vec::new();
@@ -1574,7 +1582,9 @@ impl MetadataProvider for UniversalMetadataBackend {
 
 /// Snapshot manager for periodic state persistence
 struct SnapshotManager {
+    #[allow(dead_code)]
     threshold: u64,
+    #[allow(dead_code)]
     keep_count: usize,
     base_path: PathBuf,
 }

@@ -19,6 +19,7 @@ pub struct EnterpriseAPIHandler {
     domain_manager: Arc<DomainManager>,
 
     /// Enhanced entity store
+    #[allow(dead_code)]
     entity_store: Arc<TenantAwareEntityStore>,
 
     /// Enterprise authentication manager

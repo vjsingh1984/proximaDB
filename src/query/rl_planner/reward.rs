@@ -118,6 +118,7 @@ impl OptimizationTarget {
 #[derive(Debug, Clone)]
 pub struct RewardCalculator {
     /// Default optimization goal
+    #[allow(dead_code)]
     default_goal: OptimizationGoal,
     /// Default target thresholds
     default_target: OptimizationTarget,

@@ -67,7 +67,7 @@ enum FlushReason {
 }
 
 #[derive(Default, Clone)]
-struct WalWriterMetrics {
+pub struct WalWriterMetrics {
     // Basic counters
     total_writes: u64,
     total_bytes_written: u64,
@@ -533,6 +533,7 @@ impl OptimizedWriteBufferWriter {
     }
 
     /// Optimized serialization
+    #[allow(dead_code)]
     fn serialize_vectors_optimized(
         _vectors: &[VectorRecord],
         // TODO: Restore when OptimizedFormat is available

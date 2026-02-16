@@ -102,6 +102,7 @@ impl MetadataValidationConfig {
 pub struct MetadataValidator {
     config: MetadataValidationConfig,
     binary_validator: BinaryValidator,
+    #[allow(dead_code)]
     json_validator: JsonValidator,
 }
 

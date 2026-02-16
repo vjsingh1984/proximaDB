@@ -261,6 +261,7 @@ pub struct QuantizedDistanceCalculator {
     distance_engine: Arc<UnifiedDistanceCompute>,
 
     /// Hardware capabilities
+    #[allow(dead_code)]
     hardware_caps: Arc<HardwareCapabilities>,
 
     /// Distance table cache for PQ

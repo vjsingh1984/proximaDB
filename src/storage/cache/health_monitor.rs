@@ -28,7 +28,7 @@ pub struct CacheMonitoringDashboard {
     alert_manager: Arc<AlertManager>,
 
     /// Performance profiler
-    profiler: Option<Arc<PerformanceProfiler>>,
+    _profiler: Option<Arc<PerformanceProfiler>>,
 }
 
 /// Historical metrics storage
@@ -68,10 +68,10 @@ pub struct AlertManager {
     active_alerts: Arc<RwLock<Vec<Alert>>>,
 
     /// Alert thresholds from config
-    thresholds: AlertThresholds,
+    _thresholds: AlertThresholds,
 
     /// Alert handlers
-    handlers: Vec<Box<dyn AlertHandler + Send + Sync>>,
+    _handlers: Vec<Box<dyn AlertHandler + Send + Sync>>,
 }
 
 /// Individual alert
@@ -114,15 +114,15 @@ pub enum AlertSeverity {
 #[derive(Debug, Clone)]
 pub struct AlertThresholds {
     /// Minimum acceptable hit rate (0.0-1.0)
-    min_hit_rate: f64,
+    _min_hit_rate: f64,
     /// Maximum memory usage (0.0-1.0)
-    max_memory_usage: f64,
+    _max_memory_usage: f64,
     /// Maximum eviction rate (0.0-1.0)
-    max_eviction_rate: f64,
+    _max_eviction_rate: f64,
     /// Maximum cascade size
-    max_cascade_size: usize,
+    _max_cascade_size: usize,
     /// Maximum prefetch queue size
-    max_prefetch_queue: usize,
+    _max_prefetch_queue: usize,
 }
 
 /// Alert handler trait
@@ -130,6 +130,7 @@ pub struct AlertThresholds {
 /// Defines the interface for handling cache alerts.
 trait AlertHandler: Send + Sync {
     /// Handle an alert
+    #[allow(dead_code)]
     fn handle_alert(&self, alert: &Alert);
 }
 
@@ -144,7 +145,7 @@ pub struct PerformanceProfiler {
     sampling_rate: f64,
 
     /// Output path for profiles
-    output_path: String,
+    _output_path: String,
 }
 
 /// Performance profile data point
@@ -194,7 +195,7 @@ impl CacheMonitoringDashboard {
                 max_size: 1000,
             })),
             alert_manager,
-            profiler,
+            _profiler: profiler,
         }
     }
 
@@ -515,14 +516,14 @@ impl AlertManager {
     pub fn new(thresholds: &crate::storage::cache::config::AlertThresholds) -> Self {
         Self {
             active_alerts: Arc::new(RwLock::new(Vec::new())),
-            thresholds: AlertThresholds {
-                min_hit_rate: thresholds.min_hit_rate,
-                max_memory_usage: thresholds.max_memory_usage,
-                max_eviction_rate: thresholds.max_eviction_rate,
-                max_cascade_size: thresholds.max_cascade_size,
-                max_prefetch_queue: thresholds.max_prefetch_queue,
+            _thresholds: AlertThresholds {
+                _min_hit_rate: thresholds.min_hit_rate,
+                _max_memory_usage: thresholds.max_memory_usage,
+                _max_eviction_rate: thresholds.max_eviction_rate,
+                _max_cascade_size: thresholds.max_cascade_size,
+                _max_prefetch_queue: thresholds.max_prefetch_queue,
             },
-            handlers: Vec::new(),
+            _handlers: Vec::new(),
         }
     }
 
@@ -579,7 +580,7 @@ impl PerformanceProfiler {
         Self {
             profiles: Arc::new(RwLock::new(Vec::new())),
             sampling_rate,
-            output_path,
+            _output_path: output_path,
         }
     }
 

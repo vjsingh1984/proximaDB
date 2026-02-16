@@ -23,9 +23,11 @@ use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 #[derive(Debug, Clone)]
 pub struct MigrationConfig {
     /// Source engine type
+    #[allow(dead_code)]
     pub source_engine: ProtoStorageEngine,
 
     /// Target engine type
+    #[allow(dead_code)]
     pub target_engine: ProtoStorageEngine,
 
     /// Collections to migrate (empty = all)

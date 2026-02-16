@@ -164,6 +164,7 @@ pub struct ColumnarSerializer {
     memory_pools: MemoryPools,
 
     /// Hardware capabilities for optimization
+    #[allow(dead_code)]
     hardware_caps: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
 }
 

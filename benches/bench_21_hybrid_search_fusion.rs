@@ -9,9 +9,9 @@
 // - Dempster-Shafer
 // - Adaptive
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::core::search::hybrid::{
-    HybridFusionEngine, FusionStrategy, BM25Result, VectorResult,
+    BM25Result, FusionStrategy, HybridFusionEngine, VectorResult,
 };
 
 fn create_test_bm25_results(count: usize) -> Vec<BM25Result> {

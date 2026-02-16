@@ -153,6 +153,7 @@ impl Crc32 {
     }
 
     /// Slicing-by-8 algorithm (3-4x faster than byte-by-byte)
+    #[allow(dead_code)]
     fn update_slicing_by_8(&self, data: &[u8], mut crc: u32) -> u32 {
         let mut offset = 0;
 

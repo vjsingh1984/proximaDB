@@ -27,6 +27,7 @@ struct CachedPlan {
 
 /// Cost-based execution planner for unified query optimization with unified caching
 pub struct ExecutionPlanner {
+    #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
     graph_service: Arc<GraphOperationsService>,
     cost_model: CostModel,
@@ -709,6 +710,7 @@ impl ExecutionPlanner {
         }
     }
 
+    #[allow(dead_code)]
     fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> {
         Self::extract_join_keys_static(expr)
     }
@@ -1104,6 +1106,7 @@ struct QueryAnalysis {
 struct SksSimilarArgs {
     pub query: Expr,
     pub metric: Option<String>,
+    #[allow(dead_code)]
     pub threshold: Option<f64>,
 }
 

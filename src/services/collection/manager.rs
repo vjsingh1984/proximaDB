@@ -1290,6 +1290,7 @@ impl CollectionService {
     }
 
     /// Validate collection configuration
+    #[allow(dead_code)]
     fn validate_collection_config(&self, config: &CollectionConfig) -> Result<()> {
         if config.name.is_empty() {
             return Err(anyhow::anyhow!("Collection name cannot be empty"));

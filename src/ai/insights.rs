@@ -31,7 +31,7 @@ pub struct AutomatedInsightEngine {
 /// Business insights generator for strategic intelligence
 pub struct BusinessInsightsGenerator {
     /// Strategic insight templates by industry
-    strategic_templates: Arc<DashMap<String, StrategicInsightTemplate>>,
+    _strategic_templates: Arc<DashMap<String, StrategicInsightTemplate>>,
 
     /// Operational insight analyzer
     operational_analyzer: Arc<OperationalInsightAnalyzer>,
@@ -275,7 +275,7 @@ impl AutomatedInsightEngine {
 impl BusinessInsightsGenerator {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            strategic_templates: Arc::new(DashMap::new()),
+            _strategic_templates: Arc::new(DashMap::new()),
             operational_analyzer: Arc::new(OperationalInsightAnalyzer::new()?),
             financial_calculator: Arc::new(FinancialInsightCalculator::new()?),
             competitive_analyzer: Arc::new(CompetitiveIntelligenceAnalyzer::new()?),
@@ -870,7 +870,7 @@ mod tests {
     #[tokio::test]
     async fn test_business_insights_generator_creation() {
         let insights_generator = BusinessInsightsGenerator::new().await.unwrap();
-        assert!(insights_generator.strategic_templates.is_empty());
+        assert!(insights_generator._strategic_templates.is_empty());
     }
 
     #[test]

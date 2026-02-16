@@ -44,17 +44,16 @@
 
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::State,
     response::Json,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::search::hybrid::{
-    HybridFusionEngine, FusionStrategy, BM25Result, VectorResult, FusedSearchResult,
+    BM25Result, FusedSearchResult, FusionStrategy, HybridFusionEngine, VectorResult,
 };
 use crate::errors::{ApiError, ApiResult};
 
@@ -162,9 +161,9 @@ impl From<FusedSearchResult> for HybridSearchResult {
             vector_score: fused.vector_score,
             bm25_rank: fused.bm25_rank,
             vector_rank: fused.vector_rank,
-            highlights: fused.highlights.map(|highlights| {
-                highlights.into_iter().map(|th| th.text).collect()
-            }),
+            highlights: fused
+                .highlights
+                .map(|highlights| highlights.into_iter().map(|th| th.text).collect()),
             metadata: fused.metadata,
         }
     }
@@ -266,7 +265,8 @@ async fn execute_hybrid_search(
     let fusion_start = std::time::Instant::now();
 
     // Execute fusion
-    let fused_results = fusion_engine.fuse(bm25_results, vector_results)
+    let fused_results = fusion_engine
+        .fuse(bm25_results, vector_results)
         .map_err(|e| ApiError::InvalidArgument(format!("Fusion error: {}", e)))?;
 
     let fusion_time_ms = fusion_start.elapsed().as_secs_f64() * 1000.0;
@@ -327,7 +327,8 @@ async fn list_strategies(
         FusionStrategyInfo {
             id: "rrf".to_string(),
             name: "Reciprocal Rank Fusion".to_string(),
-            description: "Robust rank-based fusion: score = 1/(k+rank_bm25) + 1/(k+rank_vector)".to_string(),
+            description: "Robust rank-based fusion: score = 1/(k+rank_bm25) + 1/(k+rank_vector)"
+                .to_string(),
             parameters: {
                 let mut params = HashMap::new();
                 params.insert("k".to_string(), serde_json::json!(60));
@@ -416,9 +417,9 @@ fn parse_fusion_strategy(strategy_str: &str) -> Result<FusionStrategy, ApiError>
             bm25_normalize: true,
             vector_normalize: true,
         }),
-        "rbp" | "rank_biased_precision" => Ok(FusionStrategy::RankBiasedPrecision {
-            persistence: 0.8,
-        }),
+        "rbp" | "rank_biased_precision" => {
+            Ok(FusionStrategy::RankBiasedPrecision { persistence: 0.8 })
+        }
         "borda_count" => Ok(FusionStrategy::BordaCount),
         "comb_sum" => Ok(FusionStrategy::CombSum),
         "comb_min" => Ok(FusionStrategy::CombMin),
@@ -447,14 +448,12 @@ fn create_mock_results(request: &HybridSearchRequest) -> (Vec<BM25Result>, Vec<V
         .map(|i| BM25Result {
             doc_id: format!("{}_bm25_{}", request.collection, i),
             score: 1.0 - (i as f64 * 0.05),
-            highlights: Some(vec![
-                TextHighlight {
-                    field: "title".to_string(),
-                    text: format!("Match for '{}'", request.text_query),
-                    start_offset: 0,
-                    end_offset: request.text_query.len(),
-                }
-            ]),
+            highlights: Some(vec![TextHighlight {
+                field: "title".to_string(),
+                text: format!("Match for '{}'", request.text_query),
+                start_offset: 0,
+                end_offset: request.text_query.len(),
+            }]),
             metadata: {
                 let mut meta = HashMap::new();
                 meta.insert("source".to_string(), serde_json::json!("bm25"));

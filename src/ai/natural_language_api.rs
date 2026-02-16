@@ -37,7 +37,7 @@ pub struct NaturalLanguageBusinessIntelligenceAPI {
 /// Natural language query processor for enterprise business intelligence
 pub struct NaturalLanguageQueryProcessor {
     /// Query parsing with business context
-    query_parser: Arc<BusinessContextQueryParser>,
+    _query_parser: Arc<BusinessContextQueryParser>,
 
     /// Intent classification for enterprise queries
     intent_classifier: Arc<EnterpriseIntentClassifier>,
@@ -52,7 +52,7 @@ pub struct NaturalLanguageQueryProcessor {
 /// Business intelligence translator for natural language to structured queries
 pub struct BusinessIntelligenceTranslator {
     /// Translation rules by business domain
-    domain_translation_rules: Arc<DashMap<String, DomainTranslationRules>>,
+    _domain_translation_rules: Arc<DashMap<String, DomainTranslationRules>>,
 
     /// Regulatory compliance translator
     compliance_translator: Arc<ComplianceQueryTranslator>,
@@ -61,7 +61,7 @@ pub struct BusinessIntelligenceTranslator {
     cross_domain_composer: Arc<CrossDomainQueryComposer>,
 
     /// Performance optimizer for translated queries
-    query_optimizer: Arc<TranslatedQueryOptimizer>,
+    _query_optimizer: Arc<TranslatedQueryOptimizer>,
 }
 
 impl NaturalLanguageBusinessIntelligenceAPI {
@@ -762,7 +762,7 @@ pub struct QueryPerformanceRequirements {
 impl NaturalLanguageQueryProcessor {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            query_parser: Arc::new(BusinessContextQueryParser::new()?),
+            _query_parser: Arc::new(BusinessContextQueryParser::new()?),
             intent_classifier: Arc::new(EnterpriseIntentClassifier::new()?),
             entity_extractor: Arc::new(RegulatoryAwareEntityExtractor::new()?),
             complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new()?),
@@ -773,10 +773,10 @@ impl NaturalLanguageQueryProcessor {
 impl BusinessIntelligenceTranslator {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            domain_translation_rules: Arc::new(DashMap::new()),
+            _domain_translation_rules: Arc::new(DashMap::new()),
             compliance_translator: Arc::new(ComplianceQueryTranslator::new()?),
             cross_domain_composer: Arc::new(CrossDomainQueryComposer::new()?),
-            query_optimizer: Arc::new(TranslatedQueryOptimizer::new()?),
+            _query_optimizer: Arc::new(TranslatedQueryOptimizer::new()?),
         })
     }
 }

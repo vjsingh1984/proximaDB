@@ -47,6 +47,7 @@ pub struct ConfigReloader {
     config_path: String,
 
     /// Config loader
+    #[allow(dead_code)]
     loader: ConfigLoader,
 
     /// File modification time tracking

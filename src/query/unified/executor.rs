@@ -24,7 +24,9 @@ use crate::proto::proximadb_v1::{
     DocFilterCondition, DocFilterOperator, DocumentFilter, Severity, SqlValue,
     sql_value::Value as SqlValueVariant,
 };
-use crate::security::unified_rbac::{ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext};
+use crate::security::unified_rbac::{
+    ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
+};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentQueryParams, DocumentService};
 use crate::storage::traits::UnifiedStorageEngine;
@@ -64,9 +66,10 @@ impl ParallelExecutor {
         user_ctx: &UnifiedUserContext,
         component: &QueryComponent,
     ) -> Result<()> {
-        let rbac_manager = self.rbac_manager.as_ref().ok_or_else(|| {
-            anyhow!("RBAC validation requested but RBAC manager not configured")
-        })?;
+        let rbac_manager = self
+            .rbac_manager
+            .as_ref()
+            .ok_or_else(|| anyhow!("RBAC validation requested but RBAC manager not configured"))?;
 
         // Match on the operation to extract the collection/resource ID
         match &component.operation {
@@ -121,7 +124,9 @@ impl ParallelExecutor {
                     .map_err(|e| anyhow!("Failed to check observability permission: {}", e))?;
 
                 if !allowed {
-                    return Err(anyhow!("Permission denied: Observability queries require system admin"));
+                    return Err(anyhow!(
+                        "Permission denied: Observability queries require system admin"
+                    ));
                 }
             }
         }
@@ -266,6 +271,7 @@ impl ParallelExecutor {
     }
 
     /// Execute a batch of parallelizable components
+    #[allow(dead_code)]
     async fn execute_parallel_batch(
         &self,
         components: Vec<(usize, QueryComponent)>,
@@ -380,6 +386,7 @@ impl ParallelExecutor {
 }
 
 /// Execute a single query component
+#[allow(dead_code)]
 async fn execute_component(
     component: &QueryComponent,
     vector_ops: Option<Arc<VectorOperationsService>>,
@@ -422,6 +429,7 @@ async fn execute_component_full(
 }
 
 /// Execute a component with dependency context
+#[allow(dead_code)]
 async fn execute_component_with_context(
     component: &QueryComponent,
     vector_ops: Option<Arc<VectorOperationsService>>,
@@ -747,6 +755,7 @@ fn convert_filter_value_to_sql(value: &FilterValue) -> SqlValue {
 }
 
 /// Execute a graph traversal query (legacy - calls full version)
+#[allow(dead_code)]
 async fn execute_graph_traversal(expr: &GraphTraversalExpr) -> Result<SubQueryResult> {
     execute_graph_traversal_full(expr, None).await
 }

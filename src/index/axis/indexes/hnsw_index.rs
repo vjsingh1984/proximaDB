@@ -867,6 +867,7 @@ impl AxisHnswIndex {
 
     /// NEW: Dequantize vector for HNSW graph construction
     /// TODO: Integrate with actual quantization module from storage engines
+    #[allow(dead_code)]
     fn dequantize_vector(
         &self,
         _quantized: &[u8],

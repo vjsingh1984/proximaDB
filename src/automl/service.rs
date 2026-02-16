@@ -295,6 +295,7 @@ impl AutoMLService {
     }
 
     /// Evaluate optimization urgency based on metrics
+    #[allow(dead_code)]
     async fn evaluate_optimization_urgency(
         &self,
         _metrics: &CollectionMetrics,

@@ -13,6 +13,7 @@ pub struct Config {
     pub monitoring: MonitoringConfig,
     pub network: Option<NetworkConfig>,
     pub tls: Option<TlsConfig>,
+    #[allow(dead_code)]
     pub hardware: Option<HardwareConfig>,
     pub sks: Option<SksConfig>,
     /// Unified security configuration (optional)

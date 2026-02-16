@@ -97,20 +97,30 @@ pub struct StrategyConfig {
 /// Collection metadata for strategy decisions
 #[derive(Debug, Clone)]
 struct CollectionMetadata {
+    #[allow(dead_code)]
     pub collection_id: String,
+    #[allow(dead_code)]
     pub vector_count: usize,
+    #[allow(dead_code)]
     pub dimension: usize,
+    #[allow(dead_code)]
     pub has_indexes: bool,
+    #[allow(dead_code)]
     pub index_types: Vec<String>,
+    #[allow(dead_code)]
     pub quantization_config: Option<QuantizationConfig>,
+    #[allow(dead_code)]
     pub average_metadata_size: usize,
-    pub update_frequency: f32,        // Updates per second
+    #[allow(dead_code)]
+    pub update_frequency: f32, // Updates per second
+    #[allow(dead_code)]
     pub last_compaction: Option<u64>, // Timestamp
 }
 
 /// Cost estimator for different strategies
 struct CostEstimator {
     /// Historical cost data
+    #[allow(dead_code)]
     cost_history: Arc<RwLock<HashMap<String, Vec<CostRecord>>>>,
 
     /// Model parameters for cost estimation
@@ -119,28 +129,42 @@ struct CostEstimator {
 
 #[derive(Debug, Clone)]
 struct CostRecord {
+    #[allow(dead_code)]
     strategy: String,
+    #[allow(dead_code)]
     vector_count: usize,
+    #[allow(dead_code)]
     dimension: usize,
+    #[allow(dead_code)]
     actual_latency_ms: u64,
+    #[allow(dead_code)]
     memory_used_mb: u64,
+    #[allow(dead_code)]
     cpu_usage_percent: f32,
 }
 
 #[derive(Debug, Clone)]
 struct ModelParameters {
     /// Cost per vector for different operations (microseconds)
+    #[allow(dead_code)]
     fp32_cost_per_vector: f64,
+    #[allow(dead_code)]
     int8_cost_per_vector: f64,
+    #[allow(dead_code)]
     binary_cost_per_vector: f64,
+    #[allow(dead_code)]
     index_lookup_cost: f64,
 
     /// Memory cost per vector (bytes)
+    #[allow(dead_code)]
     memory_per_fp32_vector: usize,
+    #[allow(dead_code)]
     memory_per_quantized_vector: usize,
 
     /// Overhead costs (microseconds)
+    #[allow(dead_code)]
     index_overhead: f64,
+    #[allow(dead_code)]
     cache_miss_penalty: f64,
 }
 
@@ -155,56 +179,82 @@ struct PerformanceTracker {
 
 #[derive(Debug, Clone)]
 struct QueryPerformance {
+    #[allow(dead_code)]
     query_id: u64,
+    #[allow(dead_code)]
     strategy: ExecutionStrategy,
+    #[allow(dead_code)]
     predicted_latency_ms: u64,
+    #[allow(dead_code)]
     actual_latency_ms: u64,
+    #[allow(dead_code)]
     result_quality: f32, // 0.0-1.0
+    #[allow(dead_code)]
     memory_peak_mb: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 struct SuccessMetrics {
+    #[allow(dead_code)]
     total_queries: u64,
+    #[allow(dead_code)]
     successful_queries: u64,
+    #[allow(dead_code)]
     average_latency_ms: u64,
+    #[allow(dead_code)]
     p99_latency_ms: u64,
+    #[allow(dead_code)]
     quality_score: f32,
 }
 
 /// System resource monitor
 struct ResourceMonitor {
     /// Current memory usage
+    #[allow(dead_code)]
     memory_usage: Arc<RwLock<MemoryStats>>,
 
     /// CPU usage tracker
+    #[allow(dead_code)]
     cpu_usage: Arc<RwLock<CpuStats>>,
 
     /// I/O statistics
+    #[allow(dead_code)]
     io_stats: Arc<RwLock<IoStats>>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct MemoryStats {
+    #[allow(dead_code)]
     total_mb: u64,
+    #[allow(dead_code)]
     used_mb: u64,
+    #[allow(dead_code)]
     available_mb: u64,
+    #[allow(dead_code)]
     cache_mb: u64,
+    #[allow(dead_code)]
     pressure: f32, // 0.0-1.0
 }
 
 #[derive(Debug, Clone, Default)]
 struct CpuStats {
+    #[allow(dead_code)]
     cores: usize,
+    #[allow(dead_code)]
     usage_percent: f32,
+    #[allow(dead_code)]
     load_average: [f32; 3],
 }
 
 #[derive(Debug, Clone, Default)]
 struct IoStats {
+    #[allow(dead_code)]
     read_ops_per_sec: f64,
+    #[allow(dead_code)]
     write_ops_per_sec: f64,
+    #[allow(dead_code)]
     read_mb_per_sec: f64,
+    #[allow(dead_code)]
     write_mb_per_sec: f64,
 }
 

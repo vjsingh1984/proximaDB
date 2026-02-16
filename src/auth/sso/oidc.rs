@@ -244,6 +244,7 @@ impl OIDCIntegration {
     }
 
     /// Extract claims from ID token
+    #[allow(dead_code)]
     fn extract_id_token_claims(
         &self,
         _id_token: &str,

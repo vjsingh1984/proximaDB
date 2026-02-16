@@ -101,6 +101,7 @@ pub struct CacheConfiguration {
 /// Optimization pipeline
 pub struct OptimizationPipeline {
     /// Configuration
+    #[allow(dead_code)]
     config: AutoMLConfig,
     /// Performance predictor
     predictor: Arc<PerformancePredictor>,

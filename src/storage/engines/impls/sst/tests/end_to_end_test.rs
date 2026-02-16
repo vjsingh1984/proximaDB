@@ -206,9 +206,9 @@ mod tests {
                 collection_id: collection_id.to_string(),
                 ..Default::default()
             },
-                user_context: None,
-                tenant_context: None,
-            };
+            user_context: None,
+            tenant_context: None,
+        };
         let search_results = engine.search_vectors_unified(&ctx).await?;
 
         // Verify we got results - this is the key end-to-end test
@@ -296,9 +296,9 @@ mod tests {
                 collection_id: collection_id.to_string(),
                 ..Default::default()
             },
-                user_context: None,
-                tenant_context: None,
-            };
+            user_context: None,
+            tenant_context: None,
+        };
         let persistence_results = engine2.search_vectors_unified(&persistence_ctx).await?;
 
         // The key test: new engine instance can read flushed data
@@ -372,9 +372,9 @@ mod tests {
                 collection_id: "empty_collection".to_string(),
                 ..Default::default()
             },
-                user_context: None,
-                tenant_context: None,
-            };
+            user_context: None,
+            tenant_context: None,
+        };
         let results = engine.search_vectors_unified(&ctx).await?;
 
         assert!(
@@ -546,9 +546,9 @@ mod tests {
                 collection_id: collection_id.to_string(),
                 ..Default::default()
             },
-                user_context: None,
-                tenant_context: None,
-            };
+            user_context: None,
+            tenant_context: None,
+        };
         let search_results = engine.search_vectors_unified(&ctx).await?;
 
         // Verify we got results

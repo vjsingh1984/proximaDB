@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 /// Performance predictor using ML models
 pub struct PerformancePredictor {
     /// Prediction models by collection
+    #[allow(dead_code)]
     models: Arc<RwLock<HashMap<String, PredictionModel>>>,
     /// Model training configuration
     config: PredictorConfig,
@@ -275,9 +276,13 @@ enum TreeNode {
         value: f64,
     },
     Split {
+        #[allow(dead_code)]
         feature_idx: usize,
+        #[allow(dead_code)]
         threshold: f64,
+        #[allow(dead_code)]
         left: Box<TreeNode>,
+        #[allow(dead_code)]
         right: Box<TreeNode>,
     },
 }

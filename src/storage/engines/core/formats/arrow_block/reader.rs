@@ -35,6 +35,7 @@ pub struct ArrowBlockReader {
     /// Fallback file reader
     ///
     /// Standard file handle used when memory mapping is not available.
+    #[allow(dead_code)]
     file: Option<File>,
 
     /// File path (for reopening if needed)

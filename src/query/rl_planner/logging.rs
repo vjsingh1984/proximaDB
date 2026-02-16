@@ -225,6 +225,7 @@ pub struct ExecutionLogger {
     /// Buffer flush threshold
     flush_threshold: usize,
     /// File handle (lazy initialized)
+    #[allow(dead_code)]
     file: Option<tokio::fs::File>,
 }
 

@@ -94,7 +94,7 @@ pub struct NovaEngine {
     /// - Memory-mapped file access for large scans
     ///
     /// Used for hot-path operations requiring maximum throughput
-    optimized_ops: Arc<OptimizedNovaOperations>,
+    _optimized_ops: Arc<OptimizedNovaOperations>,
 
     /// **Flush Operations Module**
     ///
@@ -174,7 +174,7 @@ pub struct NovaEngine {
     /// - Adaptive selection based on data characteristics
     ///
     /// Stateless provider, thread-safe for concurrent use
-    compression_provider: StandardCompression,
+    _compression_provider: StandardCompression,
 
     /// **Storage Quantization Engine** (Collection-Aware)
     ///
@@ -210,7 +210,7 @@ pub struct NovaEngine {
     /// - Progressive refinement (coarse → fine distances)
     ///
     /// Shared singleton across all distance operations
-    distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    _distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 
     /// **Universal Performance Optimizer**
     ///
@@ -321,7 +321,7 @@ impl NovaEngine {
 
         Ok(Self {
             filesystem,
-            optimized_ops,
+            _optimized_ops: optimized_ops,
             flush_ops,
             compaction_ops,
             search_ops,
@@ -339,10 +339,10 @@ impl NovaEngine {
             })),
             hardware,
             metrics_collector: None,
-            compression_provider,
+            _compression_provider: compression_provider,
             storage_quantization_engine,
             fallback_quantization_engine,
-            distance_engine: distance_compute,
+            _distance_engine: distance_compute,
             universal_optimizer,
             axis_manager: None, // AXIS manager will be set externally if available
         })

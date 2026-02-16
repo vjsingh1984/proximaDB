@@ -334,6 +334,7 @@ impl OrionGraphEngine {
     }
 
     /// Add multiple edges to CSR in a single rebuild pass (reduces per-edge overhead)
+    #[allow(dead_code)]
     async fn add_edges_to_csr_batch(&self, edges: &[(usize, usize, EdgeId)]) -> Result<()> {
         if edges.is_empty() {
             return Ok(());

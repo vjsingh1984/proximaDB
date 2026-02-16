@@ -183,8 +183,8 @@ struct CacheStatistics {
     superblock_hits: AtomicU64,
     block_hits: AtomicU64,
     rowgroup_hits: AtomicU64,
-    cache_misses: AtomicU64,
-    bytes_saved: AtomicU64,
+    _cache_misses: AtomicU64,
+    _bytes_saved: AtomicU64,
 }
 
 impl NovaHierarchicalCache {
@@ -220,8 +220,8 @@ impl NovaHierarchicalCache {
                 superblock_hits: AtomicU64::new(0),
                 block_hits: AtomicU64::new(0),
                 rowgroup_hits: AtomicU64::new(0),
-                cache_misses: AtomicU64::new(0),
-                bytes_saved: AtomicU64::new(0),
+                _cache_misses: AtomicU64::new(0),
+                _bytes_saved: AtomicU64::new(0),
             }),
         }
     }

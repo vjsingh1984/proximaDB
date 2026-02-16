@@ -29,25 +29,33 @@ pub struct AuditCorrelationEngine {
 /// Provider-specific audit integrations
 pub struct ProviderAuditIntegrations {
     /// AWS CloudTrail integration
+    #[allow(dead_code)]
     aws_cloudtrail: Option<Arc<AWSCloudTrailIntegration>>,
 
     /// Azure Activity Log integration
+    #[allow(dead_code)]
     azure_activity_log: Option<Arc<AzureActivityLogIntegration>>,
 
     /// Google Cloud Audit integration
+    #[allow(dead_code)]
     gcp_cloud_audit: Option<Arc<GCPCloudAuditIntegration>>,
 
     /// Okta System Log integration
+    #[allow(dead_code)]
     okta_system_log: Option<Arc<OktaSystemLogIntegration>>,
 
     /// Generic SIEM integration
+    #[allow(dead_code)]
     generic_siem: Option<Arc<GenericSIEMIntegration>>,
 }
 
 /// Cross-provider event correlator for unified audit trails
 pub struct CrossProviderEventCorrelator {
+    #[allow(dead_code)]
     correlation_rules: Vec<EventCorrelationRule>,
+    #[allow(dead_code)]
     event_window: Duration,
+    #[allow(dead_code)]
     confidence_threshold: f64,
 }
 
@@ -61,22 +69,30 @@ pub struct EventCorrelationRule {
 
 /// Compliance audit reporter for enterprise reporting
 pub struct ComplianceAuditReporter {
+    #[allow(dead_code)]
     compliance_frameworks: Vec<ComplianceFramework>,
+    #[allow(dead_code)]
     reporting_config: ReportingConfiguration,
 }
 
 /// Audit event store for persistent logging
 pub struct AuditEventStore {
+    #[allow(dead_code)]
     storage_backend: StorageBackend,
+    #[allow(dead_code)]
     retention_policy: RetentionPolicy,
 }
 
 /// Audit correlation session tracking
 #[derive(Debug, Clone)]
 pub struct AuditCorrelationSession {
+    #[allow(dead_code)]
     session_id: String,
+    #[allow(dead_code)]
     start_time: DateTime<Utc>,
+    #[allow(dead_code)]
     events: Vec<AuditEvent>,
+    #[allow(dead_code)]
     correlation_status: CorrelationStatus,
 }
 
@@ -130,15 +146,21 @@ pub enum CorrelationStatus {
 
 #[derive(Debug)]
 pub struct ComplianceFramework {
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     version: String,
+    #[allow(dead_code)]
     requirements: Vec<String>,
 }
 
 #[derive(Debug)]
 pub struct ReportingConfiguration {
+    #[allow(dead_code)]
     frequency: Duration,
+    #[allow(dead_code)]
     recipients: Vec<String>,
+    #[allow(dead_code)]
     format: String,
 }
 
@@ -152,7 +174,9 @@ pub enum StorageBackend {
 
 #[derive(Debug)]
 pub struct RetentionPolicy {
+    #[allow(dead_code)]
     retention_days: u32,
+    #[allow(dead_code)]
     archive_after_days: u32,
 }
 

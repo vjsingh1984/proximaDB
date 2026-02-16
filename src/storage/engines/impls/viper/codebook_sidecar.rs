@@ -239,7 +239,7 @@ impl ViperCodebookSidecarManager {
 /// NOVA-specific extensions for progressive columnar storage
 pub struct NovaCodebookSidecarManager {
     base: ViperCodebookSidecarManager,
-    enable_progressive: bool,
+    _enable_progressive: bool,
 }
 
 impl NovaCodebookSidecarManager {
@@ -251,7 +251,7 @@ impl NovaCodebookSidecarManager {
     ) -> Self {
         Self {
             base: ViperCodebookSidecarManager::new(collection_id, filesystem),
-            enable_progressive,
+            _enable_progressive: enable_progressive,
         }
     }
 

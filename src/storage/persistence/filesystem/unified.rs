@@ -60,6 +60,7 @@ pub struct UnifiedCachingFilesystem {
     metrics: Arc<CacheMetrics>,
 
     /// Engine-specific metadata serializer (provided by the storage engine)
+    #[allow(dead_code)]
     metadata_serializer: Arc<dyn EngineMetadataSerializer>,
 }
 

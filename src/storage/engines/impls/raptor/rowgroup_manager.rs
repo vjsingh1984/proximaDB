@@ -87,6 +87,9 @@ impl RowGroups {
             metadata_algorithm: None,
         };
 
+        // Use the configured compression settings from config, not local variable
+        // This avoids confusion with struct field of same name
+
         Ok(Self {
             row_groups: HashMap::new(),
             current_row_group: None,
@@ -95,7 +98,7 @@ impl RowGroups {
             optimal_size,
             quantization_engine,
             // Note: simd_encoder removed - encoding now done via ProximaCodec
-            compression_config,
+            compression_config: compression_config,
             config,
         })
     }
@@ -423,6 +426,7 @@ impl RowGroups {
     }
 
     /// Add metadata in columnar format
+    #[allow(dead_code)]
     fn add_metadata_columnar(
         &self,
         metadata_columns: &mut MetadataColumns,
@@ -467,6 +471,7 @@ impl RowGroups {
     }
 
     /// Add empty metadata entries to maintain column alignment
+    #[allow(dead_code)]
     fn add_empty_metadata_columnar(&self, metadata_columns: &mut MetadataColumns) -> Result<()> {
         // Add None to all existing columns to maintain alignment
         for column in metadata_columns.string_columns.values_mut() {

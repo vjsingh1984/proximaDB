@@ -999,6 +999,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn detect_arm_cache_sizes() -> CacheSizes {
         use std::fs;
 
@@ -1033,6 +1034,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn get_arm_defaults() -> CacheSizes {
         // Enhanced defaults for ARM64 based on common architectures
         // Apple M1/M2: L1=128KB, L2=4MB, L3=8-24MB (shared)
@@ -1047,6 +1049,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_arm_cpuinfo(cpuinfo: &str) -> CacheSizes {
         let mut cache_sizes = Self::get_arm_defaults();
 
@@ -1092,6 +1095,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_arm_cache_size(line: &str) -> Option<usize> {
         // ARM cache size parsing - more flexible than Linux KB/MB parsing
         let _line_lower = line.to_lowercase();
@@ -1129,6 +1133,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_apple_silicon_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Apple Silicon has known cache configurations
         // M1: L1=128KB, L2=4MB, L3=8MB (efficiency cores share L3)
@@ -1153,6 +1158,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_qualcomm_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Qualcomm Snapdragon typical configurations
         // Snapdragon 8 Gen 2: L1=64KB, L2=512KB, L3=8MB

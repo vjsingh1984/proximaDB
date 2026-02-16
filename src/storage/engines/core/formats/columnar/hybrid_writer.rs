@@ -186,6 +186,7 @@ pub struct HybridParquetWriter {
 struct InsertionEvent {
     timestamp: Instant,
     batch_size: usize,
+    #[allow(dead_code)]
     mode: WriterMode,
 }
 

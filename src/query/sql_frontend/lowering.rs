@@ -735,6 +735,7 @@ impl QueryLowering {
     }
 
     /// Lower JOIN clauses from SQL AST to query AST
+    #[allow(dead_code)]
     async fn lower_joins(
         &self,
         joins: &[sqlparser::ast::Join],

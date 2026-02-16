@@ -143,6 +143,7 @@ impl GoogleCloudIntegration {
     }
 
     /// Get user groups from Google Workspace (placeholder)
+    #[allow(dead_code)]
     async fn get_user_groups(&self, user_email: &str) -> Result<Vec<String>> {
         // Placeholder implementation
         // Real implementation would use Google Workspace Admin SDK

@@ -46,6 +46,7 @@ pub struct IndexMigrationEngine {
     executor: Arc<MigrationExecutor>,
 
     /// Rollback manager
+    #[allow(dead_code)]
     rollback_manager: Arc<RollbackManager>,
 
     /// Progress tracker
@@ -264,6 +265,7 @@ pub struct StepMetrics {
 /// Rollback manager
 pub struct RollbackManager {
     /// Rollback strategies
+    #[allow(dead_code)]
     strategies: Vec<Box<dyn RollbackStrategy + Send + Sync>>,
 }
 

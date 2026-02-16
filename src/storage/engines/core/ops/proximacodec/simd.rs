@@ -183,6 +183,7 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
 ///
 /// Uses VectorMemoryPool to avoid allocations on hot path. The pooled buffer
 /// is automatically returned when the result Vec is no longer needed.
+#[allow(dead_code)]
 fn f32_to_i32_with_pool(values: &[f32]) -> Vec<i32> {
     // For small sizes, direct allocation is faster than pool overhead
     if values.len() < 100 {
@@ -628,6 +629,7 @@ pub fn simd_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
 // ONLY SIMD intrinsic code, not scalar implementations.
 
 /// Helper: Pack i64 values into bits (wrapper around existing bit-packing)
+#[allow(dead_code)]
 fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
     if values.is_empty() {
         return Ok(Vec::new());
@@ -671,6 +673,7 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 }
 
 /// Helper: Unpack bytes into i32 values (delegates to baseline)
+#[allow(dead_code)]
 fn bitunpack_bytes_to_i32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
     use super::impls::baseline::functions::bitpack;
     // Unpack to u32 first, then reinterpret as i32

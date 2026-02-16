@@ -109,6 +109,7 @@ impl AlertingService {
     }
 
     /// Get all active alerts
+    #[allow(dead_code)]
     pub async fn get_active_alerts(&self) -> Vec<ActiveAlert> {
         self.active_alerts.read().await.values().cloned().collect()
     }

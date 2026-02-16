@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 /// Clean AWS IAM integration without over-engineering
 pub struct AWSIAMIntegration {
     /// AWS region for STS operations
+    #[allow(dead_code)]
     region: String,
 
     /// Role mappings for enterprise users
@@ -392,6 +393,7 @@ impl AWSIAMIntegration {
     }
 
     /// Extract account ID from access key (simplified)
+    #[allow(dead_code)]
     fn extract_account_id_from_access_key(&self, access_key: &str) -> Result<String> {
         // In real implementation, would decode access key properly
         // For now, simple extraction

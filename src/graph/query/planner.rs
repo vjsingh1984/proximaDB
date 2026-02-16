@@ -309,6 +309,7 @@ pub struct CostEstimate {
 #[derive(Debug, Clone)]
 struct CachedPlan {
     plan: QueryPlan,
+    #[allow(dead_code)]
     access_count: u64,
     last_accessed: Instant,
 }

@@ -251,6 +251,7 @@ pub fn progressive_decode_binary_int8_f32(
 // Scalar Implementations
 // ============================================================================
 
+#[allow(dead_code)]
 fn fused_decode_binary_scalar(
     input: &[u8],
     output: &mut [f32],
@@ -273,6 +274,7 @@ fn fused_decode_binary_scalar(
     Ok(count)
 }
 
+#[allow(dead_code)]
 fn fused_decode_int4_scalar(
     input: &[u8],
     output: &mut [f32],
@@ -302,6 +304,7 @@ fn fused_decode_int4_scalar(
     Ok(count)
 }
 
+#[allow(dead_code)]
 fn fused_decode_int8_scalar(
     input: &[u8],
     output: &mut [f32],

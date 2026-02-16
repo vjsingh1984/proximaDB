@@ -50,6 +50,7 @@ use std::sync::Arc;
 /// ```
 pub struct FloydWarshallAPSP {
     engine: Arc<OrionGraphEngine>,
+    #[allow(dead_code)]
     use_simd: bool,
 }
 

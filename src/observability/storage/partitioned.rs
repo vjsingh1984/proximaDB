@@ -35,7 +35,7 @@ pub struct PartitionedStorage {
 /// A single time partition
 struct Partition {
     /// Partition start timestamp (nanoseconds)
-    start_ns: i64,
+    _start_ns: i64,
     /// Partition end timestamp (nanoseconds)
     end_ns: i64,
     /// Entries in this partition (in-memory for hot tier)
@@ -119,7 +119,7 @@ impl PartitionedStorage {
 
         // Create new partition
         let partition = Arc::new(Partition {
-            start_ns: partition_key,
+            _start_ns: partition_key,
             end_ns: partition_key + self.partition_duration_ns,
             entries: RwLock::new(Vec::new()),
             tier: RwLock::new(PartitionTier::Hot),

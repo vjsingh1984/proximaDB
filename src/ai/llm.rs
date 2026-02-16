@@ -19,7 +19,7 @@ pub struct AIIntelligenceFoundation {
     business_context_ai: Arc<BusinessContextAI>,
 
     /// Enterprise NLP engine
-    enterprise_nlp: Arc<EnterpriseNLPEngine>,
+    _enterprise_nlp: Arc<EnterpriseNLPEngine>,
 
     /// AI query translator
     ai_query_translator: Arc<AIQueryTranslator>,
@@ -34,28 +34,28 @@ pub struct LLMIntegrationEngine {
     model_configurations: Arc<DashMap<String, LLMModelConfiguration>>,
 
     /// Enterprise prompt templates
-    prompt_templates: Arc<DashMap<String, EnterprisePromptTemplate>>,
+    _prompt_templates: Arc<DashMap<String, EnterprisePromptTemplate>>,
 
     /// Response validation and filtering
     response_validator: Arc<LLMResponseValidator>,
 
     /// Performance optimization for enterprise workloads
-    performance_optimizer: Arc<LLMPerformanceOptimizer>,
+    _performance_optimizer: Arc<LLMPerformanceOptimizer>,
 }
 
 /// Business context AI for understanding enterprise intent
 pub struct BusinessContextAI {
     /// Industry-specific intent classifiers
-    industry_classifiers: Arc<DashMap<String, IndustryIntentClassifier>>,
+    _industry_classifiers: Arc<DashMap<String, IndustryIntentClassifier>>,
 
     /// Business domain understanding
-    domain_understanding: Arc<BusinessDomainUnderstanding>,
+    _domain_understanding: Arc<BusinessDomainUnderstanding>,
 
     /// Regulatory context integration
     regulatory_context: Arc<RegulatoryContextIntegration>,
 
     /// Enterprise terminology processor
-    enterprise_terminology: Arc<EnterpriseTerminologyProcessor>,
+    _enterprise_terminology: Arc<EnterpriseTerminologyProcessor>,
 }
 
 impl AIIntelligenceFoundation {
@@ -64,7 +64,7 @@ impl AIIntelligenceFoundation {
         Ok(Self {
             llm_integration: Arc::new(LLMIntegrationEngine::new().await?),
             business_context_ai: Arc::new(BusinessContextAI::new().await?),
-            enterprise_nlp: Arc::new(EnterpriseNLPEngine::new()?),
+            _enterprise_nlp: Arc::new(EnterpriseNLPEngine::new()?),
             ai_query_translator: Arc::new(AIQueryTranslator::new()?),
             knowledge_graph_ai: Arc::new(KnowledgeGraphAICoordinator::new()?),
         })
@@ -139,9 +139,9 @@ impl LLMIntegrationEngine {
     async fn new() -> Result<Self> {
         Ok(Self {
             model_configurations: Arc::new(DashMap::new()),
-            prompt_templates: Arc::new(DashMap::new()),
+            _prompt_templates: Arc::new(DashMap::new()),
             response_validator: Arc::new(LLMResponseValidator::new()?),
-            performance_optimizer: Arc::new(LLMPerformanceOptimizer::new()?),
+            _performance_optimizer: Arc::new(LLMPerformanceOptimizer::new()?),
         })
     }
 
@@ -340,10 +340,10 @@ impl LLMIntegrationEngine {
 impl BusinessContextAI {
     async fn new() -> Result<Self> {
         Ok(Self {
-            industry_classifiers: Arc::new(DashMap::new()),
-            domain_understanding: Arc::new(BusinessDomainUnderstanding::new()?),
+            _industry_classifiers: Arc::new(DashMap::new()),
+            _domain_understanding: Arc::new(BusinessDomainUnderstanding::new()?),
             regulatory_context: Arc::new(RegulatoryContextIntegration::new()?),
-            enterprise_terminology: Arc::new(EnterpriseTerminologyProcessor::new()?),
+            _enterprise_terminology: Arc::new(EnterpriseTerminologyProcessor::new()?),
         })
     }
 

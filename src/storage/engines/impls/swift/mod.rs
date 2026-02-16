@@ -375,6 +375,7 @@ impl SuperBlock {
 /// Placeholder for quantized index - now handled by unified compute module
 #[derive(Debug)]
 pub struct QuantizedIndex {
+    #[allow(dead_code)]
     dimension: usize,
 }
 
@@ -425,6 +426,7 @@ pub struct SwiftFile {
     pub metadata_index: hierarchical_blocks::MetadataIndex,
 
     /// Memory management
+    #[allow(dead_code)]
     memory_manager: Arc<MemoryManager>,
     // Note: simd_encoder removed - encoding now done via ProximaCodec per-operation
 }

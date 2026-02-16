@@ -362,6 +362,7 @@ impl HilbertCurve {
 
     /// Compress high-dimensional bits
     #[inline]
+    #[allow(dead_code)]
     fn compress_high_dim_bits(&self, bits: u32, dims: usize) -> u32 {
         // XOR folding for dimension reduction
         let mut compressed = bits & 0xF;
@@ -509,6 +510,7 @@ impl HilbertCurve {
     }
 
     /// 2D Hilbert lookup table
+    #[allow(dead_code)]
     fn hilbert_2d_table(&self, x: u32, y: u32) -> u32 {
         match (x, y) {
             (0, 0) => 0,

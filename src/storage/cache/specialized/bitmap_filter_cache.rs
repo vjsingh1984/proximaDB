@@ -35,6 +35,7 @@ impl CacheValue for CachedFilterResult {
 /// Filter optimizer for decomposing complex filters
 pub struct FilterOptimizer {
     /// Cache of atomic filter components
+    #[allow(dead_code)]
     atomic_filters: Arc<RwLock<HashMap<String, RoaringBitmap>>>,
 }
 

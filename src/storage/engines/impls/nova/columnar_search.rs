@@ -926,6 +926,7 @@ impl NovaColumnarSearch {
         }
     }
 
+    #[allow(dead_code)]
     fn compute_batch_distances(
         &self,
         batch: &RecordBatch,
@@ -994,6 +995,7 @@ impl NovaColumnarSearch {
         }
     }
 
+    #[allow(dead_code)]
     fn extract_record_from_batch(
         &self,
         batch: &RecordBatch,
@@ -1065,6 +1067,7 @@ fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
 
 /// Extract a vector from an Arrow column at the specified row index
 /// Handles Float32Array and other vector representations
+#[allow(dead_code)]
 fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f32>> {
     // Try Float32Array first
     if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>() {
@@ -1159,6 +1162,7 @@ impl ColumnarSearchConfig {
 }
 
 /// Build projection mask based on config and filter
+#[allow(dead_code)]
 fn build_projection_mask(
     _config: &ColumnarSearchConfig,
     filter: &Option<MetadataFilter>,

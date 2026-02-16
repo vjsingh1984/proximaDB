@@ -155,7 +155,7 @@ pub struct ViperEngine {
     /// - Nested schema for complex metadata
     ///
     /// Shared between VIPER and NOVA for format compatibility
-    schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
+    _schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
 
     /// **Compaction Service**
     ///
@@ -225,7 +225,7 @@ pub struct ViperEngine {
     /// - Hardware-accelerated quantization (SIMD)
     ///
     /// Codebooks trained once during first flush, reused forever
-    storage_quantization_engine:
+    _storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
 
     /// **Fallback Quantization Engine** (Stateless)
@@ -566,16 +566,16 @@ impl ViperEngine {
             collection_service: collection_service.clone(),
             filesystem: filesystem.clone(),
             filesystem_factory,
-            schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema::new(),
+            _schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema::new(),
             compaction,
             flush_manager,
             // ml_clustering_engine, // Moved to AXIS
-            utilities,
+            utilities: utilities,
             // Search engine removed - using IntegratedSearchOptimizer
             stats: Arc::new(EngineStats::default()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            storage_quantization_engine,
-            fallback_quantization_engine,
+            _storage_quantization_engine: storage_quantization_engine,
+            fallback_quantization_engine: fallback_quantization_engine,
             universal_optimizer,
             orchestrator: None,
             axis_manager: None, // AXIS manager will be set externally if available

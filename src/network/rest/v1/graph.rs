@@ -94,7 +94,7 @@ pub struct RestTraversalRequest {
     /// Node labels to filter (empty means all labels)
     node_labels: Vec<String>,
     /// Whether to return the full path
-    return_path: bool,
+    _return_path: bool,
     /// Traversal algorithm (bfs, dfs, parallel_bfs)
     algorithm: String,
 }
@@ -1856,7 +1856,7 @@ pub struct GraphQueryRequest {
     query: String,
     /// Query language (currently only "cypher" is supported)
     #[serde(default = "default_query_language")]
-    language: String,
+    _language: String,
 }
 
 fn default_query_language() -> String {

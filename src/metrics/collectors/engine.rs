@@ -64,7 +64,7 @@ pub struct EngineMetricsCollector {
 
     /// Last collection time for rate calculations
     /// Used to compute rates (ops/sec, bytes/sec) from counters
-    last_collection: Arc<RwLock<Instant>>,
+    _last_collection: Arc<RwLock<Instant>>,
 
     /// Accumulated metrics for rate calculations
     /// Contains counters that are reset periodically after export
@@ -74,14 +74,14 @@ pub struct EngineMetricsCollector {
 #[derive(Debug, Clone)]
 struct EngineMetricsAccumulator {
     operations: HashMap<String, OperationMetrics>,
-    last_reset: Instant,
+    _last_reset: Instant,
 }
 
 impl Default for EngineMetricsAccumulator {
     fn default() -> Self {
         Self {
             operations: HashMap::new(),
-            last_reset: Instant::now(),
+            _last_reset: Instant::now(),
         }
     }
 }
@@ -98,10 +98,10 @@ impl EngineMetricsCollector {
     pub fn new() -> Self {
         Self {
             engines: Arc::new(RwLock::new(HashMap::new())),
-            last_collection: Arc::new(RwLock::new(Instant::now())),
+            _last_collection: Arc::new(RwLock::new(Instant::now())),
             accumulated_metrics: Arc::new(RwLock::new(EngineMetricsAccumulator {
                 operations: HashMap::new(),
-                last_reset: Instant::now(),
+                _last_reset: Instant::now(),
             })),
         }
     }

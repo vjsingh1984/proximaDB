@@ -93,6 +93,7 @@ pub struct SharedParquetFormatReader {
 
     /// Memory mapping strategy for Parquet files
     /// Controls which columns to mmap based on access patterns
+    #[allow(dead_code)]
     mmap_strategy: ParquetMmapStrategy,
 
     /// UNIFIED CACHE: Zero-copy system replaces all specialized caches

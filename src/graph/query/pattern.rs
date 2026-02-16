@@ -70,9 +70,13 @@ pub struct PatternMatcher {
 /// Pattern compiler for parsing Cypher-like patterns
 pub struct PatternCompiler {
     /// Regular expressions for pattern parsing
+    #[allow(dead_code)]
     node_pattern_regex: Regex,
+    #[allow(dead_code)]
     edge_pattern_regex: Regex,
+    #[allow(dead_code)]
     path_pattern_regex: Regex,
+    #[allow(dead_code)]
     property_pattern_regex: Regex,
 }
 

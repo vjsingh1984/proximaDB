@@ -413,6 +413,7 @@ pub struct CommonColumnarOperations {
 
     // Distance computation removed - engines should use compute module directly
     /// Filesystem factory for I/O operations
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Metadata cache

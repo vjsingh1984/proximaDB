@@ -7,12 +7,12 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use axum::{extract::State, http::StatusCode, Json, Router};
+use axum::{Json, Router, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tower::ServiceBuilder;
@@ -20,7 +20,9 @@ use tower_http::trace::TraceLayer;
 
 use super::{AdapterConfig, InputAdapter};
 use crate::observability::ObservabilityService;
-use crate::proto::proximadb_v1::{sql_value, LogEntry, Severity, SpanKind, SpanStatus, SpanStatusCode, SqlValue, TraceData};
+use crate::proto::proximadb_v1::{
+    LogEntry, Severity, SpanKind, SpanStatus, SpanStatusCode, SqlValue, TraceData, sql_value,
+};
 
 /// OTLP adapter for OpenTelemetry protocol
 pub struct OtlpAdapter {
@@ -297,7 +299,12 @@ impl OtlpAdapter {
     ) -> Self {
         let (tx, _rx) = tokio::sync::mpsc::channel(1000);
         let config = AdapterConfig::new(bind_address, tx);
-        Self::new(config, transport, observability_service, "default".to_string())
+        Self::new(
+            config,
+            transport,
+            observability_service,
+            "default".to_string(),
+        )
     }
 
     /// Convert OTLP span to ProximaDB TraceData
@@ -307,14 +314,8 @@ impl OtlpAdapter {
         resource_attributes: &HashMap<String, String>,
     ) -> TraceData {
         // Parse timestamps
-        let start_time_ns = otlp_span
-            .start_time_unix_nano
-            .parse::<i64>()
-            .unwrap_or(0);
-        let end_time_ns = otlp_span
-            .end_time_unix_nano
-            .parse::<i64>()
-            .unwrap_or(0);
+        let start_time_ns = otlp_span.start_time_unix_nano.parse::<i64>().unwrap_or(0);
+        let end_time_ns = otlp_span.end_time_unix_nano.parse::<i64>().unwrap_or(0);
 
         // Convert span kind
         let kind = match otlp_span.kind.as_deref() {
@@ -434,6 +435,7 @@ impl OtlpAdapter {
     }
 
     /// Convert OTLP severity to our Severity
+    #[allow(dead_code)]
     fn convert_severity(severity_number: i32) -> Severity {
         // OTLP severity numbers: 1-4 = TRACE, 5-8 = DEBUG, 9-12 = INFO,
         // 13-16 = WARN, 17-20 = ERROR, 21-24 = FATAL
@@ -449,6 +451,7 @@ impl OtlpAdapter {
     }
 
     /// Convert OTLP log record to LogEntry
+    #[allow(dead_code)]
     fn convert_log_record(
         &self,
         timestamp_ns: i64,
@@ -497,10 +500,8 @@ impl OtlpAdapter {
     /// Start HTTP server for OTLP trace ingestion
     async fn start_http(&self) -> Result<()> {
         use axum::routing::post;
-        use hyper::server::conn::AddrIncoming;
+
         use hyper::Server;
-        use std::convert::Infallible;
-        use tower::make::Shared;
 
         let app = Router::new()
             .route("/v1/traces", post(otlp_traces_handler))
@@ -517,14 +518,12 @@ impl OtlpAdapter {
         );
 
         // Store the sender for shutdown
-        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.lock().await = Some(shutdown_tx);
 
         // Create server with graceful shutdown
         let addr = self.config.bind_address;
-        let server = Server::bind(&addr).serve(
-            app.into_make_service()
-        );
+        let server = Server::bind(&addr).serve(app.into_make_service());
 
         // Spawn graceful shutdown task
         let graceful = server.with_graceful_shutdown(async move {
@@ -533,7 +532,8 @@ impl OtlpAdapter {
         });
 
         // Wait for server to complete
-        graceful.await
+        graceful
+            .await
             .map_err(|e| anyhow::anyhow!("OTLP HTTP server error: {}", e))
     }
 }
@@ -752,13 +752,13 @@ mod tests {
 
         // Test that the types can be created
         match grpc {
-            OtlpTransport::Grpc => {},
+            OtlpTransport::Grpc => {}
             OtlpTransport::Http => panic!("Expected Grpc"),
         }
 
         match http {
             OtlpTransport::Grpc => panic!("Expected Http"),
-            OtlpTransport::Http => {},
+            OtlpTransport::Http => {}
         }
     }
 

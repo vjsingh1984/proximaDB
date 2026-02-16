@@ -72,6 +72,7 @@ pub struct MetadataFilterAnalyzer {
     /// Performance warning threshold (ms)
     ///
     /// Queries exceeding this threshold will log performance warnings.
+    #[allow(dead_code)]
     slow_query_threshold_ms: u64,
 }
 

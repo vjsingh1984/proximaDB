@@ -118,11 +118,13 @@ pub struct Compaction {
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
+    #[allow(dead_code)]
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     unified_reader: Arc<UnifiedSstableReader>,
     sst_compactor: Option<Arc<SstCompactor>>,
     filesystem_factory: Arc<FilesystemFactory>,
     /// New compaction orchestrator
+    #[allow(dead_code)]
     compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }

@@ -138,6 +138,7 @@ pub struct DecisionFactors {
     /// Future access probability (0.0 - 1.0)
     pub future_access_probability: f32,
     /// Total file size in bytes
+    #[allow(dead_code)]
     pub file_size_bytes: u64,
     /// Estimated cost savings with selective download
     pub cost_savings_estimate: f64,

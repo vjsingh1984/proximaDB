@@ -32,6 +32,7 @@ pub struct ColumnarOptimizer {
     zero_copy_fs: Arc<FilesystemFactory>,
 
     /// Filesystem factory for writes (selects based on URL scheme)
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Cached bloom filters per file
@@ -50,6 +51,7 @@ pub struct FileBloomFilters {
 /// Bloom filters for a single row group
 #[derive(Debug)]
 pub struct RowGroupBloomFilters {
+    #[allow(dead_code)]
     pub row_group_id: usize,
     pub column_filters: HashMap<String, BloomFilterInfo>,
 }

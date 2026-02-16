@@ -12,6 +12,7 @@ use tracing::info;
 /// Operation metrics for monitoring and optimization
 pub struct OperationMetrics {
     /// Operation counts by type and collection
+    #[allow(dead_code)]
     operation_counts: Arc<RwLock<HashMap<String, HashMap<OperationType, u64>>>>,
 
     /// Duration statistics for performance analysis
@@ -21,6 +22,7 @@ pub struct OperationMetrics {
     success_rates: Arc<RwLock<HashMap<OperationType, SuccessRate>>>,
 
     /// Resource utilization during operations
+    #[allow(dead_code)]
     resource_usage: Arc<RwLock<ResourceUsageStats>>,
 }
 
@@ -43,9 +45,13 @@ struct SuccessRate {
 /// Resource utilization statistics
 #[derive(Debug, Clone, Default)]
 struct ResourceUsageStats {
+    #[allow(dead_code)]
     peak_memory_usage: u64,
+    #[allow(dead_code)]
     peak_cpu_usage: f64,
+    #[allow(dead_code)]
     peak_io_throughput: u64,
+    #[allow(dead_code)]
     concurrent_operations_peak: usize,
 }
 

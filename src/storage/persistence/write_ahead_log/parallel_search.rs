@@ -448,7 +448,7 @@ impl ParallelWALSearch {
 
 /// Intermediate search candidate
 #[derive(Clone)]
-struct SearchCandidate {
+pub struct SearchCandidate {
     record: VectorRecord,
     score: f32,
     include_vectors: bool,

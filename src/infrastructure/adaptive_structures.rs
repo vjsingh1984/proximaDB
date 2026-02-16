@@ -300,6 +300,7 @@ pub struct UniversalTier {
     /// Collection-specific configurations
     collection_configs: DashMap<String, SmartTierPolicy>,
     /// Active tier operations
+    #[allow(dead_code)]
     active_operations: AtomicMetrics,
     /// Overall performance metrics
     performance_metrics: AtomicMetrics,
@@ -775,18 +776,22 @@ pub struct IndexBackend<K, V> {
     storage: DashMap<K, V>,
     write_buffer: Arc<RwLock<Vec<(K, V)>>>,
     write_buffer_size: usize,
+    #[allow(dead_code)]
     tier_policy: UnifiedTierPolicy,
+    #[allow(dead_code)]
     config: AdaptiveStoreConfig,
     tier_manager: Arc<UniversalTier>,
     metrics: AtomicMetrics,
     workload_metrics: RwLock<WorkloadMetrics>,
 }
 
-/// Cache backend using Moka with tier management  
+/// Cache backend using Moka with tier management
 pub struct CacheBackend<K, V> {
     collection_id: String,
     storage: MokaCache<K, V>,
+    #[allow(dead_code)]
     tier_policy: UnifiedTierPolicy,
+    #[allow(dead_code)]
     config: AdaptiveStoreConfig,
     tier_manager: Arc<UniversalTier>,
     metrics: AtomicMetrics,
@@ -796,8 +801,11 @@ pub struct CacheBackend<K, V> {
 /// Hybrid backend that can switch between index and cache modes
 pub struct HybridBackend<K, V> {
     collection_id: String,
+    #[allow(dead_code)]
     active_structure: RwLock<HybridStructure>,
+    #[allow(dead_code)]
     detection_config: WorkloadDetectionConfig,
+    #[allow(dead_code)]
     config: AdaptiveStoreConfig,
     tier_manager: Arc<UniversalTier>,
     metrics: AtomicMetrics,

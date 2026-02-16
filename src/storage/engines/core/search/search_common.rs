@@ -143,6 +143,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
 pub struct UniversalSearchPipeline {
     distance_compute: Arc<UnifiedDistanceCompute>,
     quantization_engine: Arc<UnifiedQuantizationEngine>,
+    #[allow(dead_code)]
     filter_processor: Arc<FilterProcessor>,
     result_manager: Arc<ResultManager>,
 }

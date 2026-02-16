@@ -28,10 +28,10 @@ pub struct RaptorCompactor {
     reader: Arc<RaptorReader>,
 
     // DIRECT references to unified modules
-    distance_compute: Arc<UnifiedDistanceCompute>,
+    _distance_compute: Arc<UnifiedDistanceCompute>,
     // Note: proxima_encoder removed - encoding now done via ProximaCodec in writer.rs
     filesystem: Arc<dyn FileSystem>,
-    transaction_coordinator: Arc<TransactionCoordinator>,
+    _transaction_coordinator: Arc<TransactionCoordinator>,
 }
 
 impl RaptorCompactor {
@@ -44,10 +44,10 @@ impl RaptorCompactor {
         Self {
             config,
             reader,
-            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
+            _distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             // Note: proxima_encoder removed - encoding now done via ProximaCodec in writer.rs
             filesystem,
-            transaction_coordinator,
+            _transaction_coordinator: transaction_coordinator,
         }
     }
 
@@ -130,6 +130,7 @@ impl RaptorCompactor {
     /// Clustering-based compaction matching writer's flush behavior
     /// Key principle: k (number of clusters) = number of rowgroups
     /// Each rowgroup contains vectors from exactly one cluster
+    #[allow(dead_code)]
     async fn compact_with_matrix_preservation(
         &self,
         input_files: Vec<String>,
@@ -221,6 +222,7 @@ impl RaptorCompactor {
 
     /// Run fast-converging K-means++ clustering for high-dimensional data
     /// Uses the same algorithm as the writer for consistency
+    #[allow(dead_code)]
     fn cluster_vectors(&self, vectors: &[VectorRecord], k: usize) -> Result<Vec<usize>> {
         // Use AXIS clustering engine with K-means++ initialization
         // This provides fast convergence for high-dimensional data

@@ -79,10 +79,12 @@ pub use service_transactions::{
 };
 
 use crate::core::error::ProximaDBError;
-use crate::security::unified_rbac::{ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext};
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     engines::{GraphEngine, orion::OrionGraphEngine},
+};
+use crate::security::unified_rbac::{
+    ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
@@ -283,6 +285,7 @@ impl GraphOperationsService {
     }
 
     /// Validate graph operation permission
+    #[allow(dead_code)]
     async fn validate_graph_permission(
         &self,
         user_ctx: &UnifiedUserContext,
@@ -1492,6 +1495,7 @@ impl GraphOperationsService {
     }
     */
     /// Legacy query_edges (moved). Kept for reference; new implementation in service_edge_ops.rs
+    #[allow(dead_code)]
     pub(crate) async fn query_edges_legacy(
         &self,
         graph_id: &str,
@@ -1814,6 +1818,7 @@ impl GraphOperationsService {
     }
 
     /// Helper method to convert properties to proto format
+    #[allow(dead_code)]
     fn convert_properties_to_proto(
         &self,
         properties: &std::collections::HashMap<String, crate::graph::PropertyValue>,
@@ -2030,6 +2035,7 @@ impl GraphOperationsService {
     }
 
     // Helpers for range/string comparisons
+    #[allow(dead_code)]
     fn parse_f64_key(s: &str) -> Option<f64> {
         s.parse::<f64>().ok()
     }

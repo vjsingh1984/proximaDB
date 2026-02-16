@@ -305,10 +305,10 @@ struct LdapUserInfo {
 
 /// OAuth2 authentication provider
 pub struct OAuth2AuthProvider {
-    client_id: String,
-    client_secret: String,
-    auth_url: String,
-    token_url: String,
+    _client_id: String,
+    _client_secret: String,
+    _auth_url: String,
+    _token_url: String,
     user_info_url: String,
     client: Client,
 }
@@ -322,10 +322,10 @@ impl OAuth2AuthProvider {
         user_info_url: String,
     ) -> Self {
         Self {
-            client_id,
-            client_secret,
-            auth_url,
-            token_url,
+            _client_id: client_id,
+            _client_secret: client_secret,
+            _auth_url: auth_url,
+            _token_url: token_url,
             user_info_url,
             client: Client::new(),
         }
@@ -444,8 +444,8 @@ impl OAuth2AuthProvider {
 #[derive(Debug, Deserialize)]
 struct OAuth2UserInfo {
     id: String,
-    email: Option<String>,
-    name: Option<String>,
+    _email: Option<String>,
+    _name: Option<String>,
     #[serde(default)]
     roles: Vec<String>,
     tenant_id: Option<String>,
@@ -455,22 +455,31 @@ struct OAuth2UserInfo {
 
 /// SAML authentication provider (placeholder)
 pub struct SamlAuthProvider {
+    #[allow(dead_code)]
     entity_id: String,
+    #[allow(dead_code)]
     sso_url: String,
+    #[allow(dead_code)]
     certificate: String,
 }
 
 #[derive(Debug)]
 struct SamlResponse {
+    #[allow(dead_code)]
     user_id: String,
+    #[allow(dead_code)]
     tenant_id: String,
 }
 
 #[derive(Debug)]
 struct SamlAssertion {
+    #[allow(dead_code)]
     user_id: String,
+    #[allow(dead_code)]
     tenant_id: String,
+    #[allow(dead_code)]
     roles: Vec<String>,
+    #[allow(dead_code)]
     expires_at: Option<i64>,
 }
 
@@ -539,6 +548,7 @@ impl AuthProvider for SamlAuthProvider {
 /// Database authentication provider
 pub struct DatabaseAuthProvider {
     // Connection details would go here
+    #[allow(dead_code)]
     connection_string: String,
 }
 
@@ -674,6 +684,7 @@ impl DatabaseAuthProvider {
 #[derive(Debug)]
 struct DatabaseUser {
     id: String,
+    #[allow(dead_code)]
     username: String,
     roles: Vec<String>,
     tenant_id: Option<String>,

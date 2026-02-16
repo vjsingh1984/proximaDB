@@ -92,6 +92,7 @@ pub enum EncryptionAlgorithm {
 #[derive(Debug)]
 pub struct AlertSender {
     webhook_url: Option<String>,
+    #[allow(dead_code)]
     email_config: Option<EmailConfig>,
 }
 

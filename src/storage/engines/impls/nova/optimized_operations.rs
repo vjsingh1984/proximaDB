@@ -15,11 +15,11 @@ use tracing::info;
 // For now, we'll use placeholder types
 struct MmapParquetReader;
 struct MmapPool {
-    size: usize,
+    _size: usize,
 }
 impl MmapPool {
     fn new(size: usize) -> Self {
-        Self { size }
+        Self { _size: size }
     }
 }
 
@@ -45,15 +45,15 @@ use crate::storage::engines::core::formats::columnar::SearchCandidate;
 /// Optimized VIPER operations using existing infrastructure
 pub struct OptimizedNovaOperations {
     /// Hardware capabilities
-    hardware: Arc<HardwareCapabilities>,
+    _hardware: Arc<HardwareCapabilities>,
     /// Unified distance computation
     distance_compute: UnifiedDistanceCompute,
     /// Vector memory pool
     vector_pool: Arc<VectorMemoryPool>,
     /// Memory-mapped file pool
-    mmap_pool: Arc<MmapPool>,
+    _mmap_pool: Arc<MmapPool>,
     /// Parquet-specific optimizations
-    enable_pushdown: bool,
+    _enable_pushdown: bool,
     enable_projection: bool,
 }
 
@@ -66,11 +66,11 @@ impl OptimizedNovaOperations {
         let mmap_pool = Arc::new(MmapPool::new(50));
 
         Ok(Self {
-            hardware,
+            _hardware: hardware,
             distance_compute,
             vector_pool,
-            mmap_pool,
-            enable_pushdown: true,
+            _mmap_pool: mmap_pool,
+            _enable_pushdown: true,
             enable_projection: true,
         })
     }
@@ -296,6 +296,7 @@ impl OptimizedNovaOperations {
         Ok(vectors)
     }
     /// Select optimal computation mode based on data size
+    #[allow(dead_code)]
     fn select_compute_mode(&self, _vectors: &[Vec<f32>]) -> DistanceMode {
         // DistanceMode is about value normalization, not hardware selection
         // Hardware selection is handled internally by UnifiedDistanceCompute

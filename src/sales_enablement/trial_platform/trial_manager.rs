@@ -615,6 +615,7 @@ pub struct TrialCreationRequest {
 /// Trial environment manager
 #[derive(Debug)]
 pub struct TrialEnvironmentManager {
+    #[allow(dead_code)]
     environment_templates: HashMap<TrialType, EnvironmentTemplate>,
 }
 
@@ -679,6 +680,7 @@ pub struct EnvironmentTemplate {
 /// Customer engagement analytics
 #[derive(Debug)]
 pub struct CustomerEngagementAnalytics {
+    #[allow(dead_code)]
     engagement_data: Arc<RwLock<HashMap<String, Vec<CustomerActivity>>>>,
 }
 

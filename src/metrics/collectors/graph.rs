@@ -30,7 +30,7 @@ use crate::graph::GraphOperationsService;
 
 /// Metrics collector for graph operations
 pub struct GraphMetricsCollector {
-    graph_service: Arc<GraphOperationsService>,
+    _graph_service: Arc<GraphOperationsService>,
     name: &'static str,
     last_sample: Arc<tokio::sync::RwLock<Option<GraphMetricsSample>>>,
 }
@@ -70,7 +70,7 @@ impl GraphMetricsCollector {
     /// Create new graph metrics collector
     pub fn new(graph_service: Arc<GraphOperationsService>) -> Self {
         Self {
-            graph_service,
+            _graph_service: graph_service,
             name: "graph_engine",
             last_sample: Arc::new(tokio::sync::RwLock::new(None)),
         }

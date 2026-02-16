@@ -198,6 +198,7 @@ impl SAMLIntegration {
     }
 
     /// Extract user attributes from SAML assertion
+    #[allow(dead_code)]
     fn extract_user_attributes(
         &self,
         _assertion: &SAMLAssertion,
@@ -208,6 +209,7 @@ impl SAMLIntegration {
     }
 
     /// Map SAML attributes to ProximaDB user context
+    #[allow(dead_code)]
     fn map_attributes_to_user_context(
         &self,
         attributes: &HashMap<String, Vec<String>>,

@@ -321,6 +321,7 @@ pub struct ProximaDB {
     /// Configuration (stored for RL planner and other runtime access)
     _config: core::Config,
     /// Security coordinator for auth/RBAC
+    #[allow(dead_code)]
     security: Option<Arc<security::SecurityCoordinator>>,
     /// Handle for RL planner checkpoint task (if enabled)
     rl_checkpoint_handle: Option<tokio::task::JoinHandle<()>>,

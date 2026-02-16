@@ -632,6 +632,7 @@ pub struct EmbeddedProximaDB {
     /// Checkpoint manager for incremental persistence
     checkpoint_manager: std::sync::Arc<CheckpointManager>,
     /// File lock manager for multi-process coordination
+    #[allow(dead_code)]
     lock_manager: Option<FileLockManager>,
     /// Leader election for leader/follower mode
     leader_election: Option<LeaderElection>,

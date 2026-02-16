@@ -15,7 +15,7 @@ use tokio;
 
 use crate::query::unified::{
     ast::{
-        DataModel, DocumentQueryExpr, DistanceMetric, GraphTraversalExpr, LogQueryExpr,
+        DataModel, DistanceMetric, DocumentQueryExpr, GraphTraversalExpr, LogQueryExpr,
         MetricQueryExpr, ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec,
         TraversalDirection, VectorSearchExpr, VectorSearchParams,
     },
@@ -70,7 +70,7 @@ fn create_vector_only_user() -> UnifiedUserContext {
 async fn create_test_rbac_manager() -> ConsolidatedRBACManager {
     // Enable default_deny for proper permission testing
     let config = RBACConfig {
-        default_deny: true,  // Users without explicit permissions are denied
+        default_deny: true, // Users without explicit permissions are denied
         ..RBACConfig::default()
     };
     let rbac_manager = ConsolidatedRBACManager::new(config);
@@ -81,44 +81,74 @@ async fn create_test_rbac_manager() -> ConsolidatedRBACManager {
         .grant_permission("admin_user", &UnifiedPermission::SystemAdmin)
         .await;
     let _ = rbac_manager
-        .grant_permission("admin_user", &UnifiedPermission::VectorSearch("collection1".to_string()))
+        .grant_permission(
+            "admin_user",
+            &UnifiedPermission::VectorSearch("collection1".to_string()),
+        )
         .await;
     let _ = rbac_manager
-        .grant_permission("admin_user", &UnifiedPermission::CollectionRead("collection1".to_string()))
+        .grant_permission(
+            "admin_user",
+            &UnifiedPermission::CollectionRead("collection1".to_string()),
+        )
         .await;
     let _ = rbac_manager
-        .grant_permission("admin_user", &UnifiedPermission::CollectionRead("docs1".to_string()))
+        .grant_permission(
+            "admin_user",
+            &UnifiedPermission::CollectionRead("docs1".to_string()),
+        )
         .await;
     let _ = rbac_manager
-        .grant_permission("admin_user", &UnifiedPermission::GraphTraverse("graph1".to_string()))
+        .grant_permission(
+            "admin_user",
+            &UnifiedPermission::GraphTraverse("graph1".to_string()),
+        )
         .await;
 
     // Vector user - only vector permissions
     let _ = rbac_manager
-        .grant_permission("vector_user", &UnifiedPermission::VectorSearch("collection1".to_string()))
+        .grant_permission(
+            "vector_user",
+            &UnifiedPermission::VectorSearch("collection1".to_string()),
+        )
         .await;
 
     // Mixed permissions user - vector + document
     let _ = rbac_manager
-        .grant_permission("mixed_perms_user", &UnifiedPermission::VectorSearch("collection1".to_string()))
+        .grant_permission(
+            "mixed_perms_user",
+            &UnifiedPermission::VectorSearch("collection1".to_string()),
+        )
         .await;
     let _ = rbac_manager
-        .grant_permission("mixed_perms_user", &UnifiedPermission::CollectionRead("docs1".to_string()))
+        .grant_permission(
+            "mixed_perms_user",
+            &UnifiedPermission::CollectionRead("docs1".to_string()),
+        )
         .await;
 
     // Graph user - only graph permissions
     let _ = rbac_manager
-        .grant_permission("graph_user", &UnifiedPermission::GraphTraverse("graph1".to_string()))
+        .grant_permission(
+            "graph_user",
+            &UnifiedPermission::GraphTraverse("graph1".to_string()),
+        )
         .await;
 
     // Document user - only document permissions
     let _ = rbac_manager
-        .grant_permission("doc_user", &UnifiedPermission::CollectionRead("docs1".to_string()))
+        .grant_permission(
+            "doc_user",
+            &UnifiedPermission::CollectionRead("docs1".to_string()),
+        )
         .await;
 
     // Tenant isolation test user
     let _ = rbac_manager
-        .grant_permission("user_tenant1", &UnifiedPermission::VectorSearch("collection1".to_string()))
+        .grant_permission(
+            "user_tenant1",
+            &UnifiedPermission::VectorSearch("collection1".to_string()),
+        )
         .await;
 
     // Admin user for observability tests (created as "admin" in tests)
@@ -206,9 +236,8 @@ mod rbac_integration_tests {
         let executor = ParallelExecutor::with_rbac(4, rbac_manager.clone());
 
         let mut user = create_test_user("graph_user", Some("tenant1"));
-        user.effective_permissions = HashSet::from([
-            UnifiedPermission::GraphTraverse("graph1".to_string()),
-        ]);
+        user.effective_permissions =
+            HashSet::from([UnifiedPermission::GraphTraverse("graph1".to_string())]);
 
         // Create a graph traversal query component
         let component = QueryComponent {
@@ -275,9 +304,8 @@ mod rbac_integration_tests {
         let executor = ParallelExecutor::with_rbac(4, rbac_manager.clone());
 
         let mut user = create_test_user("doc_user", Some("tenant1"));
-        user.effective_permissions = HashSet::from([
-            UnifiedPermission::CollectionRead("docs1".to_string()),
-        ]);
+        user.effective_permissions =
+            HashSet::from([UnifiedPermission::CollectionRead("docs1".to_string())]);
 
         // Create a document query component
         let component = QueryComponent {
@@ -356,7 +384,9 @@ mod rbac_integration_tests {
         };
 
         // Validate permissions - should fail for regular user
-        let result = executor.validate_component_access(&regular_user, &component).await;
+        let result = executor
+            .validate_component_access(&regular_user, &component)
+            .await;
         assert!(
             result.is_err(),
             "Observability queries should require admin permission"
@@ -465,14 +495,16 @@ mod rbac_integration_tests {
         };
 
         // Validate all components - should fail on graph component
-        let result = executor.execute_with_auth(
-            &query,
-            &user,
-            None, // vector_ops
-            Arc::new(DocumentService::new(storage_engine.clone())), // document_service
-            None, // graph_service
-            None, // observability_service
-        ).await;
+        let result = executor
+            .execute_with_auth(
+                &query,
+                &user,
+                None,                                                   // vector_ops
+                Arc::new(DocumentService::new(storage_engine.clone())), // document_service
+                None,                                                   // graph_service
+                None,                                                   // observability_service
+            )
+            .await;
 
         assert!(
             result.is_err(),
@@ -533,24 +565,26 @@ mod rbac_integration_tests {
         // Validate all components - should succeed
         // Note: This will still fail during execution since we don't have actual data,
         // but permission validation should pass
-        let result = executor.execute_with_auth(
-            &query,
-            &admin,
-            None, // vector_ops
-            Arc::new(DocumentService::new(storage_engine.clone())), // document_service
-            None, // graph_service
-            None, // observability_service
-        ).await;
+        let result = executor
+            .execute_with_auth(
+                &query,
+                &admin,
+                None,                                                   // vector_ops
+                Arc::new(DocumentService::new(storage_engine.clone())), // document_service
+                None,                                                   // graph_service
+                None,                                                   // observability_service
+            )
+            .await;
 
         // Permission validation should pass (execution may fail due to no data)
         match result {
-            Ok(_) => {}, // Success - permissions passed
+            Ok(_) => {} // Success - permissions passed
             Err(e) => {
                 // Check that error is NOT a permission error
                 let error_msg = e.to_string().to_lowercase();
                 assert!(
-                    !error_msg.contains("permission denied") &&
-                    !error_msg.contains("insufficient permissions"),
+                    !error_msg.contains("permission denied")
+                        && !error_msg.contains("insufficient permissions"),
                     "Permission validation should pass for admin user, got: {}",
                     e
                 );
@@ -565,9 +599,8 @@ mod rbac_integration_tests {
 
         // User from tenant1 with access to collection1
         let mut user_tenant1 = create_test_user("user_tenant1", Some("tenant1"));
-        user_tenant1.effective_permissions = HashSet::from([
-            UnifiedPermission::VectorSearch("collection1".to_string()),
-        ]);
+        user_tenant1.effective_permissions =
+            HashSet::from([UnifiedPermission::VectorSearch("collection1".to_string())]);
 
         // Create query for collection1 (allowed for tenant1)
         let component = QueryComponent {
@@ -585,7 +618,9 @@ mod rbac_integration_tests {
         };
 
         // Should succeed for tenant1 user
-        let result = executor.validate_component_access(&user_tenant1, &component).await;
+        let result = executor
+            .validate_component_access(&user_tenant1, &component)
+            .await;
         assert!(
             result.is_ok(),
             "Tenant1 user should have access to collection1"

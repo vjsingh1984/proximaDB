@@ -249,9 +249,9 @@ pub struct WriteRecord {
 pub struct DistributedCollectionOps {
     config: DistributedOpsConfig,
     shard_manager: Arc<ShardManager>,
-    routing_service: Arc<RoutingService>,
+    _routing_service: Arc<RoutingService>,
     node_registry: Arc<NodeRegistry>,
-    consensus: Arc<RwLock<RaftConsensus>>,
+    _consensus: Arc<RwLock<RaftConsensus>>,
     /// Local node ID
     local_node_id: String,
     /// Statistics
@@ -284,9 +284,9 @@ impl DistributedCollectionOps {
         Self {
             config,
             shard_manager,
-            routing_service,
+            _routing_service: routing_service,
             node_registry,
-            consensus,
+            _consensus: consensus,
             local_node_id,
             stats: Arc::new(RwLock::new(DistributedOpsStats::default())),
             fanout: None,
@@ -309,9 +309,9 @@ impl DistributedCollectionOps {
         Self {
             config,
             shard_manager,
-            routing_service,
+            _routing_service: routing_service,
             node_registry,
-            consensus,
+            _consensus: consensus,
             local_node_id,
             stats: Arc::new(RwLock::new(DistributedOpsStats::default())),
             fanout: Some(fanout),
@@ -845,6 +845,7 @@ impl DistributedCollectionOps {
     }
 
     /// Partition records by shard using consistent hashing
+    #[allow(dead_code)]
     fn partition_records_by_shard(
         &self,
         records: &[WriteRecord],

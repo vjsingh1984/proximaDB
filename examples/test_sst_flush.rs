@@ -159,8 +159,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = StorageQueryContext {
         search_params,
         collection: Arc::new(collection),
-        metadata
-            user_context: None,
+        metadata,
+        user_context: None,
         tenant_context: None,
     };
 

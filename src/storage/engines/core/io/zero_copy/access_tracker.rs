@@ -111,6 +111,7 @@ pub struct AccessPatternTracker {
     /// Time window for pattern analysis
     analysis_window: Duration,
     /// Learning parameters
+    #[allow(dead_code)]
     learning_params: LearningParameters,
 }
 

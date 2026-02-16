@@ -136,7 +136,9 @@ pub enum SearchStage {
 struct StageCandidate {
     record: Arc<VectorRecord>,
     score: f32,
+    #[allow(dead_code)]
     stage: SearchStage,
+    #[allow(dead_code)]
     refined_count: usize,
 }
 
@@ -568,6 +570,7 @@ impl UnifiedProgressiveSearchPipeline {
     }
 
     /// Compute Hamming distance for binary vectors
+    #[allow(dead_code)]
     fn compute_hamming_distance(&self, a: &[u8], b: &[u8]) -> f32 {
         let distance: u32 = a
             .iter()
@@ -580,6 +583,7 @@ impl UnifiedProgressiveSearchPipeline {
     }
 
     /// Compute INT8 distance
+    #[allow(dead_code)]
     fn compute_int8_distance(&self, a: &[i8], b: &[i8], metric: &DistanceMetric) -> f32 {
         match metric {
             DistanceMetric::Cosine => {
@@ -616,6 +620,7 @@ impl UnifiedProgressiveSearchPipeline {
     }
 
     /// Compute PQ distance (simplified)
+    #[allow(dead_code)]
     fn compute_pq_distance(&self, a: &[u8], b: &[u8], _pq_bits: usize) -> f32 {
         // Simplified PQ distance - should use lookup tables in production
         let distance: u32 = a

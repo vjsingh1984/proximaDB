@@ -164,6 +164,7 @@ pub struct FlushResultCache {
     cache: moka::future::Cache<String, Arc<FlushResult>>,
 
     /// Maximum cache size
+    #[allow(dead_code)]
     max_entries: u64,
 }
 

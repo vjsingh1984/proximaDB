@@ -124,6 +124,7 @@ pub struct TransactionMetadata {
     /// Graph ID this transaction operates on
     pub graph_id: String,
     /// Participating shards
+    #[allow(dead_code)]
     pub participants: HashSet<ShardId>,
     /// Current state
     pub state: TransactionState,
@@ -589,6 +590,7 @@ pub struct TransactionManager {
     /// Active units of work indexed by transaction ID
     active_uows: Arc<DashMap<TransactionId, RwLock<UnitOfWork>>>,
     /// Default transaction timeout
+    #[allow(dead_code)]
     default_timeout: Duration,
     /// Default isolation level
     default_isolation: IsolationLevel,

@@ -66,20 +66,17 @@ impl HybridCoordinator {
         let vector = vector.to_vec();
 
         // Execute searches in parallel
-        let (bm25_result, vector_result) = tokio::join!(
-            async move {
-                bm25_search_fn(query).await
-            },
-            async move {
+        let (bm25_result, vector_result) =
+            tokio::join!(async move { bm25_search_fn(query).await }, async move {
                 vector_search_fn(vector).await
-            }
-        );
+            });
 
         let bm25_results = bm25_result?;
         let vector_results = vector_result?;
 
         // Fuse results using fusion engine
-        self.fusion_engine.fuse(bm25_results, vector_results)
+        self.fusion_engine
+            .fuse(bm25_results, vector_results)
             .map_err(|e| anyhow::anyhow!("Fusion error: {}", e))
     }
 }
@@ -97,7 +94,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_with_custom_top_k() {
-        let _coordinator = HybridCoordinator::with_top_k(FusionStrategy::ReciprocalRank { k: 60 }, 20);
+        let _coordinator =
+            HybridCoordinator::with_top_k(FusionStrategy::ReciprocalRank { k: 60 }, 20);
         // Coordinator created successfully with custom top_k
     }
 

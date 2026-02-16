@@ -204,6 +204,7 @@ impl UnifiedNOVAReader {
     }
 
     /// Check if a row group should be read based on zone maps
+    #[allow(dead_code)]
     fn should_read_row_group(
         &self,
         _metadata: &parquet::file::metadata::ParquetMetaData,
@@ -221,6 +222,7 @@ impl UnifiedNOVAReader {
     }
 
     /// Evaluate filter against metadata
+    #[allow(dead_code)]
     fn evaluate_filter(
         &self,
         _filter: &crate::core::search::FilterExpression,
@@ -266,6 +268,7 @@ impl UnifiedNOVAReader {
     }
 
     /// Convert Arrow RecordBatch to VectorRecords
+    #[allow(dead_code)]
     fn arrow_batch_to_vector_records(
         &self,
         batch: arrow_array::RecordBatch,

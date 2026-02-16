@@ -661,6 +661,7 @@ async fn phase4_full_precision(
 
 // Helper functions
 
+#[allow(dead_code)]
 fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
     let mut bits = Vec::new();
     for chunk in bytes.chunks(8) {
@@ -684,6 +685,7 @@ fn block_matches_filter(block: &ProximaDataBlock, _filter: &MetadataFilter) -> b
     true
 }
 
+#[allow(dead_code)]
 fn condition_matches_block_stats(
     condition: &super::FilterCondition,
     stats: &std::collections::HashMap<String, super::ColumnStats>,
@@ -720,6 +722,7 @@ fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool
     true
 }
 
+#[allow(dead_code)]
 fn metadata_item_to_json(
     value: &Option<crate::proto::proximadb_v1::metadata_item::Value>,
 ) -> serde_json::Value {

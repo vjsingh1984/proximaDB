@@ -230,14 +230,14 @@ impl StrategyAwareReader for UnifiedHELIXReader {
 /// - PCA model training
 pub struct DirectHELIXReader {
     filesystem_factory: Arc<FilesystemFactory>,
-    collection_id: String,
+    _collection_id: String,
 }
 
 impl DirectHELIXReader {
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, collection_id: String) -> Self {
         Self {
             filesystem_factory,
-            collection_id,
+            _collection_id: collection_id,
         }
     }
 
@@ -283,7 +283,7 @@ impl DirectHELIXReader {
 /// - Liquid clustering adaptive patterns
 pub struct CachedHELIXReader {
     cached_filesystem: Arc<UnifiedCachingFilesystem>,
-    collection_id: String,
+    _collection_id: String,
     search_strategy: HelixSearchStrategy,
 }
 
@@ -302,7 +302,7 @@ impl CachedHELIXReader {
 
         Ok(Self {
             cached_filesystem,
-            collection_id,
+            _collection_id: collection_id,
             search_strategy,
         })
     }

@@ -86,27 +86,15 @@ impl HybridFusionEngine {
             FusionStrategy::ConditionalNormalization => {
                 self.conditional_normalization(bm25_results, vector_results)
             }
-            FusionStrategy::BordaCount => {
-                self.borda_count(bm25_results, vector_results)
-            }
-            FusionStrategy::CombSum => {
-                self.comb_sum(bm25_results, vector_results)
-            }
-            FusionStrategy::CombMin => {
-                self.comb_min(bm25_results, vector_results)
-            }
-            FusionStrategy::CombMax => {
-                self.comb_max(bm25_results, vector_results)
-            }
-            FusionStrategy::Condorcet => {
-                self.condorcet(bm25_results, vector_results)
-            }
+            FusionStrategy::BordaCount => self.borda_count(bm25_results, vector_results),
+            FusionStrategy::CombSum => self.comb_sum(bm25_results, vector_results),
+            FusionStrategy::CombMin => self.comb_min(bm25_results, vector_results),
+            FusionStrategy::CombMax => self.comb_max(bm25_results, vector_results),
+            FusionStrategy::Condorcet => self.condorcet(bm25_results, vector_results),
             FusionStrategy::DempsterShafer { alpha } => {
                 self.dempster_shafer(bm25_results, vector_results, alpha)
             }
-            FusionStrategy::Adaptive => {
-                self.adaptive_fusion(bm25_results, vector_results)
-            }
+            FusionStrategy::Adaptive => self.adaptive_fusion(bm25_results, vector_results),
         }
     }
 
@@ -945,14 +933,10 @@ impl HybridFusionEngine {
         vector_results: Vec<VectorResult>,
     ) -> Result<Vec<FusedSearchResult>, FusionError> {
         // Calculate Jaccard similarity between result sets
-        let bm25_ids: std::collections::HashSet<_> = bm25_results
-            .iter()
-            .map(|r| r.doc_id.as_str())
-            .collect();
-        let vector_ids: std::collections::HashSet<_> = vector_results
-            .iter()
-            .map(|r| r.doc_id.as_str())
-            .collect();
+        let bm25_ids: std::collections::HashSet<_> =
+            bm25_results.iter().map(|r| r.doc_id.as_str()).collect();
+        let vector_ids: std::collections::HashSet<_> =
+            vector_results.iter().map(|r| r.doc_id.as_str()).collect();
 
         let intersection = bm25_ids.intersection(&vector_ids).count();
         let union = bm25_ids.union(&vector_ids).count();
@@ -995,7 +979,9 @@ impl HybridFusionEngine {
                 self.reciprocal_rank_fusion(bm25_results, vector_results, k)
             }
             FusionStrategy::CombSum => self.comb_sum(bm25_results, vector_results),
-            _ => Err(FusionError::NotYetImplemented("Adaptive strategy selection failed".to_string())),
+            _ => Err(FusionError::NotYetImplemented(
+                "Adaptive strategy selection failed".to_string(),
+            )),
         }
     }
 }
@@ -1441,20 +1427,22 @@ mod tests {
         // Create test data where normalized scores will be 0.5
         let bm25_results = vec![BM25Result {
             doc_id: "doc1".to_string(),
-            score: 0.5,  // Will normalize to 0.0 (min)
+            score: 0.5, // Will normalize to 0.0 (min)
             highlights: None,
             metadata: HashMap::new(),
         }];
 
         let vector_results = vec![VectorResult {
             doc_id: "doc1".to_string(),
-            score: 0.6,  // Will normalize differently
+            score: 0.6, // Will normalize differently
             distance: 0.4,
             metadata: HashMap::new(),
         }];
 
         // Just verify both engines work without error
-        let _fused_low = engine_low.fuse(bm25_results.clone(), vector_results.clone()).unwrap();
+        let _fused_low = engine_low
+            .fuse(bm25_results.clone(), vector_results.clone())
+            .unwrap();
         let _fused_high = engine_high.fuse(bm25_results, vector_results).unwrap();
 
         // Test passes if both engines complete successfully

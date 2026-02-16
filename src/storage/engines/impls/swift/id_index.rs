@@ -274,7 +274,7 @@ pub struct TwoLevelIdIndex {
     dense_indexes: Vec<DenseIdIndex>,
 
     /// Configuration
-    sparse_factor: u32,
+    _sparse_factor: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +296,7 @@ impl TwoLevelIdIndex {
         Self {
             sparse_index: BTreeMap::new(),
             dense_indexes: Vec::new(),
-            sparse_factor,
+            _sparse_factor: sparse_factor,
         }
     }
 

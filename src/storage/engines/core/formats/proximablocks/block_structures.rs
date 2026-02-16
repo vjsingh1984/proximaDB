@@ -280,6 +280,7 @@ pub struct ProximaDataBlock {
     pub metadata: ProximaBlockMetadata,
 
     /// Compression information
+    #[allow(dead_code)]
     pub compression_config: BlockCompressionConfig,
 
     /// Direct compression algorithm field (for SST compatibility)

@@ -42,6 +42,7 @@ pub struct CachedResponse {
 #[derive(Debug, Clone)]
 struct CacheEntry {
     /// Cache key (hash of question)
+    #[allow(dead_code)]
     key: u64,
     /// Cached response
     response: CachedResponse,

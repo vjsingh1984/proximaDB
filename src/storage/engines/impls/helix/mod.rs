@@ -321,6 +321,7 @@ pub struct HelixEngine {
     /// - Codebooks stored in SSTable headers
     ///
     /// None if quantization disabled, Some for optimized queries
+    #[allow(dead_code)]
     storage_quantization_engine:
         Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
 
@@ -333,6 +334,7 @@ pub struct HelixEngine {
     /// - Faster for temporary quantization
     ///
     /// Always available as fallback
+    #[allow(dead_code)]
     fallback_quantization_engine:
         Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
@@ -345,6 +347,7 @@ pub struct HelixEngine {
     /// - Manages cache memory budgets
     ///
     /// None if caching disabled, Some in production
+    #[allow(dead_code)]
     cache_orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 
     /// **PCA Model** (RwLock, Optional)
@@ -400,6 +403,7 @@ pub struct HelixEngine {
     /// - Manages index lifecycle
     ///
     /// None if AXIS disabled, Some for indexed collections
+    #[allow(dead_code)]
     event_log: Option<Arc<EventLog>>,
 
     /// **AXIS Manager** (Optional)
@@ -461,6 +465,7 @@ struct EngineMetrics {
 
 impl HelixEngine {
     /// Smart quantization selection using shared logic
+    #[allow(dead_code)]
     fn should_use_persistent_quantization(
         &self,
         operation_context: &str,
@@ -473,6 +478,7 @@ impl HelixEngine {
     }
 
     /// Get the appropriate quantization engine based on operation context
+    #[allow(dead_code)]
     async fn get_quantization_engine(
         &self,
         operation_context: &str,

@@ -41,7 +41,7 @@ pub struct TraceSpan {
 /// Trace storage service
 pub struct TraceStorage {
     /// Base path for storage
-    base_path: String,
+    _base_path: String,
     /// Traces indexed by trace ID
     traces: RwLock<HashMap<String, TraceData>>,
     /// Spans indexed by time
@@ -72,7 +72,7 @@ impl TraceStorage {
     /// Create a new trace storage
     pub fn new(base_path: &str) -> Result<Self> {
         Ok(Self {
-            base_path: base_path.to_string(),
+            _base_path: base_path.to_string(),
             traces: RwLock::new(HashMap::new()),
             spans_by_time: RwLock::new(BTreeMap::new()),
             service_index: RwLock::new(HashMap::new()),

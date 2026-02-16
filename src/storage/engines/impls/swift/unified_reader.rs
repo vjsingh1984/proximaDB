@@ -860,7 +860,9 @@ impl UnifiedSwiftReader {
     // Helper methods
 
     fn parse_records_from_chunk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
-        Err(anyhow!("SWIFT engine: record chunk parsing not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: record chunk parsing not yet implemented"
+        ))
     }
 
     fn parse_records_from_data(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
@@ -872,7 +874,9 @@ impl UnifiedSwiftReader {
         _data: &[u8],
         _count: u32,
     ) -> Result<Vec<SuperBlockMetadata>> {
-        Err(anyhow!("SWIFT engine: superblock metadata parsing not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: superblock metadata parsing not yet implemented"
+        ))
     }
 
     fn prune_superblocks(
@@ -881,7 +885,9 @@ impl UnifiedSwiftReader {
         _metadata_filter: &Option<MetadataFilter>,
         _id_filter: &Option<Vec<String>>,
     ) -> Result<Vec<u32>> {
-        Err(anyhow!("SWIFT engine: superblock pruning not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: superblock pruning not yet implemented"
+        ))
     }
 
     fn should_read_superblock_bloom(
@@ -894,11 +900,15 @@ impl UnifiedSwiftReader {
     }
 
     async fn read_bloom_filter(&self, _sb_id: u32) -> Result<Vec<u8>> {
-        Err(anyhow!("SWIFT engine: bloom filter reading not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: bloom filter reading not yet implemented"
+        ))
     }
 
     fn bloom_filter_matches(&self, _data: &[u8], _id_filter: &Option<Vec<String>>) -> Result<bool> {
-        Err(anyhow!("SWIFT engine: bloom filter matching not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: bloom filter matching not yet implemented"
+        ))
     }
 
     async fn superblock_metadata(&self, sb_id: u32) -> Result<SuperBlockMetadata> {
@@ -910,7 +920,9 @@ impl UnifiedSwiftReader {
     }
 
     fn calculate_block_offset(&self, _sb_id: u32, _block_id: u32) -> Result<u64> {
-        Err(anyhow!("SWIFT engine: block offset calculation not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: block offset calculation not yet implemented"
+        ))
     }
 }
 
@@ -942,7 +954,9 @@ impl SwiftRecordIterator {
             return Ok(None);
         }
 
-        Err(anyhow!("SWIFT engine: streaming iteration not yet implemented"))
+        Err(anyhow!(
+            "SWIFT engine: streaming iteration not yet implemented"
+        ))
     }
 }
 

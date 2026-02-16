@@ -204,16 +204,22 @@ impl ProximaInputFormat {
 /// Converts Arrow RecordBatches to Hadoop WritableComparable format.
 pub struct ProximaRecordReader {
     /// Input split being read
+    #[allow(dead_code)]
     split: HadoopInputSplit,
     /// Configuration
+    #[allow(dead_code)]
     config: HadoopShimConfig,
     /// Current batch
+    #[allow(dead_code)]
     current_batch: Option<RecordBatch>,
     /// Current row in batch
+    #[allow(dead_code)]
     current_row: usize,
     /// Total rows read
+    #[allow(dead_code)]
     total_rows_read: u64,
     /// Whether reader is exhausted
+    #[allow(dead_code)]
     exhausted: bool,
 }
 
@@ -307,16 +313,22 @@ impl ProximaOutputFormat {
 /// ProximaDB RecordWriter - writes records to ProximaDB
 pub struct ProximaRecordWriter {
     /// Configuration
+    #[allow(dead_code)]
     config: HadoopShimConfig,
     /// Task ID
+    #[allow(dead_code)]
     task_id: i32,
     /// Records written
+    #[allow(dead_code)]
     records_written: u64,
     /// Bytes written
+    #[allow(dead_code)]
     bytes_written: u64,
     /// Batch buffer
+    #[allow(dead_code)]
     batch_buffer: Vec<HashMap<String, HadoopWritable>>,
     /// Batch size threshold
+    #[allow(dead_code)]
     batch_size: usize,
 }
 
@@ -372,6 +384,7 @@ impl ProximaRecordWriter {
 /// ProximaDB Output Committer - handles job/task commit protocol
 pub struct ProximaOutputCommitter {
     /// Configuration
+    #[allow(dead_code)]
     config: HadoopShimConfig,
 }
 
@@ -522,6 +535,7 @@ impl HadoopWritable {
 /// Hive SerDe - serializer/deserializer for Hive integration
 pub struct ProximaSerDe {
     /// Schema
+    #[allow(dead_code)]
     schema: Option<Arc<ArrowSchema>>,
     /// Column names
     column_names: Vec<String>,

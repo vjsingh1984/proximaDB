@@ -592,27 +592,26 @@ impl UnifiedHandlers {
     /// ```
     pub async fn execute_hybrid_search(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         text_query: &str,
         query_vector: &[f32],
-        top_k: usize,
+        _top_k: usize,
         fusion_strategy: crate::core::search::hybrid::FusionStrategy,
-        filters: Option<crate::core::search::FilterExpression>,
+        _filters: Option<crate::core::search::FilterExpression>,
     ) -> anyhow::Result<Vec<crate::core::search::hybrid::FusedSearchResult>> {
-        use crate::core::search::hybrid::{HybridCoordinator, BM25Result, VectorResult};
-        use std::collections::HashMap;
+        use crate::core::search::hybrid::{BM25Result, HybridCoordinator, VectorResult};
 
         let coordinator = HybridCoordinator::new(fusion_strategy);
 
         // Mock BM25 search for now (TODO: integrate actual BM25 backend)
-        let bm25_search = |query: String| async move {
+        let bm25_search = |_query: String| async move {
             // TODO: Replace with actual BM25 full-text search
             // For now, return empty results
             Ok::<Vec<BM25Result>, anyhow::Error>(vec![])
         };
 
         // Mock vector search (TODO: use actual vector search service)
-        let vector_search = |vector: Vec<f32>| async move {
+        let vector_search = |_vector: Vec<f32>| async move {
             // TODO: Replace with actual vector search using self.vector_operations_service
             Ok::<Vec<VectorResult>, anyhow::Error>(vec![])
         };
@@ -1574,6 +1573,7 @@ impl UnifiedHandlers {
 
     /// Apply parameters to a parameterized query
     /// Replaces $1, $2, etc. with actual parameter values
+    #[allow(dead_code)]
     fn apply_query_parameters(
         &self,
         query: String,
@@ -1605,6 +1605,7 @@ impl UnifiedHandlers {
     }
 
     /// Format a JSON value for SQL
+    #[allow(dead_code)]
     fn format_sql_value(&self, value: &serde_json::Value) -> Result<String> {
         match value {
             serde_json::Value::Null => Ok("NULL".to_string()),
@@ -1692,6 +1693,7 @@ impl UnifiedHandlers {
         }
     }
 
+    #[allow(dead_code)]
     fn sql_value_to_json(v: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
         use crate::proto::proximadb_v1::sql_value::Value as V;
         match v.value.as_ref() {

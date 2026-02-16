@@ -771,39 +771,42 @@ impl ProtocolHandler for RestHandler {
 
 /// Builder for creating REST handlers
 pub struct RestHandlerBuilder {
-    ready: bool,
-    config: Option<RestHandlerConfig>,
+    _ready: bool,
+    _config: Option<RestHandlerConfig>,
 }
 
 impl RestHandlerBuilder {
     /// Create a new builder
     pub fn new() -> Self {
         Self {
-            ready: false,
-            config: None,
+            _ready: false,
+            _config: None,
         }
     }
 
     /// Mark the handler as ready
+    #[allow(dead_code)]
     pub fn ready(mut self) -> Self {
-        self.ready = true;
+        self._ready = true;
         self
     }
 
     /// Set the handler configuration
+    #[allow(dead_code)]
     pub fn with_config(mut self, config: RestHandlerConfig) -> Self {
-        self.config = Some(config);
-        self.ready = true;
+        self._config = Some(config);
+        self._ready = true;
         self
     }
 
     /// Build the REST handler
+    #[allow(dead_code)]
     pub fn build(self) -> RestHandler {
-        if let Some(config) = self.config {
+        if let Some(config) = self._config {
             RestHandler::with_config(config)
         } else {
             RestHandler {
-                ready: self.ready,
+                ready: self._ready,
                 config: None,
             }
         }

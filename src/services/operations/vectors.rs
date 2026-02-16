@@ -51,6 +51,7 @@ use crate::query::unified_query_optimizer::{
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
 
+#[allow(dead_code)]
 fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {
     let level_type = match strategy.quantization_type {
         QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {
@@ -2966,6 +2967,7 @@ impl VectorOperationsService {
     }
 
     /// v1: Convert OptimizedSearchRecord to proximadb_v1::SearchResult
+    #[allow(dead_code)]
     fn convert_to_proto_search_result_v1(
         &self,
         optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord>,
@@ -3001,6 +3003,7 @@ impl VectorOperationsService {
 
 impl VectorOperationsService {
     /// Convert OptimizedSearchRecord to proto SearchVectorRecord
+    #[allow(dead_code)]
     fn optimized_to_proto(
         &self,
         result: &crate::core::search::results::OptimizedSearchRecord,

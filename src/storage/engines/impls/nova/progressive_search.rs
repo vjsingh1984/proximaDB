@@ -18,11 +18,13 @@ use tracing::{debug, info, instrument};
 
 // Create compatibility types for progressive search
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BinarySketch {
     bits: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct Int8Vector {
     values: Vec<i8>,
     scale: f32,
@@ -923,6 +925,7 @@ impl DistanceTable {
     }
 }
 
+#[allow(dead_code)]
 impl BinarySketch {
     fn from_vector(vector: &[f32], threshold: f32) -> Self {
         let dimension = vector.len();
@@ -947,6 +950,7 @@ impl BinarySketch {
     }
 }
 
+#[allow(dead_code)]
 impl Int8Vector {
     fn from_vector(vector: &[f32]) -> Self {
         // Find min and max for scaling

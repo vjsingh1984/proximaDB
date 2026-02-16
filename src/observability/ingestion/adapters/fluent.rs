@@ -67,6 +67,7 @@ impl FluentAdapter {
     }
 
     /// Parse MessagePack-encoded forward message
+    #[allow(dead_code)]
     fn parse_forward_message(&self, _data: &[u8]) -> Result<Vec<LogEntry>> {
         let entries = Vec::new();
 
@@ -82,6 +83,7 @@ impl FluentAdapter {
     }
 
     /// Convert fluent record to LogEntry
+    #[allow(dead_code)]
     fn convert_record(
         &self,
         tag: &str,
@@ -162,6 +164,7 @@ impl FluentAdapter {
     }
 
     /// Parse log level string to severity
+    #[allow(dead_code)]
     fn parse_level(&self, level: &str) -> Severity {
         match level.to_lowercase().as_str() {
             "trace" | "verbose" => Severity::Debug,

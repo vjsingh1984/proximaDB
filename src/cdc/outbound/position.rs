@@ -237,7 +237,8 @@ pub struct FilePositionStore {
 
 impl FilePositionStore {
     /// Create a new file position store
-    pub fn new(path: impl Into<PathBuf>) -> CdcResult<Self> {
+    #[allow(dead_code)]
+    pub fn _new(path: impl Into<PathBuf>) -> CdcResult<Self> {
         let path = path.into();
         std::fs::create_dir_all(&path)?;
         Ok(Self { path })

@@ -26,6 +26,7 @@ pub struct SSOIntegrationManager {
     azure_integration: Option<Arc<AzureADIntegration>>,
 
     /// Google Cloud integration
+    #[allow(dead_code)]
     google_cloud_integration: Option<Arc<GoogleCloudIntegration>>,
 
     /// Simple token cache for performance

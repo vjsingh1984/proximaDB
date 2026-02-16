@@ -805,9 +805,9 @@ mod helix_integration_tests {
             search_params,
             collection: Arc::new(collection_config),
             metadata: StorageQueryMetadata::default(),
-        user_context: None,
-        tenant_context: None,
-    };
+            user_context: None,
+            tenant_context: None,
+        };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
 
@@ -923,9 +923,9 @@ mod helix_integration_tests {
             search_params,
             collection: Arc::new(collection_config),
             metadata: StorageQueryMetadata::default(),
-        user_context: None,
-        tenant_context: None,
-    };
+            user_context: None,
+            tenant_context: None,
+        };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
 

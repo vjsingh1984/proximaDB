@@ -307,6 +307,7 @@ impl FileAuditStorage {
 
 /// Database-based audit storage implementation (placeholder)
 pub struct DatabaseAuditStorage {
+    #[allow(dead_code)]
     connection_string: String,
 }
 

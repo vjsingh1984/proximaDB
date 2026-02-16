@@ -289,9 +289,11 @@ pub enum ExecutionStep {
 pub struct UnifiedCostModel {
     /// Cost calculation strategies
     /// Cost calculation strategies
+    #[allow(dead_code)]
     strategies: HashMap<String, Box<dyn CostStrategy>>,
 
     /// Historical cost data
+    #[allow(dead_code)]
     historical_costs: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
 
     /// Hardware capabilities for cost adjustment
@@ -828,12 +830,16 @@ struct CostAnalysis {
     index_cost: Option<f64>,
     filter_selectivity: Option<f64>,
     filters: Vec<FilterAnalysis>,
+    #[allow(dead_code)]
     has_bloom_filters: bool,
     /// Dataset size for accurate cost estimation
+    #[allow(dead_code)]
     dataset_size: usize,
     /// Estimated memory usage for operation
+    #[allow(dead_code)]
     estimated_memory_mb: f64,
     /// Estimated I/O operations required
+    #[allow(dead_code)]
     estimated_io_ops: usize,
 }
 
@@ -848,7 +854,7 @@ struct FilterAnalysis {
 }
 
 /// Operation types for cost calculation
-enum Operation {
+pub enum Operation {
     MetadataFilter(FilterOperation),
     VectorSearch(SearchOperation),
     IndexLookup(IndexOperation),
@@ -856,26 +862,27 @@ enum Operation {
 }
 
 /// Index operation details
-struct IndexOperation {
+pub struct IndexOperation {
     index_type: Index,
+    #[allow(dead_code)]
     lookup_params: IndexLookupParams,
 }
 
 /// Filter operation details
-struct FilterOperation {
+pub struct FilterOperation {
     condition: FilterCondition,
     rows_to_scan: usize,
     can_use_index: bool,
 }
 
 /// Search operation details
-struct SearchOperation {
+pub struct SearchOperation {
     method: SearchExecutionMethod,
     num_vectors: usize,
 }
 
 /// Combined operation details
-struct CombinedOperation {
+pub struct CombinedOperation {
     filter: FilterOperation,
     search: SearchOperation,
     can_parallelize: bool,

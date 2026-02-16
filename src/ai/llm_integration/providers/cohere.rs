@@ -34,13 +34,13 @@ struct CohereRequest {
 #[derive(Debug, Deserialize)]
 struct CohereResponse {
     text: String,
-    generation_id: String,
+    _generation_id: String,
     meta: CohereMetadata,
 }
 
 #[derive(Debug, Deserialize)]
 struct CohereMetadata {
-    api_version: Option<String>,
+    _api_version: Option<String>,
     billed_units: Option<CohereBilledUnits>,
 }
 

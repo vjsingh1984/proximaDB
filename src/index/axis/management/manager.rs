@@ -172,6 +172,7 @@ pub struct AxisManager {
 
     /// Join engine for hybrid queries
     /// Combines results from multiple indexes
+    #[allow(dead_code)]
     join_engine: Arc<JoinEngine>,
 
     /// Adaptive intelligence components for workload optimization
@@ -186,10 +187,12 @@ pub struct AxisManager {
 
     /// Tracks performance metrics and anomalies
     /// Monitors latency, throughput, accuracy, and resource usage
+    #[allow(dead_code)]
     performance_monitor: Arc<PerformanceMonitor>,
 
     /// Manages clustering for IVF indexes
     /// Performs k-means clustering and centroid optimization
+    #[allow(dead_code)]
     clustering_engine: Arc<AxisClusteringEngine>,
 
     /// Collection-specific configurations

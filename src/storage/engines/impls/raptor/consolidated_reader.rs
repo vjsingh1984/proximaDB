@@ -45,6 +45,7 @@ use std::collections::HashSet;
 
 /// Wrapper for f32 to make it orderable for priority queues
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 struct OrdFloat(f32);
 
 impl Eq for OrdFloat {}
@@ -231,7 +232,7 @@ pub struct RaptorReader {
     base_path: String,
 
     /// Configuration
-    config: RaptorConfig,
+    _config: RaptorConfig,
 
     /// Unified cache orchestrator (replaces rowgroup_cache.rs)
     cache: Arc<CrossCacheOrchestrator>,
@@ -246,7 +247,7 @@ pub struct RaptorReader {
     collection_id: String,
 
     /// Transaction coordinator
-    transaction_coordinator: Arc<TransactionCoordinator>,
+    _transaction_coordinator: Arc<TransactionCoordinator>,
     // Note: Caching strategy:
     // - File-level metadata (footer, K centroids, K×K matrix) is cached by the
     //   shared CrossCacheOrchestrator through the zero-copy filesystem
@@ -305,11 +306,11 @@ impl RaptorReader {
         Self {
             base_path,
             collection_id,
-            config,
+            _config: config,
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             filesystem,
-            transaction_coordinator,
+            _transaction_coordinator: transaction_coordinator,
         }
     }
 

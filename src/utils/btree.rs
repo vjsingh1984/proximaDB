@@ -82,11 +82,13 @@ enum Node {
 
 impl Node {
     /// Check if node is a leaf
+    #[allow(dead_code)]
     fn is_leaf(&self) -> bool {
         matches!(self, Node::Leaf(_))
     }
 
     /// Get the number of keys in the node
+    #[allow(dead_code)]
     fn key_count(&self) -> usize {
         match self {
             Node::Internal(internal) => internal.keys.len(),
@@ -95,16 +97,19 @@ impl Node {
     }
 
     /// Check if node is full
+    #[allow(dead_code)]
     fn is_full(&self, max_keys: usize) -> bool {
         self.key_count() >= max_keys
     }
 
     /// Check if node is underflow (has too few keys)
+    #[allow(dead_code)]
     fn is_underflow(&self, min_keys: usize) -> bool {
         self.key_count() < min_keys
     }
 
     /// Get the first key in the node
+    #[allow(dead_code)]
     fn first_key(&self) -> Option<&Vec<u8>> {
         match self {
             Node::Internal(internal) => internal.keys.first(),
@@ -113,6 +118,7 @@ impl Node {
     }
 
     /// Get the last key in the node
+    #[allow(dead_code)]
     fn last_key(&self) -> Option<&Vec<u8>> {
         match self {
             Node::Internal(internal) => internal.keys.last(),
@@ -158,6 +164,7 @@ impl InternalNode {
     }
 
     /// Remove key and child at a specific position
+    #[allow(dead_code)]
     fn remove_at(&mut self, index: usize) -> (Vec<u8>, NodeRef) {
         let key = self.keys.remove(index);
         let child = self.children.remove(index + 1);
@@ -182,6 +189,7 @@ impl InternalNode {
     }
 
     /// Merge with another internal node
+    #[allow(dead_code)]
     fn merge(&mut self, key: Vec<u8>, other: InternalNode) {
         self.keys.push(key);
         self.keys.extend(other.keys);
@@ -267,12 +275,14 @@ impl LeafNode {
     }
 
     /// Merge with another leaf node
+    #[allow(dead_code)]
     fn merge(&mut self, other: LeafNode) {
         self.entries.extend(other.entries);
         self.next = other.next;
     }
 
     /// Get all entries in a key range
+    #[allow(dead_code)]
     fn range(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut result = Vec::new();
 
@@ -358,6 +368,7 @@ impl NodeRef {
     }
 
     /// Load a node from disk storage
+    #[allow(dead_code)]
     fn load_disk_node(
         &self,
         disk_info: &DiskNodeInfo,
@@ -409,6 +420,7 @@ pub struct BTreeIterator {
     /// End key for range queries (exclusive)
     end_key: Option<Vec<u8>>,
     /// Direction of iteration
+    #[allow(dead_code)]
     forward: bool,
 }
 

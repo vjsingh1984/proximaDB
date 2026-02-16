@@ -28,6 +28,7 @@ pub struct AccessPatternTracker {
 
 /// Access history for a single file
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct FileAccessHistory {
     /// Recent access times
     access_times: VecDeque<Instant>,
@@ -49,6 +50,7 @@ struct FileAccessHistory {
 
 /// Global access statistics
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct GlobalAccessStats {
     total_files_accessed: usize,
     total_accesses: u64,

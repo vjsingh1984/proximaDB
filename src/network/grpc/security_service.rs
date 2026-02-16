@@ -10,10 +10,10 @@
 //! Implements the SecurityService for role-based access control,
 //! permission validation, and audit logging.
 
+use chrono::Utc;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info};
-use chrono::Utc;
 
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
@@ -73,7 +73,10 @@ impl SecurityServiceImpl {
     }
 
     /// Validate that the caller has admin permissions
-    async fn validate_admin_access(&self, auth_ctx: &Option<proximadb_v1::AuthContext>) -> Result<(), Status> {
+    async fn validate_admin_access(
+        &self,
+        auth_ctx: &Option<proximadb_v1::AuthContext>,
+    ) -> Result<(), Status> {
         let user_ctx = self.auth_context_to_user_context(auth_ctx)?;
         let has_admin = self
             .rbac_manager
@@ -97,15 +100,31 @@ impl SecurityServiceImpl {
         _data_model: &str,
     ) -> Result<UnifiedPermission, Status> {
         match (resource_type, operation) {
-            ("collection", "read") => Ok(UnifiedPermission::CollectionRead(resource_id.to_string())),
-            ("collection", "write") => Ok(UnifiedPermission::CollectionWrite(resource_id.to_string())),
-            ("collection", "delete") => Ok(UnifiedPermission::CollectionDelete(resource_id.to_string())),
-            ("collection", "admin") => Ok(UnifiedPermission::CollectionAdmin(resource_id.to_string())),
-            ("collection", "vector_search") => Ok(UnifiedPermission::VectorSearch(resource_id.to_string())),
-            ("collection", "vector_insert") => Ok(UnifiedPermission::VectorInsert(resource_id.to_string())),
+            ("collection", "read") => {
+                Ok(UnifiedPermission::CollectionRead(resource_id.to_string()))
+            }
+            ("collection", "write") => {
+                Ok(UnifiedPermission::CollectionWrite(resource_id.to_string()))
+            }
+            ("collection", "delete") => {
+                Ok(UnifiedPermission::CollectionDelete(resource_id.to_string()))
+            }
+            ("collection", "admin") => {
+                Ok(UnifiedPermission::CollectionAdmin(resource_id.to_string()))
+            }
+            ("collection", "vector_search") => {
+                Ok(UnifiedPermission::VectorSearch(resource_id.to_string()))
+            }
+            ("collection", "vector_insert") => {
+                Ok(UnifiedPermission::VectorInsert(resource_id.to_string()))
+            }
             ("graph", "traverse") => Ok(UnifiedPermission::GraphTraverse(resource_id.to_string())),
-            ("graph", "create_relations") => Ok(UnifiedPermission::GraphCreateRelations(resource_id.to_string())),
-            ("graph", "delete_relations") => Ok(UnifiedPermission::GraphDeleteRelations(resource_id.to_string())),
+            ("graph", "create_relations") => Ok(UnifiedPermission::GraphCreateRelations(
+                resource_id.to_string(),
+            )),
+            ("graph", "delete_relations") => Ok(UnifiedPermission::GraphDeleteRelations(
+                resource_id.to_string(),
+            )),
             _ => Ok(UnifiedPermission::SystemAdmin), // Fallback for unknown operations
         }
     }
@@ -131,7 +150,12 @@ impl SecurityService for SecurityServiceImpl {
 
         // Convert operation string to UnifiedPermission
         let permission = self
-            .operation_to_permission(&req.resource_type, &req.resource_id, &req.operation, &req.data_model)
+            .operation_to_permission(
+                &req.resource_type,
+                &req.resource_id,
+                &req.operation,
+                &req.data_model,
+            )
             .map_err(|e| Status::invalid_argument(format!("Invalid operation: {}", e)))?;
 
         // Create user context
@@ -170,7 +194,9 @@ impl SecurityService for SecurityServiceImpl {
         };
 
         if !allowed {
-            response.missing_permissions.push(format!("{:?}", permission));
+            response
+                .missing_permissions
+                .push(format!("{:?}", permission));
         }
 
         Ok(Response::new(response))
@@ -204,9 +230,14 @@ impl SecurityService for SecurityServiceImpl {
         // Validate admin access
         self.validate_admin_access(&req.auth_context).await?;
 
-        let role = req.role.ok_or_else(|| Status::invalid_argument("Missing role"))?;
+        let role = req
+            .role
+            .ok_or_else(|| Status::invalid_argument("Missing role"))?;
 
-        info!("CreateRole: role_name={}, tenant_id={}", role.role_name, role.tenant_id);
+        info!(
+            "CreateRole: role_name={}, tenant_id={}",
+            role.role_name, role.tenant_id
+        );
 
         // Convert proto permissions to UnifiedPermission
         let permissions: std::collections::HashSet<UnifiedPermission> = role
@@ -222,13 +253,18 @@ impl SecurityService for SecurityServiceImpl {
                     &role.tenant_id,
                     &role.role_name,
                     permissions,
-                    &req.auth_context.as_ref().map(|c| c.user_id.clone()).unwrap_or_default(),
+                    &req.auth_context
+                        .as_ref()
+                        .map(|c| c.user_id.clone())
+                        .unwrap_or_default(),
                 )
                 .await
                 .map_err(|e| Status::internal(format!("Failed to create role: {}", e)))?;
         }
 
-        Ok(Response::new(proximadb_v1::CreateRoleResponse { role: Some(role) }))
+        Ok(Response::new(proximadb_v1::CreateRoleResponse {
+            role: Some(role),
+        }))
     }
 
     async fn list_roles(
@@ -254,7 +290,9 @@ impl SecurityService for SecurityServiceImpl {
         info!("DeleteRole: role_id={}", req.role_id);
 
         // TODO: Implement delete role in RBAC manager
-        Ok(Response::new(proximadb_v1::DeleteRoleResponse { success: true }))
+        Ok(Response::new(proximadb_v1::DeleteRoleResponse {
+            success: true,
+        }))
     }
 
     async fn assign_role(
@@ -282,7 +320,11 @@ impl SecurityService for SecurityServiceImpl {
             self.rbac_manager
                 .assign_role_to_user(
                     &req.user_id,
-                    if req.tenant_id.is_empty() { None } else { Some(req.tenant_id.as_str()) },
+                    if req.tenant_id.is_empty() {
+                        None
+                    } else {
+                        Some(req.tenant_id.as_str())
+                    },
                     role_name,
                     &assigned_by,
                 )
@@ -299,7 +341,9 @@ impl SecurityService for SecurityServiceImpl {
             expires_at: req.expires_at,
         };
 
-        Ok(Response::new(proximadb_v1::AssignRoleResponse { assignment: Some(assignment) }))
+        Ok(Response::new(proximadb_v1::AssignRoleResponse {
+            assignment: Some(assignment),
+        }))
     }
 
     async fn revoke_role(
@@ -317,7 +361,9 @@ impl SecurityService for SecurityServiceImpl {
         );
 
         // TODO: Implement revoke role in RBAC manager
-        Ok(Response::new(proximadb_v1::RevokeRoleResponse { success: true }))
+        Ok(Response::new(proximadb_v1::RevokeRoleResponse {
+            success: true,
+        }))
     }
 
     async fn list_user_roles(
@@ -326,7 +372,10 @@ impl SecurityService for SecurityServiceImpl {
     ) -> Result<Response<proximadb_v1::ListUserRolesResponse>, Status> {
         let req = request.into_inner();
 
-        debug!("ListUserRoles: user_id={}, tenant_id={}", req.user_id, req.tenant_id);
+        debug!(
+            "ListUserRoles: user_id={}, tenant_id={}",
+            req.user_id, req.tenant_id
+        );
 
         // TODO: Implement list user roles from RBAC manager
         Ok(Response::new(proximadb_v1::ListUserRolesResponse {
@@ -370,7 +419,11 @@ impl SecurityService for SecurityServiceImpl {
             }),
         };
 
-        Ok(Response::new(proximadb_v1::GetTenantSecurityPolicyResponse { policy: Some(policy) }))
+        Ok(Response::new(
+            proximadb_v1::GetTenantSecurityPolicyResponse {
+                policy: Some(policy),
+            },
+        ))
     }
 
     async fn set_tenant_security_policy(
@@ -384,11 +437,16 @@ impl SecurityService for SecurityServiceImpl {
 
         info!(
             "SetTenantSecurityPolicy: tenant_id={}",
-            req.policy.as_ref().map(|p| &p.tenant_id).unwrap_or(&String::new())
+            req.policy
+                .as_ref()
+                .map(|p| &p.tenant_id)
+                .unwrap_or(&String::new())
         );
 
         // TODO: Implement tenant security policy setting
-        Ok(Response::new(proximadb_v1::SetTenantSecurityPolicyResponse { success: true }))
+        Ok(Response::new(
+            proximadb_v1::SetTenantSecurityPolicyResponse { success: true },
+        ))
     }
 }
 

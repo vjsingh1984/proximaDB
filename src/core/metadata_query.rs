@@ -212,6 +212,7 @@ impl MetadataQueryEngine {
     }
 
     /// Compare values that support PartialEq (used for Equal and NotEqual)
+    #[allow(dead_code)]
     fn compare_values<F>(
         &self,
         field_value: Option<&JsonValue>,

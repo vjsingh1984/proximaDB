@@ -6,8 +6,11 @@ use anyhow::{Result, anyhow};
 
 /// Clean Azure AD integration
 pub struct AzureADIntegration {
+    #[allow(dead_code)]
     tenant_id: String,
+    #[allow(dead_code)]
     client_id: String,
+    #[allow(dead_code)]
     authority: String,
 }
 

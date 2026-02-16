@@ -41,14 +41,14 @@ struct OllamaOptions {
 struct OllamaResponse {
     response: String,
     model: String,
-    created_at: String,
+    _created_at: String,
     done: bool,
-    total_duration: Option<u64>,
-    load_duration: Option<u64>,
+    _total_duration: Option<u64>,
+    _load_duration: Option<u64>,
     prompt_eval_count: Option<u32>,
-    prompt_eval_duration: Option<u64>,
+    _prompt_eval_duration: Option<u64>,
     eval_count: Option<u32>,
-    eval_duration: Option<u64>,
+    _eval_duration: Option<u64>,
 }
 
 impl OllamaClient {

@@ -11,6 +11,7 @@ use tracing::{debug, info, warn};
 
 /// Enterprise environment detector for automated deployment
 pub struct EnvironmentDetector {
+    #[allow(dead_code)]
     detection_config: DetectionConfig,
     platform_analyzers: HashMap<PlatformType, Box<dyn PlatformAnalyzer + Send + Sync>>,
 }

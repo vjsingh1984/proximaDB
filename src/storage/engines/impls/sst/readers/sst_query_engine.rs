@@ -105,6 +105,7 @@ pub enum SstableReadingStrategy {
 /// Leverages SharedSstFormatReader for actual file operations (eliminates code duplication)
 pub struct UnifiedSstableReader {
     // CORE READER: Delegates low-level file operations to shared infrastructure
+    #[allow(dead_code)]
     shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
     // UNIFIED CACHE: Using UnifiedCachingFilesystem for all caching needs
@@ -141,6 +142,7 @@ pub struct BlockCache {
 pub struct IndexCache {
     indices: Arc<moka::future::Cache<String, Arc<SstableIndex>>>,
     bloom_filters: Arc<moka::future::Cache<String, Arc<SstableBloomFilter>>>,
+    #[allow(dead_code)]
     max_memory_mb: usize,
     metrics: Arc<tokio::sync::RwLock<CacheMetrics>>,
 }
@@ -173,6 +175,7 @@ pub enum ReadStrategy {
 
 impl ReadStrategy {
     /// Check if this strategy should use block filtering
+    #[allow(dead_code)]
     fn should_filter_blocks(&self) -> bool {
         !matches!(self, ReadStrategy::CompactionDirect)
     }

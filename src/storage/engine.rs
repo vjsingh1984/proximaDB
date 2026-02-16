@@ -1009,6 +1009,7 @@ impl StorageEngine {
     }
 
     /// Calculate distance/similarity based on collection's configured metric
+    #[allow(dead_code)]
     fn calculate_distance_metric(
         &self,
         query: &[f32],

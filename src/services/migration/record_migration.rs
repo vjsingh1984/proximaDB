@@ -285,6 +285,7 @@ impl Default for MigrationStatus {
 /// Internal migration state tracking
 struct MigrationState {
     /// Collection name
+    #[allow(dead_code)]
     collection_name: String,
     /// Current mode
     mode: MigrationMode,

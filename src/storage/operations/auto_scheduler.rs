@@ -348,6 +348,7 @@ pub struct AutoScheduler {
     /// Workload analysis result
     workload_analysis: Arc<RwLock<WorkloadAnalysis>>,
     /// Scheduler state (running/paused)
+    #[allow(dead_code)]
     is_running: Arc<RwLock<bool>>,
     /// Shutdown signal sender
     shutdown_tx: broadcast::Sender<()>,

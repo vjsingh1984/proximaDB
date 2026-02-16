@@ -269,7 +269,7 @@ struct RoutableNode {
 
 /// Cached partition configuration entry with TTL
 #[derive(Debug, Clone)]
-struct CachedPartitionConfig {
+pub struct CachedPartitionConfig {
     /// The partition configuration
     config: PartitionConfig,
     /// When this entry was cached

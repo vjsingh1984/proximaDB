@@ -21,6 +21,7 @@ pub struct UsageMeteringEngine {
     /// Billing integration
     billing_integration: Option<Arc<dyn BillingProvider + Send + Sync>>,
     /// Configuration
+    #[allow(dead_code)]
     config: MeteringConfig,
 }
 

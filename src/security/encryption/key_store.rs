@@ -149,6 +149,7 @@ impl EncryptionKey {
 /// Stored key with all versions
 struct StoredKey {
     /// All versions of this key, indexed by version number
+    #[allow(dead_code)]
     versions: HashMap<u32, EncryptionKey>,
     /// Current active version
     current_version: u32,
@@ -159,6 +160,7 @@ pub struct KeyStore {
     /// Configuration
     config: KeyStoreConfig,
     /// Master key for encrypting stored keys
+    #[allow(dead_code)]
     master_key: Option<LessSafeKey>,
     /// Stored keys
     keys: RwLock<HashMap<String, StoredKey>>,

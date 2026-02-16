@@ -2,15 +2,16 @@
 //!
 //! Provides gRPC endpoints for hybrid BM25 + vector search fusion.
 
-use std::sync::Arc;
 use tonic::{Request, Response, Status};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::search::hybrid::{
-    HybridFusionEngine, FusionStrategy, BM25Result, VectorResult, FusedSearchResult, TextHighlight,
+    BM25Result, FusedSearchResult, FusionStrategy, HybridFusionEngine, TextHighlight, VectorResult,
 };
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::hybrid_search_service_server::{HybridSearchService, HybridSearchServiceServer};
+use crate::proto::proximadb_v1::hybrid_search_service_server::{
+    HybridSearchService, HybridSearchServiceServer,
+};
 
 /// gRPC service implementation for Hybrid Search
 pub struct HybridSearchServiceImpl {
@@ -114,7 +115,9 @@ impl HybridSearchService for HybridSearchServiceImpl {
             proximadb_v1::FusionStrategyInfo {
                 id: "rrf".to_string(),
                 name: "Reciprocal Rank Fusion".to_string(),
-                description: "Robust rank-based fusion: score = 1/(k+rank_bm25) + 1/(k+rank_vector)".to_string(),
+                description:
+                    "Robust rank-based fusion: score = 1/(k+rank_bm25) + 1/(k+rank_vector)"
+                        .to_string(),
                 default_params: Some(proximadb_v1::FusionStrategyParams {
                     params: Some(proximadb_v1::fusion_strategy_params::Params::RrfK(60)),
                 }),
@@ -122,15 +125,18 @@ impl HybridSearchService for HybridSearchServiceImpl {
             proximadb_v1::FusionStrategyInfo {
                 id: "weighted_linear".to_string(),
                 name: "Weighted Linear Fusion".to_string(),
-                description: "Linear combination: score = alpha*bm25 + (1-alpha)*vector".to_string(),
+                description: "Linear combination: score = alpha*bm25 + (1-alpha)*vector"
+                    .to_string(),
                 default_params: Some(proximadb_v1::FusionStrategyParams {
-                    params: Some(proximadb_v1::fusion_strategy_params::Params::WeightedLinear(
-                        proximadb_v1::WeightedLinearParams {
-                            alpha: 0.5,
-                            bm25_normalize: true,
-                            vector_normalize: true,
-                        },
-                    )),
+                    params: Some(
+                        proximadb_v1::fusion_strategy_params::Params::WeightedLinear(
+                            proximadb_v1::WeightedLinearParams {
+                                alpha: 0.5,
+                                bm25_normalize: true,
+                                vector_normalize: true,
+                            },
+                        ),
+                    ),
                 }),
             },
             proximadb_v1::FusionStrategyInfo {
@@ -138,9 +144,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
                 name: "Rank Biased Precision".to_string(),
                 description: "Emphasizes top ranks: score = (1-p)*p^(rank-1)".to_string(),
                 default_params: Some(proximadb_v1::FusionStrategyParams {
-                    params: Some(proximadb_v1::fusion_strategy_params::Params::RbpPersistence(
-                        0.8,
-                    )),
+                    params: Some(proximadb_v1::fusion_strategy_params::Params::RbpPersistence(0.8)),
                 }),
             },
             proximadb_v1::FusionStrategyInfo {
@@ -200,7 +204,9 @@ fn parse_proto_fusion_strategy(
     req: &proximadb_v1::HybridFusionSearchRequest,
 ) -> Result<FusionStrategy, anyhow::Error> {
     match proximadb_v1::FusionStrategy::try_from(req.fusion_strategy) {
-        Ok(proximadb_v1::FusionStrategy::Unspecified) => Ok(FusionStrategy::ReciprocalRank { k: 60 }),
+        Ok(proximadb_v1::FusionStrategy::Unspecified) => {
+            Ok(FusionStrategy::ReciprocalRank { k: 60 })
+        }
         Ok(proximadb_v1::FusionStrategy::Rrf) => Ok(FusionStrategy::ReciprocalRank { k: 60 }),
         Ok(proximadb_v1::FusionStrategy::WeightedLinear) => Ok(FusionStrategy::WeightedLinear {
             alpha: 0.5,
@@ -215,7 +221,9 @@ fn parse_proto_fusion_strategy(
         Ok(proximadb_v1::FusionStrategy::CombMin) => Ok(FusionStrategy::CombMin),
         Ok(proximadb_v1::FusionStrategy::CombMax) => Ok(FusionStrategy::CombMax),
         Ok(proximadb_v1::FusionStrategy::Condorcet) => Ok(FusionStrategy::Condorcet),
-        Ok(proximadb_v1::FusionStrategy::DempsterShafer) => Ok(FusionStrategy::DempsterShafer { alpha: 0.5 }),
+        Ok(proximadb_v1::FusionStrategy::DempsterShafer) => {
+            Ok(FusionStrategy::DempsterShafer { alpha: 0.5 })
+        }
         Ok(proximadb_v1::FusionStrategy::Adaptive) => Ok(FusionStrategy::Adaptive),
         Err(_) => Err(anyhow::anyhow!("Invalid fusion strategy value")),
     }

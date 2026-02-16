@@ -26,6 +26,7 @@ pub struct MetadataFilterPushdown {
     column_indexes: HashMap<String, ColumnIndex>,
 
     /// Filter selectivity estimator
+    #[allow(dead_code)]
     selectivity_estimator: SelectivityEstimator,
 }
 
@@ -48,19 +49,23 @@ pub struct ColumnIndex {
     inverted_index: HashMap<Value, HashSet<String>>,
 
     /// Range index for numeric columns
+    #[allow(dead_code)]
     range_index: Option<RangeIndex>,
 
     /// Prefix tree for string columns
+    #[allow(dead_code)]
     trie_index: Option<TrieIndex>,
 }
 
 /// Range index for numeric columns
 struct RangeIndex {
+    #[allow(dead_code)]
     sorted_entries: Vec<(f64, String)>, // (value, vector_id)
 }
 
 /// Trie index for string prefix matching
 struct TrieIndex {
+    #[allow(dead_code)]
     root: TrieNode,
 }
 
@@ -72,6 +77,7 @@ struct TrieNode {
 /// Filter selectivity estimator
 struct SelectivityEstimator {
     /// Historical selectivity for different filter patterns
+    #[allow(dead_code)]
     selectivity_history: HashMap<String, f64>,
 }
 

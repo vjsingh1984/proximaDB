@@ -26,9 +26,11 @@ pub struct StreamingSearchEngine {
     progressive_search: ProgressiveColumnarSearch,
 
     /// Streaming processor
+    #[allow(dead_code)]
     streaming_processor: StreamingRowGroupProcessor,
 
     /// Cost-based optimizer
+    #[allow(dead_code)]
     cost_optimizer: Option<CostBasedOptimizer>,
 
     /// Configuration
@@ -152,6 +154,7 @@ struct QueryCharacteristics {
 struct ActualPerformance {
     latency_ms: u64,
     memory_peak: usize,
+    #[allow(dead_code)]
     candidates_processed: usize,
     pruning_effectiveness: f32,
     recall: Option<f32>,
@@ -161,9 +164,9 @@ struct ActualPerformance {
 /// Predicted performance estimates
 #[derive(Debug, Clone)]
 struct PredictedPerformance {
-    estimated_latency_ms: u64,
-    estimated_memory: usize,
-    estimated_candidates: usize,
+    _estimated_latency_ms: u64,
+    _estimated_memory: usize,
+    _estimated_candidates: usize,
 }
 
 impl StreamingSearchEngine {

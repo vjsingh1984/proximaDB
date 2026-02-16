@@ -85,6 +85,7 @@ pub struct EmbeddingStats {
 /// Coordinates embedding generation via Victor's embedding infrastructure.
 /// Provides caching and batching for efficiency.
 pub struct EmbeddingService {
+    #[allow(dead_code)]
     config: LLMConfig,
     provider: EmbeddingProvider,
     /// Embedding cache (text hash -> embedding)

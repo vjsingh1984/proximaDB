@@ -13,12 +13,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // Re-export types from Enhanced RBAC for compatibility
 pub use crate::storage::tenant::rbac::{
-    CollectionOperation as EnhancedCollectionOperation,
-    Permission as EnhancedPermission,
+    CollectionOperation as EnhancedCollectionOperation, Permission as EnhancedPermission,
 };
 
 /// Data model enum for cross-model permission validation
@@ -151,6 +150,7 @@ pub struct ConsolidatedRBACManager {
     system_roles: Arc<DashMap<String, UnifiedRole>>,
 
     /// Collection-specific permissions
+    #[allow(dead_code)]
     collection_permissions: Arc<DashMap<String, CollectionPermissions>>,
 
     /// User role assignments
@@ -163,7 +163,8 @@ pub struct ConsolidatedRBACManager {
     config: RBACConfig,
 
     /// Permission cache for performance (user_id -> permission -> entry)
-    permission_cache: Arc<RwLock<HashMap<String, HashMap<UnifiedPermission, PermissionCacheEntry>>>>,
+    permission_cache:
+        Arc<RwLock<HashMap<String, HashMap<UnifiedPermission, PermissionCacheEntry>>>>,
 
     /// Reference to Enhanced RBAC Manager for multi-tenant operations
     enhanced_rbac: Option<Arc<crate::storage::tenant::rbac::EnhancedRBACManager>>,
@@ -301,7 +302,9 @@ impl ConsolidatedRBACManager {
         permission: &UnifiedPermission,
     ) -> Result<bool> {
         if !self.config.cache_permissions {
-            return self.check_permission_with_context(user_id, permission).await;
+            return self
+                .check_permission_with_context(user_id, permission)
+                .await;
         }
 
         // Check cache first
@@ -312,7 +315,12 @@ impl ConsolidatedRBACManager {
                     let now = Utc::now();
                     let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
 
-                    if now.signed_duration_since(entry.cached_at).to_std().unwrap_or(Duration::ZERO) < ttl {
+                    if now
+                        .signed_duration_since(entry.cached_at)
+                        .to_std()
+                        .unwrap_or(Duration::ZERO)
+                        < ttl
+                    {
                         debug!("Cache hit for user '{}': {:?}", user_id, permission);
                         return Ok(entry.allowed);
                     }
@@ -321,12 +329,16 @@ impl ConsolidatedRBACManager {
         }
 
         // Cache miss - perform actual check
-        let allowed = self.check_permission_with_context(user_id, permission).await?;
+        let allowed = self
+            .check_permission_with_context(user_id, permission)
+            .await?;
 
         // Update cache
         {
             let mut cache = self.permission_cache.write().await;
-            let user_cache = cache.entry(user_id.to_string()).or_insert_with(HashMap::new);
+            let user_cache = cache
+                .entry(user_id.to_string())
+                .or_insert_with(HashMap::new);
             user_cache.insert(
                 permission.clone(),
                 PermissionCacheEntry {
@@ -388,7 +400,9 @@ impl ConsolidatedRBACManager {
             }
         };
 
-        let allowed = self.check_permission_cached(&user_ctx.user_id, &permission).await?;
+        let allowed = self
+            .check_permission_cached(&user_ctx.user_id, &permission)
+            .await?;
 
         let mut permissions = HashSet::new();
         permissions.insert(permission.clone());
@@ -402,7 +416,11 @@ impl ConsolidatedRBACManager {
                 security_policy: "default".to_string(),
                 compliance_frameworks: Vec::new(),
             }),
-            reason: if allowed { None } else { Some("Insufficient permissions".to_string()) },
+            reason: if allowed {
+                None
+            } else {
+                Some("Insufficient permissions".to_string())
+            },
         })
     }
 

@@ -69,6 +69,7 @@ pub struct NativeMetadataHandler {
     field_stats: HashMap<String, FieldStatistics>,
 
     /// Enable automatic type inference
+    #[allow(dead_code)]
     auto_infer_types: bool,
 
     /// Confidence threshold for type inference (0.0 - 1.0)

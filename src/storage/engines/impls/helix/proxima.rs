@@ -31,8 +31,11 @@ pub use crate::storage::engines::core::formats::proximablocks::block_structures:
 /// HELIX Spatial Block Writer
 /// Uses ProximaDataBlock's internal SIMD encoding with spatial clustering
 pub struct HelixSIMDWriter {
+    #[allow(dead_code)]
     hilbert_curve_size: usize,
+    #[allow(dead_code)]
     dimension: usize,
+    #[allow(dead_code)]
     max_vectors: usize,
 }
 

@@ -54,6 +54,7 @@ mod tests {
     struct FormatBenchmarkResult {
         engine_format: String,
         flush_time_ms: f64,
+        #[allow(dead_code)]
         file_size_bytes: u64,
         full_scan_time_ms: f64,
         filtered_read_time_ms: f64,

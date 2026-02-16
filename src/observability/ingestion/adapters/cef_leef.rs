@@ -63,6 +63,7 @@ impl CefLeefAdapter {
     }
 
     /// Parse a message and detect format
+    #[allow(dead_code)]
     fn parse_message(&self, msg: &str) -> Option<LogEntry> {
         // Strip syslog wrapper if present
         let content = self.strip_syslog_header(msg);

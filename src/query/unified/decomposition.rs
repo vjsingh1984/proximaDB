@@ -21,6 +21,7 @@ pub struct QueryDecomposer {
 struct QueryPatterns {
     vector_similar: Regex,
     vector_distance: Regex,
+    #[allow(dead_code)]
     json_path: Regex,
     graph_traverse: Regex,
     graph_connected: Regex,

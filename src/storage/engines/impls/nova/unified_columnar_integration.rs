@@ -162,9 +162,9 @@ pub struct QualityThresholds {
 struct NovaCollectionMetadata {
     collection_id: String,
     dimension: usize,
+    schema: Arc<arrow_schema::Schema>,
     quantization: Option<QuantizationConfig>,
     filterable_columns: Vec<ColumnarFilterableSpec>,
-    schema: Arc<arrow_schema::Schema>,
     compression_metadata: crate::storage::engines::core::formats::columnar::CompressionMetadata,
     hierarchical_stats: HierarchicalStatistics,
     zone_maps: Vec<ZoneMap>,
@@ -323,6 +323,7 @@ struct StreamingSession {
 
 /// Stream types
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum StreamType {
     Insert,
     Search,
@@ -963,12 +964,13 @@ pub struct StreamingInsertResult {
 #[derive(Debug)]
 struct BatchInsertResult {
     pub vectors_inserted: usize,
-    pub compression_ratio: f32,
+    compression_ratio: f32,
     pub hierarchical_updates: Vec<HierarchicalUpdate>,
 }
 
 /// Hierarchical statistics update
 #[derive(Debug)]
+#[allow(dead_code)]
 enum HierarchicalUpdate {
     SuperBlockCreated {
         super_block_id: usize,
@@ -980,8 +982,8 @@ enum HierarchicalUpdate {
         vector_count: usize,
     },
     StatisticsUpdated {
-        component: String,
-        change: f32,
+        _component: String,
+        _change: f32,
     },
 }
 
@@ -1086,6 +1088,7 @@ impl HierarchicalStatsManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn get_metrics(&self) -> HierarchicalMetrics {
         HierarchicalMetrics {
             super_blocks_count: 0,
@@ -1116,6 +1119,7 @@ impl ZoneMapManager {
         Ok(zone_maps.iter().map(|z| z.zone_id).collect())
     }
 
+    #[allow(dead_code)]
     async fn get_metrics(&self) -> ZoneMapMetrics {
         ZoneMapMetrics {
             zones_count: 0,
@@ -1162,6 +1166,7 @@ impl StreamingProcessor {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn get_metrics(&self) -> StreamingMetrics {
         let active_streams = self.active_streams.read().await;
         StreamingMetrics {

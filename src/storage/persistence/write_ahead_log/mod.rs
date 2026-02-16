@@ -414,6 +414,7 @@ pub struct WriteAheadLogManagerPoolEntry {
     /// Workload metrics for load balancing
     workload_metrics: WriteAheadLogManagerWorkload,
     /// Last rebalancing timestamp
+    #[allow(dead_code)]
     last_rebalance: std::time::Instant,
 }
 
@@ -2869,6 +2870,7 @@ impl WriteAheadLogManager {
     }
 
     /// Convert proto metadata to HashMap for SearchResult
+    #[allow(dead_code)]
     fn convert_proto_metadata_to_hashmap(
         &self,
         metadata: &[crate::proto::proximadb_v1::MetadataItem],
@@ -3020,6 +3022,7 @@ impl WriteAheadLogManager {
     }
 
     /// Extract batch from memory for disk synchronization
+    #[allow(dead_code)]
     async fn extract_batch_for_sync(
         &self,
         collection_id: &str,

@@ -68,6 +68,7 @@ pub struct RaptorConfig {
     // IVF clustering settings for RAPTOR's p²+k×p algorithm
     pub enable_clustering: bool,
     pub num_clusters: Option<usize>, // k value, defaults to √n if not specified
+    #[allow(dead_code)]
     pub target_rowgroup_size: Option<usize>, // p value, auto-calculated if not specified
     pub use_component_boosting: bool, // Enable distance component boosting
 

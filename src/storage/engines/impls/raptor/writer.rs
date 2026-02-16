@@ -2041,13 +2041,17 @@ impl RaptorWriter {
 /// Column projections builder
 struct ColumnProjectionsBuilder {
     metadata_columns: HashMap<String, Vec<Vec<u8>>>,
+    #[allow(dead_code)]
     filter_bitmaps: HashMap<String, Vec<bool>>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct RowLocation {
+    #[allow(dead_code)]
     row_group_id: u32,
+    #[allow(dead_code)]
     page_id: u16,
+    #[allow(dead_code)]
     offset_in_page: u16,
 }
 
@@ -2072,7 +2076,9 @@ struct IvfNode {
 /// Edge with distance for intelligent row group clustering
 #[derive(Debug, Clone)]
 struct EdgeWithDistance {
+    #[allow(dead_code)]
     target_node_id: u32,
+    #[allow(dead_code)]
     target_vector_id: String,
     distance: f32, // Similarity distance for clustering decisions
 }
@@ -2080,10 +2086,14 @@ struct EdgeWithDistance {
 /// Enhanced edge with pre-computed boosted distance (serialized)
 #[derive(Debug, Clone)]
 struct BoostedEdge {
+    #[allow(dead_code)]
     target_node_id: u32,
+    #[allow(dead_code)]
     target_vector_id: String,
+    #[allow(dead_code)]
     raw_distance: f32,                   // Original distance
     boosted_distance: f32,               // Pre-computed boosted distance
+    #[allow(dead_code)]
     boost_components: Option<BoostInfo>, // Optional: store component breakdown
 }
 

@@ -240,6 +240,7 @@ impl SwiftMetadata {
 /// SWIFT metadata serializer
 pub struct SwiftMetadataSerializer {
     /// Filesystem interface for reading files
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 }
 

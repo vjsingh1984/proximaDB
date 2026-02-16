@@ -14,6 +14,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct LicenseManager {
     current_license: Option<LicenseInfo>,
+    #[allow(dead_code)]
     tier_enforcement: TierEnforcement,
     offline_validator: OfflineLicenseValidator,
     config: LicenseConfig,

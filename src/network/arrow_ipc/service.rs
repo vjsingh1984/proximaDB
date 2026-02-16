@@ -58,7 +58,7 @@ type TonicStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, TonicStat
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
     unified_handlers: Arc<UnifiedHandlers>,
-    codec: ArrowProtoCodec,
+    _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
 }
 
@@ -78,7 +78,7 @@ impl ProximaFlightService {
 
         Self {
             unified_handlers,
-            codec: ArrowProtoCodec,
+            _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
     }

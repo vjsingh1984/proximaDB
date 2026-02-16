@@ -527,6 +527,7 @@ impl DeltaLakeFormat {
             #[serde(rename = "type")]
             field_type: serde_json::Value,
             nullable: bool,
+            #[allow(dead_code)]
             metadata: Option<HashMap<String, String>>,
         }
 

@@ -34,6 +34,7 @@ struct OptimizationHistory {
     decisions: Vec<OptimizationDecision>,
 
     /// Performance impact of each decision
+    #[allow(dead_code)]
     impacts: HashMap<String, PerformanceImpact>,
 }
 
@@ -110,15 +111,20 @@ struct PerformanceModel {
 struct DataPoint {
     memory_allocation: HashMap<CacheType, usize>,
     hit_rate: f64,
+    #[allow(dead_code)]
     avg_latency: f64,
     workload_characteristics: WorkloadCharacteristics,
 }
 
 #[derive(Debug, Clone)]
 struct WorkloadCharacteristics {
+    #[allow(dead_code)]
     read_write_ratio: f64,
+    #[allow(dead_code)]
     hot_key_percentage: f64,
+    #[allow(dead_code)]
     average_value_size: usize,
+    #[allow(dead_code)]
     temporal_locality: f64,
 }
 
@@ -484,6 +490,7 @@ impl AutoTuner {
 }
 
 impl PerformanceModel {
+    #[allow(dead_code)]
     fn update_coefficients(&mut self) {
         // Simplified linear regression
         // In production, would use proper ML algorithms

@@ -150,6 +150,7 @@ pub struct SstArrowCache {
     /// Cache entries keyed by file path
     entries: RwLock<HashMap<String, SstArrowCacheEntry>>,
     /// Maximum number of entries to keep
+    #[allow(dead_code)]
     max_entries: usize,
 }
 

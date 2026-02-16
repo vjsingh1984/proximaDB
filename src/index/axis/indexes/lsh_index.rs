@@ -491,6 +491,7 @@ impl AxisLshIndex {
 
     // Private helper methods
 
+    #[allow(dead_code)]
     fn compute_distance(&self, a: &[f32], b: &[f32]) -> f32 {
         let result = self
             .distance_compute

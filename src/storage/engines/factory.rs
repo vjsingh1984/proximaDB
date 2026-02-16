@@ -151,7 +151,9 @@ impl StorageEngineFactory {
             ProtoStorageEngine::Helix => Self::create_helix(),
             ProtoStorageEngine::Swift => {
                 #[cfg(feature = "experimental-engines")]
-                { Self::create_swift() }
+                {
+                    Self::create_swift()
+                }
                 #[cfg(not(feature = "experimental-engines"))]
                 {
                     anyhow::bail!(
@@ -164,7 +166,9 @@ impl StorageEngineFactory {
             ProtoStorageEngine::Nova => Self::create_nova(),
             ProtoStorageEngine::Raptor => {
                 #[cfg(feature = "experimental-engines")]
-                { Self::create_raptor() }
+                {
+                    Self::create_raptor()
+                }
                 #[cfg(not(feature = "experimental-engines"))]
                 {
                     anyhow::bail!(
@@ -199,7 +203,9 @@ impl StorageEngineFactory {
             ProtoStorageEngine::Helix => Self::create_helix_async().await,
             ProtoStorageEngine::Swift => {
                 #[cfg(feature = "experimental-engines")]
-                { Self::create_swift_async().await }
+                {
+                    Self::create_swift_async().await
+                }
                 #[cfg(not(feature = "experimental-engines"))]
                 {
                     anyhow::bail!(
@@ -212,7 +218,9 @@ impl StorageEngineFactory {
             ProtoStorageEngine::Nova => Self::create_nova_async().await,
             ProtoStorageEngine::Raptor => {
                 #[cfg(feature = "experimental-engines")]
-                { Self::create_raptor_async().await }
+                {
+                    Self::create_raptor_async().await
+                }
                 #[cfg(not(feature = "experimental-engines"))]
                 {
                     anyhow::bail!(
@@ -542,7 +550,9 @@ impl StorageEngineFactory {
                 }
                 #[cfg(not(feature = "experimental-engines"))]
                 {
-                    info!("Transactional workload detected, using SST (SWIFT requires experimental-engines feature)");
+                    info!(
+                        "Transactional workload detected, using SST (SWIFT requires experimental-engines feature)"
+                    );
                     Self::create_sst()
                 }
             }

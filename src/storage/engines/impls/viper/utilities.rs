@@ -690,12 +690,12 @@ pub struct StagingOperationResult {
 // Placeholder implementations for compilation
 
 impl PerformanceStatsCollector {
-    async fn new(_config: StatsConfig) -> Result<Self> {
+    async fn new(config: StatsConfig) -> Result<Self> {
         Ok(Self {
             operation_metrics: Arc::new(RwLock::new(HashMap::new())),
             collection_stats: Arc::new(RwLock::new(HashMap::new())),
             global_stats: Arc::new(RwLock::new(GlobalViperStats::default())),
-            config: _config,
+            config,
         })
     }
 

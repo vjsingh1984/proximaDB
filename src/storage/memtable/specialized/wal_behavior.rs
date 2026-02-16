@@ -237,6 +237,7 @@ pub struct WALBehaviorWrapper {
     wal_metrics: Arc<RwLock<WriteBufferMetrics>>,
 
     /// Flush coordination state
+    #[allow(dead_code)]
     flush_state: Arc<RwLock<FlushState>>,
 
     /// Distributed mode: idempotency tokens per collection
@@ -705,6 +706,7 @@ impl WALBehaviorWrapper {
         Ok(stats_map)
     }
 
+    #[allow(dead_code)]
     fn get_operation_type(&self, operation: &WALOperation) -> u8 {
         // Map operation types to numeric codes
         match operation.operation_type.as_str() {

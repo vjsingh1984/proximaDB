@@ -39,7 +39,7 @@ pub struct ViperFactory {
     processor_registry: HashMap<String, Box<dyn ProcessorFactory>>,
 
     /// Configuration builder cache
-    builder_cache: HashMap<String, ViperConfigurationBuilder>,
+    _builder_cache: HashMap<String, ViperConfigurationBuilder>,
 }
 
 /// Complete VIPER configuration
@@ -365,7 +365,7 @@ impl ViperFactory {
             default_config: ViperConfiguration::default(),
             strategy_registry: HashMap::new(),
             processor_registry: HashMap::new(),
-            builder_cache: HashMap::new(),
+            _builder_cache: HashMap::new(),
         };
 
         factory.register_default_strategies();

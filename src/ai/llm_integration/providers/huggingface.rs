@@ -50,7 +50,7 @@ struct HuggingFaceResponse {
 #[derive(Debug, Deserialize)]
 struct HuggingFaceErrorResponse {
     error: String,
-    warnings: Option<Vec<String>>,
+    _warnings: Option<Vec<String>>,
 }
 
 impl HuggingFaceClient {

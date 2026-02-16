@@ -145,6 +145,7 @@ pub fn delta_decode_i32_prefix_sum(deltas: &[i32], base: i32, output: &mut [i32]
 // Scalar Implementations
 // ============================================================================
 
+#[allow(dead_code)]
 fn delta_decode_f32_scalar(
     deltas: &[i64],
     base_bits: i64,
@@ -158,6 +159,7 @@ fn delta_decode_f32_scalar(
     Ok(count)
 }
 
+#[allow(dead_code)]
 fn prefix_sum_i64_scalar(
     deltas: &[i64],
     base: i64,
@@ -176,6 +178,7 @@ fn prefix_sum_i64_scalar(
     Ok(count)
 }
 
+#[allow(dead_code)]
 fn prefix_sum_i32_scalar(
     deltas: &[i32],
     base: i32,

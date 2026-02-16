@@ -86,7 +86,7 @@ pub struct CdcCoordinator {
     /// Shutdown signal
     shutdown_tx: Option<watch::Sender<bool>>,
     /// Shutdown receiver
-    shutdown_rx: Option<watch::Receiver<bool>>,
+    _shutdown_rx: Option<watch::Receiver<bool>>,
 }
 
 impl CdcCoordinator {
@@ -130,7 +130,7 @@ impl CdcCoordinator {
             event_tx: Some(event_tx),
             event_rx: Some(event_rx),
             shutdown_tx: Some(shutdown_tx),
-            shutdown_rx: Some(shutdown_rx),
+            _shutdown_rx: Some(shutdown_rx),
         })
     }
 

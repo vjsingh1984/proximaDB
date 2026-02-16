@@ -905,6 +905,7 @@ pub struct HierarchicalBloomConfig {
 
 /// Bloom filter builder for incremental construction
 pub struct BloomFilterBuilder {
+    #[allow(dead_code)]
     config: BloomFilterConfig,
     filter: Box<dyn BloomFilterStrategy>,
 }

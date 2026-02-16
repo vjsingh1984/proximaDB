@@ -168,8 +168,8 @@ struct CachedResult {
     results: Vec<OptimizedSearchRecord>,
     /// Cache timestamp
     cached_at: Instant,
-    /// Files accessed for this query
-    accessed_files: Vec<String>,
+    /// Files accessed for this query (stored for potential future use in dependency tracking)
+    _accessed_files: Vec<String>,
 }
 
 impl SmartResultCache {
@@ -213,7 +213,7 @@ impl SmartResultCache {
         let cached_result = CachedResult {
             results,
             cached_at: Instant::now(),
-            accessed_files: accessed_files.clone(),
+            _accessed_files: accessed_files.clone(),
         };
 
         // Add to cache

@@ -221,6 +221,7 @@ pub struct DdlDmlExecutor {
     /// DML operations backend
     dml_ops: Arc<dyn DmlOperations>,
     /// Schema registry for validation
+    #[allow(dead_code)]
     schemas: Arc<tokio::sync::RwLock<HashMap<String, RelationalSchema>>>,
 }
 

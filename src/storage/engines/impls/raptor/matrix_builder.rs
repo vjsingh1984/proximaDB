@@ -14,6 +14,8 @@
 
 use anyhow::Result;
 use std::sync::Arc;
+#[cfg(feature = "gpu")]
+use tracing::warn;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
@@ -40,7 +42,7 @@ use super::common::{
 /// - The rowgroup has >= 100 vectors (GPU overhead worthwhile)
 pub struct MatrixBuilder {
     distance_compute: Arc<UnifiedDistanceCompute>,
-    hardware: Arc<HardwareCapabilities>,
+    _hardware: Arc<HardwareCapabilities>,
     distance_metric: DistanceMetric,
     /// Optional GPU compute for accelerated pairwise distance
     #[cfg(feature = "gpu")]
@@ -78,7 +80,7 @@ impl MatrixBuilder {
 
         Self {
             distance_compute,
-            hardware,
+            _hardware: hardware,
             distance_metric,
             #[cfg(feature = "gpu")]
             gpu_compute,
@@ -102,7 +104,9 @@ impl MatrixBuilder {
     /// Uses GPU acceleration (Metal MPS) when available for significant speedup
     /// on large rowgroups. Falls back to CPU SIMD for small rowgroups or when
     /// GPU is not available.
-    pub fn build_p2_matrix(&self, vectors: &[Vec<f32>], _dimension: usize) -> Result<P2Matrix> {
+    pub fn build_p2_matrix(&self, vectors: &[Vec<f32>], dimension: usize) -> Result<P2Matrix> {
+        #[cfg(not(feature = "gpu"))]
+        let _dimension = dimension; // Suppress unused warning when GPU is disabled
         let num_vectors = vectors.len();
         if num_vectors == 0 {
             return Ok(P2Matrix {
@@ -117,7 +121,7 @@ impl MatrixBuilder {
 
         // Try GPU path first for rowgroups >= 100 vectors (GPU overhead worthwhile)
         #[cfg(feature = "gpu")]
-        if num_vectors >= self.hardware.config.gpu_min_batch_size {
+        if num_vectors >= 100 {
             if let Some(ref gpu) = self.gpu_compute {
                 // Only MPS pairwise kernels are implemented today
                 if gpu.backend() == GpuBackend::MPS {
@@ -219,7 +223,7 @@ impl MatrixBuilder {
     fn build_p2_matrix_gpu(
         &self,
         vectors: &[Vec<f32>],
-        _dimension: usize,
+        dimension: usize,
         gpu: Arc<GpuDistanceCompute>,
     ) -> Result<P2Matrix> {
         use tokio::runtime::Handle;

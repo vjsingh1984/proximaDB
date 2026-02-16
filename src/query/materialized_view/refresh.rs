@@ -281,6 +281,7 @@ pub struct RefreshScheduler {
     /// Event sender for refresh events
     event_tx: mpsc::Sender<RefreshEvent>,
     /// Whether the scheduler is running
+    #[allow(dead_code)]
     is_running: AtomicBool,
     /// Statistics
     stats: SchedulerStats,

@@ -411,6 +411,7 @@ impl NovaMetadata {
 /// NOVA metadata serializer
 pub struct NovaMetadataSerializer {
     /// Filesystem interface for reading files
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 }
 
