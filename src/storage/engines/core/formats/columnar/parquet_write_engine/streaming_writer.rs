@@ -36,9 +36,11 @@ pub struct StreamingParquetWriter {
     total_records_written: u64,
 
     /// Custom ID bloom filters per row group (supplements Parquet native filters)
+    #[allow(dead_code)]
     id_bloom_filters: Vec<crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
 
     /// Metadata bloom filters for other columns
+    #[allow(dead_code)]
     metadata_bloom_filters:
         HashMap<String, crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
 
@@ -57,6 +59,7 @@ pub struct StreamingParquetWriter {
     metadata_collector: Option<Box<dyn MetadataCollector>>,
 
     /// Filesystem factory for cloud storage support
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 }
 

@@ -70,7 +70,9 @@ struct TrieIndex {
 }
 
 struct TrieNode {
+    #[allow(dead_code)]
     children: HashMap<char, Box<TrieNode>>,
+    #[allow(dead_code)]
     vector_ids: HashSet<String>,
 }
 

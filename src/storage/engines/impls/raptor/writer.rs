@@ -2091,8 +2091,8 @@ struct BoostedEdge {
     #[allow(dead_code)]
     target_vector_id: String,
     #[allow(dead_code)]
-    raw_distance: f32,                   // Original distance
-    boosted_distance: f32,               // Pre-computed boosted distance
+    raw_distance: f32, // Original distance
+    boosted_distance: f32, // Pre-computed boosted distance
     #[allow(dead_code)]
     boost_components: Option<BoostInfo>, // Optional: store component breakdown
 }

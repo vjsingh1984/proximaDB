@@ -1113,8 +1113,11 @@ pub struct WriteBufferMetrics {
 /// Flush coordination state
 #[derive(Debug, Clone, Default)]
 struct FlushState {
+    #[allow(dead_code)]
     last_flush_sequence: u64,
+    #[allow(dead_code)]
     flush_in_progress: bool,
+    #[allow(dead_code)]
     flush_start_time: Option<std::time::Instant>,
 }
 

@@ -153,11 +153,15 @@ struct QueryCharacteristics {
 #[derive(Debug, Clone)]
 struct ActualPerformance {
     latency_ms: u64,
+    #[allow(dead_code)]
     memory_peak: usize,
     #[allow(dead_code)]
     candidates_processed: usize,
+    #[allow(dead_code)]
     pruning_effectiveness: f32,
+    #[allow(dead_code)]
     recall: Option<f32>,
+    #[allow(dead_code)]
     precision: Option<f32>,
 }
 

@@ -117,6 +117,7 @@ pub struct AccessPatternTracker {
 
 /// Parameters for pattern learning
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LearningParameters {
     /// Minimum accesses before making predictions
     pub min_accesses_for_prediction: u32,

@@ -175,12 +175,15 @@ struct MemoryPools {
     fp32_pool: std::sync::Mutex<Vec<Vec<f32>>>,
 
     /// Pool for INT8 vectors
+    #[allow(dead_code)]
     int8_pool: std::sync::Mutex<Vec<Vec<i8>>>,
 
     /// Pool for binary vectors
+    #[allow(dead_code)]
     binary_pool: std::sync::Mutex<Vec<Vec<u8>>>,
 
     /// Pool for PQ codes
+    #[allow(dead_code)]
     pq_pool: std::sync::Mutex<Vec<Vec<u8>>>,
 }
 

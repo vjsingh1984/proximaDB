@@ -2807,8 +2807,11 @@ impl RaptorEngine {
 
 // Helper structures
 struct RowGroupCache {
+    #[allow(dead_code)]
     capacity: usize,
+    #[allow(dead_code)]
     cache: HashMap<String, RecordBatch>,
+    #[allow(dead_code)]
     access_counts: HashMap<String, usize>,
 }
 

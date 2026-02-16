@@ -161,6 +161,7 @@ struct ClusterMetadata {
 struct ClusterStats {
     mean_distance: f32,
     std_deviation: f32,
+    #[allow(dead_code)]
     radius: f32,
 }
 

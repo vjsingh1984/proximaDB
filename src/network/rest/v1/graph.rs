@@ -1869,6 +1869,7 @@ struct GraphQueryResultResponse {
     /// Result rows
     rows: Vec<serde_json::Value>,
     /// Total number of rows returned
+    #[allow(dead_code)]
     row_count: u64,
     /// Execution time in milliseconds
     execution_time_ms: f64,

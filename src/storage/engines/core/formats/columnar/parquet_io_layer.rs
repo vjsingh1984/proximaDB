@@ -193,6 +193,7 @@ pub struct ReaderStats {
 /// Local disk cache for Parquet data
 pub struct LocalDiskCache {
     cache_dir: PathBuf,
+    #[allow(dead_code)]
     max_cache_size: u64,
     current_size: AtomicU64,
 

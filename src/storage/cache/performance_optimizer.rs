@@ -109,10 +109,13 @@ struct PerformanceModel {
 
 #[derive(Debug, Clone)]
 struct DataPoint {
+    #[allow(dead_code)]
     memory_allocation: HashMap<CacheType, usize>,
+    #[allow(dead_code)]
     hit_rate: f64,
     #[allow(dead_code)]
     avg_latency: f64,
+    #[allow(dead_code)]
     workload_characteristics: WorkloadCharacteristics,
 }
 
@@ -130,8 +133,11 @@ struct WorkloadCharacteristics {
 
 #[derive(Debug, Clone, Default)]
 struct ModelCoefficients {
+    #[allow(dead_code)]
     memory_impact: f64,
+    #[allow(dead_code)]
     locality_impact: f64,
+    #[allow(dead_code)]
     size_impact: f64,
 }
 
