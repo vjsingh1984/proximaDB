@@ -2061,11 +2061,25 @@ class ProximaDBClient:
     def close(self):
         """Close the client and cleanup resources"""
         if self._client and hasattr(self._client, "close"):
-            self._client.close()
+            try:
+                self._client.close()
+            except Exception:
+                pass
 
-        # Close protocol selector if enabled
+        # Stop operation router background thread if enabled
+        if self._operation_router:
+            try:
+                self._operation_router.stop()
+            except Exception:
+                pass
+            self._operation_router = None
+
+        # Stop protocol selector background thread if enabled
         if self._protocol_selector:
-            self._protocol_selector.close()
+            try:
+                self._protocol_selector.stop()
+            except Exception:
+                pass
             self._protocol_selector = None
 
     def __enter__(self):

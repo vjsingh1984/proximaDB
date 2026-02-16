@@ -42,13 +42,13 @@ RUN cargo build --release --bin proximadb-server && \
 COPY src/ ./src/
 
 # Build final optimized binary with real source code
-# Use aggressive memory optimization for CI constraints
-# opt-level=1 provides good balance: ~60% less memory than opt-level=3, ~40% slower runtime
-ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+# GHA runners have 7GB RAM; use 2 parallel jobs with 4 codegen units
+# for a balance of speed (~3x faster than single-threaded) and memory safety
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=4 \
     CARGO_PROFILE_RELEASE_OPT_LEVEL=1 \
     CARGO_PROFILE_RELEASE_LTO=false \
     CARGO_PROFILE_RELEASE_DEBUG=false
-RUN cargo build --release --bin proximadb-server --jobs=1
+RUN cargo build --release --bin proximadb-server --jobs=2
 
 # Stage 2: Unified runtime with Python and system dependencies
 FROM python:3.11-slim
