@@ -79,21 +79,32 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
 async fn test_helix_engine_initialization() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let _temp_dir = TempDir::new().unwrap();
-    let _config = HelixConfig::default();
-    let _filesystem_factory = Arc::new(
+    let temp_dir = TempDir::new().unwrap();
+    let config = HelixConfig::default();
+    let filesystem_factory = Arc::new(
         FilesystemFactory::create(
             crate::storage::persistence::filesystem::FilesystemConfig::default(),
         )
         .await
         .unwrap(),
     );
-    let _filesystem = _filesystem_factory.get_filesystem("file://").unwrap();
 
-    let engine = HelixEngine::new().await.unwrap();
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::UnifiedDistanceCompute::new(
+            crate::proto::proximadb_v1::DistanceMetric::Cosine,
+        ),
+    );
+
+    // Use new_with_config which creates a proper temp directory,
+    // instead of new() which uses /tmp and may fail on CI runners
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
 
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
+    // temp_dir kept alive for the duration of the test
+    drop(temp_dir);
 }
 
 /// Test PCA model training and projection
