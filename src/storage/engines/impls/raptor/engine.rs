@@ -37,7 +37,9 @@ use crate::index::axis::types::ClusterAssignment;
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
-use crate::storage::persistence::filesystem::{FileOptions, FileStorageTier, FileSystem};
+use crate::storage::persistence::filesystem::{
+    FileOptions, FileStorageTier, FileSystem, FilesystemFactory,
+};
 
 // Universal performance optimization imports
 use crate::core::hardware_capabilities::HardwareCapabilities;
@@ -220,6 +222,12 @@ pub struct RaptorEngine {
     ///
     /// RwLock for concurrent read access during queries
     cluster_assignments: Arc<RwLock<HashMap<u32, Vec<ClusterAssignment>>>>,
+
+    /// **Filesystem Factory**
+    ///
+    /// Creates filesystem instances for different storage backends.
+    /// Required by the `UnifiedStorageEngine` trait (`get_filesystem_factory`).
+    filesystem_factory: Arc<FilesystemFactory>,
 
     /// **Filesystem Interface**
     ///
@@ -447,7 +455,7 @@ impl RaptorEngine {
         // ============================================================================
 
         // Initialize filesystem factory for creating appropriate filesystems
-        let _filesystem_factory =
+        let filesystem_factory =
             Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await?);
 
         // Storage tier and paths will be determined at runtime from FlushParameters
@@ -644,6 +652,7 @@ impl RaptorEngine {
             cluster_manager,
             clustering_config,
             cluster_assignments,
+            filesystem_factory,
             filesystem: data_filesystem,
             tier_config,
             file_options,
@@ -2716,8 +2725,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        // Would return actual filesystem factory
-        unimplemented!("Filesystem factory not yet implemented")
+        &self.filesystem_factory
     }
 }
 

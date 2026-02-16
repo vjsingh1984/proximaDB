@@ -238,6 +238,9 @@ ai_endpoints = []
 sales_endpoints = []
 tenant_access = []
 executive_intel = []
+# Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
+# server panics from unimplemented code paths. Enable for development/testing only.
+experimental-engines = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
