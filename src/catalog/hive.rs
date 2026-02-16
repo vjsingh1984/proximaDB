@@ -70,7 +70,7 @@ pub struct HiveCatalog {
     /// Catalog name
     name: String,
     /// Configuration
-    config: HiveCatalogConfig,
+    _config: HiveCatalogConfig,
     /// Thrift client connection state
     /// In production, this would be a proper Thrift client
     connection_uri: String,
@@ -85,7 +85,7 @@ pub struct HiveCatalog {
 #[derive(Debug, Clone)]
 struct MockDatabase {
     name: String,
-    description: String,
+    _description: String,
     location: String,
     properties: HashMap<String, String>,
     created_at: i64,
@@ -98,7 +98,7 @@ struct MockTable {
     table_name: String,
     columns: Vec<MockColumn>,
     location: String,
-    table_type: String,
+    _table_type: String,
     properties: HashMap<String, String>,
     created_at: i64,
     schema_version: i32,
@@ -128,7 +128,7 @@ impl HiveCatalog {
 
         let catalog = Self {
             name,
-            config: config.clone(),
+            _config: config.clone(),
             connection_uri: config.thrift_uri.clone(),
             cache,
             mock_databases: tokio::sync::RwLock::new(HashMap::new()),
@@ -152,7 +152,7 @@ impl HiveCatalog {
             default_db.clone(),
             MockDatabase {
                 name: default_db.clone(),
-                description: "Default Hive database".to_string(),
+                _description: "Default Hive database".to_string(),
                 location: format!("/warehouse/{}", default_db),
                 properties: HashMap::new(),
                 created_at: now,
@@ -163,7 +163,7 @@ impl HiveCatalog {
     }
 
     /// Convert Hive type string to CatalogDataType
-    fn hive_type_to_data_type(hive_type: &str) -> CatalogDataType {
+    fn _hive_type_to_data_type(hive_type: &str) -> CatalogDataType {
         let lower = hive_type.to_lowercase();
         match lower.as_str() {
             "boolean" => CatalogDataType::Boolean,
@@ -189,7 +189,7 @@ impl HiveCatalog {
     }
 
     /// Convert CatalogDataType to Hive type string
-    fn data_type_to_hive_type(
+    fn _data_type_to_hive_type(
         data_type: CatalogDataType,
         _properties: &HashMap<String, String>,
     ) -> String {
@@ -262,7 +262,7 @@ impl Catalog for HiveCatalog {
 
         let database = MockDatabase {
             name: db_name.clone(),
-            description: properties.get("description").cloned().unwrap_or_default(),
+            _description: properties.get("description").cloned().unwrap_or_default(),
             location: format!("/warehouse/{}", db_name),
             properties: properties.clone(),
             created_at: now,
@@ -413,7 +413,7 @@ impl Catalog for HiveCatalog {
             table_name: identifier.name.clone(),
             columns,
             location: format!("/warehouse/{}/{}", db_name, identifier.name),
-            table_type: "EXTERNAL_TABLE".to_string(),
+            _table_type: "EXTERNAL_TABLE".to_string(),
             properties: schema.properties.clone(),
             created_at: now,
             schema_version: schema.schema_version,
@@ -685,15 +685,15 @@ mod tests {
     #[test]
     fn test_hive_type_conversion() {
         assert_eq!(
-            HiveCatalog::hive_type_to_data_type("bigint"),
+            HiveCatalog::_hive_type_to_data_type("bigint"),
             CatalogDataType::Int64
         );
         assert_eq!(
-            HiveCatalog::hive_type_to_data_type("string"),
+            HiveCatalog::_hive_type_to_data_type("string"),
             CatalogDataType::String
         );
         assert_eq!(
-            HiveCatalog::hive_type_to_data_type("array<float>"),
+            HiveCatalog::_hive_type_to_data_type("array<float>"),
             CatalogDataType::Vector
         );
     }
@@ -702,15 +702,15 @@ mod tests {
     fn test_data_type_to_hive() {
         let props = HashMap::new();
         assert_eq!(
-            HiveCatalog::data_type_to_hive_type(CatalogDataType::Int64, &props),
+            HiveCatalog::_data_type_to_hive_type(CatalogDataType::Int64, &props),
             "bigint"
         );
         assert_eq!(
-            HiveCatalog::data_type_to_hive_type(CatalogDataType::String, &props),
+            HiveCatalog::_data_type_to_hive_type(CatalogDataType::String, &props),
             "string"
         );
         assert_eq!(
-            HiveCatalog::data_type_to_hive_type(CatalogDataType::Vector, &props),
+            HiveCatalog::_data_type_to_hive_type(CatalogDataType::Vector, &props),
             "array<float>"
         );
     }

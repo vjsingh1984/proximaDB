@@ -19,12 +19,12 @@ use crate::storage::engines::core::search::search_modes::{
 // For now, we'll use placeholder types
 struct MmapFile;
 struct MmapPool {
-    size: usize,
+    _size: usize,
 }
 
 impl MmapPool {
     fn new(size: usize) -> Self {
-        Self { size }
+        Self { _size: size }
     }
 
     fn get(&self, _path: &str) -> Result<MmapFile> {
@@ -37,12 +37,14 @@ impl MmapFile {
         Ok(&[])
     }
 
+    #[allow(dead_code)]
     fn advise(&self, _advice: Advice) -> Result<()> {
         Ok(())
     }
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum Advice {
     Sequential,
 }
@@ -54,13 +56,13 @@ use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 /// Optimized SST operations using existing infrastructure
 pub struct OptimizedSwiftOperations {
     /// Hardware capabilities detected at startup
-    hardware: Arc<HardwareCapabilities>,
+    _hardware: Arc<HardwareCapabilities>,
 
     /// Unified distance computation with SIMD
     distance_compute: UnifiedDistanceCompute,
 
     /// Vector memory pool for reuse
-    vector_pool: Arc<VectorMemoryPool>,
+    _vector_pool: Arc<VectorMemoryPool>,
 
     /// Memory-mapped file pool
     mmap_pool: Arc<MmapPool>,
@@ -82,9 +84,9 @@ impl OptimizedSwiftOperations {
         let mmap_pool = Arc::new(MmapPool::new(100));
 
         Ok(Self {
-            hardware,
+            _hardware: hardware,
             distance_compute,
-            vector_pool,
+            _vector_pool: vector_pool,
             mmap_pool,
         })
     }
@@ -394,7 +396,7 @@ mod tests {
         let ops = OptimizedSwiftOperations::new().unwrap();
 
         // Verify hardware detection
-        assert!(ops.hardware.cpu.physical_cores > 0);
+        assert!(ops._hardware.cpu.physical_cores > 0);
 
         // Verify distance compute is initialized
         let query = vec![1.0; 128];

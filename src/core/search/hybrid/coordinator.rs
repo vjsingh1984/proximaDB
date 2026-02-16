@@ -3,7 +3,6 @@
 //! Orchestrates parallel BM25 and vector search execution.
 
 use super::{BM25Result, FusedSearchResult, FusionStrategy, HybridFusionEngine, VectorResult};
-use std::collections::HashMap;
 
 /// Hybrid search coordinator
 ///
@@ -88,6 +87,7 @@ impl HybridCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_coordinator_creation() {
