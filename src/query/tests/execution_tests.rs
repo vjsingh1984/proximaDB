@@ -19,14 +19,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-// Test static globals for mocking results
-static TEST_VECTOR_RESULTS: std::sync::OnceLock<
-    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
-> = std::sync::OnceLock::new();
+// Note: TEST_SIMILAR_RESULTS is set by some tests below but is dead code -
+// the executor reads from its own statics in executor.rs. These tests still
+// pass because they use create_test_executor_with_collection() with real data.
 static TEST_SIMILAR_RESULTS: std::sync::OnceLock<
-    Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
-> = std::sync::OnceLock::new();
-static TEST_GRAPH_RESULTS: std::sync::OnceLock<
     Mutex<std::collections::HashMap<String, Vec<QueryRow>>>,
 > = std::sync::OnceLock::new();
 
@@ -507,133 +503,8 @@ async fn test_derive_vector_rows_from_graph_seeds() {
     );
 }
 
-fn set_test_vector_results(collection_id: &str, rows: Vec<QueryRow>) {
-    let map =
-        TEST_VECTOR_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert(collection_id.to_string(), rows);
-    }
-}
-
-#[tokio::test]
-async fn test_vector_to_graph_seeding_integration() {
-    // Prepare graph: n1 -> n2
-    let graph_service = Arc::new(crate::graph::service::GraphOperationsService::new());
-
-    // Skip graph collection creation for test - we'll use mock data
-    // Set up mock graph traversal results
-    let mut graph_fields = std::collections::HashMap::new();
-    graph_fields.insert(
-        "id".to_string(),
-        serde_json::Value::String("n2".to_string()),
-    );
-    let mock_graph_rows = vec![QueryRow {
-        fields: graph_fields,
-        similarity_score: None,
-        graph_distance: Some(1),
-        provenance: None,
-    }];
-
-    let map =
-        TEST_GRAPH_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert("test_graph".to_string(), mock_graph_rows);
-    }
-
-    // Mock vector search to return both n1 (for seeding) and vecA (for averaged embedding)
-    let mut fields1 = std::collections::HashMap::new();
-    fields1.insert(
-        "id".to_string(),
-        serde_json::Value::String("n1".to_string()),
-    );
-    let mut fields2 = std::collections::HashMap::new();
-    fields2.insert(
-        "id".to_string(),
-        serde_json::Value::String("vecA".to_string()),
-    );
-    let mock_vector_rows = vec![
-        QueryRow {
-            fields: fields1,
-            similarity_score: Some(1.0),
-            graph_distance: None,
-            provenance: None,
-        },
-        QueryRow {
-            fields: fields2,
-            similarity_score: Some(0.99),
-            graph_distance: None,
-            provenance: None,
-        },
-    ];
-    set_test_vector_results("c1", mock_vector_rows);
-    // Also set similar results for averaged embedding path
-    let mut sim_fields = std::collections::HashMap::new();
-    sim_fields.insert(
-        "id".to_string(),
-        serde_json::Value::String("vecA".to_string()),
-    );
-    let mock_similar_rows = vec![QueryRow {
-        fields: sim_fields,
-        similarity_score: Some(0.99),
-        graph_distance: None,
-        provenance: None,
-    }];
-    let map = TEST_SIMILAR_RESULTS
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert("c1".to_string(), mock_similar_rows);
-    }
-
-    // Build plan: VectorSearch then GraphTraversal with empty seeds (to be seeded)
-    let plan = ExecutionPlan {
-        execution_strategy: ExecutionStrategy::Hybrid,
-        operations: vec![
-            ExecutionOperation::VectorSearch {
-                collection_id: "c1".to_string(),
-                query_vector: None,
-                filters: None,
-                top_k: 10,
-                distance_metric: "cosine".to_string(),
-            },
-            ExecutionOperation::GraphTraversal {
-                graph_id: "test_graph".to_string(),
-                start_nodes: vec![],
-                edge_types: vec!["related".to_string()],
-                max_depth: 1,
-                filters: None,
-                vector_target_collection: Some("c1".to_string()),
-            },
-        ],
-        estimated_cost: 0.0,
-        optimizations: vec![],
-        performance_hints: vec![],
-        seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-        limit: None,
-        offset: None,
-    };
-
-    let executor = QueryExecutor::new_for_tests(graph_service);
-
-    let result = executor.execute_hybrid_plan(plan).await.unwrap();
-    // Expect at least one graph-derived row (n2)
-    let has_n2 = result
-        .rows
-        .iter()
-        .any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("n2"));
-    assert!(
-        has_n2,
-        "graph traversal should produce neighbor node n2 seeded from vector results"
-    );
-    // Expect averaged embedding similar result present (vecA)
-    let has_veca = result
-        .rows
-        .iter()
-        .any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("vecA"));
-    assert!(
-        has_veca,
-        "averaged embedding seeding should produce vector results via SIMILAR"
-    );
-}
+// NOTE: test_vector_to_graph_seeding_integration lives in executor.rs (executor_tests module)
+// where it can access the executor's OnceLock test statics directly.
 
 async fn create_test_executor() -> QueryExecutor {
     use crate::index::AxisManager;
