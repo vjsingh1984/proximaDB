@@ -1289,8 +1289,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // Hybrid search endpoints (BM25 + Vector with RRF fusion)
-        .route("/api/v1/hybrid/search", post(hybrid_search))
+        // Note: /api/v1/hybrid/search registered via nested router below (~line 1434)
+        // The /index endpoint uses AppState so it stays here
         .route("/api/v1/hybrid/index", post(hybrid_index))
         // With metadata endpoints
         .route(
