@@ -82,6 +82,8 @@ mod small_batch_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         }
     }
 
@@ -513,6 +515,8 @@ mod small_batch_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         }
     }
 
@@ -670,6 +674,8 @@ mod small_batch_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         }
     }
 

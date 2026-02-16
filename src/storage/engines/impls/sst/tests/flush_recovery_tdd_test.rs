@@ -348,6 +348,8 @@ mod tests {
                 distance_metric: DistanceMetric::Euclidean,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await?;
@@ -428,6 +430,8 @@ mod tests {
                 distance_metric: DistanceMetric::Euclidean,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await?;
@@ -613,6 +617,8 @@ mod tests {
                 distance_metric: DistanceMetric::Euclidean,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let results1 = engine.search_vectors_unified(&ctx1).await?;
@@ -640,6 +646,8 @@ mod tests {
                 distance_metric: DistanceMetric::Euclidean,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let results2 = engine.search_vectors_unified(&ctx2).await?;
@@ -714,6 +722,8 @@ mod tests {
                     distance_metric: DistanceMetric::Euclidean,
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
 
             let exact_results = engine.search_vectors_unified(&exact_ctx).await?;
@@ -739,6 +749,8 @@ mod tests {
                     distance_metric: DistanceMetric::Euclidean,
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
 
             let approx_results = engine.search_vectors_unified(&approx_ctx).await?;
@@ -948,6 +960,8 @@ mod tests {
                         distance_metric: DistanceMetric::Euclidean,
                         ..Default::default()
                     },
+                    user_context: None,
+                    tenant_context: None,
                 };
 
                 engine_clone.search_vectors_unified(&ctx).await
