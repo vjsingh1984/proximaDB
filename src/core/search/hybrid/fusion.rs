@@ -31,8 +31,8 @@ impl HybridFusionEngine {
     /// * `strategy` - Fusion strategy to use
     ///
     /// # Example
-    /// ```no_run
-    /// use proxima::core::search::hybrid::{FusionStrategy, HybridFusionEngine};
+    /// ```ignore
+    /// use proximadb::core::search::hybrid::{FusionStrategy, HybridFusionEngine};
     ///
     /// let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
     /// ```

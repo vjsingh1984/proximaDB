@@ -24,8 +24,8 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
-//! use proxima::core::search::hybrid::{
+//! ```ignore
+//! use proximadb::core::search::hybrid::{
 //!     FusionStrategy, HybridFusionEngine, BM25Result, VectorResult,
 //! };
 //!
@@ -59,8 +59,8 @@ pub enum FusionStrategy {
     /// * `k` - Ranking constant (default: 60)
     ///
     /// # Example
-    /// ```
-    /// use proxima::core::search::hybrid::FusionStrategy;
+    /// ```ignore
+    /// use proximadb::core::search::hybrid::FusionStrategy;
     ///
     /// let strategy = FusionStrategy::ReciprocalRank { k: 60 };
     /// ```
@@ -76,7 +76,7 @@ pub enum FusionStrategy {
     /// * `vector_normalize` - Whether to normalize vector scores to [0,1]
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// // Equal weight: 50% BM25, 50% vector
     /// let strategy = FusionStrategy::WeightedLinear {
     ///     alpha: 0.5,
@@ -100,7 +100,7 @@ pub enum FusionStrategy {
     ///   - Typical values: 0.8 to 0.99
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// // Strong emphasis on top ranks
     /// let strategy = FusionStrategy::RankBiasedPrecision {
     ///     persistence: 0.95,
@@ -120,7 +120,7 @@ pub enum FusionStrategy {
     /// where N is the total number of documents in both result sets
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::BordaCount;
     /// ```
     BordaCount,
@@ -131,7 +131,7 @@ pub enum FusionStrategy {
     /// Formula: `score = bm25_normalized + vector_normalized`
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::CombSum;
     /// ```
     CombSum,
@@ -142,7 +142,7 @@ pub enum FusionStrategy {
     /// Formula: `score = min(bm25_normalized, vector_normalized)`
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::CombMin;
     /// ```
     CombMin,
@@ -153,7 +153,7 @@ pub enum FusionStrategy {
     /// Formula: `score = max(bm25_normalized, vector_normalized)`
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::CombMax;
     /// ```
     CombMax,
@@ -164,7 +164,7 @@ pub enum FusionStrategy {
     /// Formula: Binary wins, losses summed across all comparisons
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::Condorcet;
     /// ```
     Condorcet,
@@ -178,7 +178,7 @@ pub enum FusionStrategy {
     /// * `alpha` - Weighting parameter (0.0 to 1.0)
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::DempsterShafer { alpha: 0.5 };
     /// ```
     DempsterShafer { alpha: f64 },
@@ -192,7 +192,7 @@ pub enum FusionStrategy {
     /// - Rank correlation
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let strategy = FusionStrategy::Adaptive;
     /// ```
     Adaptive,

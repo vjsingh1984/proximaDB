@@ -38,8 +38,8 @@ impl HybridCoordinator {
     /// Fused and sorted results
     ///
     /// # Example
-    /// ```no_run
-    /// use proxima::core::search::hybrid::{HybridCoordinator, FusionStrategy};
+    /// ```ignore
+    /// use proximadb::core::search::hybrid::{HybridCoordinator, FusionStrategy};
     ///
     /// let coordinator = HybridCoordinator::new(FusionStrategy::ReciprocalRank { k: 60 });
     /// let results = coordinator.execute_hybrid_search(

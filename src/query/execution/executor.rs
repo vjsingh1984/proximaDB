@@ -1817,16 +1817,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_collection".to_string(), mock_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_collection".to_string(), mock_rows);
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_collection".to_string(), mock_rows);
         }
 
         // Create execution plan with metadata filtering
@@ -1878,16 +1872,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_collection".to_string(), mock_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_collection".to_string(), mock_rows);
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_collection".to_string(), mock_rows);
         }
 
         // Create hybrid execution plan
@@ -1955,16 +1943,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_collection".to_string(), mock_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_collection".to_string(), mock_rows);
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_collection".to_string(), mock_rows);
         }
 
         // Create query with multiple metadata filters
@@ -2127,16 +2109,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_GRAPH_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_graph".to_string(), mock_graph_rows);
-            }
-        } else {
-            let _ = TEST_GRAPH_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_graph".to_string(), mock_graph_rows);
-                m
-            }));
+        let map = TEST_GRAPH_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_graph".to_string(), mock_graph_rows);
         }
 
         // Mock vector search to return both n1 (for seeding) and vecA (for averaged embedding)
@@ -2177,27 +2153,10 @@ mod executor_tests {
             graph_distance: None,
             provenance: None,
         }];
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("c1".to_string(), mock_similar_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert(
-                    "c1".to_string(),
-                    vec![QueryRow {
-                        fields: std::collections::HashMap::from([(
-                            "id".to_string(),
-                            serde_json::Value::String("vecA".to_string()),
-                        )]),
-                        similarity_score: Some(0.99),
-                        graph_distance: None,
-                        provenance: None,
-                    }],
-                );
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("c1".to_string(), mock_similar_rows);
         }
 
         // Build plan: VectorSearch then GraphTraversal with empty seeds (to be seeded)
