@@ -3664,8 +3664,7 @@ def _investigate_raptor_performance():
     print("RAPTOR PERFORMANCE INVESTIGATION")
     print("=" * 60)
 
-    print(
-        """
+    print("""
     RAPTOR Performance Analysis:
     ----------------------------
     RAPTOR uses adaptive row-group storage with Matrix Trinity indexes.
@@ -3676,8 +3675,7 @@ def _investigate_raptor_performance():
     3. Row-group metadata not cached
 
     Checking RAPTOR search implementation...
-    """
-    )
+    """)
 
     # Check if RAPTOR has proper disk-based search
     try:
@@ -3698,15 +3696,13 @@ def _investigate_raptor_performance():
     except Exception as e:
         print(f"  Could not analyze RAPTOR code: {e}")
 
-    print(
-        """
+    print("""
     Recommended fixes:
     1. Ensure RAPTOR loads Matrix Trinity indexes on startup
     2. Cache row-group metadata in memory
     3. Use memory-mapped files for faster access
     4. Pre-build search indexes during insert flush
-    """
-    )
+    """)
 
 
 def benchmark_ldbc_snb(

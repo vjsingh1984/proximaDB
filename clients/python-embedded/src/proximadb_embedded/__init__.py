@@ -37,10 +37,10 @@ Example:
 """
 
 from ._proximadb_embedded import (
-    ProximaDB,
-    DiskConfig,
-    SearchResult,
     CollectionInfo,
+    DiskConfig,
+    ProximaDB,
+    SearchResult,
     StorageStats,
 )
 

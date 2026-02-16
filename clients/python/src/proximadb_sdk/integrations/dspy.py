@@ -80,9 +80,7 @@ class ProximaDBRM(dspy.Retrieve):
         all_passages: list[str] = []
         for query in queries:
             vector = self._embedding_fn(query)
-            results = self._client.search(
-                self._collection_name, vector=vector, top_k=k
-            )
+            results = self._client.search(self._collection_name, vector=vector, top_k=k)
             for r in results:
                 passage = r.source or ""
                 if passage and passage not in all_passages:

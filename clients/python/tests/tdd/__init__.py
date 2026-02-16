@@ -4,9 +4,10 @@ Tests MUST FAIL initially. They define the specification
 for Python SDK functionality before implementation.
 """
 
-import pytest
 from typing import List
+
 import numpy as np
+import pytest
 
 
 class TestHybridSearch:
@@ -92,6 +93,7 @@ class TestObservability:
 
 # Test utilities for Python TDD
 
+
 class MockData:
     """Mock data generators for Python tests"""
 
@@ -110,8 +112,16 @@ class MockData:
     def random_text(word_count: int) -> str:
         """Generate random text document"""
         words = [
-            "machine", "learning", "database", "vector", "search",
-            "embedding", "semantic", "retrieval", "hybrid", "fusion"
+            "machine",
+            "learning",
+            "database",
+            "vector",
+            "search",
+            "embedding",
+            "semantic",
+            "retrieval",
+            "hybrid",
+            "fusion",
         ]
         return " ".join(np.random.choice(words, word_count))
 
@@ -121,10 +131,13 @@ class MockData:
         assert len(a) == len(b), f"Vector lengths differ: {len(a)} vs {len(b)}"
         for i, (x, y) in enumerate(zip(a, b)):
             diff = abs(x - y)
-            assert diff < epsilon, f"Vector elements differ at index {i}: {x} vs {y} (diff: {diff})"
+            assert (
+                diff < epsilon
+            ), f"Vector elements differ at index {i}: {x} vs {y} (diff: {diff})"
 
     @staticmethod
     def assert_recall_above(actual_recall: float, min_recall: float):
         """Assert recall percentage is above threshold"""
-        assert actual_recall >= min_recall, \
-            f"Recall {actual_recall*100}% is below minimum {min_recall*100}%"
+        assert (
+            actual_recall >= min_recall
+        ), f"Recall {actual_recall*100}% is below minimum {min_recall*100}%"

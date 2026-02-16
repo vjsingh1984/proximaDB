@@ -81,7 +81,9 @@ class TestDelete:
     def test_delete(self, store, mock_client):
         result = store.delete(ids=["id1", "id2"])
         assert result is True
-        mock_client.delete_vectors.assert_called_once_with("test_collection", ["id1", "id2"])
+        mock_client.delete_vectors.assert_called_once_with(
+            "test_collection", ["id1", "id2"]
+        )
 
     def test_delete_no_ids(self, store, mock_client):
         result = store.delete(ids=None)

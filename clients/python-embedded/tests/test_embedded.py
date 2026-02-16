@@ -1,9 +1,11 @@
 """Tests for ProximaDB Embedded Mode"""
+
 import tempfile
+
 import numpy as np
 import pytest
 
-from proximadb_embedded import ProximaDB, DiskConfig, CollectionInfo, SearchResult
+from proximadb_embedded import DiskConfig, ProximaDB, SearchResult
 
 
 class TestEmbeddedBasics:
@@ -181,14 +183,18 @@ class TestContextManager:
             with ProximaDB(data_dirs=tmpdir) as db:
                 db.create_collection("context_test", dimension=32)
                 vectors = np.random.rand(10, 32).astype(np.float32)
-                db.insert("context_test", ids=[f"v{i}" for i in range(10)], vectors=vectors)
+                db.insert(
+                    "context_test", ids=[f"v{i}" for i in range(10)], vectors=vectors
+                )
             # Should be flushed after exit
 
 
 class TestEngines:
     """Storage engine tests"""
 
-    @pytest.mark.parametrize("engine", ["sst", "viper", "nova", "swift", "raptor", "helix"])
+    @pytest.mark.parametrize(
+        "engine", ["sst", "viper", "nova", "swift", "raptor", "helix"]
+    )
     def test_engine_types(self, engine):
         """Test different storage engines"""
         with tempfile.TemporaryDirectory() as tmpdir:

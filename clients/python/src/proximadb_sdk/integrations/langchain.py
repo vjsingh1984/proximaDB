@@ -123,9 +123,7 @@ class ProximaDBVectorStore(VectorStore):
     ) -> list[tuple[Document, float]]:
         """Return documents most similar to the query string with scores."""
         query_vector = self._embedding.embed_query(query)
-        return self.similarity_search_by_vector_with_score(
-            query_vector, k=k, **kwargs
-        )
+        return self.similarity_search_by_vector_with_score(query_vector, k=k, **kwargs)
 
     def similarity_search_by_vector(
         self,
@@ -134,9 +132,7 @@ class ProximaDBVectorStore(VectorStore):
         **kwargs: Any,
     ) -> list[Document]:
         """Return documents most similar to the given embedding vector."""
-        results = self.similarity_search_by_vector_with_score(
-            embedding, k=k, **kwargs
-        )
+        results = self.similarity_search_by_vector_with_score(embedding, k=k, **kwargs)
         return [doc for doc, _ in results]
 
     def similarity_search_by_vector_with_score(

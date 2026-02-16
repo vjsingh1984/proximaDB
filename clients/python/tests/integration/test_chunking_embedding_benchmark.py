@@ -93,8 +93,7 @@ def load_test_document() -> str:
 
     # If no files found, create a synthetic document
     print("No documentation files found, using synthetic document")
-    return (
-        """
+    return """
         # ProximaDB Testing and Development Guide
         
         ## Introduction
@@ -120,9 +119,7 @@ def load_test_document() -> str:
         Comprehensive testing includes unit tests, integration tests, and performance benchmarks. The test suite
         covers all major components including chunking strategies, embedding providers, storage engines, and query APIs.
         
-        """
-        * 10
-    )  # Repeat to get reasonable size
+        """ * 10  # Repeat to get reasonable size
 
     with open(doc_path, "r") as f:
         return f.read()

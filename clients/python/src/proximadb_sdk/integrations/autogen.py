@@ -102,9 +102,7 @@ class ProximaDBVectorDB:
                 pass
 
         try:
-            self._client.create_collection(
-                collection_name, dimension=self._dimension
-            )
+            self._client.create_collection(collection_name, dimension=self._dimension)
         except Exception:
             if not get_or_create:
                 raise

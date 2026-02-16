@@ -45,9 +45,7 @@ class TestCreateCollection:
     def test_create_collection(self, db, mock_client):
         result = db.create_collection("test_coll")
         assert result == "test_coll"
-        mock_client.create_collection.assert_called_once_with(
-            "test_coll", dimension=3
-        )
+        mock_client.create_collection.assert_called_once_with("test_coll", dimension=3)
 
     def test_create_collection_overwrite(self, db, mock_client):
         db.create_collection("test_coll", overwrite=True)
@@ -120,9 +118,7 @@ class TestInsertDocs:
 class TestDeleteDocs:
     def test_delete_docs(self, db, mock_client):
         db.delete_docs(["id1", "id2"], "test_coll")
-        mock_client.delete_vectors.assert_called_once_with(
-            "test_coll", ["id1", "id2"]
-        )
+        mock_client.delete_vectors.assert_called_once_with("test_coll", ["id1", "id2"])
 
     def test_delete_empty(self, db, mock_client):
         db.delete_docs([], "test_coll")
@@ -132,9 +128,7 @@ class TestDeleteDocs:
 class TestRetrieveDocs:
     def test_retrieve_string_queries(self, db, mock_client):
         mock_client.search.return_value = [
-            SearchResult(
-                id="r1", score=0.95, source="hello", metadata={"key": "val"}
-            ),
+            SearchResult(id="r1", score=0.95, source="hello", metadata={"key": "val"}),
         ]
         results = db.retrieve_docs(["test query"], "test_coll", n_results=5)
         assert len(results) == 1  # one query

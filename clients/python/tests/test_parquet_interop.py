@@ -581,13 +581,11 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Filter by timestamp
-            result = conn.execute(
-                f"""
+            result = conn.execute(f"""
                 SELECT id, timestamp
                 FROM '{parquet_path}'
                 WHERE timestamp >= 1700000050000
-            """
-            ).fetchall()
+            """).fetchall()
 
             assert len(result) == 50  # Last 50 vectors
             assert all(row[1] >= 1700000050000 for row in result)
@@ -609,14 +607,12 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Sort by timestamp descending
-            result = conn.execute(
-                f"""
+            result = conn.execute(f"""
                 SELECT id, timestamp
                 FROM '{parquet_path}'
                 ORDER BY timestamp DESC
                 LIMIT 10
-            """
-            ).fetchall()
+            """).fetchall()
 
             assert len(result) == 10
             assert result[0][0] == "nova_vec_00049"  # Highest timestamp
@@ -643,16 +639,14 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Test aggregation functions
-            result = conn.execute(
-                f"""
+            result = conn.execute(f"""
                 SELECT
                     COUNT(*) as count,
                     MIN(timestamp) as min_ts,
                     MAX(timestamp) as max_ts,
                     AVG(timestamp) as avg_ts
                 FROM '{parquet_path}'
-            """
-            ).fetchone()
+            """).fetchone()
 
             assert result[0] == 100  # COUNT
             assert result[1] == 1700000000000  # MIN timestamp
@@ -675,16 +669,14 @@ class TestDuckDBInterop:
             conn = duckdb.connect()
 
             # Extract JSON fields
-            result = conn.execute(
-                f"""
+            result = conn.execute(f"""
                 SELECT
                     json_extract_string(extra_meta, '$.category') as category,
                     COUNT(*) as count
                 FROM '{parquet_path}'
                 GROUP BY json_extract_string(extra_meta, '$.category')
                 ORDER BY category
-            """
-            ).fetchall()
+            """).fetchall()
 
             # 5 categories, 100 vectors -> 20 per category
             assert len(result) == 5

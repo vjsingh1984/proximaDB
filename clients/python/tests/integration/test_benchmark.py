@@ -116,8 +116,7 @@ class TestComprehensiveBenchmark:
     @staticmethod
     def generate_synthetic_document() -> str:
         """Generate synthetic document for testing when no docs available"""
-        return (
-            """
+        return """
         # ProximaDB Comprehensive Documentation
         
         ## Architecture Overview
@@ -160,9 +159,7 @@ class TestComprehensiveBenchmark:
         - Bloom filters for metadata
         - Compression algorithms
         - Connection pooling
-        """
-            * 5
-        )  # Repeat to get reasonable size
+        """ * 5  # Repeat to get reasonable size
 
     @pytest.fixture(scope="class")
     def search_queries(self):

@@ -65,9 +65,7 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(self, config: EmbeddingConfig) -> None:
         super().__init__(config)
         self._initialized: bool = False
-        server_url: str = config.extra_config.get(
-            "server_url", "http://localhost:5678"
-        )
+        server_url: str = config.extra_config.get("server_url", "http://localhost:5678")
         self._client = ProximaDBClient(url=server_url)
         self._collection_name: str = config.extra_config.get(
             "collection_name", "code_embeddings"
@@ -107,14 +105,18 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
     async def embed_text(self, text: str) -> list[float]:
         """Generate an embedding vector for *text*."""
         if self.embedding_model is None:
-            raise RuntimeError("Embedding model not initialized. Call initialize() first.")
+            raise RuntimeError(
+                "Embedding model not initialized. Call initialize() first."
+            )
         result: list[float] = await self.embedding_model.embed_text(text)
         return result
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embedding vectors for a batch of texts."""
         if self.embedding_model is None:
-            raise RuntimeError("Embedding model not initialized. Call initialize() first.")
+            raise RuntimeError(
+                "Embedding model not initialized. Call initialize() first."
+            )
         result: list[list[float]] = await self.embedding_model.embed_batch(texts)
         return result
 
@@ -189,7 +191,8 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
                     metadata={
                         k: v
                         for k, v in meta.items()
-                        if k not in {"content", "file_path", "symbol_name", "line_number"}
+                        if k
+                        not in {"content", "file_path", "symbol_name", "line_number"}
                     },
                 )
             )

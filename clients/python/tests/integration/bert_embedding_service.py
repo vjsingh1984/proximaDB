@@ -21,7 +21,9 @@ try:
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
-    print("⚠️ Warning: sentence-transformers not available. Using simulated embeddings.")
+    print(
+        "⚠️ Warning: sentence-transformers not available. Using simulated embeddings."
+    )
 
 
 class BERTEmbeddingService:

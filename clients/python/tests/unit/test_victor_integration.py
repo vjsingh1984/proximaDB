@@ -63,12 +63,15 @@ def mock_embedding_model():
 @pytest.fixture
 def provider(mock_client, mock_embedding_model):
     config = _make_config()
-    with patch(
-        "proximadb_sdk.integrations.victor.ProximaDBClient",
-        return_value=mock_client,
-    ), patch(
-        "proximadb_sdk.integrations.victor.create_embedding_model",
-        return_value=mock_embedding_model,
+    with (
+        patch(
+            "proximadb_sdk.integrations.victor.ProximaDBClient",
+            return_value=mock_client,
+        ),
+        patch(
+            "proximadb_sdk.integrations.victor.create_embedding_model",
+            return_value=mock_embedding_model,
+        ),
     ):
         p = ProximaDBEmbeddingProvider(config)
     # Inject mocks directly
@@ -168,9 +171,7 @@ class TestSearchSimilar:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_source_fallback_to_content_meta(
-        self, provider, mock_client
-    ):
+    async def test_search_source_fallback_to_content_meta(self, provider, mock_client):
         """When source is None, fall back to content in metadata."""
         mock_client.search.return_value = [
             SearchResult(
@@ -196,9 +197,7 @@ class TestClearIndex:
     async def test_clear_index(self, provider, mock_client):
         await provider.clear_index()
         mock_client.delete_collection.assert_called_once_with("test_coll")
-        mock_client.create_collection.assert_called_once_with(
-            "test_coll", dimension=3
-        )
+        mock_client.create_collection.assert_called_once_with("test_coll", dimension=3)
 
 
 class TestGetStats:

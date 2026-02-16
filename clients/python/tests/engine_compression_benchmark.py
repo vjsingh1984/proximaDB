@@ -311,8 +311,7 @@ def run_comprehensive_benchmark(batch_sizes: List[int]):
     print("\n" + "=" * 100)
     print("KEY FINDINGS")
     print("=" * 100)
-    print(
-        """
+    print("""
 1. COMPRESSION IMPACT BY ENGINE:
    - SST: LZ4-1 provides ~2-3x compression with minimal performance impact
    - VIPER: ZSTD-3 achieves ~3-5x compression, best for columnar data
@@ -340,8 +339,7 @@ def run_comprehensive_benchmark(batch_sizes: List[int]):
    - Ultra-low latency: SWIFT with LZ4-1 or no compression
    - High-dimensional data: HELIX (PCA reduction)
    - Adaptive workloads: RAPTOR with ZSTD-3
-"""
-    )
+""")
 
 
 if __name__ == "__main__":

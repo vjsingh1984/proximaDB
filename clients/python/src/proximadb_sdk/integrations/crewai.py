@@ -136,9 +136,7 @@ class ProximaDBKnowledgeSource:
         ``metadata`` keys.
         """
         vector = self._embedding_fn(query)
-        results = self._client.search(
-            self._collection_name, vector=vector, top_k=limit
-        )
+        results = self._client.search(self._collection_name, vector=vector, top_k=limit)
         return [
             {
                 "id": r.id,

@@ -1235,8 +1235,7 @@ def main():
     print(
         "  ─────────────────────────────────────────────────────────────────────────────"
     )
-    print(
-        """
+    print("""
   ChromaDB:
     ✅ Simple API, Python-native
     ✅ Built-in persistence (SQLite + HNSW)
@@ -1298,15 +1297,13 @@ def main():
   3. FAISS + metadata store - Fastest search, but needs extra work
   4. ChromaDB - Simplest to integrate, slower at scale
   5. Qdrant - Best filtering, but heavier
-"""
-    )
+""")
 
     print("  EMBEDDING MODEL ANALYSIS:")
     print(
         "  ─────────────────────────────────────────────────────────────────────────────"
     )
-    print(
-        """
+    print("""
   Sentence-Transformers (BGE):
     + Fast local inference (~5-10ms)
     + No API costs
@@ -1320,8 +1317,7 @@ def main():
     + Larger context (8K tokens)
     - Slower (~50-100ms per embed)
     - Requires Ollama running
-"""
-    )
+""")
 
     # Cleanup
     try:
