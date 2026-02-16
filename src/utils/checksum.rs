@@ -50,6 +50,7 @@ impl Crc32 {
     const POLYNOMIAL: u32 = 0xEDB88320;
 
     /// CRC32C (Castagnoli) polynomial for hardware acceleration
+    #[allow(dead_code)]
     const CRC32C_POLYNOMIAL: u32 = 0x82F63B78;
 
     /// Create a new CRC32 calculator
@@ -108,6 +109,7 @@ impl Crc32 {
     /// Hardware-accelerated CRC32C (20-50x faster)
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.2")]
+    #[allow(dead_code)]
     unsafe fn update_hardware_crc32c(&self, data: &[u8], mut crc: u32) -> u32 {
         unsafe {
             use std::arch::x86_64::*;
@@ -139,6 +141,7 @@ impl Crc32 {
     }
 
     #[cfg(not(target_arch = "x86_64"))]
+    #[allow(dead_code)]
     unsafe fn update_hardware_crc32c(&self, data: &[u8], crc: u32) -> u32 {
         self.update_byte_by_byte(data, crc)
     }

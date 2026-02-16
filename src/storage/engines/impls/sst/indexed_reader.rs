@@ -100,6 +100,7 @@ impl SSTMetadataSource {
         })
     }
 
+    #[allow(dead_code)]
     fn infer_data_type(value: &serde_json::Value) -> ColumnData {
         match value {
             serde_json::Value::String(_) => ColumnData::String,
@@ -110,6 +111,7 @@ impl SSTMetadataSource {
         }
     }
 
+    #[allow(dead_code)]
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         crate::core::search::json_comparison::compare_json_values(a, b)
     }
@@ -118,6 +120,7 @@ impl SSTMetadataSource {
 /// SST-specific index-based data reader
 pub struct SSTIndexBasedReader {
     /// SST reader for accessing data blocks
+    #[allow(dead_code)]
     reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader,
 }
 

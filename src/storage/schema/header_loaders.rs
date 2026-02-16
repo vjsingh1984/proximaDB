@@ -495,6 +495,7 @@ impl ProximaBlocksHeaderLoader {
 
 /// Parsed ProximaBlocks header information.
 struct ProximaBlocksHeaderInfo {
+    #[allow(dead_code)]
     version: u32,
     header_size: usize,
     metadata: serde_json::Value,

@@ -491,6 +491,7 @@ impl NovaMetadataSerializer {
     }
 
     /// Extract metadata from NOVA file
+    #[allow(dead_code)]
     async fn extract_metadata(
         &self,
         file_path: &str,

@@ -862,6 +862,7 @@ pub async fn explain_sql(
 
 /// Compatibility alias for vector search input
 /// Maps internal VectorResult to simple wrapper used by handlers
+#[allow(dead_code)]
 struct VectorSearchInput {
     #[allow(dead_code)]
     id: String,

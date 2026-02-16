@@ -148,6 +148,7 @@ impl std::fmt::Debug for Compaction {
 
 impl Compaction {
     /// Extract collection ID from file paths
+    #[allow(dead_code)]
     fn extract_collection_id_from_paths(&self, paths: &[PathBuf]) -> Result<String> {
         if paths.is_empty() {
             return Ok("unknown".to_string());
@@ -655,6 +656,7 @@ impl Compaction {
     }
 
     /// Convert zero-copy stats to enhanced stats format
+    #[allow(dead_code)]
     fn convert_zero_copy_stats_to_enhanced(
         &self,
         stats: ZeroCopyCompactionStats,
@@ -1332,6 +1334,7 @@ impl Compaction {
     }
 
     /// Get SST files organized by level using unified framework
+    #[allow(dead_code)]
     async fn get_sst_files_by_level(
         &self,
         collection_dir: &Path,
@@ -1511,6 +1514,7 @@ impl Compaction {
 
     /// Fast parsing of data block optimized for compaction bulk reads
     /// Avoids full DataBlock struct deserialization for better performance
+    #[allow(dead_code)]
     fn fast_parse_data_block(
         &self,
         block_data: &[u8],

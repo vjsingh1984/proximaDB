@@ -62,15 +62,19 @@ pub struct AxisIndexPreferences {
 #[derive(Debug, Clone)]
 pub struct IndexTierPreference {
     /// Preferred tier level (1=Memory, 2=NVMe, 3=HDD, etc.)
+    #[allow(dead_code)]
     preferred_tier_level: u8,
 
     /// Minimum acceptable tier (won't place slower than this)
+    #[allow(dead_code)]
     min_tier_level: u8,
 
     /// Maximum acceptable tier (won't place faster than this unless hot)
+    #[allow(dead_code)]
     max_tier_level: u8,
 
     /// Access frequency multiplier for tier decisions
+    #[allow(dead_code)]
     frequency_multiplier: f64,
 }
 

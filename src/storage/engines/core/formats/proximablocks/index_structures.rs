@@ -32,6 +32,7 @@ pub struct RowBasedIdIndex {
     statistics: IndexStatistics,
 
     /// Configuration
+    #[allow(dead_code)]
     config: IndexConfiguration,
 }
 
@@ -231,6 +232,7 @@ pub struct HierarchicalIndex {
     levels: Vec<HierarchicalLevel>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: HierarchicalConfig,
 
     /// Current state
@@ -250,12 +252,15 @@ pub struct HierarchicalIndex {
 #[derive(Debug)]
 pub struct MultiLevelIndex {
     /// Primary fast index (hash)
+    #[allow(dead_code)]
     primary_index: HashMap<String, BlockLocation>,
 
     /// Secondary sorted index (B+ tree)
+    #[allow(dead_code)]
     secondary_index: BTreeMap<String, BlockLocation>,
 
     /// Tertiary hierarchical index for range queries
+    #[allow(dead_code)]
     hierarchical_index: Option<HierarchicalIndex>,
 
     /// Bloom filters at each level
@@ -263,6 +268,7 @@ pub struct MultiLevelIndex {
     bloom_filters: Vec<SstableBloomFilter>,
 
     /// Index selection statistics
+    #[allow(dead_code)]
     access_patterns: HashMap<String, AccessPattern>,
 }
 

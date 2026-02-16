@@ -25,6 +25,7 @@ pub struct DomainKnowledgeGraph {
     entities: Arc<DashMap<String, Entity>>,
 
     /// Entity relationships within domain
+    #[allow(dead_code)]
     relationships: Arc<DashMap<String, EntityRelationship>>,
 
     /// Business intelligence engine for domain
@@ -39,8 +40,10 @@ pub struct DomainKnowledgeGraph {
 
 /// Business intelligence engine for domain-specific operations
 pub struct DomainBusinessIntelligence {
+    #[allow(dead_code)]
     domain_id: String,
     business_context: BusinessContext,
+    #[allow(dead_code)]
     intelligence_rules: Vec<BusinessIntelligenceRule>,
     pattern_analyzer: Arc<DomainPatternAnalyzer>,
 }
@@ -49,6 +52,7 @@ pub struct DomainBusinessIntelligence {
 pub struct DomainQueryOptimizer {
     domain_id: String,
     business_context: BusinessContext,
+    #[allow(dead_code)]
     optimization_rules: Vec<QueryOptimizationRule>,
     performance_cache: Arc<DashMap<String, OptimizationResult>>,
 }

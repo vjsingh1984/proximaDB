@@ -21,6 +21,7 @@ use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 /// Time-partitioned storage for logs
 pub struct PartitionedStorage {
     /// Base path for storage
+    #[allow(dead_code)]
     base_path: String,
     /// Partitions by timestamp (hour granularity)
     partitions: RwLock<BTreeMap<i64, Arc<Partition>>>,

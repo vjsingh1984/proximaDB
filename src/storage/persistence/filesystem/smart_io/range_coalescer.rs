@@ -237,6 +237,7 @@ pub struct AdaptiveRangeCoalescer {
     /// Base coalescer
     base: DefaultRangeCoalescer,
     /// Storage tier latency (affects threshold calculation)
+    #[allow(dead_code)]
     storage_latency_us: u64,
     /// Target I/O size for this storage tier
     target_io_size: u64,

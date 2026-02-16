@@ -55,6 +55,7 @@ pub struct ObservabilityStorage {
 /// Contains separate storage engines for logs, metrics, and traces.
 struct NamespaceStorage {
     /// Configuration
+    #[allow(dead_code)]
     config: ObservabilityNamespaceConfig,
     /// Partitioned log storage
     logs: partitioned::PartitionedStorage,

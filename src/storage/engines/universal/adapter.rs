@@ -31,6 +31,7 @@ use super::{
 // Hardware acceleration types
 #[derive(Debug, Clone)]
 pub struct HardwareAccelerationManager {
+    #[allow(dead_code)]
     capabilities: HardwareCapabilities,
 }
 
@@ -62,6 +63,7 @@ pub struct UniversalDistanceAdapter {
     config: UniversalAdapterConfig,
 
     /// Unified distance computation engine
+    #[allow(dead_code)]
     distance_engine: Arc<UnifiedDistanceCompute>,
 
     /// Quantized distance calculator

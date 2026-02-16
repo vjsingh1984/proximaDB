@@ -90,10 +90,15 @@ struct ThresholdAdjuster {
 
 #[derive(Debug)]
 struct PerformanceRecord {
+    #[allow(dead_code)]
     query_id: u64,
+    #[allow(dead_code)]
     stages_used: Vec<String>,
+    #[allow(dead_code)]
     total_time_ms: u64,
+    #[allow(dead_code)]
     recall_quality: f32,
+    #[allow(dead_code)]
     candidates_evaluated: usize,
 }
 

@@ -66,6 +66,7 @@ pub struct ProximaBlocksArrowReader {
     file: File,
 
     /// File path (for error messages and reopening)
+    #[allow(dead_code)]
     path: String,
 
     /// SSTable header containing file metadata

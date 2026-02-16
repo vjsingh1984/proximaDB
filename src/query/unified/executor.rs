@@ -336,6 +336,7 @@ impl ParallelExecutor {
     }
 
     /// Execute a single component with access to prior results (for dependencies)
+    #[allow(dead_code)]
     async fn execute_single_with_context(
         &self,
         idx: usize,
@@ -1019,6 +1020,7 @@ fn extract_node_labels(filters: &[super::ast::NodeFilter]) -> Vec<String> {
 }
 
 /// Execute a graph traversal with input node IDs (legacy)
+#[allow(dead_code)]
 async fn execute_graph_traversal_with_input(
     expr: &GraphTraversalExpr,
     input_ids: Option<Vec<String>>,
@@ -1027,6 +1029,7 @@ async fn execute_graph_traversal_with_input(
 }
 
 /// Execute a graph traversal with input node IDs and graph service
+#[allow(dead_code)]
 async fn execute_graph_traversal_with_input_full(
     expr: &GraphTraversalExpr,
     input_ids: Option<Vec<String>>,
@@ -1104,6 +1107,7 @@ async fn execute_graph_traversal_with_input_full(
 }
 
 /// Execute a log query (legacy)
+#[allow(dead_code)]
 async fn execute_log_query(expr: &LogQueryExpr) -> Result<SubQueryResult> {
     execute_log_query_full(expr, None).await
 }
@@ -1194,6 +1198,7 @@ async fn execute_log_query_full(
 }
 
 /// Execute a metric query (legacy)
+#[allow(dead_code)]
 async fn execute_metric_query(expr: &MetricQueryExpr) -> Result<SubQueryResult> {
     execute_metric_query_full(expr, None).await
 }

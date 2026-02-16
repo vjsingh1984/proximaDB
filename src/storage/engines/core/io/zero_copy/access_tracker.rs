@@ -70,27 +70,36 @@ pub enum TimingPattern {
 #[derive(Debug, Clone)]
 pub struct CollectionAccessPattern {
     /// Collection ID
+    #[allow(dead_code)]
     pub collection_id: String,
     /// Total files accessed in this collection
+    #[allow(dead_code)]
     pub files_accessed: u64,
     /// Most active files
+    #[allow(dead_code)]
     pub hot_files: Vec<String>,
     /// Dominant query types for this collection
+    #[allow(dead_code)]
     pub dominant_query_types: Vec<QueryType>,
     /// Access velocity (accesses per hour)
+    #[allow(dead_code)]
     pub access_velocity: f64,
     /// Last activity time
+    #[allow(dead_code)]
     pub last_activity: Instant,
 }
 
 /// Access pattern predictor
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AccessPrediction {
     /// Probability of access in next time window (0.0-1.0)
     pub access_probability: f64,
     /// Predicted time until next access
+    #[allow(dead_code)]
     pub predicted_next_access: Option<Duration>,
     /// Confidence in prediction (0.0-1.0)
+    #[allow(dead_code)]
     pub confidence: f64,
     /// Predicted query type
     pub predicted_query_type: Option<QueryType>,
@@ -143,6 +152,7 @@ impl Default for LearningParameters {
     }
 }
 
+#[allow(dead_code)]
 impl AccessPatternTracker {
     /// Create new access pattern tracker
     pub fn new(max_events: usize, analysis_window: Duration) -> Self {
@@ -704,6 +714,7 @@ impl AccessPatternTracker {
 
 /// Pattern analysis results
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PatternAnalysis {
     pub total_files_tracked: usize,
     pub total_collections_tracked: usize,

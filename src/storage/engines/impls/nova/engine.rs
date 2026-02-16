@@ -234,6 +234,7 @@ pub struct NovaEngine {
     /// None by default, set externally when AXIS indexes are enabled for collection
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
+#[allow(dead_code)]
 impl NovaEngine {
     /// Create new NOVA engine instance
     pub async fn new() -> Result<Self> {
@@ -1761,6 +1762,7 @@ impl NovaEngine {
 // Additional helper methods for NovaEngine
 impl NovaEngine {
     /// Fallback to direct search when orchestration fails
+    #[allow(dead_code)]
     async fn fallback_to_direct_search(
         &self,
         _ctx: &crate::storage::traits::StorageQueryContext,

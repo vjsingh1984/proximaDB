@@ -166,6 +166,7 @@ impl BlockFormatWriter {
 /// Adapter for reading blocks in different formats
 pub struct BlockFormatReader {
     format: BlockFormat,
+    #[allow(dead_code)]
     dimension: u32,
 }
 

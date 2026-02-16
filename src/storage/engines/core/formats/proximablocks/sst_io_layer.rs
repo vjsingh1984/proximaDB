@@ -127,18 +127,21 @@ pub struct SharedSstFormatReader {
     filesystem: Arc<FilesystemFactory>,
 
     /// Memory mapping strategy (kept for region-specific optimizations)
+    #[allow(dead_code)]
     mmap_strategy: SstMmapStrategy,
 
     /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
     unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
+    #[allow(dead_code)]
     collection_id: String,
 
     /// Stats for monitoring
     stats: Arc<ReaderStats>,
 
     /// ✅ Reusable distance compute engine - created once and passed to all search operations
+    #[allow(dead_code)]
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 }
 
@@ -146,27 +149,37 @@ pub struct SharedSstFormatReader {
 /// Complements the reader for full read/write support
 pub struct SharedSstFormatWriter {
     /// Filesystem for I/O operations
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 
     /// Unified filesystem for write operations
+    #[allow(dead_code)]
     unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
+    #[allow(dead_code)]
     collection_id: String,
 
     /// Compression configuration
+    #[allow(dead_code)]
     compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
 
     /// Stats for monitoring writes
+    #[allow(dead_code)]
     stats: Arc<WriterStats>,
 }
 
 /// Writer statistics for monitoring
 pub struct WriterStats {
+    #[allow(dead_code)]
     blocks_written: AtomicU64,
+    #[allow(dead_code)]
     bytes_written: AtomicU64,
+    #[allow(dead_code)]
     bytes_compressed: AtomicU64,
+    #[allow(dead_code)]
     compression_time_ms: AtomicU64,
+    #[allow(dead_code)]
     writes_total: AtomicU64,
 }
 

@@ -324,8 +324,11 @@ pub struct ViperSchemaStrategy {
 
 /// Time-series optimized schema strategy
 pub struct TimeSeriesSchemaStrategy {
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     config: ViperSchemaConfig,
+    #[allow(dead_code)]
     time_precision: TimePrecision,
 }
 
@@ -346,13 +349,17 @@ pub struct StandardVectorProcessor {
 
 /// Time-series optimized processor
 pub struct TimeSeriesVectorProcessor {
+    #[allow(dead_code)]
     config: ViperProcessingConfig,
+    #[allow(dead_code)]
     time_window_seconds: u64,
 }
 
 /// Similarity-based processor for clustering
 pub struct SimilarityVectorProcessor {
+    #[allow(dead_code)]
     config: ViperProcessingConfig,
+    #[allow(dead_code)]
     cluster_threshold: f32,
 }
 

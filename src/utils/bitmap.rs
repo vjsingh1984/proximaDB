@@ -962,6 +962,7 @@ impl std::ops::SubAssign<&RoaringBitmap> for RoaringBitmap {
 pub struct BitmapIteratorAll<'a> {
     containers_iter: std::collections::btree_map::Iter<'a, u16, Container>,
     current_container: Option<(u16, Box<dyn Iterator<Item = u16> + 'a>)>,
+    #[allow(dead_code)]
     current_high: u16,
 }
 

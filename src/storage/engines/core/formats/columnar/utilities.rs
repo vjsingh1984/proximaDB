@@ -17,9 +17,11 @@ pub struct ColumnarUtilities {
     filesystem: Arc<FilesystemFactory>,
 
     /// Hardware capabilities
+    #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: ColumnarConfig,
 
     /// Performance metrics cache

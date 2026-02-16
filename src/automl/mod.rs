@@ -52,8 +52,10 @@ pub struct AutoMLMetrics {
 pub struct AutoMLCoordinator {
     service: Arc<AutoMLService>,
     workload_analyzer: Arc<WorkloadAnalyzer>,
+    #[allow(dead_code)]
     performance_predictor: Arc<PerformancePredictor>,
     optimization_pipeline: Arc<OptimizationPipeline>,
+    #[allow(dead_code)]
     hyperparameter_tuner: Arc<HyperparameterTuner>,
     status: Arc<RwLock<AutoMLStatus>>,
     metrics: Arc<RwLock<AutoMLMetrics>>,

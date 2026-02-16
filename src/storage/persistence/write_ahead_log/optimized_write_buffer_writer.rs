@@ -53,8 +53,10 @@ struct WalWriteRequest {
 #[derive(Clone)]
 struct CachedAssignment {
     storage_url: String,
+    #[allow(dead_code)]
     collection_wal_dir: String,
     logs_dir: String,
+    #[allow(dead_code)]
     cached_at: Instant,
 }
 

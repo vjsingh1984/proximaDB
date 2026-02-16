@@ -85,9 +85,11 @@ pub struct StagingConfig {
     pub base_url: String,
 
     /// Collection ID (optional, for collection-specific operations)
+    #[allow(dead_code)]
     pub collection_id: Option<String>,
 
     /// Operation type
+    #[allow(dead_code)]
     pub operation_type: TransactionStageType,
 
     /// Custom staging directory name (overrides default)
@@ -1205,6 +1207,7 @@ impl TransactionCoordinator {
 pub struct TransactionHandle<'a> {
     id: String,
     coordinator: &'a TransactionCoordinator,
+    #[allow(dead_code)]
     transaction: Arc<RwLock<ActiveTransaction>>,
 }
 

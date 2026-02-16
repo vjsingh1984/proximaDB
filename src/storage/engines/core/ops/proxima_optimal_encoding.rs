@@ -10,10 +10,14 @@ pub mod markers {
     pub const COUNT_MODE_U32: u8 = 0x03;
 
     // Scheme markers (first byte)
+    #[allow(dead_code)]
     pub const DELTA: u8 = 0x20;
+    #[allow(dead_code)]
     pub const BITPACKED: u8 = 0x10;
     pub const RLE: u8 = 0x60;
+    #[allow(dead_code)]
     pub const DICTIONARY: u8 = 0x50;
+    #[allow(dead_code)]
     pub const RAW: u8 = 0x00;
 }
 

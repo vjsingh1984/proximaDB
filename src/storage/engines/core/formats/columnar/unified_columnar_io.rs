@@ -151,6 +151,7 @@ pub struct UnifiedColumnarReader {
         std::collections::HashMap<String, Arc<parquet::file::metadata::ParquetMetaData>>,
     >,
     /// Statistics collector
+    #[allow(dead_code)]
     stats: std::sync::RwLock<IoStatistics>,
 }
 
@@ -438,6 +439,7 @@ impl UnifiedColumnarReader {
 /// Unified columnar writer supporting both formats
 pub struct UnifiedColumnarWriter {
     config: UnifiedColumnarConfig,
+    #[allow(dead_code)]
     stats: IoStatistics,
 }
 
@@ -662,6 +664,7 @@ impl UnifiedColumnarWriter {
 
 /// Iterator implementations
 struct IpcStreamIterator {
+    #[allow(dead_code)]
     reader: IpcStreamReader<File>,
 }
 
@@ -688,7 +691,9 @@ impl ScanIterator for IpcStreamIterator {
 }
 
 struct IpcFileIterator {
+    #[allow(dead_code)]
     reader: IpcFileReader<File>,
+    #[allow(dead_code)]
     current_batch: usize,
 }
 
@@ -718,9 +723,13 @@ impl ScanIterator for IpcFileIterator {
 }
 
 struct ParquetFilteredIterator {
+    #[allow(dead_code)]
     file_path: String,
+    #[allow(dead_code)]
     row_groups: Vec<usize>,
+    #[allow(dead_code)]
     config: UnifiedColumnarConfig,
+    #[allow(dead_code)]
     current_rg: usize,
 }
 
@@ -756,7 +765,9 @@ impl ScanIterator for ParquetFilteredIterator {
 }
 
 struct ParquetStandardIterator {
+    #[allow(dead_code)]
     file_path: String,
+    #[allow(dead_code)]
     config: UnifiedColumnarConfig,
 }
 

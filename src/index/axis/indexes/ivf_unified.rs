@@ -1451,6 +1451,7 @@ impl UnifiedIvfIndex {
     }
 
     /// NEW: Process a single IndexEvent based on representation type
+    #[allow(dead_code)]
     async fn process_index_payload(&self, payload: IndexEvent) -> Result<()> {
         // Handle based on what type of vectors are available
         match (payload.has_fp32, payload.has_quantized) {
@@ -1500,6 +1501,7 @@ impl UnifiedIvfIndex {
     }
 
     /// Process FP32 vectors from file paths
+    #[allow(dead_code)]
     async fn process_fp32_vectors(&self, file_paths: &[String]) -> Result<()> {
         for file_path in file_paths {
             // TODO: Load vectors from file and add to IVF index
@@ -1510,6 +1512,7 @@ impl UnifiedIvfIndex {
     }
 
     /// Process quantized vectors from file paths
+    #[allow(dead_code)]
     async fn process_quantized_vectors(&self, file_paths: &[String]) -> Result<()> {
         for file_path in file_paths {
             // TODO: Load quantized vectors, dequantize, and add to IVF index
@@ -1520,6 +1523,7 @@ impl UnifiedIvfIndex {
     }
 
     /// Process mixed FP32 and quantized vectors from file paths
+    #[allow(dead_code)]
     async fn process_mixed_vectors(&self, file_paths: &[String]) -> Result<()> {
         for file_path in file_paths {
             // TODO: Load both FP32 and quantized vectors
@@ -1531,6 +1535,7 @@ impl UnifiedIvfIndex {
 
     /// NEW: Dequantize vector for IVF clustering
     /// TODO: Integrate with actual quantization module from storage engines
+    #[allow(dead_code)]
     fn dequantize_vector(
         &self,
         _quantized: &[u8],

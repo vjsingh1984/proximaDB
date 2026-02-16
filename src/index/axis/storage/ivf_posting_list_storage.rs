@@ -356,7 +356,9 @@ pub enum StorageEngineType {
 
 /// Manager for tiered posting list storage
 pub struct TieredPostingListManager {
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     engine_type: StorageEngineType,
 
     /// Memory tier (hot posting lists)

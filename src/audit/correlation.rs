@@ -11,18 +11,23 @@ use tracing::{debug, info};
 /// Comprehensive audit correlation engine
 pub struct AuditCorrelationEngine {
     /// Active audit correlation sessions
+    #[allow(dead_code)]
     correlation_sessions: Arc<DashMap<String, AuditCorrelationSession>>,
 
     /// Provider-specific audit integrations
+    #[allow(dead_code)]
     provider_integrations: Arc<ProviderAuditIntegrations>,
 
     /// Cross-provider event correlator
+    #[allow(dead_code)]
     cross_provider_correlator: Arc<CrossProviderEventCorrelator>,
 
     /// Compliance audit reporter
+    #[allow(dead_code)]
     compliance_audit_reporter: Arc<ComplianceAuditReporter>,
 
     /// Audit event storage
+    #[allow(dead_code)]
     audit_event_store: Arc<AuditEventStore>,
 }
 

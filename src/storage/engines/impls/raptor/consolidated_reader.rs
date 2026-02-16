@@ -257,6 +257,7 @@ pub struct RaptorReader {
     // - If caching is needed later, we can add a local DashMap with memory budget
 }
 
+#[allow(dead_code)]
 impl RaptorReader {
     /// Get footer (contains K centroids and K×K matrix) - cached by metadata cache
     /// The footer is file-level metadata and will be cached to avoid repeated reads
@@ -3526,6 +3527,8 @@ impl RaptorReader {
     }
 
     /// Get boosting configuration (can be customized per collection)
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn get_boost_config(&self) -> BoostConfig {
         // In production, this could be loaded from collection configuration
         // For now, use default values optimized for RAPTOR

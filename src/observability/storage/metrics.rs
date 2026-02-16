@@ -31,6 +31,7 @@ const NANOS_PER_DAY: i64 = 24 * NANOS_PER_HOUR;
 /// Time-series metric storage
 pub struct MetricStorage {
     /// Base path for storage
+    #[allow(dead_code)]
     base_path: String,
     /// Metrics by series key (metric name + labels)
     series: RwLock<HashMap<String, MetricSeries>>,

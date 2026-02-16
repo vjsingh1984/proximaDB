@@ -56,8 +56,10 @@ pub struct RowGroups {
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
     /// Note: simd_encoder removed - encoding now done via ProximaCodec per-dimension
     /// Block compression configuration
+    #[allow(dead_code)]
     compression_config: BlockCompressionConfig,
     /// Configuration
+    #[allow(dead_code)]
     config: RaptorConfig,
 }
 

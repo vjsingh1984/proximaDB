@@ -20,7 +20,9 @@ pub struct EngineMigrator {
     config: MigrationConfig,
 
     /// Source and target engines
+    #[allow(dead_code)]
     source_engine: Arc<dyn UnifiedStorageEngine>,
+    #[allow(dead_code)]
     target_engine: Arc<dyn UnifiedStorageEngine>,
 
     /// Migration state

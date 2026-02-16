@@ -1412,6 +1412,7 @@ fn parse_aggregation(input: &str) -> ParseResult<PropertyProjection> {
 }
 
 /// Parse function call (labels, type, id, etc.)
+#[allow(dead_code)]
 fn parse_function_call(input: &str) -> ParseResult<CypherFunction> {
     alt((
         map(

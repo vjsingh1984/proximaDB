@@ -41,6 +41,7 @@ use crate::storage::traits::StorageQueryContext;
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer
 pub struct AdvancedSearchOptimizer {
     /// Query preprocessor (Phase 1)
+    #[allow(dead_code)]
     query_preprocessor: Arc<QueryPreprocessor>,
 
     /// Metadata filter pushdown (Phase 3)
@@ -56,6 +57,7 @@ pub struct AdvancedSearchOptimizer {
     query_cache: Arc<QueryCache>,
 
     /// Metadata cache
+    #[allow(dead_code)]
     metadata_store: Arc<MetadataStore>,
 
     /// Cross-cache orchestrator
@@ -69,22 +71,27 @@ pub struct AdvancedSearchOptimizer {
     progressive_config: ProgressiveSearchConfig,
 
     /// Stage size calculator for progressive search
+    #[allow(dead_code)]
     stage_selector: StageSelector,
 
     /// Performance tracking for adaptive optimization
+    #[allow(dead_code)]
     performance_tracker: Arc<PerformanceTracker>,
 
     // === Merged from IntegratedSearchOptimizer ===
     /// Cost estimation for strategy selection
+    #[allow(dead_code)]
     cost_estimator: Arc<SearchCostEstimator>,
 
     /// AXIS index integration
     axis_manager: Option<Arc<AxisManager>>,
 
     /// Routing engine for intelligent path selection
+    #[allow(dead_code)]
     routing_engine: Arc<RoutingEngine>,
 
     /// Hardware profile for optimization decisions
+    #[allow(dead_code)]
     hardware_profile: HardwareProfile,
 
     /// Configuration
@@ -144,6 +151,7 @@ pub struct ZeroCopyVectorView {
     count: usize,
 }
 
+#[allow(dead_code)]
 enum VectorData {
     Owned(Vec<f32>),
     Mapped(Arc<Mmap>),

@@ -206,6 +206,7 @@ pub struct AxisManager {
 
     /// Configuration and metrics
     /// Global AXIS configuration (thresholds, intervals, etc.)
+    #[allow(dead_code)]
     config: AxisConfig,
 
     /// Aggregated metrics across all managed indexes

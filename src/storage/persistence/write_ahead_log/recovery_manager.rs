@@ -84,6 +84,7 @@ impl Clone for RecoveryManager {
     }
 }
 
+#[allow(dead_code)]
 impl RecoveryManager {
     /// Create a new recovery manager with direct-to-storage recovery
     pub fn new(

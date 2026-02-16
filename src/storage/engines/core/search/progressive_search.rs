@@ -703,6 +703,7 @@ impl ProgressiveSearchExecutor {
     }
 
     /// Helper: Parse pre-computed quantized data
+    #[allow(dead_code)]
     fn parse_quantized_data(
         &self,
         _data: &[u8],
@@ -714,6 +715,7 @@ impl ProgressiveSearchExecutor {
     }
 
     /// Helper: Quantize vector on-the-fly (for storage-optimized path)
+    #[allow(dead_code)]
     fn quantize_vector(
         &self,
         vector: &[f32],

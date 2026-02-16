@@ -51,6 +51,7 @@ pub struct RowGroupCache {
     /// LRU cache storing row groups by ID
     pub cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
     /// Current cache size in bytes
+    #[allow(dead_code)]
     pub current_size: Arc<RwLock<usize>>,
     /// Maximum cache size in bytes
     pub max_size: usize,

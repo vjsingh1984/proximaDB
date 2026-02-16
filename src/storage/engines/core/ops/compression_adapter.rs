@@ -301,6 +301,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Select algorithm using hybrid optimization
+    #[allow(dead_code)]
     fn select_hybrid_algorithm(
         &self,
         characteristics: &DataCharacteristics,
@@ -337,6 +338,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Score algorithms for data characteristics
+    #[allow(dead_code)]
     fn score_algorithm_for_data(
         &self,
         characteristics: &DataCharacteristics,
@@ -364,6 +366,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Score algorithms for performance
+    #[allow(dead_code)]
     fn score_algorithm_for_performance(
         &self,
         characteristics: &DataCharacteristics,
@@ -386,6 +389,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Score algorithms for hardware capabilities
+    #[allow(dead_code)]
     fn score_algorithm_for_hardware(&self) -> HashMap<CompressionAlgorithm, f64> {
         let mut scores = HashMap::new();
 
@@ -460,7 +464,9 @@ pub struct CompressionMetadata {
 #[derive(Debug, Clone)]
 struct DataCharacteristics {
     size: usize,
+    #[allow(dead_code)]
     entropy: f64,
+    #[allow(dead_code)]
     repetitiveness: f64,
     compressibility: String,
     has_patterns: bool,

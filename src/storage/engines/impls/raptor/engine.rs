@@ -110,6 +110,7 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///
 // Old optimization structures removed - now using UniversalPerformanceOptimizer
 // The universal optimizer provides all these capabilities through a unified interface
+#[allow(dead_code)]
 pub struct RaptorEngine {
     /// **Engine Configuration**
     ///
@@ -351,6 +352,7 @@ pub struct RaptorEngine {
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
 
+#[allow(dead_code)]
 impl RaptorEngine {
     /// Smart quantization selection using shared logic
     fn should_use_persistent_quantization(
@@ -2824,10 +2826,12 @@ impl RowGroupCache {
         }
     }
 
+    #[allow(dead_code)]
     fn get(&self, key: &str) -> Option<RecordBatch> {
         self.cache.get(key).cloned()
     }
 
+    #[allow(dead_code)]
     fn put(&mut self, key: String, batch: RecordBatch) {
         // Simple LRU eviction
         if self.cache.len() >= self.capacity {
@@ -2847,6 +2851,7 @@ impl RowGroupCache {
         *self.access_counts.entry(key).or_insert(0) += 1;
     }
 
+    #[allow(dead_code)]
     fn optimize(&mut self) {
         // Remove entries with low access counts
         let threshold = 2;
@@ -2856,7 +2861,9 @@ impl RowGroupCache {
 }
 
 struct FileRegistry {
+    #[allow(dead_code)]
     active_files: HashMap<Uuid, FileMetadata>,
+    #[allow(dead_code)]
     compacting_files: HashMap<Uuid, FileMetadata>,
 }
 
@@ -2870,10 +2877,15 @@ impl FileRegistry {
 }
 
 struct FileMetadata {
+    #[allow(dead_code)]
     id: Uuid,
+    #[allow(dead_code)]
     path: String,
+    #[allow(dead_code)]
     size_bytes: u64,
+    #[allow(dead_code)]
     row_count: usize,
+    #[allow(dead_code)]
     created_at: chrono::DateTime<chrono::Utc>,
 }
 

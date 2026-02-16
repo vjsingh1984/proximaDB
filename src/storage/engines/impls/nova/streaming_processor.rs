@@ -528,6 +528,7 @@ impl StreamingRowGroupProcessor {
 /// Task for processing a row group
 struct RowGroupTask {
     row_group_id: u32,
+    #[allow(dead_code)]
     priority: u32,
     metadata: RowGroupMetaData,
     estimated_memory: usize,

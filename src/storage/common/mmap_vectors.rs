@@ -44,10 +44,15 @@ pub struct MmapVectorStorage {
 }
 
 struct MmapHandle {
+    #[allow(dead_code)]
     path: PathBuf,
+    #[allow(dead_code)]
     mmap: Arc<Mmap>,
+    #[allow(dead_code)]
     size: usize,
+    #[allow(dead_code)]
     vector_count: usize,
+    #[allow(dead_code)]
     dimension: usize,
 }
 

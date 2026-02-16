@@ -31,7 +31,9 @@ use crate::storage::engines::core::formats::columnar::common::EarlyTerminationCo
 /// Consolidates Universal Metadata Filtering + Unified Search Optimizer
 pub struct UnifiedQueryOptimizer {
     /// Shared metadata caches (consolidated from both systems)
+    #[allow(dead_code)]
     file_metadata_cache: Arc<dashmap::DashMap<String, FileMetadata>>,
+    #[allow(dead_code)]
     column_metadata_cache: Arc<dashmap::DashMap<String, ColumnMetadata>>,
 
     /// Unified performance tracking (merged from both)
@@ -41,12 +43,14 @@ pub struct UnifiedQueryOptimizer {
     index_capabilities: Arc<dashmap::DashMap<String, IndexCapabilities>>,
 
     /// Quantization engines (from search optimizer)
+    #[allow(dead_code)]
     quantization_engines: Arc<dashmap::DashMap<String, Arc<StorageQuantizationEngine>>>,
 
     /// Unified cost model (NEW - combines both systems)
     cost_model: Arc<UnifiedCostModel>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: UnifiedOptimizerConfig,
 }
 
@@ -297,6 +301,7 @@ pub struct UnifiedCostModel {
     historical_costs: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
 
     /// Hardware capabilities for cost adjustment
+    #[allow(dead_code)]
     hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
 }
 
@@ -824,9 +829,11 @@ impl CostStrategy for DefaultCostStrategy {
 /// Cost analysis results
 #[derive(Debug)]
 struct CostAnalysis {
+    #[allow(dead_code)]
     total_cost: f64,
     filter_cost: Option<f64>,
     search_cost: Option<f64>,
+    #[allow(dead_code)]
     index_cost: Option<f64>,
     filter_selectivity: Option<f64>,
     filters: Vec<FilterAnalysis>,
@@ -1124,7 +1131,9 @@ struct UnifiedPerformanceHistory {
 struct StrategyPerformance {
     pub avg_latency_ms: f32,
     pub avg_recall: f32,
+    #[allow(dead_code)]
     pub avg_memory_mb: usize,
+    #[allow(dead_code)]
     pub success_rate: f32,
 }
 

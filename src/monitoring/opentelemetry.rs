@@ -55,16 +55,22 @@ pub struct OpenTelemetryManager {
 /// Simplified span processor for tracing integration
 #[derive(Debug)]
 pub struct SpanProcessor {
+    #[allow(dead_code)]
     endpoint: Option<String>,
+    #[allow(dead_code)]
     batch_timeout: std::time::Duration,
+    #[allow(dead_code)]
     pending_spans: Vec<SpanData>,
 }
 
 /// Simplified metrics exporter for OpenTelemetry
 #[derive(Debug)]
 pub struct MetricsExporter {
+    #[allow(dead_code)]
     endpoint: Option<String>,
+    #[allow(dead_code)]
     export_interval: std::time::Duration,
+    #[allow(dead_code)]
     pending_metrics: Vec<MetricData>,
 }
 

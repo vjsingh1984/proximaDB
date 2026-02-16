@@ -24,6 +24,7 @@ use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation
 pub struct ParquetReader {
+    #[allow(dead_code)]
     config: QueryConfig,
     stats: QueryStatistics,
 }

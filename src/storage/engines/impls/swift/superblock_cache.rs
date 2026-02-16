@@ -23,16 +23,20 @@ pub struct SwiftSuperBlockCache {
     tree_navigation_cache: Arc<DashMap<String, Arc<TreeNavigationHints>>>,
 
     /// DataBlock metadata cache with LRU eviction
+    #[allow(dead_code)]
     datablock_cache:
         Arc<RwLock<crate::utils::cache::LruCache<String, Arc<CachedDataBlockMetadata>>>>,
+    #[allow(dead_code)]
     datablock_ttl_sec: u64,
 
     /// Bloom filter cache for instant filtering
     bloom_filter_cache: Arc<DashMap<String, Arc<BloomFilterMetadata>>>,
 
     /// Progressive search cache
+    #[allow(dead_code)]
     progressive_search_cache:
         Arc<RwLock<HashMap<String, (Arc<ProgressiveSearchMetadata>, Instant)>>>,
+    #[allow(dead_code)]
     progressive_ttl_sec: u64,
 
     /// Tree path optimization cache

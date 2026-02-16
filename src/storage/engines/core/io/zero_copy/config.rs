@@ -283,6 +283,7 @@ pub struct ZeroCopyIOSystemBuilder {
     custom_cache_dir: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 impl ZeroCopyIOSystemBuilder {
     /// Create a new builder with default configuration
     pub fn new() -> Self {

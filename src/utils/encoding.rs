@@ -45,6 +45,7 @@ pub struct Base64Config {
     /// Whether to use padding (= characters)
     padding: bool,
     /// Whether this is a URL-safe configuration
+    #[allow(dead_code)]
     url_safe: bool,
 }
 

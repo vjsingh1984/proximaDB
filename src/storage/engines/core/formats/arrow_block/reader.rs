@@ -30,6 +30,7 @@ pub struct ArrowBlockReader {
     ///
     /// When available, enables zero-copy reads directly from the file mapping.
     /// Falls back to standard file I/O if memory mapping fails.
+    #[allow(dead_code)]
     mmap: Option<Mmap>,
 
     /// Fallback file reader
@@ -61,6 +62,7 @@ pub struct ArrowBlockReader {
     /// Cached Arrow schema
     ///
     /// lazily cached Arrow schema for type information.
+    #[allow(dead_code)]
     schema: Option<Arc<arrow_schema::Schema>>,
 }
 

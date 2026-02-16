@@ -100,15 +100,19 @@ pub struct AccessPrediction {
     /// Probability of accessing this file again (0.0 - 1.0)
     pub future_access_probability: f32,
     /// Predicted time until next access
+    #[allow(dead_code)]
     pub predicted_next_access: Option<Duration>,
     /// Confidence in the prediction
+    #[allow(dead_code)]
     pub confidence: f32,
     /// Historical access pattern
+    #[allow(dead_code)]
     pub access_pattern: AccessPattern,
 }
 
 /// Historical access pattern classification
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AccessPattern {
     /// Never accessed before
     Unknown,
@@ -156,8 +160,10 @@ pub struct DecisionRationale {
     /// Threshold values used
     pub thresholds_applied: HashMap<String, f32>,
     /// Estimated savings
+    #[allow(dead_code)]
     pub estimated_savings: f64,
     /// Risk factors considered
+    #[allow(dead_code)]
     pub risk_factors: Vec<String>,
 }
 
@@ -661,7 +667,9 @@ impl BandwidthOptimizer {
 pub struct NetworkConditionTracker {
     current_latency_ms: f32,
     current_bandwidth_mbps: f32,
+    #[allow(dead_code)]
     high_latency_threshold: f32,
+    #[allow(dead_code)]
     low_bandwidth_threshold: f32,
 }
 
@@ -694,6 +702,7 @@ pub struct AccessPatternPredictor {
 #[derive(Debug, Clone)]
 struct AccessEvent {
     timestamp: Instant,
+    #[allow(dead_code)]
     query_type: QueryType,
 }
 

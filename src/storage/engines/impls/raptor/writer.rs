@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // ============================================================================
 // PERFECTED: 1-TO-1 CENTROID-ROWGROUP MAPPING FOR PERFECT PARALLELISM
 // ============================================================================
@@ -94,19 +95,24 @@ pub struct RaptorWriter {
 
     // Configuration
     config: RaptorConfig,
+    #[allow(dead_code)]
     collection_id: String,
     dimension: usize,
 
     // Reuse platform capabilities
     compression: Arc<StandardCompression>,
     quantization_engine: Arc<StorageQuantizationEngine>,
+    #[allow(dead_code)]
     memory_pool: Arc<VectorMemoryPool>,
+    #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
     distance_compute: Arc<UnifiedDistanceCompute>,
+    #[allow(dead_code)]
     matrix_builder: MatrixBuilder,
 
     // Current state
     current_row_page: Option<RowPageBuffer>,
+    #[allow(dead_code)]
     current_rowgroup: Option<CurrentRowgroup>, // For RecordBatch compatibility
     row_groups: Vec<RowGroupMetadata>,
     file_metadata: RaptorFileMetadata,
@@ -118,13 +124,16 @@ pub struct RaptorWriter {
     column_projections: ColumnProjectionsBuilder,
 
     // Track if file has been created
+    #[allow(dead_code)]
     file_created: bool,
 }
 
 /// Buffer for accumulating rows into pages
 struct RowPageBuffer {
     rows: Vec<CompactRow>,
+    #[allow(dead_code)]
     page_id: u16,
+    #[allow(dead_code)]
     start_offset: u64,
 }
 
@@ -132,18 +141,25 @@ struct RowPageBuffer {
 /// Stores both FP32 and quantized vectors for full reconstruction
 struct CompactRow {
     // Core fields from VectorRecord
-    id: String,                // VectorRecord.id (string)
-    vector: Vec<f32>,          // VectorRecord.vector (original FP32)
+    #[allow(dead_code)]
+    id: String, // VectorRecord.id (string)
+    vector: Vec<f32>, // VectorRecord.vector (original FP32)
+    #[allow(dead_code)]
     quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized INT8)
-    binary_sketch: Vec<u8>,    // Binary sketch for progressive search (1-bit per dimension)
+    #[allow(dead_code)]
+    binary_sketch: Vec<u8>, // Binary sketch for progressive search (1-bit per dimension)
     // TODO: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
     metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs as byte arrays)
 
     // Timestamp fields
-    timestamp: u32,          // VectorRecord.timestamp
+    #[allow(dead_code)]
+    timestamp: u32, // VectorRecord.timestamp
+    #[allow(dead_code)]
     updated_at: Option<u32>, // VectorRecord.updated_at
+    #[allow(dead_code)]
     expires_at: Option<u32>, // VectorRecord.expires_at
-    version: Option<u32>,    // VectorRecord.version
+    #[allow(dead_code)]
+    version: Option<u32>, // VectorRecord.version
 
     // Source content for RAG
     source_content: Option<Vec<u8>>, // VectorRecord.source (serialized SourceContent)
@@ -184,6 +200,7 @@ impl BloomFilterBuilder {
     }
 
     /// Get the number of IDs collected
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.ids.len()
     }
@@ -194,6 +211,7 @@ impl BloomFilterBuilder {
     }
 
     /// Clear all collected IDs
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.ids.clear();
     }
@@ -214,8 +232,10 @@ struct IvfClusteringBuilder {
     /// Map from vector ID to node index for quick lookup
     id_to_node: HashMap<String, u32>,
     /// Target row group size (p in the p²+k×p formula)
+    #[allow(dead_code)]
     target_rowgroup_size: usize,
     /// Hardware capabilities for optimization
+    #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
     /// AXIS clustering engine for reusable k-means implementation
     axis_clustering: Arc<AxisClusteringEngine>,
@@ -276,11 +296,13 @@ impl Default for BoostingConfig {
 /// Centroid with statistics for boosting calculations
 #[derive(Clone, Debug)]
 struct Centroid {
+    #[allow(dead_code)]
     id: usize,
     vector: Vec<f32>,
     member_ids: Vec<String>,
     mean_distance: f32,
     std_deviation: f32,
+    #[allow(dead_code)]
     radius: f32, // 95th percentile distance
 }
 
@@ -2066,6 +2088,7 @@ struct IvfNode {
     /// Cluster assignment (0 to k-1) for IVF routing
     cluster_id: u32,
     /// Location in row group (row_group_id, row_offset)
+    #[allow(dead_code)]
     row_location: RowLocation,
     /// Distance to assigned centroid for boosting
     centroid_distance: f32,
@@ -2099,6 +2122,7 @@ struct BoostedEdge {
 
 /// Boost component breakdown for debugging/tuning
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BoostInfo {
     d1: f32, // Source to its centroid
     d2: f32, // Centroid to centroid
@@ -2111,11 +2135,14 @@ struct BoostInfo {
 
 // Additional fields for tracking current state
 struct CurrentRowgroup {
+    #[allow(dead_code)]
     batch: RecordBatch,
+    #[allow(dead_code)]
     size: usize,
 }
 
 // Metadata column analysis for intelligent encoding
+#[allow(dead_code)]
 struct MetadataColumn {
     name: String,
     values: Vec<String>,
@@ -2137,6 +2164,7 @@ impl MetadataColumn {
         }
     }
 
+    #[allow(dead_code)]
     fn add_value(&mut self, value: String) {
         // Check type compatibility
         if self.all_integers {
@@ -2153,6 +2181,7 @@ impl MetadataColumn {
         self.values.push(value);
     }
 
+    #[allow(dead_code)]
     fn analyze_and_choose_encoding(&mut self) -> MetadataEncoding {
         use std::collections::HashSet;
 
@@ -2177,12 +2206,14 @@ impl MetadataColumn {
         }
     }
 
+    #[allow(dead_code)]
     fn build_dictionary(&self) -> Vec<String> {
         use std::collections::BTreeSet;
         let unique: BTreeSet<_> = self.values.iter().cloned().collect();
         unique.into_iter().collect()
     }
 
+    #[allow(dead_code)]
     fn encode_as_indices(&self, dict: &[String]) -> Vec<usize> {
         let dict_map: HashMap<_, _> = dict
             .iter()
@@ -2197,6 +2228,7 @@ impl MetadataColumn {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum MetadataEncoding {
     Dictionary, // Low cardinality strings
@@ -2213,6 +2245,8 @@ enum MetadataEncoding {
 type BloomFilterMetadata = super::common::BloomFilterMetadata;
 
 impl MetadataEncoding {
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn to_byte(&self) -> u8 {
         match self {
             Self::Dictionary => 0x10,

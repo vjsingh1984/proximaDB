@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! =============================================================================
 //! HIGH-LEVEL SST QUERY ENGINE (sst_query_engine.rs)
 //! =============================================================================
@@ -130,10 +131,13 @@ impl std::fmt::Debug for UnifiedSstableReader {
 /// Block cache for frequently accessed data blocks
 #[derive(Debug)]
 pub struct BlockCache {
+    #[allow(dead_code)]
     cache: Arc<
         tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<ProximaDataBlock>>>,
     >,
+    #[allow(dead_code)]
     max_size: usize,
+    #[allow(dead_code)]
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
 
@@ -277,9 +281,11 @@ pub struct BlockIterator<T> {
     reader: Box<dyn Read + Send>,
     buffer: Vec<VectorRecord>, // OPTIMIZED: Direct VectorRecord streaming
     position: usize,
+    #[allow(dead_code)]
     block_size: usize,
     total_blocks: usize,
     current_block: usize,
+    #[allow(dead_code)]
     mode: ReadMode,
     _phantom: PhantomData<T>,
 }
@@ -830,6 +836,8 @@ impl ModularBlockReader {
         }
     }
 
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>> {
         match algorithm {
             CompressionAlgorithm::None => Ok(data.to_vec()),
@@ -5004,6 +5012,7 @@ fn filter_blocks_by_zorder(
 /// Normalize coordinates to [0, 1] range for Z-Order encoding.
 ///
 /// Uses min-max normalization across all dimensions.
+#[allow(dead_code)]
 fn normalize_coords_for_zorder(coords: &[f32]) -> Vec<f32> {
     if coords.is_empty() {
         return Vec::new();
@@ -6373,6 +6382,7 @@ impl Default for ReaderConfig {
 }
 
 // Helper function to convert JSON value to string for comparison
+#[allow(dead_code)]
 fn json_value_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s.clone(),

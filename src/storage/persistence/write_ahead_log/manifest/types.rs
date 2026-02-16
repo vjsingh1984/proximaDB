@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Global WAL Manifest
 //!
 //! Provides a centralized manifest for tracking WAL files across all collections.
@@ -164,6 +165,7 @@ pub struct CheckpointCollectionState {
 }
 
 /// Global manifest manager
+#[allow(dead_code)]
 pub struct GlobalManifest {
     /// Filesystem factory for I/O
     filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,

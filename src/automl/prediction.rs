@@ -72,6 +72,7 @@ impl TrainingDataBuffer {
         &self.samples
     }
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.samples.clear();
     }
@@ -275,6 +276,7 @@ enum TreeNode {
     Leaf {
         value: f64,
     },
+    #[allow(dead_code)]
     Split {
         #[allow(dead_code)]
         feature_idx: usize,

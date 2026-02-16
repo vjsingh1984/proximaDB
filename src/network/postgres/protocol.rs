@@ -36,6 +36,7 @@ pub struct PostgresProtocol {
     /// Session state
     session: Arc<RwLock<Session>>,
     /// Storage engine
+    #[allow(dead_code)]
     storage: Arc<RwLock<StorageEngine>>,
     /// Collection service
     collection_service: Arc<CollectionService>,
@@ -44,6 +45,7 @@ pub struct PostgresProtocol {
     /// Query translator
     translator: QueryTranslator,
     /// Read buffer
+    #[allow(dead_code)]
     read_buffer: BytesMut,
     /// Write buffer
     write_buffer: BytesMut,
@@ -52,6 +54,7 @@ pub struct PostgresProtocol {
     /// Portals (bound statements ready for execution)
     portals: HashMap<String, Portal>,
     /// DDL service for CREATE/DROP/ALTER operations (optional, for catalog integration)
+    #[allow(dead_code)]
     ddl_service: Option<Arc<DdlService>>,
     /// DML service for INSERT/UPDATE/DELETE operations (optional, for catalog integration)
     dml_service: Option<Arc<DmlService>>,
@@ -62,6 +65,7 @@ struct PreparedStatement {
     /// Original query
     query: String,
     /// Translated query
+    #[allow(dead_code)]
     translated: String,
     /// Parameter types
     param_types: Vec<PgType>,
@@ -71,14 +75,18 @@ struct PreparedStatement {
 #[derive(Clone)]
 struct Portal {
     /// Statement name this portal was bound from
+    #[allow(dead_code)]
     statement_name: String,
     /// Bound query with parameters substituted
     bound_query: String,
     /// Original translated query
+    #[allow(dead_code)]
     translated: String,
     /// Parameter values (already bound)
+    #[allow(dead_code)]
     param_values: Vec<Option<Vec<u8>>>,
     /// Max rows to return (0 = unlimited)
+    #[allow(dead_code)]
     max_rows: i32,
 }
 

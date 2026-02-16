@@ -72,6 +72,7 @@ enum CharacterClass {
     /// Explicit set of characters
     Set(HashSet<char>),
     /// Character range
+    #[allow(dead_code)]
     Range(char, char),
     /// Negated character class
     Negated(Box<CharacterClass>),

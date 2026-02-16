@@ -28,9 +28,11 @@ pub struct ParallelWALSearch {
     distance_compute: Arc<UnifiedDistanceCompute>,
 
     /// Batch size for parallel processing
+    #[allow(dead_code)]
     parallel_batch_size: usize,
 
     /// Early termination threshold (stop when we have k * multiplier candidates)
+    #[allow(dead_code)]
     early_termination_multiplier: f32,
 }
 

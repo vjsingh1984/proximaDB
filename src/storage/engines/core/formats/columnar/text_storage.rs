@@ -1595,6 +1595,7 @@ impl TextColumnWriter {
 /// and optionally lazy-loading sidecar content.
 pub struct TextColumnReader {
     /// Storage configuration
+    #[allow(dead_code)]
     config: TextStorageConfig,
 
     /// Cached sidecar content

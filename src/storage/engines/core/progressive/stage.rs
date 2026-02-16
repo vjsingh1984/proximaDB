@@ -346,6 +346,7 @@ pub struct PqStage {
     /// Bits per code (typically 8)
     bits_per_code: u8,
     /// Quantization engine for PQ operations
+    #[allow(dead_code)]
     quantization_engine: Arc<UnifiedQuantizationEngine>,
 }
 

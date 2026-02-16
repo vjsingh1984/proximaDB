@@ -144,6 +144,7 @@ pub struct BitmapFilterCache {
     optimizer: Arc<FilterOptimizer>,
     updater: Arc<IncrementalUpdater>,
     /// Roaring bitmap store for efficient storage
+    #[allow(dead_code)]
     bitmap_store: Arc<RwLock<HashMap<String, RoaringBitmap>>>,
 }
 

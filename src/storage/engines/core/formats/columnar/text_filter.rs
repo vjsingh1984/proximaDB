@@ -112,6 +112,7 @@ pub struct TextColumnFilterEvaluator {
     case_sensitive: bool,
 
     /// Cached regex patterns for reuse
+    #[allow(dead_code)]
     regex_cache: Option<Regex>,
 }
 

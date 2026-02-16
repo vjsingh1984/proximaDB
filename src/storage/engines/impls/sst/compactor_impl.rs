@@ -130,10 +130,12 @@ pub struct SstCompactor {
     /// Filesystem factory for I/O operations
     filesystem_factory: Arc<FilesystemFactory>,
     /// Optional MVCC resolver for conflict resolution
+    #[allow(dead_code)]
     mvcc_resolver: Option<Arc<MvccResolver>>,
     /// Block size for compaction
     block_size: usize,
     /// Compression threshold in bytes
+    #[allow(dead_code)]
     compression_threshold: usize,
     /// Sorting strategy for output records
     sort_strategy: CompactionSortStrategy,
@@ -362,6 +364,7 @@ impl SstCompactor {
     /// K-way merge of pre-loaded SST records with proper MVCC resolution
     /// Implements upsert semantics: keeps highest continuous version for each ID
     /// FALLBACK: This batch loading approach is kept for compatibility/testing
+    #[allow(dead_code)]
     async fn k_way_merge_records(
         &self,
         file_records: Vec<(usize, Vec<VectorRecord>)>,

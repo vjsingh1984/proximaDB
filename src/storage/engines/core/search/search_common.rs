@@ -560,6 +560,7 @@ pub struct FilterPlan {
 
 /// Result manager for handling search results
 pub struct ResultManager {
+    #[allow(dead_code)]
     distance_compute: Arc<UnifiedDistanceCompute>,
 }
 

@@ -533,6 +533,7 @@ impl RowBasedBatchOperations {
     }
 
     /// Process batches in parallel (using concurrent futures, not spawned tasks)
+    #[allow(dead_code)]
     async fn process_batches_parallel<F, Fut>(
         &self,
         batches: Vec<Vec<String>>,

@@ -24,6 +24,7 @@ use tracing::{debug, error, info, warn};
 pub struct StorageEngine {
     config: StorageConfig,
     sst_storages: Arc<DashMap<String, Arc<SstEngine>>>,
+    #[allow(dead_code)]
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
     axis_index_manager: Arc<AxisManager>,

@@ -40,10 +40,15 @@ struct OptimizationHistory {
 
 #[derive(Debug, Clone)]
 struct OptimizationDecision {
+    #[allow(dead_code)]
     timestamp: SystemTime,
+    #[allow(dead_code)]
     action: OptimizationAction,
+    #[allow(dead_code)]
     reason: String,
+    #[allow(dead_code)]
     metrics_before: CacheMetricsSnapshot,
+    #[allow(dead_code)]
     metrics_after: Option<CacheMetricsSnapshot>,
 }
 
@@ -69,14 +74,18 @@ pub enum OptimizationAction {
 
 #[derive(Debug, Clone)]
 struct PerformanceImpact {
+    #[allow(dead_code)]
     hit_rate_change: f64,
+    #[allow(dead_code)]
     latency_change: f64,
+    #[allow(dead_code)]
     memory_efficiency_change: f64,
 }
 
 /// Auto-tuning engine for dynamic optimization
 struct AutoTuner {
     /// Tuning parameters
+    #[allow(dead_code)]
     parameters: Arc<RwLock<TuningParameters>>,
 
     /// Machine learning model (simplified)
@@ -86,21 +95,26 @@ struct AutoTuner {
 #[derive(Debug, Clone)]
 struct TuningParameters {
     /// Enable auto-tuning
+    #[allow(dead_code)]
     enabled: bool,
 
     /// Minimum time between adjustments
+    #[allow(dead_code)]
     adjustment_interval: Duration,
 
     /// Performance improvement threshold
+    #[allow(dead_code)]
     improvement_threshold: f64,
 
     /// Stability period before changes
+    #[allow(dead_code)]
     stability_period: Duration,
 }
 
 /// Simplified performance prediction model
 struct PerformanceModel {
     /// Historical data points
+    #[allow(dead_code)]
     data_points: Vec<DataPoint>,
 
     /// Model coefficients
@@ -484,6 +498,7 @@ impl AutoTuner {
     }
 
     /// Train the model with new data point
+    #[allow(dead_code)]
     pub async fn train(&self, data_point: DataPoint) {
         let mut model = self.model.write().await;
         model.data_points.push(data_point);

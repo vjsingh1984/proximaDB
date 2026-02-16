@@ -674,6 +674,7 @@ impl HybridParquetWriter {
     }
 
     /// Start background flush task
+    #[allow(dead_code)]
     async fn start_background_flush_task(&mut self) {
         let buffer = self.buffer.clone();
         let last_flush_time = self.last_flush_time.clone();
@@ -730,6 +731,7 @@ impl HybridParquetWriter {
     }
 
     /// Clone for background tasks
+    #[allow(dead_code)]
     fn clone_for_task(&self) -> Arc<Self> {
         // This would need proper Arc wrapping in production
         // For now, return a placeholder

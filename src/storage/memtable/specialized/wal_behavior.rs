@@ -716,6 +716,7 @@ impl WALBehaviorWrapper {
         }
     }
 
+    #[allow(dead_code)]
     async fn serialize_operation(&self, operation: &WALOperation) -> Result<Vec<u8>> {
         Ok(bincode::serialize(operation)?)
     }

@@ -17,6 +17,7 @@ pub struct ColumnarSchema {
     schema_cache: Arc<RwLock<HashMap<String, CachedSchema>>>,
 
     /// Default configuration
+    #[allow(dead_code)]
     default_config: QuantizationConfig,
 }
 

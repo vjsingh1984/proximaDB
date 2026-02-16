@@ -99,10 +99,12 @@ pub struct SstMetadata {
 
     /// Parsed global bloom filter (lazy-loaded)
     #[serde(skip)]
+    #[allow(dead_code)]
     global_bloom: parking_lot::RwLock<Option<Arc<SstableBloomFilter>>>,
 
     /// Parsed block bloom filters (lazy-loaded)
     #[serde(skip)]
+    #[allow(dead_code)]
     block_blooms: parking_lot::RwLock<HashMap<u32, Arc<Vec<u8>>>>,
 }
 

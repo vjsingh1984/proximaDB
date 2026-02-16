@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /*
  * Copyright 2025 ProximaDB
  *
@@ -108,12 +109,19 @@ use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 /// Proxima encoding markers as constants
 mod encoding_markers {
+    #[allow(dead_code)]
     pub const RAW: u8 = 0x00; // Raw/Uncompressed
+    #[allow(dead_code)]
     pub const BITPACKED: u8 = 0x10; // Proxima BitPacked
+    #[allow(dead_code)]
     pub const DELTA: u8 = 0x20; // Proxima Delta encoding
+    #[allow(dead_code)]
     pub const FRAME_OF_REF: u8 = 0x30; // Proxima FrameOfReference
+    #[allow(dead_code)]
     pub const PATCHED_BASE: u8 = 0x40; // Proxima PatchedBase
+    #[allow(dead_code)]
     pub const DICTIONARY: u8 = 0x50; // Proxima Dictionary
+    #[allow(dead_code)]
     pub const RUN_LENGTH: u8 = 0x60; // Proxima RunLength
 }
 
@@ -156,8 +164,10 @@ pub struct SstableWriter {
     /// Filesystem factory for atomic writes
     filesystem: Arc<FilesystemFactory>,
     /// Direct compression provider (no adapter indirection)
+    #[allow(dead_code)]
     compression_provider: StandardCompression,
     /// Unified quantization engine from compute module
+    #[allow(dead_code)]
     quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
     /// Compression configuration from flush parameters

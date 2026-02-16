@@ -29,6 +29,7 @@ struct CachedPlan {
 pub struct ExecutionPlanner {
     #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
+    #[allow(dead_code)]
     graph_service: Arc<GraphOperationsService>,
     cost_model: CostModel,
     params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>, // for decoding $1 vectors when not substituted

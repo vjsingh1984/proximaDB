@@ -1767,7 +1767,9 @@ struct SortAnalysis {
 struct ColumnOptimization {
     run_length_potential: f32,
     dictionary_potential: f32,
+    #[allow(dead_code)]
     compression_potential: f32,
+    #[allow(dead_code)]
     recommended_encoding: RecommendedEncoding,
 }
 

@@ -133,6 +133,8 @@ impl UnifiedSWIFTReader {
     }
 
     /// Convert to legacy SwiftReadStrategy for compatibility
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn to_swift_strategy(&self) -> super::unified_reader::SwiftReadStrategy {
         match &self.strategy {
             ReadAccessStrategy::DirectStream => super::unified_reader::SwiftReadStrategy::StreamAll,
@@ -328,7 +330,9 @@ impl StrategyAwareReader for UnifiedSWIFTReader {
 /// - Sequential reads of entire files
 pub struct DirectSWIFTReader {
     filesystem_factory: Arc<FilesystemFactory>,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     config: SwiftReaderConfig,
 }
 
@@ -368,7 +372,9 @@ impl DirectSWIFTReader {
 /// - Any operation that benefits from caching superblock metadata
 pub struct CachedSWIFTReader {
     cached_filesystem: Arc<UnifiedCachingFilesystem>,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     config: SwiftReaderConfig,
 }
 

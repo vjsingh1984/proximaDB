@@ -21,6 +21,7 @@ use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as SqlVal
 /// Full-text search index for a collection
 pub struct FullTextIndex {
     /// Collection name
+    #[allow(dead_code)]
     collection: String,
     /// Tantivy index
     index: Index,
@@ -29,6 +30,7 @@ pub struct FullTextIndex {
     /// Index reader for searching
     reader: IndexReader,
     /// Schema
+    #[allow(dead_code)]
     schema: Schema,
     /// Document ID field
     id_field: Field,

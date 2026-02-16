@@ -146,9 +146,11 @@ pub struct ParquetMetadata {
     pub variable_data: Vec<u8>,
 
     /// Parsed schema (lazy-loaded)
+    #[allow(dead_code)]
     schema: parking_lot::RwLock<Option<Arc<Vec<u8>>>>,
 
     /// Parsed column statistics (lazy-loaded by row group)
+    #[allow(dead_code)]
     column_stats: parking_lot::RwLock<HashMap<u32, Arc<Vec<u8>>>>,
 }
 
@@ -982,6 +984,7 @@ impl EngineMetadata for ParquetMetadata {
 
 // Enable downcasting for the metadata
 impl ParquetMetadata {
+    #[allow(dead_code)]
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

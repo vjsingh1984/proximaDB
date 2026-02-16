@@ -13,7 +13,9 @@ use crate::storage::engines::core::formats::columnar::{
 
 /// Branched filter executor for optimized queries
 pub struct BranchedFilterExecutor {
+    #[allow(dead_code)]
     analyzer: MetadataFilterAnalyzer,
+    #[allow(dead_code)]
     reader: UnifiedColumnarReader,
 }
 

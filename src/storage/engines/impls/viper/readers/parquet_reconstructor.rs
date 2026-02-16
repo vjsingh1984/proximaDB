@@ -36,6 +36,7 @@ pub struct VectorQuery {
 
 /// Reconstructs Parquet data from partial reads
 pub struct ParquetReconstructor {
+    #[allow(dead_code)]
     config: ReconstructorConfig,
 }
 

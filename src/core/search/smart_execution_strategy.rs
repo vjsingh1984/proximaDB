@@ -22,6 +22,7 @@ pub struct SmartExecutionStrategy {
     cost_estimator: Arc<CostEstimator>,
 
     /// Collection metadata cache
+    #[allow(dead_code)]
     collection_cache: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
 
     /// Historical performance tracker
@@ -603,15 +604,23 @@ impl SmartExecutionStrategy {
 
 /// Query analysis results
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct QueryAnalysis {
     has_filters: bool,
+    #[allow(dead_code)]
     filter_selectivity: f32,
     top_k: usize,
+    #[allow(dead_code)]
     is_batch: bool,
+    #[allow(dead_code)]
     batch_size: usize,
+    #[allow(dead_code)]
     requires_vectors: bool,
+    #[allow(dead_code)]
     requires_metadata: bool,
+    #[allow(dead_code)]
     distance_metric: DistanceMetric,
+    #[allow(dead_code)]
     has_runtime_hints: bool,
 }
 
@@ -795,7 +804,9 @@ impl ResourceMonitor {
 #[derive(Debug, Clone)]
 struct ResourceState {
     memory: MemoryStats,
+    #[allow(dead_code)]
     cpu: CpuStats,
+    #[allow(dead_code)]
     io: IoStats,
 }
 

@@ -74,8 +74,10 @@ pub struct SwiftMetadata {
     /// Variable-size data (serialized filters, statistics, etc.)
     pub variable_data: Vec<u8>,
     /// Parsed global bloom filter (lazy-loaded)
+    #[allow(dead_code)]
     pub global_bloom: parking_lot::RwLock<Option<Arc<Vec<u8>>>>,
     /// Parsed segment bloom filters (lazy-loaded)
+    #[allow(dead_code)]
     pub segment_blooms: parking_lot::RwLock<HashMap<u32, Arc<Vec<u8>>>>,
 }
 

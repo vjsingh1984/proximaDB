@@ -13,6 +13,7 @@ pub struct MetadataIndex {
     column_indexes: HashMap<String, ColumnIndex>,
 
     /// Composite indexes for common query patterns
+    #[allow(dead_code)]
     composite_indexes: Vec<CompositeIndex>,
 
     /// Table-level statistics

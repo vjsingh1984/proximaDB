@@ -31,6 +31,7 @@ pub struct ProgressiveRefinementPipeline {
     distance_engine: Arc<UnifiedDistanceCompute>,
 
     /// Performance statistics
+    #[allow(dead_code)]
     stats: ProgressiveRefinementStats,
 }
 

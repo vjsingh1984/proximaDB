@@ -68,6 +68,7 @@ pub struct UnifiedOperationCoordinator {
 
     /// Compaction scheduler with priority queue and pluggable strategies
     /// (Leveled for SST/Nova/Raptor, Tiered for Viper/Helix/Swift)
+    #[allow(dead_code)]
     compaction_scheduler: Arc<CompactionScheduler>,
 
     /// Re-quantization manager for codebook updates
@@ -90,6 +91,7 @@ struct CoordinatorState {
     pending_operations: std::collections::VecDeque<PendingOperation>,
 
     /// Queued operations for tracking
+    #[allow(dead_code)]
     queued_operations: HashMap<String, QueuedOperationResult>,
 
     /// Performance statistics
@@ -113,9 +115,12 @@ struct ActiveOperation {
 /// Pending operation in queue
 #[derive(Debug, Clone)]
 struct PendingOperation {
+    #[allow(dead_code)]
     operation_type: OperationType,
+    #[allow(dead_code)]
     collection_id: String,
     priority: OperationPriority,
+    #[allow(dead_code)]
     requested_at: std::time::Instant,
     #[allow(dead_code)]
     estimated_cost: f64,

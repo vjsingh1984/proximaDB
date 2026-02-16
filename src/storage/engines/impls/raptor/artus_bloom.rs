@@ -318,6 +318,7 @@ pub struct BloomStats {
 
 /// Multi-column bloom filter for compound predicates
 pub struct CompoundBloomFilter {
+    #[allow(dead_code)]
     columns: Vec<String>,
     bloom: Box<dyn BloomFilterStrategy>,
     stats: ArtusColumnStats,

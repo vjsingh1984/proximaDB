@@ -222,6 +222,7 @@ impl MemoryPools {
     }
 
     /// Get or allocate INT8 vector
+    #[allow(dead_code)]
     fn get_int8_vector(&self, size: usize) -> Vec<i8> {
         let mut pool = self.int8_pool.lock().unwrap();
         if let Some(mut vec) = pool.pop() {
@@ -234,6 +235,7 @@ impl MemoryPools {
     }
 
     /// Return INT8 vector to pool
+    #[allow(dead_code)]
     fn return_int8_vector(&self, vec: Vec<i8>) {
         if vec.capacity() <= 4096 {
             let mut pool = self.int8_pool.lock().unwrap();
@@ -244,6 +246,7 @@ impl MemoryPools {
     }
 
     /// Get or allocate binary vector
+    #[allow(dead_code)]
     fn get_binary_vector(&self, size: usize) -> Vec<u8> {
         let mut pool = self.binary_pool.lock().unwrap();
         if let Some(mut vec) = pool.pop() {
@@ -256,6 +259,7 @@ impl MemoryPools {
     }
 
     /// Return binary vector to pool
+    #[allow(dead_code)]
     fn return_binary_vector(&self, vec: Vec<u8>) {
         if vec.capacity() <= 2048 {
             // Binary vectors are smaller

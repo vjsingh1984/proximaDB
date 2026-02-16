@@ -314,9 +314,11 @@ pub struct ColumnarSchemaBuilder {
     schema_cache: Arc<RwLock<HashMap<String, CachedSchema>>>,
 
     /// Default optimization settings
+    #[allow(dead_code)]
     default_optimization: SchemaOptimization,
 
     /// Default compression strategy
+    #[allow(dead_code)]
     default_compression: CompressionStrategy,
 }
 
@@ -733,6 +735,7 @@ impl ColumnarSchemaBuilder {
     }
 
     /// Convert filterable data type to Arrow data type
+    #[allow(dead_code)]
     fn convert_filterable_type(&self, data_type: &FilterableData) -> Result<DataType> {
         // Use the to_arrow_type method which handles all types
         Ok(data_type.to_arrow_type())

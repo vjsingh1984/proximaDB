@@ -179,15 +179,19 @@ struct RangeReadRequest {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ReadPurpose {
     Header,
+    #[allow(dead_code)]
     SuperBlockMetadata(u32),
+    #[allow(dead_code)]
     DataBlock(u32),
     BloomFilter(u32),
     IdIndex,
     QuantizedData(u32),
 }
 
+#[allow(dead_code)]
 impl UnifiedSwiftReader {
     /// Create new SWIFT reader with unified caching filesystem
     /// SWIFT extends SST format with SuperBlock hierarchy for 3-tier filtering
@@ -492,6 +496,7 @@ impl UnifiedSwiftReader {
     }
 
     /// Deserialize header from bytes
+    #[allow(dead_code)]
     fn deserialize_header(&self, data: &[u8]) -> Result<super::SwiftHeader> {
         // Check magic bytes
         if data.len() < 4 {

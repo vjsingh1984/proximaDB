@@ -141,6 +141,8 @@ impl SSTRowFilterEvaluator {
     }
 
     /// Get or convert metadata with caching for performance
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn get_or_convert_metadata(
         &mut self,
         record_id: &str,

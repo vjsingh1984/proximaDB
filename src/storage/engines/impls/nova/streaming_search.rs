@@ -123,6 +123,7 @@ pub struct ZoneMapMetrics {
 struct PerformanceTracker {
     query_history: Vec<QueryExecution>,
     workload_stats: WorkloadStats,
+    #[allow(dead_code)]
     performance_history: PerformanceHistory,
     adaptive_thresholds: HashMap<String, f32>,
 }
@@ -130,11 +131,17 @@ struct PerformanceTracker {
 /// Individual query execution record
 #[derive(Debug, Clone)]
 struct QueryExecution {
+    #[allow(dead_code)]
     query_id: String,
+    #[allow(dead_code)]
     start_time: Instant,
+    #[allow(dead_code)]
     end_time: Option<Instant>,
+    #[allow(dead_code)]
     query_characteristics: QueryCharacteristics,
+    #[allow(dead_code)]
     actual_performance: Option<ActualPerformance>,
+    #[allow(dead_code)]
     predicted_performance: Option<PredictedPerformance>,
 }
 
@@ -143,7 +150,9 @@ struct QueryExecution {
 struct QueryCharacteristics {
     dimension: usize,
     top_k: usize,
+    #[allow(dead_code)]
     distance_metric: DistanceMetric,
+    #[allow(dead_code)]
     query_norm: f32,
     query_sparsity: f32,
     estimated_selectivity: f32,

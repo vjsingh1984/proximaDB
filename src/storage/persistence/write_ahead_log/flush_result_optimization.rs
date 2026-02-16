@@ -90,6 +90,7 @@ pub struct StreamingFlushResult {
 /// Batch flush processor for optimal throughput
 pub struct BatchFlushProcessor {
     /// Batch size for processing
+    #[allow(dead_code)]
     batch_size: usize,
 
     /// Number of parallel workers

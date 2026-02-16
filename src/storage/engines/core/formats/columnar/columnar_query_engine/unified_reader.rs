@@ -953,6 +953,7 @@ impl UnifiedParquetReader {
     }
 
     /// Apply bloom filter pruning for ID-based searches
+    #[allow(dead_code)]
     async fn apply_bloom_filter_pruning(
         &self,
         _file_path: &str,

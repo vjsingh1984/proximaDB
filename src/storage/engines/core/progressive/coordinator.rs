@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Progressive Search Coordinator
 //!
 //! Manages the execution of multiple progressive search stages in a pipeline.
@@ -298,7 +299,9 @@ impl Default for ProgressiveSearchCoordinator {
 
 /// Builder for creating standard progressive search pipelines
 pub struct ProgressivePipelineBuilder {
+    #[allow(dead_code)]
     stages: Vec<Box<dyn ProgressiveSearchStage>>,
+    #[allow(dead_code)]
     config: CoordinatorConfig,
 }
 

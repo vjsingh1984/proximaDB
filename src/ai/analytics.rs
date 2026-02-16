@@ -13,7 +13,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct PredictiveAnalyticsEngine {
     config: PredictiveAnalyticsConfig,
+    #[allow(dead_code)]
     data_processor: Arc<DataProcessor>,
+    #[allow(dead_code)]
     model_manager: Arc<ModelManager>,
 }
 
@@ -47,7 +49,9 @@ pub struct ConversationalAnalyticsConfig {
 #[derive(Debug, Clone)]
 pub struct GovernanceAnalyticsEngine {
     config: GovernanceAnalyticsConfig,
+    #[allow(dead_code)]
     compliance_tracker: Arc<ComplianceTracker>,
+    #[allow(dead_code)]
     audit_analyzer: Arc<AuditAnalyzer>,
 }
 

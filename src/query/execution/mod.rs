@@ -20,7 +20,9 @@ use std::sync::Arc;
 /// This engine consumes lowered AST from sql_frontend and routes execution
 /// to appropriate services (VOS for vector, GraphService for graph, hybrid for SKS).
 pub struct QueryEngine {
+    #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
+    #[allow(dead_code)]
     graph_service: Arc<GraphOperationsService>,
     planner: crate::query::execution::planner::ExecutionPlanner,
     executor: crate::query::execution::executor::QueryExecutor,

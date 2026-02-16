@@ -424,10 +424,13 @@ pub struct WriteAheadLogManagerWorkload {
     /// Number of assigned collections
     collection_count: usize,
     /// Operations per second (estimated)
+    #[allow(dead_code)]
     ops_per_second: f64,
     /// Memory usage in bytes
+    #[allow(dead_code)]
     memory_usage_bytes: u64,
     /// Average operation latency in milliseconds
+    #[allow(dead_code)]
     avg_latency_ms: f64,
     /// Load score (computed from metrics)
     load_score: f64,

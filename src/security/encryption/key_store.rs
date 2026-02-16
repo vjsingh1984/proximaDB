@@ -134,6 +134,7 @@ impl EncryptionKey {
     }
 
     /// Get the key material (for internal use only)
+    #[allow(dead_code)]
     pub(crate) fn material(&self) -> &[u8] {
         &self.key_material
     }

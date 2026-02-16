@@ -70,6 +70,7 @@ pub enum ProximaReadStrategy {
 /// All storage engines delegate to this reader for consistent block access
 pub struct ProximaBlockReader {
     filesystem: Arc<UnifiedCachingFilesystem>,
+    #[allow(dead_code)]
     collection_id: String,
 }
 

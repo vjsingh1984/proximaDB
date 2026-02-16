@@ -230,8 +230,11 @@ pub enum AlertSeverity {
 /// Alert history entry
 #[derive(Debug, Clone)]
 struct AlertHistory {
+    #[allow(dead_code)]
     pub alert: Alert,
+    #[allow(dead_code)]
     pub resolved_at: Option<DateTime<Utc>>,
+    #[allow(dead_code)]
     pub resolution_time_ms: Option<u64>,
 }
 
@@ -313,6 +316,7 @@ struct AnomalyModel {
 
 /// Types of anomaly detection models
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum AnomalyModelType {
     StatisticalThreshold,
     MovingAverage,
@@ -323,9 +327,13 @@ enum AnomalyModelType {
 /// Component health status
 #[derive(Debug, Clone)]
 struct ComponentHealth {
+    #[allow(dead_code)]
     pub component_name: String,
+    #[allow(dead_code)]
     pub status: HealthStatus,
+    #[allow(dead_code)]
     pub last_check: DateTime<Utc>,
+    #[allow(dead_code)]
     pub response_time_ms: f64,
 }
 
@@ -335,6 +343,7 @@ enum HealthStatus {
     Healthy,
     Degraded,
     Unhealthy,
+    #[allow(dead_code)]
     Unknown,
 }
 
@@ -645,6 +654,7 @@ impl AlertManager {
     }
 
     /// Get active alerts
+    #[allow(dead_code)]
     async fn get_active_alerts(&self) -> Vec<Alert> {
         let active_alerts = self.active_alerts.read().await;
         active_alerts.values().cloned().collect()

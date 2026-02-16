@@ -223,7 +223,9 @@ struct CollectionMetadata {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct SchemaMetadata {
+    #[allow(dead_code)]
     version: u32,
+    #[allow(dead_code)]
     fields: Vec<String>,
 }
 

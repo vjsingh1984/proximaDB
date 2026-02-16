@@ -33,6 +33,7 @@ pub struct TantivyLogIndex {
     /// Index reader for searching (refreshable)
     reader: RwLock<IndexReader>,
     /// Schema
+    #[allow(dead_code)]
     schema: Schema,
     /// Log ID field (stored for retrieval)
     id_field: Field,

@@ -168,6 +168,7 @@ pub struct ResourceUtilizationMetrics {
 
 /// Performance alert conditions
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AlertCondition {
     /// Cache hit rate below threshold
     CacheHitRateBelow(f64),
@@ -187,6 +188,7 @@ pub enum AlertCondition {
 
 /// Performance alert event
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AlertEvent {
     /// Alert condition that triggered
     pub condition: AlertCondition,
@@ -204,6 +206,7 @@ pub struct AlertEvent {
 
 /// Alert severity levels
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum AlertSeverity {
     Info,
     Warning,
@@ -213,6 +216,7 @@ pub enum AlertSeverity {
 
 /// Optimization recommendation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct OptimizationRecommendation {
     /// Category of recommendation
     pub category: RecommendationCategory,
@@ -232,6 +236,7 @@ pub struct OptimizationRecommendation {
 
 /// Recommendation categories
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum RecommendationCategory {
     CacheOptimization,
     ThresholdTuning,
@@ -244,6 +249,7 @@ pub enum RecommendationCategory {
 
 /// Recommendation priority levels
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[allow(dead_code)]
 pub enum RecommendationPriority {
     Low = 1,
     Medium = 2,
@@ -253,6 +259,7 @@ pub enum RecommendationPriority {
 
 /// Implementation effort estimation
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum ImplementationEffort {
     Minimal,   // < 1 hour
     Low,       // 1-4 hours
@@ -263,6 +270,7 @@ pub enum ImplementationEffort {
 
 /// Metrics collector with atomic counters for thread-safe updates
 /// Integrated with ProximaDB's unified metrics framework
+#[allow(dead_code)]
 pub struct MetricsCollector {
     // Atomic counters for high-frequency updates
     cache_hits: AtomicU64,
@@ -301,6 +309,7 @@ pub struct MetricsCollector {
     unified_collector: Option<Arc<crate::metrics::collectors::FilesystemMetricsCollector>>,
 }
 
+#[allow(dead_code)]
 impl MetricsCollector {
     /// Create new metrics collector
     pub fn new() -> Self {
@@ -796,15 +805,21 @@ impl MetricsCollector {
 /// Trend analysis results
 #[derive(Debug, Clone, Default)]
 pub struct TrendAnalysis {
+    #[allow(dead_code)]
     pub hit_rate_trend: TrendDirection,
+    #[allow(dead_code)]
     pub throughput_trend: TrendDirection,
+    #[allow(dead_code)]
     pub cost_trend: TrendDirection,
+    #[allow(dead_code)]
     pub window_size: usize,
+    #[allow(dead_code)]
     pub samples: usize,
 }
 
 /// Trend direction
 #[derive(Debug, Clone, Default, PartialEq)]
+#[allow(dead_code)]
 pub enum TrendDirection {
     Increasing,
     Decreasing,

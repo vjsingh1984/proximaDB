@@ -65,6 +65,7 @@ use crate::core::search::FilterExpression;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024; // 8MB max footer size
+#[allow(dead_code)]
 const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column indexes
 
 /// Shared Parquet format reader with zero-copy cache-first architecture
@@ -195,6 +196,7 @@ pub struct LocalDiskCache {
     cache_dir: PathBuf,
     #[allow(dead_code)]
     max_cache_size: u64,
+    #[allow(dead_code)]
     current_size: AtomicU64,
 
     /// Track cached row groups per file

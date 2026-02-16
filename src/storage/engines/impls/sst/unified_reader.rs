@@ -194,6 +194,7 @@ impl StrategyAwareReader for UnifiedSSTReader {
 /// - Any sequential read of entire files
 pub struct DirectSSTReader {
     filesystem_factory: Arc<FilesystemFactory>,
+    #[allow(dead_code)]
     collection_id: String,
 }
 

@@ -567,7 +567,9 @@ pub struct ColumnStats {
 /// Memory manager for efficient resource usage
 #[derive(Debug)]
 pub struct MemoryManager {
+    #[allow(dead_code)]
     max_memory_bytes: usize,
+    #[allow(dead_code)]
     current_usage: std::sync::atomic::AtomicUsize,
 }
 
@@ -1284,6 +1286,7 @@ impl SwiftFile {
 
     /// PROXIMA: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
+    #[allow(dead_code)]
     fn finalize_superblock_encoding(&mut self) {
         // use crate::core::hardware_capabilities::HardwareCapabilities; // Unused import
 
@@ -1371,6 +1374,7 @@ impl SwiftFile {
     }
 
     /// AVX-512 optimized scheme selection for 16-wide SIMD
+    #[allow(dead_code)]
     fn select_avx512_scheme(
         stats: &[(f32, f32, f32, f32)],
         _vector_count: usize,
@@ -1411,6 +1415,7 @@ impl SwiftFile {
     }
 
     /// AVX2 optimized scheme selection for 8-wide SIMD
+    #[allow(dead_code)]
     fn select_avx2_scheme(
         stats: &[(f32, f32, f32, f32)],
         _vector_count: usize,
@@ -1451,6 +1456,7 @@ impl SwiftFile {
     }
 
     /// SSE optimized scheme selection for 4-wide SIMD
+    #[allow(dead_code)]
     fn select_sse_scheme(
         stats: &[(f32, f32, f32, f32)],
         _vector_count: usize,
@@ -1491,6 +1497,7 @@ impl SwiftFile {
     }
 
     /// Scalar optimized scheme selection (no SIMD)
+    #[allow(dead_code)]
     fn select_scalar_scheme(
         stats: &[(f32, f32, f32, f32)],
         _vector_count: usize,

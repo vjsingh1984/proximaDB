@@ -160,13 +160,21 @@ pub struct QualityThresholds {
 /// NOVA collection metadata with hierarchical statistics
 #[derive(Debug, Clone)]
 struct NovaCollectionMetadata {
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     dimension: usize,
+    #[allow(dead_code)]
     schema: Arc<arrow_schema::Schema>,
+    #[allow(dead_code)]
     quantization: Option<QuantizationConfig>,
+    #[allow(dead_code)]
     filterable_columns: Vec<ColumnarFilterableSpec>,
+    #[allow(dead_code)]
     compression_metadata: crate::storage::engines::core::formats::columnar::CompressionMetadata,
+    #[allow(dead_code)]
     hierarchical_stats: HierarchicalStatistics,
+    #[allow(dead_code)]
     zone_maps: Vec<ZoneMap>,
 }
 
@@ -246,6 +254,7 @@ pub struct ZoneMap {
 
 /// Hierarchical statistics manager
 pub struct HierarchicalStatsManager {
+    #[allow(dead_code)]
     config: NovaSpecificConfig,
     stats_cache: Arc<tokio::sync::RwLock<HashMap<String, HierarchicalStatistics>>>,
 }
@@ -268,6 +277,7 @@ impl HierarchicalStatsManager {
 
 /// Zone map manager
 pub struct ZoneMapManager {
+    #[allow(dead_code)]
     config: ZoneMapConfig,
     zone_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ZoneMap>>>>,
 }
@@ -313,11 +323,16 @@ impl StreamingProcessor {
 /// Active streaming session
 #[derive(Debug, Clone)]
 struct StreamingSession {
+    #[allow(dead_code)]
     session_id: String,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     stream_type: StreamType,
+    #[allow(dead_code)]
     buffer_size: usize,
     processed_count: usize,
+    #[allow(dead_code)]
     start_time: std::time::Instant,
 }
 
@@ -964,6 +979,7 @@ pub struct StreamingInsertResult {
 #[derive(Debug)]
 struct BatchInsertResult {
     pub vectors_inserted: usize,
+    #[allow(dead_code)]
     compression_ratio: f32,
     pub hierarchical_updates: Vec<HierarchicalUpdate>,
 }

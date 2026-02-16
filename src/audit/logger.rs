@@ -77,7 +77,9 @@ pub enum AuditStorageBackend {
 /// Encryption key for sensitive audit data
 #[derive(Debug)]
 pub struct EncryptionKey {
+    #[allow(dead_code)]
     key: [u8; 32],
+    #[allow(dead_code)]
     algorithm: EncryptionAlgorithm,
 }
 

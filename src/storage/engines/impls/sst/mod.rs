@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! # SST Storage Engine - Hybrid Columnar OLTP Optimized Storage
 //!
 //! ## ⚡ PRODUCTION-READY REAL-TIME ENGINE - COMPREHENSIVE IMPLEMENTATION
@@ -1347,12 +1349,14 @@ impl IndexEntry {
 
 // Default function for serde when reading existing SSTable headers
 // This preserves backward compatibility with existing SSTable files
+#[allow(dead_code)]
 fn default_block_size() -> u32 {
     1024 * 1024 // 1MB default - balanced for random access and sequential scans
 }
 
 /// Hierarchical block metadata for serialization
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct HierarchicalBlockMetadata {
     pub block_id: u32,
     pub record_count: u32,
@@ -1366,6 +1370,7 @@ struct HierarchicalBlockMetadata {
 mod compression_helpers {
     use super::*;
     /// Create BlockCompressionConfig from SstConfig settings
+    #[allow(dead_code)]
     pub fn block_compression_from_sst_config(config: &SstConfig) -> BlockCompressionConfig {
         // Map string algorithm names to unified compression module algorithms
         // The unified compression module supports all 13 algorithms
@@ -1593,6 +1598,7 @@ mod block_utils {
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     /// Create a new ProximaDataBlock for SST usage with automatic bloom filter generation
+    #[allow(dead_code)]
     pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> ProximaDataBlock {
         // Create bloom filter for record IDs using adaptive sizing
         let bloom_filter = if !records.is_empty() {
@@ -1803,6 +1809,7 @@ mod block_utils {
     }
 
     /// Compare JSON values for ordering
+    #[allow(dead_code)]
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         use serde_json::Value;
         match (a, b) {
@@ -1836,6 +1843,7 @@ mod block_operations {
 
     /// Get compression statistics
     /// Returns (is_compressed, uncompressed_size)
+    #[allow(dead_code)]
     pub fn compression_stats(block: &ProximaDataBlock) -> (bool, usize) {
         (
             block.compression_algorithm != CompressionAlgorithm::None,
@@ -1844,6 +1852,7 @@ mod block_operations {
     }
 
     /// Generate or update quantized section for this block
+    #[allow(dead_code)]
     pub fn update_quantization(
         block: &mut ProximaDataBlock,
         codebook: Option<&crate::compute::quantization::Codebook>,
@@ -1872,6 +1881,7 @@ mod block_operations {
     }
 
     /// Filter candidates using binary sketches (Stage 1: 95% reduction)
+    #[allow(dead_code)]
     pub fn filter_by_sketch(
         block: &ProximaDataBlock,
         _query_sketch: &[u8], // Binary sketch is just a byte array
@@ -1887,6 +1897,7 @@ mod block_operations {
     }
 
     /// Rank candidates using PQ codes (Stage 2: Further refinement)
+    #[allow(dead_code)]
     pub fn rank_by_pq(
         block: &ProximaDataBlock,
         _query: &[f32],
@@ -1903,6 +1914,7 @@ mod block_operations {
     }
 
     /// Get full vectors for final reranking (Stage 3: 100% accuracy)
+    #[allow(dead_code)]
     pub fn vectors_by_indices(
         block: &ProximaDataBlock,
         indices: &[usize],
@@ -1914,6 +1926,7 @@ mod block_operations {
     }
 
     /// Check if block has valid quantization data
+    #[allow(dead_code)]
     pub fn has_quantization(block: &ProximaDataBlock) -> bool {
         // Check if quantized vectors exist and are not empty
         block
@@ -1923,6 +1936,7 @@ mod block_operations {
     }
 
     /// Get memory savings from quantization
+    #[allow(dead_code)]
     pub fn quantization_memory_savings(block: &ProximaDataBlock) -> f32 {
         // Calculate original memory usage
         let original_size = block
@@ -1948,6 +1962,7 @@ mod block_operations {
 
 /// Batch extraction statistics for performance monitoring
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct BatchExtractionStats {
     pub total_extracted: usize,
     pub total_skipped: usize,
@@ -1956,6 +1971,7 @@ struct BatchExtractionStats {
 }
 
 impl BatchExtractionStats {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self::default()
     }

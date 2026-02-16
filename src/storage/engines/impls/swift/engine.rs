@@ -121,6 +121,7 @@ pub struct SwiftEngine {
     /// - Hierarchical index navigation
     ///
     /// Critical for achieving sub-millisecond latencies
+    #[allow(dead_code)]
     optimized_ops: Arc<OptimizedSwiftOperations>,
 
     /// **Engine Statistics** (RwLock for concurrent access)
@@ -165,6 +166,7 @@ pub struct SwiftEngine {
     /// - ZSTD (best compression when latency allows)
     ///
     /// Vectors use Proxima encoding, not general compression
+    #[allow(dead_code)]
     compression_provider: StandardCompression,
 
     /// **Storage Quantization Engine** (Collection-Aware)
@@ -251,6 +253,7 @@ pub struct SwiftEngine {
     >,
 }
 
+#[allow(dead_code)]
 impl SwiftEngine {
     /// Create a new SWIFT engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
@@ -1772,6 +1775,7 @@ impl SwiftEngine {
 
     /// Fallback to direct search when orchestration is not available
     /// This is the expected path until AXIS/orchestration is fully integrated for SWIFT
+    #[allow(dead_code)]
     async fn fallback_to_direct_search(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,

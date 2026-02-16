@@ -177,6 +177,7 @@ pub struct AccessPatternTracker {
     event_sender: mpsc::Sender<CacheAccessEvent>,
 
     /// Background processor handle for clean shutdown
+    #[allow(dead_code)]
     processor_handle: Option<tokio::task::JoinHandle<()>>,
 
     /// Integration with unified metrics framework for monitoring
@@ -187,6 +188,7 @@ pub struct AccessPatternTracker {
 struct AccessRecord {
     key: String,
     cache_type: CacheType,
+    #[allow(dead_code)]
     timestamp: SystemTime,
     followed_by: Vec<String>,
 }

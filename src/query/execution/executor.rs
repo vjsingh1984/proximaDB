@@ -1131,6 +1131,7 @@ impl QueryExecutor {
         }
     }
 
+    #[allow(dead_code)]
     fn parse_join_on(on: &str) -> Option<(String, String)> {
         let re =
             regex::Regex::new("Identifier\\(\"([^\"]+)\"\\).+Identifier\\(\"([^\"]+)\"\\)").ok()?;
@@ -1563,6 +1564,7 @@ impl QueryExecutor {
     /// Convert v1 metadata HashMap to field map for result formatting
     ///
     /// This method showcases the HashMap metadata structure in action
+    #[allow(dead_code)]
     fn convert_metadata_to_fields(
         &self,
         metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,

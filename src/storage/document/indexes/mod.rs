@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Index management for document storage
 //
 // Provides:

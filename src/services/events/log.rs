@@ -26,9 +26,11 @@ pub struct EventLogService {
     inner: Arc<dyn EventLogServiceTrait>,
 
     /// Reference to collection cache (shared with other services)
+    #[allow(dead_code)]
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
 
     /// Filesystem factory for persistence
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 }
 

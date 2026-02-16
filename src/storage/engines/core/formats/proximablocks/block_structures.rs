@@ -3758,6 +3758,7 @@ impl ProximaDataBlock {
 
         use crate::core::compression::{CompressionContext, compress};
 
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
         let mut field_data = Vec::new();
 
@@ -3976,6 +3977,7 @@ impl ProximaDataBlock {
 
         use crate::core::compression::{CompressionContext, compress};
 
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
         let mut field_data = Vec::new();
 
@@ -4677,6 +4679,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<VectorRecord>> {
         use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
 
         trace!(
@@ -5113,6 +5116,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<VectorRecord>> {
         use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
 
         trace!(

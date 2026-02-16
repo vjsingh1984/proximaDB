@@ -78,12 +78,15 @@ pub struct AxisEventLogConsumer {
     axis_manager: Arc<AxisManager>,
 
     /// Filesystem factory for reading data files
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Collection cache
+    #[allow(dead_code)]
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
 
     /// Unified cache orchestrator (shared across system)
+    #[allow(dead_code)]
     cache_orchestrator: Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>,
 
     /// Metrics

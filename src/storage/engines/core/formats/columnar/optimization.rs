@@ -66,10 +66,12 @@ pub struct BloomFilterInfo {
 /// Streaming row group iterator
 pub struct StreamingRowGroupIterator {
     file_path: String,
+    #[allow(dead_code)]
     metadata: Arc<ParquetMetaData>,
     selected_row_groups: Vec<usize>,
     current_index: usize,
     column_projection: Option<Vec<String>>,
+    #[allow(dead_code)]
     batch_size: usize,
 }
 /// Progressive search configuration

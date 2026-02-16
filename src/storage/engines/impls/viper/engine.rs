@@ -190,6 +190,7 @@ pub struct ViperEngine {
     /// - File format version handling
     ///
     /// Shared utility functions used across flush/search/compaction
+    #[allow(dead_code)]
     utilities: ViperUtilities,
 
     /// **Engine Statistics** (Lock-Free Atomics)
@@ -237,6 +238,7 @@ pub struct ViperEngine {
     /// - Same algorithms as storage engine
     ///
     /// Falls back when collection doesn't have trained codebooks
+    #[allow(dead_code)]
     fallback_quantization_engine:
         Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
@@ -293,6 +295,7 @@ impl std::fmt::Debug for ViperEngine {
     }
 }
 
+#[allow(dead_code)]
 impl ViperEngine {
     /// Attach orchestrator via context (future-proof DI)
     pub fn with_context(mut self, ctx: &crate::core::context::SharedContext) -> Self {

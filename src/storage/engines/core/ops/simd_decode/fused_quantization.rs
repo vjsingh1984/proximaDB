@@ -322,6 +322,7 @@ fn fused_decode_int8_scalar(
     Ok(count)
 }
 
+#[allow(dead_code)]
 fn progressive_decode_scalar(
     input: &[u8],
     output: &mut [f32],

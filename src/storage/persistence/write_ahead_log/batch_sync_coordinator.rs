@@ -36,12 +36,14 @@ pub struct BatchSyncCoordinator {
 #[derive(Debug, Clone)]
 struct PendingSyncRequest {
     /// Collection ID
+    #[allow(dead_code)]
     collection_id: String,
 
     /// File path to sync
     file_path: String,
 
     /// Request timestamp
+    #[allow(dead_code)]
     requested_at: Instant,
 }
 
