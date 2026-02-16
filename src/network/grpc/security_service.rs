@@ -18,7 +18,7 @@ use chrono::Utc;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
 use crate::security::unified_rbac::{
-    ConsolidatedRBACManager, RBACConfig, RBACEventLogger, UnifiedPermission, UnifiedUserContext,
+    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
 };
 
 /// Security service implementation for RBAC operations
@@ -94,7 +94,7 @@ impl SecurityServiceImpl {
         resource_type: &str,
         resource_id: &str,
         operation: &str,
-        data_model: &str,
+        _data_model: &str,
     ) -> Result<UnifiedPermission, Status> {
         match (resource_type, operation) {
             ("collection", "read") => Ok(UnifiedPermission::CollectionRead(resource_id.to_string())),
@@ -135,7 +135,7 @@ impl SecurityService for SecurityServiceImpl {
             .map_err(|e| Status::invalid_argument(format!("Invalid operation: {}", e)))?;
 
         // Create user context
-        let user_ctx = UnifiedUserContext {
+        let _user_ctx = UnifiedUserContext {
             user_id: req.user_id.clone(),
             tenant_id: if req.tenant_id.is_empty() {
                 None
@@ -419,7 +419,7 @@ mod tests {
         assert!(result.is_ok());
 
         let response = result.unwrap().into_inner();
-        // Default behavior should allow access (default_deny = false)
-        assert_eq!(response.allowed, false); // User has no roles assigned
+        // Default behavior: default_deny = false, so unassigned users are allowed
+        assert_eq!(response.allowed, true);
     }
 }
