@@ -22,17 +22,17 @@ one data plane for RAG, code search, recommendation graphs, and telemetry protot
 
 === Multi-Model: The Key Differentiator
 
-Traditional vector databases (Pinecone, Weaviate, Milvus, Qdrant) are single-model. They excel at vector search but require external systems for graphs, documents, and logs. ProximaDB unifies all data models behind a single SQL interface:
+Most vector databases are single-model systems. They excel at vector search but require external systems for graphs, documents, and logs. ProximaDB unifies all data models behind a single SQL interface:
 
 |===
-| Capability | Pinecone | Weaviate | Milvus | ProximaDB
+| Capability | Traditional Vector DBs | ProximaDB
 
-| Vector Search | Yes | Yes | Yes | Yes
-| Graph Traversal | No | No | No | *Yes* (ORION engine)
-| Document Store | No | Limited | No | *Yes* (WAL-backed)
-| Observability | No | No | No | *Yes* (Logs + Metrics)
-| Cross-Model Joins | No | No | No | *Yes* (SQL)
-| SQL Interface | No | GraphQL | Limited | *Full SQL + Extensions*
+| Vector Search | Yes | Yes
+| Graph Traversal | No | *Yes* (ORION engine)
+| Document Store | No | *Yes* (WAL-backed)
+| Observability | No | *Yes* (Logs + Metrics)
+| Cross-Model Joins | No | *Yes* (SQL)
+| SQL Interface | Limited | *Full SQL + Extensions*
 |===
 
 *Example cross-model query:*
@@ -70,12 +70,9 @@ REST + gRPC + Arrow Flight]
   subgraph DataPlane[Data Plane]
     WAL[Unified WAL]
     MEM[Memtables]
-    ENG[Vector Engines
-(SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR)]
-    GRAPHENG[Graph Engines
-(ORION, PULSAR, QUASAR)]
-    OBSSTORE[Observability Storage
-(partitioned logs, time‑series, traces)]
+    ENG["Vector Engines<br/>(SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR)"]
+    GRAPHENG["Graph Engines<br/>(ORION, PULSAR, QUASAR)"]
+    OBSSTORE["Observability Storage<br/>(partitioned logs, time-series, traces)"]
   end
 
   API --> Services --> WAL --> MEM

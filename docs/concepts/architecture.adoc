@@ -32,11 +32,10 @@ flowchart TB
     WAL[Unified WAL]
     MEM[Memtables]
     ENG[Vector Engines]
-    OBSSTORE[Observability Storage
-(partitioned logs, time‑series, traces)]
-    TSENG[Time-Series Engine\n(TST, columnar, time-partitioned)]
-    EVTENG[Event Sourcing Engine\n(append-only, indexed)]
-    BM25[Hybrid Search\n(BM25 + Vector RRF)]
+    OBSSTORE["Observability Storage<br/>(partitioned logs, time-series, traces)"]
+    TSENG["Time-Series Engine<br/>(TST, columnar, time-partitioned)"]
+    EVTENG["Event Sourcing Engine<br/>(append-only, indexed)"]
+    BM25["Hybrid Search<br/>(BM25 + Vector RRF)"]
   end
 
   subgraph ControlPlane[Control Plane]
