@@ -136,10 +136,8 @@ func TestCircuitBreakerMiddleware(t *testing.T) {
 	if err == nil {
 		t.Error("expected circuit breaker error")
 	}
-	if !proximadb.IsRetryable(err) {
-		// Circuit breaker returns unavailable error which may or may not be retryable
-		// depending on implementation
-	}
+	// Circuit breaker returns unavailable error which may or may not be retryable
+	// depending on implementation; just verify we got an error above
 
 	// Wait for timeout
 	time.Sleep(150 * time.Millisecond)

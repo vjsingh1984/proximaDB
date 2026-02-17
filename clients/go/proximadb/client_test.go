@@ -152,14 +152,14 @@ func TestMockServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"status":         "healthy",
 				"version":        "1.0.0",
 				"uptime_seconds": 123.45,
 			})
 		case "/api/v1/collections":
 			if r.Method == http.MethodGet {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"collections": []map[string]interface{}{
 						{
 							"name":         "test_collection",
@@ -173,7 +173,7 @@ func TestMockServer(t *testing.T) {
 				})
 			} else if r.Method == http.MethodPost {
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"name":         "new_collection",
 					"dimension":    256,
 					"metric":       "cosine",
@@ -184,7 +184,7 @@ func TestMockServer(t *testing.T) {
 			}
 		case "/api/v1/collections/test_collection":
 			if r.Method == http.MethodGet {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"name":         "test_collection",
 					"dimension":    128,
 					"metric":       "cosine",
@@ -197,16 +197,16 @@ func TestMockServer(t *testing.T) {
 			}
 		case "/api/v1/collections/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": "collection not found",
 			})
 		case "/api/v1/collections/test_collection/vectors":
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"inserted_count": 1,
 			})
 		case "/api/v1/collections/test_collection/search":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"results": []map[string]interface{}{
 					{
 						"id":    "vec1",
@@ -221,7 +221,7 @@ func TestMockServer(t *testing.T) {
 				"total_count": 2,
 			})
 		case "/api/v1/collections/test_collection/vectors/fetch":
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"vectors": []map[string]interface{}{
 					{
 						"id":     "vec1",
@@ -633,7 +633,7 @@ func TestBatchInsert(t *testing.T) {
 		if r.URL.Path == "/api/v1/collections/test_collection/vectors" {
 			insertCount++
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"inserted_count": 100,
 			})
 		}
@@ -679,7 +679,7 @@ func TestBatchInsert(t *testing.T) {
 func TestBatchSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/collections/test_collection/search" {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"results": []map[string]interface{}{
 					{"id": "vec1", "score": 0.95},
 				},
@@ -737,7 +737,7 @@ func TestStreamInsert(t *testing.T) {
 		if r.URL.Path == "/api/v1/collections/test_collection/vectors" {
 			insertCalls++
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"inserted_count": 1,
 			})
 		}
@@ -793,7 +793,7 @@ func TestStreamInsert(t *testing.T) {
 func TestClientMetrics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"status":         "healthy",
 				"version":        "1.0.0",
 				"uptime_seconds": 123.45,
@@ -986,7 +986,7 @@ func BenchmarkVectorRecordMarshal(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		json.Marshal(record)
+		_, _ = json.Marshal(record)
 	}
 }
 
@@ -1005,14 +1005,14 @@ func BenchmarkSearchQueryMarshal(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		json.Marshal(query)
+		_, _ = json.Marshal(query)
 	}
 }
 
 func BenchmarkBatchInsert(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{"inserted_count": 100})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"inserted_count": 100})
 	}))
 	defer server.Close()
 
@@ -1035,6 +1035,6 @@ func BenchmarkBatchInsert(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		client.BatchInsert(ctx, "test", records, opts)
+		_, _ = client.BatchInsert(ctx, "test", records, opts)
 	}
 }

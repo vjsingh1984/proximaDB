@@ -641,19 +641,6 @@ func (c *client) Metrics() *ClientMetrics {
 	}
 }
 
-// recordMetrics records metrics for an operation.
-func (c *client) recordMetrics(startTime time.Time, err error) {
-	atomic.AddInt64(&c.metrics.requestCount, 1)
-	if err == nil {
-		atomic.AddInt64(&c.metrics.successCount, 1)
-	} else {
-		atomic.AddInt64(&c.metrics.errorCount, 1)
-	}
-	latency := time.Since(startTime).Nanoseconds()
-	atomic.AddInt64(&c.metrics.totalLatencyNs, latency)
-	c.metrics.lastRequestTime.Store(time.Now())
-}
-
 // streamInserter implements the Inserter interface.
 type streamInserter struct {
 	ctx        context.Context
