@@ -160,7 +160,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Delete failed: %v", err)
 	}
-	fmt.Println("Deleted 2 vectors\n")
+	fmt.Println("Deleted 2 vectors")
 
 	// Get collection info
 	info, err := client.GetCollection(ctx, collectionName)

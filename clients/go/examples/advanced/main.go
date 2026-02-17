@@ -87,7 +87,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create collection: %v", err)
 	}
-	fmt.Println("Collection created successfully\n")
+	fmt.Println("Collection created successfully")
 
 	// Demonstrate batch insert with progress tracking
 	fmt.Println("=== Batch Insert with Progress ===")

@@ -64,7 +64,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create collection: %v", err)
 	}
-	fmt.Println("Collection created successfully\n")
+	fmt.Println("Collection created successfully")
 
 	// Example 1: Streaming Insert
 	fmt.Println("=== Example 1: Streaming Insert ===")
