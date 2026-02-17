@@ -94,7 +94,6 @@ func main() {
 	records := generateLargeDataset(5000, 256)
 
 	var insertedCount int64
-	startTime := time.Now()
 
 	batchResult, err := client.BatchInsert(ctx, collectionName, records, &proximadb.BatchOptions{
 		BatchSize:   500,
