@@ -21,6 +21,7 @@ use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 /// Time-partitioned storage for logs
 pub struct PartitionedStorage {
     /// Base path for storage
+    #[allow(dead_code)]
     base_path: String,
     /// Partitions by timestamp (hour granularity)
     partitions: RwLock<BTreeMap<i64, Arc<Partition>>>,
@@ -35,7 +36,7 @@ pub struct PartitionedStorage {
 /// A single time partition
 struct Partition {
     /// Partition start timestamp (nanoseconds)
-    start_ns: i64,
+    _start_ns: i64,
     /// Partition end timestamp (nanoseconds)
     end_ns: i64,
     /// Entries in this partition (in-memory for hot tier)
@@ -119,7 +120,7 @@ impl PartitionedStorage {
 
         // Create new partition
         let partition = Arc::new(Partition {
-            start_ns: partition_key,
+            _start_ns: partition_key,
             end_ns: partition_key + self.partition_duration_ns,
             entries: RwLock::new(Vec::new()),
             tier: RwLock::new(PartitionTier::Hot),
@@ -157,7 +158,7 @@ impl PartitionedStorage {
         let start_key = self.partition_key(start_ns);
         let end_key = self.partition_key(end_ns);
 
-        for (key, partition) in partitions.range(start_key..=end_key) {
+        for (_key, partition) in partitions.range(start_key..=end_key) {
             let entries = partition.entries.read().await;
 
             for entry in entries.iter() {

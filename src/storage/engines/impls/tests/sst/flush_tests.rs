@@ -386,6 +386,8 @@ async fn test_sst_engine_end_to_end_flush_and_search() -> Result<()> {
             collection_id: collection_id.to_string(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let search_results = engine.search_vectors_unified(&ctx).await?;
@@ -421,6 +423,8 @@ async fn test_sst_engine_end_to_end_flush_and_search() -> Result<()> {
             collection_id: collection_id.to_string(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let persistence_results = engine2.search_vectors_unified(&persistence_ctx).await?;
@@ -491,6 +495,8 @@ async fn test_sst_engine_no_data_without_flush() -> Result<()> {
             collection_id: "empty_collection".to_string(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;

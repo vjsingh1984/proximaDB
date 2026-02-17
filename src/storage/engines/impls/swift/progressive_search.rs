@@ -79,6 +79,7 @@ fn compare_json_values(
 #[derive(Debug, Clone)]
 struct BinarySketch {
     bits: Vec<u8>,
+    #[allow(dead_code)]
     dimension: usize,
 }
 
@@ -94,6 +95,7 @@ impl BinarySketch {
 // Quantization types from unified compute module
 
 // Distance table type for PQ search
+#[allow(dead_code)]
 type DistanceTable = Vec<Vec<f32>>;
 
 /// Configuration for progressive search
@@ -661,6 +663,7 @@ async fn phase4_full_precision(
 
 // Helper functions
 
+#[allow(dead_code)]
 fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
     let mut bits = Vec::new();
     for chunk in bytes.chunks(8) {
@@ -684,6 +687,7 @@ fn block_matches_filter(block: &ProximaDataBlock, _filter: &MetadataFilter) -> b
     true
 }
 
+#[allow(dead_code)]
 fn condition_matches_block_stats(
     condition: &super::FilterCondition,
     stats: &std::collections::HashMap<String, super::ColumnStats>,
@@ -720,6 +724,7 @@ fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool
     true
 }
 
+#[allow(dead_code)]
 fn metadata_item_to_json(
     value: &Option<crate::proto::proximadb_v1::metadata_item::Value>,
 ) -> serde_json::Value {
@@ -901,6 +906,7 @@ fn compute_query_adacurve_code(query: &[f32], superblocks: &[super::SuperBlock])
 /// Calculate AdaCurve epsilon for superblock-level pruning.
 ///
 /// Superblocks use a more aggressive epsilon for first-level filtering.
+#[allow(dead_code)]
 fn calculate_adacurve_epsilon_superblock(superblocks: &[super::SuperBlock]) -> u64 {
     let codes: Vec<u64> = superblocks
         .iter()

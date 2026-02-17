@@ -36,6 +36,7 @@ struct CollectionLock {
     flush_semaphore: Arc<Semaphore>,
 
     /// Compaction operations (exclusive within level ranges)
+    #[allow(dead_code)]
     compaction_rwlock: Arc<RwLock<()>>,
 
     /// Operation tracking for diagnostics
@@ -53,7 +54,9 @@ struct LevelRange {
 #[derive(Debug, Clone)]
 struct ActiveLockInfo {
     operation_type: super::OperationType,
+    #[allow(dead_code)]
     acquired_at: std::time::Instant,
+    #[allow(dead_code)]
     holder_id: String,
 }
 

@@ -9,17 +9,18 @@ Features:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from .connection_pools import GrpcConnectionPool, GrpcChannelContext
-from ..models import SearchResult, VectorOperationResponse
 from ..exceptions import ProximaDBError
+from ..models import SearchResult, VectorOperationResponse
+from .connection_pools import GrpcChannelContext, GrpcConnectionPool
 
 
 @dataclass
 class HealthCheckResponse:
     """Health check response with server status"""
+
     healthy: bool
     latency_ms: float
     status: str
@@ -31,6 +32,7 @@ class HealthCheckResponse:
 @dataclass
 class DeleteCollectionResponse:
     """Delete collection response"""
+
     success: bool
     collection_id: str
     status: str = "deleted"
@@ -59,31 +61,31 @@ class CollectionWrapper:
     @property
     def name(self):
         """Get collection name from config.name"""
-        if hasattr(self._proto, 'config') and hasattr(self._proto.config, 'name'):
+        if hasattr(self._proto, "config") and hasattr(self._proto.config, "name"):
             return self._proto.config.name
         return None
 
     @property
     def dimension(self):
         """Get collection dimension from config.dimension"""
-        if hasattr(self._proto, 'config') and hasattr(self._proto.config, 'dimension'):
+        if hasattr(self._proto, "config") and hasattr(self._proto.config, "dimension"):
             return self._proto.config.dimension
         return None
 
     @property
     def id(self):
         """Get collection ID"""
-        return getattr(self._proto, 'id', None)
+        return getattr(self._proto, "id", None)
 
     @property
     def config(self):
         """Get collection config"""
-        return getattr(self._proto, 'config', None)
+        return getattr(self._proto, "config", None)
 
     @property
     def stats(self):
         """Get collection stats if available"""
-        return getattr(self._proto, 'stats', None)
+        return getattr(self._proto, "stats", None)
 
     def __getattr__(self, name):
         """Pass through any other attribute access to the underlying protobuf object"""
@@ -174,18 +176,25 @@ class DictWrapper:
     def __repr__(self):
         return f"DictWrapper({self._dict})"
 
+
 try:
     import grpc
+
+    from proximadb_sdk.v1 import (
+        collection_pb2_grpc as v1_collection_pb2_grpc,  # type: ignore
+    )
+    from proximadb_sdk.v1 import (
+        collection_types_pb2 as v1_collection_types_pb2,  # type: ignore
+    )
+    from proximadb_sdk.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
+    from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
     from proximadb_sdk.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
     from proximadb_sdk.v1 import vector_types_pb2 as v1_vector_types_pb2  # type: ignore
-    from proximadb_sdk.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
-    from proximadb_sdk.v1 import collection_pb2_grpc as v1_collection_pb2_grpc  # type: ignore
-    from proximadb_sdk.v1 import collection_types_pb2 as v1_collection_types_pb2  # type: ignore
-    from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
+
     # Optional graph service (generated via Makefile: gen-proto)
     try:
-        from proximadb_sdk.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
         from proximadb_sdk.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+        from proximadb_sdk.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
     except Exception:  # pragma: no cover - optional
         v1_graph_pb2_grpc = None
         v1_graph_pb2 = None
@@ -199,13 +208,13 @@ logger = logging.getLogger(__name__)
 class ProximaDBSyncGrpcClient:
     """
     High-performance synchronous gRPC client with connection pooling
-    
+
     Features:
     - Connection pool with 5 channels for load balancing
     - Automatic health monitoring and failover
     - 15-25% throughput improvement over single-channel approach
     """
-    
+
     def __init__(
         self,
         server_address: str,
@@ -213,7 +222,7 @@ class ProximaDBSyncGrpcClient:
         enable_compression: bool = False,  # Disabled by default - server doesn't support gzip yet
         compression_algorithm: str = "gzip",
         pool_size: int = 5,
-        max_message_size: int = 64 * 1024 * 1024
+        max_message_size: int = 64 * 1024 * 1024,
     ):
         """Initialize sync gRPC client with connection pool
 
@@ -232,19 +241,19 @@ class ProximaDBSyncGrpcClient:
         self.compression_algorithm = compression_algorithm.lower()
         self.pool_size = pool_size
         self.max_message_size = max_message_size
-        
+
         # Initialize connection pool instead of single client
         self._connection_pool = None
         self._init_connection_pool()
 
         # Alias for backward compatibility with tests
         self._pool = self._connection_pool
-        
+
     def _init_connection_pool(self):
         """Initialize gRPC connection pool for optimal performance"""
         try:
             import grpc
-            
+
             # Map compression algorithm
             compression = None
             if self.enable_compression:
@@ -253,40 +262,46 @@ class ProximaDBSyncGrpcClient:
                 elif self.compression_algorithm == "deflate":
                     compression = grpc.Compression.Deflate
                 else:
-                    logger.warning(f"Unknown compression algorithm: {self.compression_algorithm}, using gzip")
+                    logger.warning(
+                        f"Unknown compression algorithm: {self.compression_algorithm}, using gzip"
+                    )
                     compression = grpc.Compression.Gzip
-            
+
             self._connection_pool = GrpcConnectionPool(
                 endpoint=self.server_address,
                 pool_size=self.pool_size,
                 max_message_size=self.max_message_size,
                 use_tls=False,  # TLS configuration can be added via environment variables or config
-                compression=compression
+                compression=compression,
             )
 
             # Update alias for backward compatibility
             self._pool = self._connection_pool
 
-            logger.info(f"Initialized gRPC connection pool: {self.pool_size} channels to {self.server_address}")
-            
+            logger.info(
+                f"Initialized gRPC connection pool: {self.pool_size} channels to {self.server_address}"
+            )
+
         except Exception as e:
             logger.error(f"Failed to initialize gRPC connection pool: {e}")
             raise ProximaDBError(f"gRPC connection pool initialization failed: {e}")
-    
+
     def _execute_with_pool(self, operation_name: str, operation_func):
         """Execute operation using connection pool with automatic error handling"""
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
-            
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
                 # Create stub for this operation
                 # Use versioned VectorService exclusively (v1)
                 stub = v1_vector_pb2_grpc.VectorServiceStub(channel)
-                
+
                 # Execute the operation with timeout
                 return operation_func(stub)
-                
+
         except grpc.RpcError as e:
             logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
             raise ProximaDBError(f"{operation_name} RPC failed: {e.details()}")
@@ -297,7 +312,9 @@ class ProximaDBSyncGrpcClient:
     def _execute_collection_with_pool(self, operation_name: str, operation_func):
         """Execute collection operation using connection pool with CollectionService"""
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
@@ -319,7 +336,7 @@ class ProximaDBSyncGrpcClient:
         if self._connection_pool:
             return self._connection_pool.get_metrics()
         return None
-    
+
     def close(self):
         """Close the connection pool and cleanup"""
         if self._connection_pool:
@@ -328,10 +345,10 @@ class ProximaDBSyncGrpcClient:
                 logger.info("gRPC connection pool closed")
             except Exception as e:
                 logger.warning(f"Error closing gRPC connection pool: {e}")
-    
+
     def __enter__(self):
         return self
-        
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -351,7 +368,9 @@ class ProximaDBSyncGrpcClient:
         import time
 
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
 
         try:
             start_time = time.time()
@@ -371,7 +390,7 @@ class ProximaDBSyncGrpcClient:
                     healthy=True,
                     latency_ms=latency_ms,
                     status="connected",
-                    server_address=self.server_address
+                    server_address=self.server_address,
                 )
 
         except grpc.RpcError as e:
@@ -380,7 +399,7 @@ class ProximaDBSyncGrpcClient:
                 latency_ms=-1,
                 status=f"error: {e.code()}",
                 server_address=self.server_address,
-                details=e.details()
+                details=e.details(),
             )
         except Exception as e:
             return HealthCheckResponse(
@@ -388,7 +407,7 @@ class ProximaDBSyncGrpcClient:
                 latency_ms=-1,
                 status=f"error: {type(e).__name__}",
                 server_address=self.server_address,
-                details=str(e)
+                details=str(e),
             )
 
     # Health check via REST endpoint (gRPC doesn't have dedicated Health service in v1)
@@ -412,16 +431,23 @@ class ProximaDBSyncGrpcClient:
         - x-graph-prefetch-budget: <int>
         """
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
         if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
-            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
 
         def _op(channel):
             stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
             algo_enum = {
                 "DIJKSTRA": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
                 "ASTAR": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_ASTAR,
-            }.get(algorithm.upper(), v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA)
+            }.get(
+                algorithm.upper(),
+                v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+            )
 
             req = v1_graph_pb2.ShortestPathRequest(
                 start_node_id=start_node_id,
@@ -434,7 +460,9 @@ class ProximaDBSyncGrpcClient:
 
             metadata = []
             if enable_prefetch is not None:
-                metadata.append(("x-graph-prefetch-enabled", "true" if enable_prefetch else "false"))
+                metadata.append(
+                    ("x-graph-prefetch-enabled", "true" if enable_prefetch else "false")
+                )
             if prefetch_budget is not None:
                 metadata.append(("x-graph-prefetch-budget", str(prefetch_budget)))
 
@@ -444,7 +472,12 @@ class ProximaDBSyncGrpcClient:
         return self._execute_with_pool("shortest_path", _op)
 
     # SQL (v1)
-    def execute_sql(self, query: str, parameters: Optional[list] = None, collection: Optional[str] = None):
+    def execute_sql(
+        self,
+        query: str,
+        parameters: Optional[list] = None,
+        collection: Optional[str] = None,
+    ):
         """Execute SQL via proximadb.v1.SqlService.ExecuteSql
 
         Args:
@@ -455,13 +488,16 @@ class ProximaDBSyncGrpcClient:
             ExecuteSqlResponse as dict-like (via proto object fields)
         """
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
                 stub = v1_sql_pb2_grpc.SqlServiceStub(channel)
                 # Build ExecuteSqlRequest using v1 messages
                 from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
+
                 req = v1_types_pb2.ExecuteSqlRequest(query=query)
                 if parameters:
                     for p in parameters:
@@ -478,8 +514,14 @@ class ProximaDBSyncGrpcClient:
                 resp = stub.ExecuteSql(req, timeout=self.timeout)
                 # Return as a simple dict for convenience
                 rows = [
-                    {f.key: (f.value.string_value or f.value.number_value or f.value.bool_value)
-                     for f in row.fields}
+                    {
+                        f.key: (
+                            f.value.string_value
+                            or f.value.number_value
+                            or f.value.bool_value
+                        )
+                        for f in row.fields
+                    }
                     for row in resp.rows
                 ]
                 return {
@@ -525,16 +567,25 @@ class ProximaDBSyncGrpcClient:
     def get_collection_v1(self, collection_id: str):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
-            req = v1_collection_types_pb2.GetCollectionRequest(collection_id=collection_id)
+            req = v1_collection_types_pb2.GetCollectionRequest(
+                collection_id=collection_id
+            )
             return stub.GetCollection(req, timeout=self.timeout)
 
         return self._execute_with_pool("get_collection_v1", _op)
 
-    def list_collections_v1(self, limit: Optional[int] = None, offset: Optional[int] = None, include_stats: Optional[bool] = None):
+    def list_collections_v1(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        include_stats: Optional[bool] = None,
+    ):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
             req = v1_collection_types_pb2.ListCollectionsRequest(
-                limit=limit or 0, offset=offset or 0, include_stats=include_stats or False
+                limit=limit or 0,
+                offset=offset or 0,
+                include_stats=include_stats or False,
             )
             return stub.ListCollections(req, timeout=self.timeout)
 
@@ -543,11 +594,13 @@ class ProximaDBSyncGrpcClient:
     def delete_collection_v1(self, collection_id: str):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
-            req = v1_collection_types_pb2.DeleteCollectionRequest(collection_id=collection_id)
+            req = v1_collection_types_pb2.DeleteCollectionRequest(
+                collection_id=collection_id
+            )
             return stub.DeleteCollection(req, timeout=self.timeout)
 
         return self._execute_with_pool("delete_collection_v1", _op)
-    
+
     # Collection Operations - Unified Interface
     def create_collection(
         self,
@@ -559,7 +612,7 @@ class ProximaDBSyncGrpcClient:
         engine: int = None,  # Alias for storage_engine (backward compatibility)
         filterable_columns: List[Any] = None,
         index_configs: List[Any] = None,
-        quantization_config: Any = None
+        quantization_config: Any = None,
     ) -> Any:
         """Create collection with unified interface
 
@@ -584,6 +637,7 @@ class ProximaDBSyncGrpcClient:
         # Convert string storage engine names to enum integers if needed
         if storage_engine is not None and isinstance(storage_engine, str):
             from proximadb_sdk.models import StorageEngineType
+
             storage_engine_map = {
                 "viper": StorageEngineType.VIPER,
                 "sst": StorageEngineType.SST,
@@ -596,15 +650,16 @@ class ProximaDBSyncGrpcClient:
             if storage_engine_str in storage_engine_map:
                 storage_engine = int(storage_engine_map[storage_engine_str])
             else:
-                raise ValueError(f"Unknown storage engine: {storage_engine}. Valid options: {list(storage_engine_map.keys())}")
+                raise ValueError(
+                    f"Unknown storage engine: {storage_engine}. Valid options: {list(storage_engine_map.keys())}"
+                )
 
         def _create_collection_operation(stub):
             # Build collection config using v1 types
             config = v1_collection_types_pb2.CollectionConfig(
-                name=name,
-                dimension=dimension
+                name=name, dimension=dimension
             )
-            
+
             if distance_metric is not None:
                 config.distance_metric = distance_metric
             # Indexing algorithm is configured via IndexConfig; prefer index_configs param
@@ -625,7 +680,7 @@ class ProximaDBSyncGrpcClient:
             if quantization_config:
                 # Field name in proto is `quantization`
                 config.quantization.CopyFrom(quantization_config)
-            
+
             # Use CollectionService.CreateCollection method from v1 API
             # CreateCollection expects CollectionConfig directly, not wrapped in a request
             response = stub.CreateCollection(config, timeout=self.timeout)
@@ -633,23 +688,27 @@ class ProximaDBSyncGrpcClient:
             # Wrap the protobuf Collection to provide .name and .dimension attributes
             return CollectionWrapper(response)
 
-        return self._execute_collection_with_pool("create_collection", _create_collection_operation)
-    
+        return self._execute_collection_with_pool(
+            "create_collection", _create_collection_operation
+        )
+
     def get_collection(self, name: str) -> Any:
         """Get collection metadata"""
+
         def _get_collection_operation(stub):
-            request = v1_collection_types_pb2.GetCollectionRequest(
-                collection_id=name
-            )
+            request = v1_collection_types_pb2.GetCollectionRequest(collection_id=name)
             response = stub.GetCollection(request, timeout=self.timeout)
 
             # Wrap the protobuf Collection to provide .name and .dimension attributes
             return CollectionWrapper(response)
 
-        return self._execute_collection_with_pool("get_collection", _get_collection_operation)
-    
+        return self._execute_collection_with_pool(
+            "get_collection", _get_collection_operation
+        )
+
     def list_collections(self) -> List[Any]:
         """List all collections"""
+
         def _list_collections_operation(stub):
             request = v1_collection_types_pb2.ListCollectionsRequest()
             response = stub.ListCollections(request, timeout=self.timeout)
@@ -662,50 +721,51 @@ class ProximaDBSyncGrpcClient:
 
             return collections
 
-        return self._execute_collection_with_pool("list_collections", _list_collections_operation)
-    
+        return self._execute_collection_with_pool(
+            "list_collections", _list_collections_operation
+        )
+
     def delete_collection(self, collection_id: str) -> DeleteCollectionResponse:
         """Delete collection"""
+
         def _delete_collection_operation(stub):
             request = v1_collection_types_pb2.DeleteCollectionRequest(
                 collection_id=collection_id
             )
             response = stub.DeleteCollection(request, timeout=self.timeout)
             return DeleteCollectionResponse(
-                success=response.success,
-                collection_id=collection_id,
-                status="deleted"
+                success=response.success, collection_id=collection_id, status="deleted"
             )
 
-        return self._execute_collection_with_pool("delete_collection", _delete_collection_operation)
-    
+        return self._execute_collection_with_pool(
+            "delete_collection", _delete_collection_operation
+        )
+
     # Vector Operations - Unified Interface
     def insert_vectors(
-        self,
-        collection_id: str,
-        vectors: List[Dict[str, Any]],
-        upsert: bool = False
+        self, collection_id: str, vectors: List[Dict[str, Any]], upsert: bool = False
     ) -> VectorOperationResponse:
         """Insert vectors with unified interface
-        
+
         Args:
             collection_id: Target collection ID
             vectors: List of vector objects with format:
                     [{"id": "vec1", "vector": [0.1, 0.2, ...], "metadata": {...}}, ...]
             upsert: Whether to update existing vectors
-            
+
         Returns:
             VectorOperationResponse with operation details
         """
+
         def _insert_vectors_operation(stub):
             # Convert vectors to proto format using v1 VectorRecord
             proto_vectors = []
             for vector_data in vectors:
                 # Handle both VectorRecord objects and dictionaries
-                if hasattr(vector_data, 'model_dump'):
+                if hasattr(vector_data, "model_dump"):
                     # Pydantic BaseModel (VectorRecord) - convert to dict
                     vector_dict = vector_data.model_dump(exclude_none=False)
-                elif hasattr(vector_data, '__dict__'):
+                elif hasattr(vector_data, "__dict__"):
                     # Regular object with __dict__
                     vector_dict = vector_data.__dict__
                 else:
@@ -714,13 +774,13 @@ class ProximaDBSyncGrpcClient:
 
                 vector_record = v1_vector_types_pb2.VectorRecord()
 
-                if 'id' in vector_dict and vector_dict['id']:
-                    vector_record.id = vector_dict['id']
-                if 'vector' in vector_dict and vector_dict['vector']:
-                    vector_record.vector.extend(vector_dict['vector'])
-                if 'metadata' in vector_dict and vector_dict['metadata']:
+                if "id" in vector_dict and vector_dict["id"]:
+                    vector_record.id = vector_dict["id"]
+                if "vector" in vector_dict and vector_dict["vector"]:
+                    vector_record.vector.extend(vector_dict["vector"])
+                if "metadata" in vector_dict and vector_dict["metadata"]:
                     # Convert metadata to map<string, SqlValue> format
-                    for key, value in vector_dict['metadata'].items():
+                    for key, value in vector_dict["metadata"].items():
                         sql_value = v1_types_pb2.SqlValue()
                         if isinstance(value, bool):
                             # Check bool before int since bool is a subclass of int
@@ -738,56 +798,87 @@ class ProximaDBSyncGrpcClient:
                         vector_record.metadata[key].CopyFrom(sql_value)
 
                 # Add timestamp field (accept both 'timestamp' and 'timestamp_ms')
-                if 'timestamp' in vector_dict and vector_dict['timestamp'] is not None:
-                    vector_record.timestamp = int(vector_dict['timestamp'])
-                elif 'timestamp_ms' in vector_dict and vector_dict['timestamp_ms'] is not None:
-                    vector_record.timestamp = int(vector_dict['timestamp_ms'])
+                if "timestamp" in vector_dict and vector_dict["timestamp"] is not None:
+                    vector_record.timestamp = int(vector_dict["timestamp"])
+                elif (
+                    "timestamp_ms" in vector_dict
+                    and vector_dict["timestamp_ms"] is not None
+                ):
+                    vector_record.timestamp = int(vector_dict["timestamp_ms"])
 
                 # Add updated_at field (accept both forms)
-                if 'updated_at' in vector_dict and vector_dict['updated_at'] is not None:
-                    vector_record.updated_at = int(vector_dict['updated_at'])
-                elif 'updated_at_ms' in vector_dict and vector_dict['updated_at_ms'] is not None:
-                    vector_record.updated_at = int(vector_dict['updated_at_ms'])
+                if (
+                    "updated_at" in vector_dict
+                    and vector_dict["updated_at"] is not None
+                ):
+                    vector_record.updated_at = int(vector_dict["updated_at"])
+                elif (
+                    "updated_at_ms" in vector_dict
+                    and vector_dict["updated_at_ms"] is not None
+                ):
+                    vector_record.updated_at = int(vector_dict["updated_at_ms"])
 
                 # Add expires_at field (accept both forms)
-                if 'expires_at' in vector_dict and vector_dict['expires_at'] is not None:
-                    vector_record.expires_at = int(vector_dict['expires_at'])
-                elif 'expires_at_ms' in vector_dict and vector_dict['expires_at_ms'] is not None:
-                    vector_record.expires_at = int(vector_dict['expires_at_ms'])
+                if (
+                    "expires_at" in vector_dict
+                    and vector_dict["expires_at"] is not None
+                ):
+                    vector_record.expires_at = int(vector_dict["expires_at"])
+                elif (
+                    "expires_at_ms" in vector_dict
+                    and vector_dict["expires_at_ms"] is not None
+                ):
+                    vector_record.expires_at = int(vector_dict["expires_at_ms"])
 
                 # Add version field
-                if 'version' in vector_dict and vector_dict['version'] is not None:
-                    vector_record.version = int(vector_dict['version'])
+                if "version" in vector_dict and vector_dict["version"] is not None:
+                    vector_record.version = int(vector_dict["version"])
 
                 # Add source field (original content that generated this vector)
-                if 'source' in vector_dict and vector_dict['source'] is not None:
-                    vector_record.source = str(vector_dict['source'])
+                if "source" in vector_dict and vector_dict["source"] is not None:
+                    vector_record.source = str(vector_dict["source"])
 
                 proto_vectors.append(vector_record)
 
             # Use VectorBatch endpoint for inserts (v1)
             request = v1_vector_types_pb2.VectorBatchRequest(
-                collection_id=collection_id,
-                vectors=proto_vectors
+                collection_id=collection_id, vectors=proto_vectors
             )
             response = stub.VectorBatch(request, timeout=self.timeout)
-            
-            # Return VectorOperationResponse 
+
+            # Return VectorOperationResponse
             from ..models import OperationMetrics
+
             return VectorOperationResponse(
                 success=response.success,
-                operation='INSERT',
+                operation="INSERT",
                 metrics=OperationMetrics(
-                    successful_count=getattr(response.metrics, 'successful_count', len(vectors)) if hasattr(response, 'metrics') else len(vectors),
-                    failed_count=getattr(response.metrics, 'failed_count', 0) if hasattr(response, 'metrics') else 0,
-                    duration_ms=getattr(response.metrics, 'processing_time_us', 0) / 1000 if hasattr(response, 'metrics') else 0,
-                    total_count=len(vectors)
+                    successful_count=(
+                        getattr(response.metrics, "successful_count", len(vectors))
+                        if hasattr(response, "metrics")
+                        else len(vectors)
+                    ),
+                    failed_count=(
+                        getattr(response.metrics, "failed_count", 0)
+                        if hasattr(response, "metrics")
+                        else 0
+                    ),
+                    duration_ms=(
+                        getattr(response.metrics, "processing_time_us", 0) / 1000
+                        if hasattr(response, "metrics")
+                        else 0
+                    ),
+                    total_count=len(vectors),
                 ),
-                error_message=getattr(response, 'error_message', None) if not response.success else None
+                error_message=(
+                    getattr(response, "error_message", None)
+                    if not response.success
+                    else None
+                ),
             )
-        
+
         return self._execute_with_pool("insert_vectors", _insert_vectors_operation)
-    
+
     def search_vectors(
         self,
         collection_id: str,
@@ -797,10 +888,10 @@ class ProximaDBSyncGrpcClient:
         metadata_filters: Optional[Dict[str, Any]] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        search_hints: Optional[Dict[str, Any]] = None
+        search_hints: Optional[Dict[str, Any]] = None,
     ) -> SearchResult:
         """Search vectors with unified interface
-        
+
         Args:
             collection_id: Target collection ID
             query_vector: Query vector
@@ -808,7 +899,7 @@ class ProximaDBSyncGrpcClient:
             metadata_filters: Metadata filter conditions
             include_vectors: Include vector data in results
             include_metadata: Include metadata in results
-            
+
         Returns:
             SearchResult with found vectors
         """
@@ -817,7 +908,7 @@ class ProximaDBSyncGrpcClient:
             query_vectors = [query_vector]
         elif query_vectors is None:
             raise ValueError("Either query_vector or query_vectors must be provided")
-        
+
         def _search_vectors_operation(stub):
             # Build search queries using v1 protos
             search_queries = []
@@ -845,10 +936,7 @@ class ProximaDBSyncGrpcClient:
 
             # Build include fields
             include_fields = v1_vector_types_pb2.IncludeFields(
-                vector=include_vectors,
-                metadata=include_metadata,
-                score=True,
-                rank=True
+                vector=include_vectors, metadata=include_metadata, score=True, rank=True
             )
 
             # Build search request with v1 proto
@@ -856,7 +944,7 @@ class ProximaDBSyncGrpcClient:
                 collection_id=collection_id,
                 queries=search_queries,
                 top_k=top_k,
-                include_fields=include_fields
+                include_fields=include_fields,
             )
 
             response = stub.VectorSearch(request, timeout=self.timeout)
@@ -864,7 +952,11 @@ class ProximaDBSyncGrpcClient:
             # VectorSearch returns VectorOperationResponse which wraps SearchResult
             # Extract the SearchResult from the response
             if not response.success:
-                error_msg = response.error_message if response.error_message else "Search failed"
+                error_msg = (
+                    response.error_message
+                    if response.error_message
+                    else "Search failed"
+                )
                 raise ProximaDBError(f"VectorSearch failed: {error_msg}")
 
             # Access response.results which is a SearchResult message
@@ -876,62 +968,62 @@ class ProximaDBSyncGrpcClient:
             results = []
             for result in search_result_msg.results:
                 vector_result = {
-                    'id': result.id,
-                    'score': result.score,
+                    "id": result.id,
+                    "score": result.score,
                 }
                 if include_vectors and result.vector:
-                    vector_result['vector'] = list(result.vector)
+                    vector_result["vector"] = list(result.vector)
                 if include_metadata and result.metadata:
                     # Convert v1 metadata (map of SqlValue) to dict
                     metadata_dict = {}
                     for item in result.metadata:
                         sql_value = result.metadata[item]
-                        if sql_value.HasField('string_value'):
+                        if sql_value.HasField("string_value"):
                             metadata_dict[item] = sql_value.string_value
-                        elif sql_value.HasField('int64_value'):
+                        elif sql_value.HasField("int64_value"):
                             metadata_dict[item] = sql_value.int64_value
-                        elif sql_value.HasField('number_value'):
+                        elif sql_value.HasField("number_value"):
                             metadata_dict[item] = sql_value.number_value
-                        elif sql_value.HasField('bool_value'):
+                        elif sql_value.HasField("bool_value"):
                             metadata_dict[item] = sql_value.bool_value
-                    vector_result['metadata'] = metadata_dict
+                    vector_result["metadata"] = metadata_dict
 
                 # Add timestamp fields (use _ms suffix for SDK consistency)
-                if result.HasField('timestamp'):
-                    vector_result['timestamp_ms'] = result.timestamp
-                    vector_result['timestamp'] = result.timestamp
+                if result.HasField("timestamp"):
+                    vector_result["timestamp_ms"] = result.timestamp
+                    vector_result["timestamp"] = result.timestamp
 
                 # Add version field (proto field 5)
-                if result.HasField('version'):
-                    vector_result['version'] = result.version
+                if result.HasField("version"):
+                    vector_result["version"] = result.version
 
                 # Add similarity field (proto field 6)
-                if result.HasField('similarity'):
-                    vector_result['similarity'] = result.similarity
+                if result.HasField("similarity"):
+                    vector_result["similarity"] = result.similarity
 
                 # Add source field (proto field 8 - original content for RAG)
-                if result.HasField('source'):
-                    vector_result['source'] = result.source
+                if result.HasField("source"):
+                    vector_result["source"] = result.source
 
                 # Add expanded_context field (proto field 9)
                 if result.expanded_context:
-                    vector_result['expanded_context'] = list(result.expanded_context)
+                    vector_result["expanded_context"] = list(result.expanded_context)
 
                 # Add semantic_similarity field (proto field 10)
-                if result.HasField('semantic_similarity'):
-                    vector_result['semantic_similarity'] = result.semantic_similarity
+                if result.HasField("semantic_similarity"):
+                    vector_result["semantic_similarity"] = result.semantic_similarity
 
                 # Add quantization_info field (proto field 11)
-                if result.HasField('quantization_info'):
-                    vector_result['quantization_info'] = result.quantization_info
+                if result.HasField("quantization_info"):
+                    vector_result["quantization_info"] = result.quantization_info
 
                 # Add engine_stats field (proto field 12)
                 if result.engine_stats:
-                    vector_result['engine_stats'] = dict(result.engine_stats)
+                    vector_result["engine_stats"] = dict(result.engine_stats)
 
                 # Add index_path field (proto field 13)
-                if result.HasField('index_path'):
-                    vector_result['index_path'] = result.index_path
+                if result.HasField("index_path"):
+                    vector_result["index_path"] = result.index_path
 
                 results.append(vector_result)
 
@@ -939,20 +1031,20 @@ class ProximaDBSyncGrpcClient:
             search_results = []
             for result in results:
                 search_result = SearchResult(
-                    id=result['id'],
-                    score=result['score'],
-                    metadata=result.get('metadata', {}),
-                    vector=result.get('vector', None),
+                    id=result["id"],
+                    score=result["score"],
+                    metadata=result.get("metadata", {}),
+                    vector=result.get("vector", None),
                     # Add all SearchVectorRecord fields
-                    timestamp=result.get('timestamp'),
-                    version=result.get('version'),
-                    similarity=result.get('similarity'),
-                    source=result.get('source'),
-                    expanded_context=result.get('expanded_context'),
-                    semantic_similarity=result.get('semantic_similarity'),
-                    quantization_info=result.get('quantization_info'),
-                    engine_stats=result.get('engine_stats'),
-                    index_path=result.get('index_path')
+                    timestamp=result.get("timestamp"),
+                    version=result.get("version"),
+                    similarity=result.get("similarity"),
+                    source=result.get("source"),
+                    expanded_context=result.get("expanded_context"),
+                    semantic_similarity=result.get("semantic_similarity"),
+                    quantization_info=result.get("quantization_info"),
+                    engine_stats=result.get("engine_stats"),
+                    index_path=result.get("index_path"),
                 )
                 search_results.append(search_result)
 
@@ -972,7 +1064,7 @@ class ProximaDBSyncGrpcClient:
         metadata_filters: Optional[Dict[str, Any]] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        search_hints: Optional[Dict[str, Any]] = None
+        search_hints: Optional[Dict[str, Any]] = None,
     ) -> SearchResult:
         """
         Alias for search_vectors() for backward compatibility and convenience
@@ -1013,7 +1105,7 @@ class ProximaDBSyncGrpcClient:
             metadata_filters=metadata_filters,
             include_vectors=include_vectors,
             include_metadata=include_metadata,
-            search_hints=search_hints
+            search_hints=search_hints,
         )
 
     def get_vector(
@@ -1021,16 +1113,17 @@ class ProximaDBSyncGrpcClient:
         collection_id: str,
         vector_id: str,
         include_vector: bool = True,
-        include_metadata: bool = True
+        include_metadata: bool = True,
     ) -> Dict[str, Any]:
         """Get single vector by ID"""
+
         def _get_vector_operation(stub):
             # v1 proto uses direct boolean fields, not IncludeFields object
             request = v1_vector_types_pb2.VectorGetRequest(
                 collection_id=collection_id,
                 vector_id=vector_id,
                 include_vector=include_vector,
-                include_metadata=include_metadata
+                include_metadata=include_metadata,
             )
             response = stub.VectorGet(request, timeout=self.timeout)
 
@@ -1042,36 +1135,36 @@ class ProximaDBSyncGrpcClient:
             if response.results and response.results.results:
                 result_item = response.results.results[0]
                 result = {
-                    'id': result_item.id,
+                    "id": result_item.id,
                 }
                 if include_vector and result_item.vector:
-                    result['vector'] = list(result_item.vector)
+                    result["vector"] = list(result_item.vector)
                 if include_metadata and result_item.metadata:
                     # Convert map<string, SqlValue> to dict
                     metadata_dict = {}
                     for key in result_item.metadata:
                         sql_value = result_item.metadata[key]
-                        if sql_value.HasField('string_value'):
+                        if sql_value.HasField("string_value"):
                             metadata_dict[key] = sql_value.string_value
-                        elif sql_value.HasField('int64_value'):
+                        elif sql_value.HasField("int64_value"):
                             metadata_dict[key] = sql_value.int64_value
-                        elif sql_value.HasField('number_value'):
+                        elif sql_value.HasField("number_value"):
                             metadata_dict[key] = sql_value.number_value
-                        elif sql_value.HasField('bool_value'):
+                        elif sql_value.HasField("bool_value"):
                             metadata_dict[key] = sql_value.bool_value
-                    result['metadata'] = metadata_dict
+                    result["metadata"] = metadata_dict
 
                 # Add timestamp field (SearchVectorRecord has timestamp at field 7)
-                if result_item.HasField('timestamp'):
-                    result['timestamp_ms'] = result_item.timestamp
+                if result_item.HasField("timestamp"):
+                    result["timestamp_ms"] = result_item.timestamp
 
                 # Add version field (SearchVectorRecord has version at field 5)
-                if result_item.HasField('version'):
-                    result['version'] = result_item.version
+                if result_item.HasField("version"):
+                    result["version"] = result_item.version
 
                 # Add source field (SearchVectorRecord has source at field 8)
-                if result_item.HasField('source'):
-                    result['source'] = result_item.source
+                if result_item.HasField("source"):
+                    result["source"] = result_item.source
 
                 # NOTE: SearchVectorRecord does NOT have updated_at or expires_at fields
                 # Those fields only exist in the insert VectorRecord proto
@@ -1082,37 +1175,36 @@ class ProximaDBSyncGrpcClient:
                 raise ProximaDBError(f"Vector {vector_id} not found")
 
         return self._execute_with_pool("get_vector", _get_vector_operation)
-    
+
     def update_vector(
         self,
         collection_id: str,
         vector_id: str,
         vector: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Update vector data and/or metadata"""
         # For now, treat update as upsert using VectorBatch
-        vector_data = {'id': vector_id}
+        vector_data = {"id": vector_id}
         if vector is not None:
-            vector_data['vector'] = vector
+            vector_data["vector"] = vector
         if metadata is not None:
-            vector_data['metadata'] = metadata
-            
+            vector_data["metadata"] = metadata
+
         # Use upsert functionality
         result = self.insert_vectors(
-            collection_id=collection_id,
-            vectors=[vector_data],
-            upsert=True
+            collection_id=collection_id, vectors=[vector_data], upsert=True
         )
-        
+
         return {
             "status": "updated" if result.success else "failed",
             "vector_id": vector_id,
-            "success": result.success
+            "success": result.success,
         }
-    
+
     def delete_vector(self, collection_id: str, vector_id: str) -> Dict[str, Any]:
         """Delete single vector - using vector batch with empty vector (mark for deletion)"""
+
         def _delete_vector_operation(stub):
             # Create a vector record with just ID for deletion (v1)
             vector_record = v1_vector_types_pb2.VectorRecord()
@@ -1120,18 +1212,22 @@ class ProximaDBSyncGrpcClient:
             # Empty vector indicates deletion (this may need to be adjusted based on actual API)
 
             request = v1_vector_types_pb2.VectorBatchRequest(
-                collection_id=collection_id,
-                vectors=[vector_record]
+                collection_id=collection_id, vectors=[vector_record]
             )
             response = stub.VectorBatch(request, timeout=self.timeout)
             # If we got a response without error, the delete succeeded
             # The status field should reflect success regardless of response.success value
-            return DictWrapper({"status": "deleted", "vector_id": vector_id, "success": True})
+            return DictWrapper(
+                {"status": "deleted", "vector_id": vector_id, "success": True}
+            )
 
         return self._execute_with_pool("delete_vector", _delete_vector_operation)
-    
-    def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> Dict[str, Any]:
+
+    def delete_vectors(
+        self, collection_id: str, vector_ids: List[str]
+    ) -> Dict[str, Any]:
         """Delete multiple vectors"""
+
         def _delete_vectors_operation(stub):
             deleted_count = 0
             failed_count = 0
@@ -1139,8 +1235,7 @@ class ProximaDBSyncGrpcClient:
             for vector_id in vector_ids:
                 try:
                     request = v1_vector_types_pb2.DeleteVectorRequest(
-                        collection_id=collection_id,
-                        vector_id=vector_id
+                        collection_id=collection_id, vector_id=vector_id
                     )
                     response = stub.DeleteVector(request, timeout=self.timeout)
                     if response.success:
@@ -1154,43 +1249,38 @@ class ProximaDBSyncGrpcClient:
                 "status": "completed",
                 "deleted_count": deleted_count,
                 "failed_count": failed_count,
-                "total_requested": len(vector_ids)
+                "total_requested": len(vector_ids),
             }
 
         return self._execute_with_pool("delete_vectors", _delete_vectors_operation)
-    
+
     def insert_vector(
         self,
         collection_id: str,
         vector_id: str,
         vector: List[float],
         metadata: Optional[Dict[str, Any]] = None,
-        upsert: bool = False
+        upsert: bool = False,
     ) -> VectorOperationResponse:
         """Insert a single vector - alias for batch insert with one vector
-        
+
         Args:
             collection_id: Collection ID or name
             vector_id: Vector identifier
-            vector: Vector data  
+            vector: Vector data
             metadata: Optional metadata
             upsert: If True, update existing vector
-            
+
         Returns:
             VectorOperationResponse
         """
         # Use the batch insert with a single vector
-        vector_data = {
-            'id': vector_id,
-            'vector': vector
-        }
+        vector_data = {"id": vector_id, "vector": vector}
         if metadata:
-            vector_data['metadata'] = metadata
-        
+            vector_data["metadata"] = metadata
+
         return self.insert_vectors(
-            collection_id=collection_id,
-            vectors=[vector_data],
-            upsert=upsert
+            collection_id=collection_id, vectors=[vector_data], upsert=upsert
         )
 
     # === GRAPH OPERATIONS (v1) ===
@@ -1198,7 +1288,9 @@ class ProximaDBSyncGrpcClient:
     def _convert_to_property_value(self, value: Any):
         """Convert Python value to PropertyValue proto"""
         if v1_graph_pb2 is None:
-            raise ProximaDBError("Graph protos not available. Run: make -C clients/python gen-proto")
+            raise ProximaDBError(
+                "Graph protos not available. Run: make -C clients/python gen-proto"
+            )
 
         if isinstance(value, str):
             return v1_graph_pb2.PropertyValue(string_value=value)
@@ -1216,7 +1308,9 @@ class ProximaDBSyncGrpcClient:
                 array_value=v1_graph_pb2.PropertyArray(values=array_values)
             )
         elif isinstance(value, dict):
-            object_fields = {k: self._convert_to_property_value(v) for k, v in value.items()}
+            object_fields = {
+                k: self._convert_to_property_value(v) for k, v in value.items()
+            }
             return v1_graph_pb2.PropertyValue(
                 object_value=v1_graph_pb2.PropertyObject(fields=object_fields)
             )
@@ -1225,51 +1319,89 @@ class ProximaDBSyncGrpcClient:
 
     def _convert_from_property_value(self, prop_value) -> Any:
         """Convert PropertyValue proto to Python value"""
-        if prop_value.HasField('string_value'):
+        if prop_value.HasField("string_value"):
             return prop_value.string_value
-        elif prop_value.HasField('int_value'):
+        elif prop_value.HasField("int_value"):
             return prop_value.int_value
-        elif prop_value.HasField('double_value'):
+        elif prop_value.HasField("double_value"):
             return prop_value.double_value
-        elif prop_value.HasField('bool_value'):
+        elif prop_value.HasField("bool_value"):
             return prop_value.bool_value
-        elif prop_value.HasField('bytes_value'):
+        elif prop_value.HasField("bytes_value"):
             return prop_value.bytes_value
-        elif prop_value.HasField('array_value'):
-            return [self._convert_from_property_value(item) for item in prop_value.array_value.values]
-        elif prop_value.HasField('object_value'):
-            return {k: self._convert_from_property_value(v) for k, v in prop_value.object_value.fields.items()}
+        elif prop_value.HasField("array_value"):
+            return [
+                self._convert_from_property_value(item)
+                for item in prop_value.array_value.values
+            ]
+        elif prop_value.HasField("object_value"):
+            return {
+                k: self._convert_from_property_value(v)
+                for k, v in prop_value.object_value.fields.items()
+            }
         else:
             return None
 
     def _convert_node_from_proto(self, node) -> Dict[str, Any]:
         """Convert Node proto to dictionary"""
         from datetime import datetime, timezone
+
         return {
             "id": node.id,
             "labels": list(node.labels),
-            "properties": {k: self._convert_from_property_value(v) for k, v in node.properties.items()},
-            "created_at": datetime.fromtimestamp(node.created_at_ms / 1000, tz=timezone.utc).isoformat() if node.created_at_ms else None,
-            "updated_at": datetime.fromtimestamp(node.updated_at_ms / 1000, tz=timezone.utc).isoformat() if node.updated_at_ms else None
+            "properties": {
+                k: self._convert_from_property_value(v)
+                for k, v in node.properties.items()
+            },
+            "created_at": (
+                datetime.fromtimestamp(
+                    node.created_at_ms / 1000, tz=timezone.utc
+                ).isoformat()
+                if node.created_at_ms
+                else None
+            ),
+            "updated_at": (
+                datetime.fromtimestamp(
+                    node.updated_at_ms / 1000, tz=timezone.utc
+                ).isoformat()
+                if node.updated_at_ms
+                else None
+            ),
         }
 
     def _convert_edge_from_proto(self, edge) -> Dict[str, Any]:
         """Convert Edge proto to dictionary"""
         from datetime import datetime, timezone
+
         return {
             "id": edge.id,
             "from_node_id": edge.from_node_id,
             "to_node_id": edge.to_node_id,
             "edge_type": edge.edge_type,
-            "properties": {k: self._convert_from_property_value(v) for k, v in edge.properties.items()},
-            "weight": edge.weight if edge.HasField('weight') else None,
-            "created_at": datetime.fromtimestamp(edge.created_at_ms / 1000, tz=timezone.utc).isoformat() if edge.created_at_ms else None,
-            "updated_at": datetime.fromtimestamp(edge.updated_at_ms / 1000, tz=timezone.utc).isoformat() if edge.updated_at_ms else None
+            "properties": {
+                k: self._convert_from_property_value(v)
+                for k, v in edge.properties.items()
+            },
+            "weight": edge.weight if edge.HasField("weight") else None,
+            "created_at": (
+                datetime.fromtimestamp(
+                    edge.created_at_ms / 1000, tz=timezone.utc
+                ).isoformat()
+                if edge.created_at_ms
+                else None
+            ),
+            "updated_at": (
+                datetime.fromtimestamp(
+                    edge.updated_at_ms / 1000, tz=timezone.utc
+                ).isoformat()
+                if edge.updated_at_ms
+                else None
+            ),
         }
 
     def _convert_path_from_proto(self, path) -> List[str]:
         """Convert GraphPath proto to list of node IDs"""
-        if hasattr(path, 'node_ids'):
+        if hasattr(path, "node_ids"):
             return list(path.node_ids)
         else:
             return []
@@ -1280,7 +1412,7 @@ class ProximaDBSyncGrpcClient:
         labels: List[str],
         properties: Optional[Dict[str, Any]] = None,
         embedding: Optional[List[float]] = None,
-        graph_id: str = "default"
+        graph_id: str = "default",
     ) -> Dict[str, Any]:
         """Create a graph node via gRPC
 
@@ -1295,9 +1427,13 @@ class ProximaDBSyncGrpcClient:
             Dictionary representation of the created node
         """
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
         if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
-            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
 
         def _op(channel):
             stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
@@ -1308,9 +1444,7 @@ class ProximaDBSyncGrpcClient:
                     node_properties[key] = self._convert_to_property_value(value)
 
             node = v1_graph_pb2.Node(
-                id=node_id,
-                labels=labels,
-                properties=node_properties
+                id=node_id, labels=labels, properties=node_properties
             )
 
             request = v1_graph_pb2.CreateNodeRequest(graph_id=graph_id, node=node)
@@ -1335,7 +1469,7 @@ class ProximaDBSyncGrpcClient:
         edge_type: str,
         properties: Optional[Dict[str, Any]] = None,
         weight: Optional[float] = None,
-        graph_id: str = "default"
+        graph_id: str = "default",
     ) -> Dict[str, Any]:
         """Create a graph edge via gRPC
 
@@ -1352,9 +1486,13 @@ class ProximaDBSyncGrpcClient:
             Dictionary representation of the created edge
         """
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
         if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
-            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
 
         def _op(channel):
             stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
@@ -1369,7 +1507,7 @@ class ProximaDBSyncGrpcClient:
                 from_node_id=from_node_id,
                 to_node_id=to_node_id,
                 edge_type=edge_type,
-                properties=edge_properties
+                properties=edge_properties,
             )
 
             if weight is not None:
@@ -1397,7 +1535,7 @@ class ProximaDBSyncGrpcClient:
         node_labels: Optional[List[str]] = None,
         algorithm: str = "BFS",
         limit: Optional[int] = None,
-        graph_id: str = "default"
+        graph_id: str = "default",
     ) -> Dict[str, Any]:
         """Traverse graph from a starting node via gRPC
 
@@ -1414,9 +1552,13 @@ class ProximaDBSyncGrpcClient:
             Dictionary with nodes, edges, paths, and traversal statistics
         """
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
         if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
-            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
 
         def _op(channel):
             stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
@@ -1434,7 +1576,7 @@ class ProximaDBSyncGrpcClient:
                 max_depth=max_depth,
                 edge_types=edge_types or [],
                 node_labels=node_labels or [],
-                algorithm=algorithm_enum
+                algorithm=algorithm_enum,
             )
 
             if limit is not None:
@@ -1443,15 +1585,37 @@ class ProximaDBSyncGrpcClient:
             response = stub.TraverseGraph(request, timeout=self.timeout)
 
             return {
-                "nodes": [self._convert_node_from_proto(node) for node in response.nodes],
-                "edges": [self._convert_edge_from_proto(edge) for edge in response.edges],
-                "paths": [self._convert_path_from_proto(path) for path in response.paths],
+                "nodes": [
+                    self._convert_node_from_proto(node) for node in response.nodes
+                ],
+                "edges": [
+                    self._convert_edge_from_proto(edge) for edge in response.edges
+                ],
+                "paths": [
+                    self._convert_path_from_proto(path) for path in response.paths
+                ],
                 "stats": {
-                    "nodes_visited": response.stats.nodes_visited if hasattr(response, 'stats') else 0,
-                    "edges_traversed": response.stats.edges_traversed if hasattr(response, 'stats') else 0,
-                    "max_depth_reached": response.stats.max_depth_reached if hasattr(response, 'stats') else 0,
-                    "execution_time_microseconds": response.stats.execution_time_microseconds if hasattr(response, 'stats') else 0
-                }
+                    "nodes_visited": (
+                        response.stats.nodes_visited
+                        if hasattr(response, "stats")
+                        else 0
+                    ),
+                    "edges_traversed": (
+                        response.stats.edges_traversed
+                        if hasattr(response, "stats")
+                        else 0
+                    ),
+                    "max_depth_reached": (
+                        response.stats.max_depth_reached
+                        if hasattr(response, "stats")
+                        else 0
+                    ),
+                    "execution_time_microseconds": (
+                        response.stats.execution_time_microseconds
+                        if hasattr(response, "stats")
+                        else 0
+                    ),
+                },
             }
 
         try:
@@ -1470,7 +1634,7 @@ class ProximaDBSyncGrpcClient:
         properties: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        graph_id: str = "default"
+        graph_id: str = "default",
     ) -> Dict[str, Any]:
         """Query nodes by labels and properties via gRPC
 
@@ -1485,9 +1649,13 @@ class ProximaDBSyncGrpcClient:
             Dictionary with success status, nodes list, and total count
         """
         if not GRPC_AVAILABLE:
-            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
         if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
-            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
 
         def _op(channel):
             stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
@@ -1495,16 +1663,16 @@ class ProximaDBSyncGrpcClient:
             filters = []
             if properties:
                 for key, value in properties.items():
-                    filters.append(v1_graph_pb2.PropertyFilter(
-                        key=key,
-                        operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
-                        value=self._convert_to_property_value(value)
-                    ))
+                    filters.append(
+                        v1_graph_pb2.PropertyFilter(
+                            key=key,
+                            operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
+                            value=self._convert_to_property_value(value),
+                        )
+                    )
 
             request = v1_graph_pb2.NodeQuery(
-                graph_id=graph_id,
-                labels=labels or [],
-                filters=filters
+                graph_id=graph_id, labels=labels or [], filters=filters
             )
 
             if limit is not None:
@@ -1514,9 +1682,11 @@ class ProximaDBSyncGrpcClient:
 
             response = stub.QueryNodes(request, timeout=self.timeout)
             return {
-                "success": response.success if hasattr(response, 'success') else True,
-                "nodes": [self._convert_node_from_proto(node) for node in response.nodes],
-                "total_count": len(response.nodes)
+                "success": response.success if hasattr(response, "success") else True,
+                "nodes": [
+                    self._convert_node_from_proto(node) for node in response.nodes
+                ],
+                "total_count": len(response.nodes),
             }
 
         try:
@@ -1528,7 +1698,6 @@ class ProximaDBSyncGrpcClient:
         except Exception as e:
             logger.error(f"gRPC query_nodes failed: {e}")
             raise ProximaDBError(f"query_nodes failed: {e}")
-
 
 
 # Alias for consistency

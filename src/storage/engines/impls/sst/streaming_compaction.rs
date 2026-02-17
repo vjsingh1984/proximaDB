@@ -28,15 +28,20 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Ultra-fast streaming compactor using VectorRecord natively
 pub struct StreamingCompactor {
+    /// Filesystem factory for I/O operations
     filesystem: Arc<FilesystemFactory>,
+    /// Block size for compaction
     block_size: usize,
 }
 
 /// Record with merge priority for K-way merge
 #[derive(Debug, Clone)]
 struct MergeRecord {
+    /// The vector record
     record: VectorRecord,
+    /// Index of the file this record came from
     file_index: usize,
+    /// Sequence number for ordering
     sequence: u64,
 }
 
@@ -146,9 +151,12 @@ impl StreamingCompactor {
                 format!("file://{}", input_file)
             };
 
-            let fs = self.filesystem.get_filesystem(&file_url)?;
-            if let Ok(metadata) = fs.metadata(input_file).await {
-                total_input_size += metadata.size;
+            let _fs = self.filesystem.get_filesystem(&file_url)?;
+            // Note: Using input_file directly for metadata since file_url may have different scheme
+            if let Ok(fs) = self.filesystem.get_filesystem(input_file) {
+                if let Ok(metadata) = fs.metadata(input_file).await {
+                    total_input_size += metadata.size;
+                }
             }
 
             // Create streaming reader - for compaction, we use unified caching filesystem
@@ -298,9 +306,9 @@ impl StreamingCompactor {
     /// Get first record from a file for K-way merge initialization
     async fn get_first_record_from_file(
         &self,
-        reader: &UnifiedSstableReader,
-        file_path: &str,
-        file_index: usize,
+        _reader: &UnifiedSstableReader,
+        _file_path: &str,
+        _file_index: usize,
     ) -> Result<Option<MergeRecord>> {
         // Use unified reader to get first record
         // This is a simplified version - in reality we'd use streaming iteration
@@ -313,9 +321,9 @@ impl StreamingCompactor {
     /// Advance stream for a specific file in K-way merge
     async fn advance_stream(
         &self,
-        file_streams: &mut Vec<(UnifiedSstableReader, String, Option<MergeRecord>, u64)>,
-        merge_heap: &mut BinaryHeap<Reverse<MergeRecord>>,
-        file_index: usize,
+        _file_streams: &mut Vec<(UnifiedSstableReader, String, Option<MergeRecord>, u64)>,
+        _merge_heap: &mut BinaryHeap<Reverse<MergeRecord>>,
+        _file_index: usize,
     ) -> Result<()> {
         // Get next record from the specified file stream
         // TODO: Implement actual streaming advancement
@@ -326,7 +334,7 @@ impl StreamingCompactor {
     /// Flush batch using fast streaming approach
     async fn flush_batch_streaming(
         &self,
-        writer: &SstableWriter,
+        _writer: &SstableWriter,
         output_records: &mut Vec<(String, VectorRecord)>,
     ) -> Result<()> {
         if output_records.is_empty() {

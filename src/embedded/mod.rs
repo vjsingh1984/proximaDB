@@ -632,6 +632,7 @@ pub struct EmbeddedProximaDB {
     /// Checkpoint manager for incremental persistence
     checkpoint_manager: std::sync::Arc<CheckpointManager>,
     /// File lock manager for multi-process coordination
+    #[allow(dead_code)]
     lock_manager: Option<FileLockManager>,
     /// Leader election for leader/follower mode
     leader_election: Option<LeaderElection>,
@@ -1761,7 +1762,7 @@ impl EmbeddedProximaDB {
         // Explicitly typed as Result<u64, E> to capture bytes written for metrics
         let result: Result<u64, Box<dyn std::error::Error + Send + Sync>> = self.runtime.block_on(async {
             use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
-            use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+            use crate::storage::traits::FlushParameters;
             use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment};
 
             tracing::info!("🛑 EMBEDDED: Flushing all unflushed data to storage engines...");
@@ -2562,8 +2563,6 @@ impl EmbeddedProximaDB {
     ) -> Result<CheckpointInfo, Box<dyn std::error::Error + Send + Sync>> {
         // Check write access before creating checkpoint
         self.check_write_access()?;
-
-        use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
         self.runtime.block_on(async {
             // First, flush all pending writes to ensure checkpoint captures current state
@@ -4954,6 +4953,11 @@ pub struct UnifiedQueryPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    // ========================================================================
+    // StorageLocationConfig Tests
+    // ========================================================================
 
     #[test]
     fn test_storage_location_url_conversion() {
@@ -4969,14 +4973,6 @@ mod tests {
     }
 
     #[test]
-    fn test_embedded_config_default() {
-        let config = EmbeddedConfig::default();
-        assert_eq!(config.cache_size_mb, 512);
-        assert_eq!(config.default_engine, "sst");
-        assert!(config.enable_wal);
-    }
-
-    #[test]
     fn test_storage_location_builder() {
         let loc = StorageLocationConfig::new("/data")
             .with_weight(2)
@@ -4984,5 +4980,491 @@ mod tests {
 
         assert_eq!(loc.weight, 2);
         assert!(loc.tags.contains(&"hot".to_string()));
+    }
+
+    #[test]
+    fn test_storage_location_default_values() {
+        let loc = StorageLocationConfig::new("/data");
+        assert_eq!(loc.path, "/data");
+        assert_eq!(loc.weight, 1);
+        assert!(loc.tags.is_empty());
+    }
+
+    #[test]
+    fn test_storage_location_multiple_tags() {
+        let loc = StorageLocationConfig::new("/fast-storage")
+            .with_tag("hot")
+            .with_tag("nvme")
+            .with_tag("primary");
+
+        assert_eq!(loc.tags.len(), 3);
+        assert!(loc.tags.contains(&"hot".to_string()));
+        assert!(loc.tags.contains(&"nvme".to_string()));
+        assert!(loc.tags.contains(&"primary".to_string()));
+    }
+
+    #[test]
+    fn test_storage_location_high_weight() {
+        let loc = StorageLocationConfig::new("/high-capacity").with_weight(10);
+        assert_eq!(loc.weight, 10);
+    }
+
+    // ========================================================================
+    // EmbeddedConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_embedded_config_default() {
+        let config = EmbeddedConfig::default();
+        assert_eq!(config.cache_size_mb, 512);
+        assert_eq!(config.default_engine, "sst");
+        assert!(config.enable_wal);
+        assert_eq!(config.wal_sync_mode, "batch");
+        assert_eq!(config.block_prune_mode, "sqrt");
+        assert!(config.enable_rl_planner);
+        assert!(config.rl_policy_path.is_none());
+        assert_eq!(config.access_mode, AccessMode::Exclusive);
+        assert!(config.node_id.is_none());
+    }
+
+    #[test]
+    fn test_embedded_config_storage_locations_default() {
+        let config = EmbeddedConfig::default();
+        assert_eq!(config.storage_locations.len(), 1);
+        assert_eq!(config.storage_locations[0].path, "./data");
+        assert_eq!(config.storage_locations[0].weight, 1);
+    }
+
+    #[test]
+    fn test_embedded_config_for_benchmarks() {
+        let config = EmbeddedConfig::for_benchmarks("/tmp/bench");
+        assert_eq!(config.cache_size_mb, 1024);
+        assert_eq!(config.default_engine, "sst");
+        assert!(config.enable_wal);
+        assert_eq!(config.wal_sync_mode, "batch");
+        assert!(config.enable_rl_planner);
+        assert_eq!(config.storage_locations[0].path, "/tmp/bench");
+        assert!(
+            config.storage_locations[0]
+                .tags
+                .contains(&"benchmark".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_config_for_low_memory() {
+        let config = EmbeddedConfig::for_low_memory("/tmp/lowmem");
+        assert_eq!(config.cache_size_mb, 128);
+        assert!(!config.enable_rl_planner);
+        assert_eq!(config.storage_locations[0].path, "/tmp/lowmem");
+    }
+
+    #[test]
+    fn test_embedded_config_with_access_mode() {
+        let config = EmbeddedConfig::default().with_access_mode(AccessMode::SharedRead);
+        assert_eq!(config.access_mode, AccessMode::SharedRead);
+    }
+
+    #[test]
+    fn test_embedded_config_with_node_id() {
+        let config = EmbeddedConfig::default().with_node_id("node-123");
+        assert_eq!(config.node_id, Some("node-123".to_string()));
+    }
+
+    #[test]
+    fn test_embedded_config_chained_builders() {
+        let config = EmbeddedConfig::default()
+            .with_access_mode(AccessMode::LeaderFollower)
+            .with_node_id("leader-node");
+        assert_eq!(config.access_mode, AccessMode::LeaderFollower);
+        assert_eq!(config.node_id, Some("leader-node".to_string()));
+    }
+
+    // ========================================================================
+    // GraphNode Tests
+    // ========================================================================
+
+    #[test]
+    fn test_graph_node_creation() {
+        let node = GraphNode::new("node_1");
+        assert_eq!(node.id, "node_1");
+        assert!(node.labels.is_empty());
+        assert!(node.properties.is_empty());
+    }
+
+    #[test]
+    fn test_graph_node_with_label() {
+        let node = GraphNode::new("user_1").with_label("Person");
+        assert_eq!(node.labels.len(), 1);
+        assert!(node.labels.contains(&"Person".to_string()));
+    }
+
+    #[test]
+    fn test_graph_node_multiple_labels() {
+        let node = GraphNode::new("entity_1")
+            .with_label("Person")
+            .with_label("Employee")
+            .with_label("Manager");
+        assert_eq!(node.labels.len(), 3);
+        assert!(node.labels.contains(&"Person".to_string()));
+        assert!(node.labels.contains(&"Employee".to_string()));
+        assert!(node.labels.contains(&"Manager".to_string()));
+    }
+
+    #[test]
+    fn test_graph_node_with_property() {
+        let node = GraphNode::new("user_1").with_property("name", "Alice");
+        assert_eq!(node.properties.get("name"), Some(&"Alice".to_string()));
+    }
+
+    #[test]
+    fn test_graph_node_multiple_properties() {
+        let node = GraphNode::new("user_1")
+            .with_property("name", "Alice")
+            .with_property("email", "alice@example.com")
+            .with_property("age", "30");
+        assert_eq!(node.properties.len(), 3);
+        assert_eq!(node.properties.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(
+            node.properties.get("email"),
+            Some(&"alice@example.com".to_string())
+        );
+        assert_eq!(node.properties.get("age"), Some(&"30".to_string()));
+    }
+
+    #[test]
+    fn test_graph_node_builder_chain() {
+        let node = GraphNode::new("func_main")
+            .with_label("function")
+            .with_label("public")
+            .with_property("name", "main")
+            .with_property("file", "main.rs")
+            .with_property("line", "10");
+
+        assert_eq!(node.id, "func_main");
+        assert_eq!(node.labels.len(), 2);
+        assert_eq!(node.properties.len(), 3);
+    }
+
+    #[test]
+    fn test_graph_node_to_proto() {
+        let node = GraphNode::new("test_node")
+            .with_label("TestLabel")
+            .with_property("key", "value");
+
+        let proto = node.to_proto();
+        assert_eq!(proto.id, "test_node");
+        assert!(proto.labels.contains(&"TestLabel".to_string()));
+        assert!(proto.properties.contains_key("key"));
+    }
+
+    #[test]
+    fn test_graph_node_clone() {
+        let node = GraphNode::new("original")
+            .with_label("Label")
+            .with_property("prop", "value");
+
+        let cloned = node.clone();
+        assert_eq!(cloned.id, node.id);
+        assert_eq!(cloned.labels, node.labels);
+        assert_eq!(cloned.properties, node.properties);
+    }
+
+    // ========================================================================
+    // GraphEdge Tests
+    // ========================================================================
+
+    #[test]
+    fn test_graph_edge_creation() {
+        let edge = GraphEdge::new("node_a", "node_b", "KNOWS");
+        assert_eq!(edge.from_node_id, "node_a");
+        assert_eq!(edge.to_node_id, "node_b");
+        assert_eq!(edge.edge_type, "KNOWS");
+        assert!(edge.id.is_none());
+        assert!(edge.weight.is_none());
+        assert!(edge.properties.is_empty());
+    }
+
+    #[test]
+    fn test_graph_edge_with_id() {
+        let edge = GraphEdge::new("a", "b", "REL").with_id("edge_123");
+        assert_eq!(edge.id, Some("edge_123".to_string()));
+    }
+
+    #[test]
+    fn test_graph_edge_with_weight() {
+        let edge = GraphEdge::new("a", "b", "WEIGHTED").with_weight(0.75);
+        assert_eq!(edge.weight, Some(0.75));
+    }
+
+    #[test]
+    fn test_graph_edge_with_property() {
+        let edge = GraphEdge::new("a", "b", "RELATIONSHIP").with_property("since", "2024");
+        assert_eq!(edge.properties.get("since"), Some(&"2024".to_string()));
+    }
+
+    #[test]
+    fn test_graph_edge_builder_chain() {
+        let edge = GraphEdge::new("user_1", "user_2", "FOLLOWS")
+            .with_id("follow_edge")
+            .with_weight(1.0)
+            .with_property("timestamp", "2024-01-01")
+            .with_property("source", "web");
+
+        assert_eq!(edge.from_node_id, "user_1");
+        assert_eq!(edge.to_node_id, "user_2");
+        assert_eq!(edge.edge_type, "FOLLOWS");
+        assert_eq!(edge.id, Some("follow_edge".to_string()));
+        assert_eq!(edge.weight, Some(1.0));
+        assert_eq!(edge.properties.len(), 2);
+    }
+
+    #[test]
+    fn test_graph_edge_generated_id() {
+        let edge = GraphEdge::new("a", "b", "TYPE");
+        // Test the generated_id method indirectly via to_proto
+        let proto = edge.to_proto();
+        assert_eq!(proto.id, "a->b:TYPE");
+    }
+
+    #[test]
+    fn test_graph_edge_to_proto() {
+        let edge = GraphEdge::new("from", "to", "REL")
+            .with_weight(0.5)
+            .with_property("key", "value");
+
+        let proto = edge.to_proto();
+        assert_eq!(proto.from_node_id, "from");
+        assert_eq!(proto.to_node_id, "to");
+        assert_eq!(proto.edge_type, "REL");
+        assert_eq!(proto.weight, Some(0.5));
+    }
+
+    #[test]
+    fn test_graph_edge_clone() {
+        let edge = GraphEdge::new("a", "b", "TYPE")
+            .with_weight(0.8)
+            .with_property("key", "value");
+
+        let cloned = edge.clone();
+        assert_eq!(cloned.from_node_id, edge.from_node_id);
+        assert_eq!(cloned.to_node_id, edge.to_node_id);
+        assert_eq!(cloned.edge_type, edge.edge_type);
+        assert_eq!(cloned.weight, edge.weight);
+    }
+
+    // ========================================================================
+    // SearchResult Tests
+    // ========================================================================
+
+    #[test]
+    fn test_search_result_creation() {
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), "technology".to_string());
+
+        let result = SearchResult {
+            id: "vec_123".to_string(),
+            score: 0.95,
+            metadata,
+        };
+
+        assert_eq!(result.id, "vec_123");
+        assert!((result.score - 0.95).abs() < f32::EPSILON);
+        assert_eq!(
+            result.metadata.get("category"),
+            Some(&"technology".to_string())
+        );
+    }
+
+    #[test]
+    fn test_search_result_empty_metadata() {
+        let result = SearchResult {
+            id: "id".to_string(),
+            score: 0.5,
+            metadata: HashMap::new(),
+        };
+        assert!(result.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_search_result_clone() {
+        let mut metadata = HashMap::new();
+        metadata.insert("key".to_string(), "value".to_string());
+
+        let result = SearchResult {
+            id: "original".to_string(),
+            score: 0.75,
+            metadata,
+        };
+
+        let cloned = result.clone();
+        assert_eq!(cloned.id, result.id);
+        assert_eq!(cloned.score, result.score);
+        assert_eq!(cloned.metadata, result.metadata);
+    }
+
+    // ========================================================================
+    // CollectionInfo Tests
+    // ========================================================================
+
+    #[test]
+    fn test_collection_info_creation() {
+        let info = CollectionInfo {
+            name: "my_collection".to_string(),
+            dimension: 768,
+            vector_count: 10000,
+            engine: "sst".to_string(),
+            disk_usage_bytes: 1024 * 1024 * 100,
+        };
+
+        assert_eq!(info.name, "my_collection");
+        assert_eq!(info.dimension, 768);
+        assert_eq!(info.vector_count, 10000);
+        assert_eq!(info.engine, "sst");
+        assert_eq!(info.disk_usage_bytes, 104857600);
+    }
+
+    #[test]
+    fn test_collection_info_clone() {
+        let info = CollectionInfo {
+            name: "test".to_string(),
+            dimension: 256,
+            vector_count: 500,
+            engine: "helix".to_string(),
+            disk_usage_bytes: 1000,
+        };
+
+        let cloned = info.clone();
+        assert_eq!(cloned.name, info.name);
+        assert_eq!(cloned.dimension, info.dimension);
+    }
+
+    // ========================================================================
+    // StorageStats Tests
+    // ========================================================================
+
+    #[test]
+    fn test_storage_stats_creation() {
+        let stats = StorageStats {
+            total_vectors: 50000,
+            total_collections: 5,
+            disk_usage_bytes: 1024 * 1024 * 500,
+            cache_hit_rate: 0.85,
+        };
+
+        assert_eq!(stats.total_vectors, 50000);
+        assert_eq!(stats.total_collections, 5);
+        assert!((stats.cache_hit_rate - 0.85).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_storage_stats_empty() {
+        let stats = StorageStats {
+            total_vectors: 0,
+            total_collections: 0,
+            disk_usage_bytes: 0,
+            cache_hit_rate: 0.0,
+        };
+
+        assert_eq!(stats.total_vectors, 0);
+        assert_eq!(stats.total_collections, 0);
+    }
+
+    #[test]
+    fn test_storage_stats_clone() {
+        let stats = StorageStats {
+            total_vectors: 1000,
+            total_collections: 2,
+            disk_usage_bytes: 5000,
+            cache_hit_rate: 0.9,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.total_vectors, stats.total_vectors);
+        assert_eq!(cloned.cache_hit_rate, stats.cache_hit_rate);
+    }
+
+    // ========================================================================
+    // GraphStats Tests
+    // ========================================================================
+
+    #[test]
+    fn test_graph_stats_creation() {
+        let stats = GraphStats {
+            total_nodes: 1000,
+            total_edges: 5000,
+        };
+
+        assert_eq!(stats.total_nodes, 1000);
+        assert_eq!(stats.total_edges, 5000);
+    }
+
+    #[test]
+    fn test_graph_stats_empty() {
+        let stats = GraphStats {
+            total_nodes: 0,
+            total_edges: 0,
+        };
+
+        assert_eq!(stats.total_nodes, 0);
+        assert_eq!(stats.total_edges, 0);
+    }
+
+    #[test]
+    fn test_graph_stats_clone() {
+        let stats = GraphStats {
+            total_nodes: 100,
+            total_edges: 500,
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.total_nodes, stats.total_nodes);
+        assert_eq!(cloned.total_edges, stats.total_edges);
+    }
+
+    // ========================================================================
+    // AccessMode Tests (from coordination module, but used in EmbeddedConfig)
+    // ========================================================================
+
+    #[test]
+    fn test_access_mode_equality() {
+        assert_eq!(AccessMode::Exclusive, AccessMode::Exclusive);
+        assert_eq!(AccessMode::SharedRead, AccessMode::SharedRead);
+        assert_eq!(AccessMode::LeaderFollower, AccessMode::LeaderFollower);
+        assert_ne!(AccessMode::Exclusive, AccessMode::SharedRead);
+    }
+
+    #[test]
+    fn test_access_mode_can_write() {
+        assert!(AccessMode::Exclusive.can_write());
+        assert!(!AccessMode::SharedRead.can_write());
+        assert!(AccessMode::LeaderFollower.can_write());
+    }
+
+    // ========================================================================
+    // CacheStatsSnapshot Tests (internal type)
+    // ========================================================================
+
+    #[test]
+    fn test_cache_stats_snapshot_creation() {
+        let snapshot = CacheStatsSnapshot {
+            entries: 1000,
+            memory_bytes: 1024 * 1024,
+        };
+
+        assert_eq!(snapshot.entries, 1000);
+        assert_eq!(snapshot.memory_bytes, 1048576);
+    }
+
+    #[test]
+    fn test_cache_stats_snapshot_clone() {
+        let snapshot = CacheStatsSnapshot {
+            entries: 500,
+            memory_bytes: 2048,
+        };
+
+        let cloned = snapshot.clone();
+        assert_eq!(cloned.entries, snapshot.entries);
+        assert_eq!(cloned.memory_bytes, snapshot.memory_bytes);
     }
 }

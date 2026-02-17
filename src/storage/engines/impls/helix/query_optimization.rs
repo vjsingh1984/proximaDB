@@ -168,8 +168,8 @@ struct CachedResult {
     results: Vec<OptimizedSearchRecord>,
     /// Cache timestamp
     cached_at: Instant,
-    /// Files accessed for this query
-    accessed_files: Vec<String>,
+    /// Files accessed for this query (stored for potential future use in dependency tracking)
+    _accessed_files: Vec<String>,
 }
 
 impl SmartResultCache {
@@ -213,7 +213,7 @@ impl SmartResultCache {
         let cached_result = CachedResult {
             results,
             cached_at: Instant::now(),
-            accessed_files: accessed_files.clone(),
+            _accessed_files: accessed_files.clone(),
         };
 
         // Add to cache
@@ -298,13 +298,19 @@ pub struct QueryOptimizer {
 
 /// Query statistics for optimization decisions
 #[derive(Debug, Default, Clone)]
-struct QueryStats {
-    total_queries: u64,
-    cache_hits: u64,
-    cache_misses: u64,
-    prefetch_hits: u64,
-    prefetch_misses: u64,
-    avg_latency_ms: f64,
+pub struct QueryStats {
+    /// Total number of queries executed
+    pub total_queries: u64,
+    /// Number of cache hits
+    pub cache_hits: u64,
+    /// Number of cache misses
+    pub cache_misses: u64,
+    /// Number of successful prefetches
+    pub prefetch_hits: u64,
+    /// Number of missed prefetches
+    pub prefetch_misses: u64,
+    /// Average query latency in milliseconds
+    pub avg_latency_ms: f64,
 }
 
 impl QueryOptimizer {

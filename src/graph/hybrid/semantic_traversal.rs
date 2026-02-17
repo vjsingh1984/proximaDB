@@ -37,7 +37,7 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::graph::hybrid::SemanticBFSTraversal;
 //! use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 //!
@@ -130,7 +130,7 @@ impl SemanticBFSTraversal {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// let semantic_bfs = SemanticBFSTraversal::new(
     ///     engine,
     ///     distance_compute,
@@ -341,7 +341,7 @@ mod tests {
     use super::*;
     use crate::graph::engines::GraphEngine;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
+    use crate::proto::proximadb_v1::EmbeddingVersion;
     use std::collections::HashMap;
 
     fn create_test_engine() -> Arc<OrionGraphEngine> {

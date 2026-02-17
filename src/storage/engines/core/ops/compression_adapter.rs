@@ -246,7 +246,6 @@ impl UniversalCompressionAdapter {
     fn select_data_driven_algorithm(
         &self,
         characteristics: &DataCharacteristics,
-        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // High compressibility data
         if characteristics.compressibility == "high" {
@@ -270,7 +269,6 @@ impl UniversalCompressionAdapter {
     fn select_performance_driven_algorithm(
         &self,
         characteristics: &DataCharacteristics,
-        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // For large data, favor faster algorithms
         if characteristics.size > 1024 * 1024 {
@@ -289,7 +287,6 @@ impl UniversalCompressionAdapter {
     fn select_hardware_driven_algorithm(
         &self,
         _characteristics: &DataCharacteristics,
-        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // Use hardware-optimized algorithms when available
         if self.hardware.cpu.features.avx2_support {
@@ -304,10 +301,10 @@ impl UniversalCompressionAdapter {
     }
 
     /// Select algorithm using hybrid optimization
+    #[allow(dead_code)]
     fn select_hybrid_algorithm(
         &self,
         characteristics: &DataCharacteristics,
-        // fallback_algorithms removed -  &[CompressionAlgorithm],
     ) -> Option<CompressionAlgorithm> {
         // Combine data, performance, and hardware considerations
         let data_score = self.score_algorithm_for_data(characteristics);
@@ -341,6 +338,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Score algorithms for data characteristics
+    #[allow(dead_code)]
     fn score_algorithm_for_data(
         &self,
         characteristics: &DataCharacteristics,
@@ -368,6 +366,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Score algorithms for performance
+    #[allow(dead_code)]
     fn score_algorithm_for_performance(
         &self,
         characteristics: &DataCharacteristics,
@@ -390,6 +389,7 @@ impl UniversalCompressionAdapter {
     }
 
     /// Score algorithms for hardware capabilities
+    #[allow(dead_code)]
     fn score_algorithm_for_hardware(&self) -> HashMap<CompressionAlgorithm, f64> {
         let mut scores = HashMap::new();
 
@@ -464,7 +464,9 @@ pub struct CompressionMetadata {
 #[derive(Debug, Clone)]
 struct DataCharacteristics {
     size: usize,
+    #[allow(dead_code)]
     entropy: f64,
+    #[allow(dead_code)]
     repetitiveness: f64,
     compressibility: String,
     has_patterns: bool,
@@ -486,7 +488,7 @@ impl CompressionPerformanceStats {
     fn record_compression(
         &mut self,
         original_size: usize,
-        compressed_size: usize,
+        _compressed_size: usize,
         time: std::time::Duration,
         algorithm: CompressionAlgorithm,
     ) {
@@ -498,10 +500,10 @@ impl CompressionPerformanceStats {
 
     fn record_decompression(
         &mut self,
-        compressed_size: usize,
+        _compressed_size: usize,
         decompressed_size: usize,
         time: std::time::Duration,
-        algorithm: CompressionAlgorithm,
+        _algorithm: CompressionAlgorithm,
     ) {
         self.total_decompressions += 1;
         self.total_decompression_time_ms += time.as_millis() as u64;

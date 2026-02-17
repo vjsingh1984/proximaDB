@@ -81,6 +81,7 @@ pub struct SstManifest {
     /// Filesystem for I/O
     filesystem: Arc<FilesystemFactory>,
     /// Atomic coordinator for safe updates
+    #[allow(dead_code)]
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     /// Version history (limited to last N versions)
     version_history: Arc<RwLock<Vec<ManifestVersion>>>,

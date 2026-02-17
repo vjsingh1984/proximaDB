@@ -204,6 +204,7 @@ struct ProviderState {
     is_healthy: std::sync::atomic::AtomicBool,
 
     /// Last health check time
+    #[allow(dead_code)]
     last_health_check: RwLock<std::time::Instant>,
 }
 

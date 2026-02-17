@@ -18,11 +18,11 @@ Test procedure:
 - Verify data recovered from WAL
 """
 
+import json
 import os
+import subprocess
 import sys
 import time
-import subprocess
-import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -32,11 +32,13 @@ from proximadb_sdk.models import VectorRecord
 
 server_process = None
 
+
 def get_project_paths():
     """Get project paths"""
     test_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(test_dir, "../../../.."))
     return project_root
+
 
 def start_server():
     """Start server"""
@@ -59,11 +61,12 @@ def start_server():
         cwd=project_root,
         env={**os.environ, "RUST_LOG": "info"},
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stderr=subprocess.PIPE,
     )
 
     # Wait for server to be ready (poll health endpoint)
     import requests
+
     for i in range(30):  # Try for 30 seconds
         time.sleep(1)
         try:
@@ -76,6 +79,7 @@ def start_server():
 
     print("❌ Server failed to start after 30s")
     return False
+
 
 def stop_server():
     """Stop server"""
@@ -91,13 +95,14 @@ def stop_server():
         time.sleep(2)
         print("✅ Server stopped")
 
+
 def check_wal_files(storage_path, collection_id):
     """Check if WAL files exist at correct location"""
     print(f"\n📁 Checking WAL files...")
     print(f"   Storage path: {storage_path}")
 
     # Extract path from file:// URL
-    if storage_path.startswith('file://'):
+    if storage_path.startswith("file://"):
         base_path = storage_path[7:]
     else:
         base_path = storage_path
@@ -108,7 +113,7 @@ def check_wal_files(storage_path, collection_id):
     print(f"   WAL directory: {wal_dir}")
 
     if os.path.exists(wal_dir):
-        wal_files = [f for f in os.listdir(wal_dir) if f.endswith('.bcwal')]
+        wal_files = [f for f in os.listdir(wal_dir) if f.endswith(".bcwal")]
         print(f"✅ WAL directory exists")
         print(f"✅ Found {len(wal_files)} WAL files:")
         for f in wal_files[:5]:  # Show first 5
@@ -121,6 +126,7 @@ def check_wal_files(storage_path, collection_id):
     else:
         print(f"❌ WAL directory not found at: {wal_dir}")
         return False
+
 
 def test_wal_persistence():
     """Main test function"""
@@ -135,9 +141,9 @@ def test_wal_persistence():
     client = ProximaDBClient("http://localhost:5678", protocol="rest")
     collection_name = f"wal_test_{int(time.time())}"
 
-    #=========================
+    # =========================
     # Step 1: Create & Insert
-    #=========================
+    # =========================
     print("\n" + "=" * 80)
     print("STEP 1: Create Collection and Insert Data")
     print("=" * 80)
@@ -145,19 +151,19 @@ def test_wal_persistence():
     try:
         # Create collection
         collection = client.create_collection(
-            name=collection_name,
-            dimension=64,
-            storage_engine="sst"
+            name=collection_name, dimension=64, storage_engine="sst"
         )
 
         # Get storage path from collection
         storage_path = None
-        if hasattr(collection, 'storage_assignment'):
-            storage_path = collection.storage_assignment.get('primary_path')
+        if hasattr(collection, "storage_assignment"):
+            storage_path = collection.storage_assignment.get("primary_path")
         elif isinstance(collection, dict):
-            storage_path = collection.get('storage_assignment', {}).get('primary_path')
+            storage_path = collection.get("storage_assignment", {}).get("primary_path")
 
-        collection_id = collection.id if hasattr(collection, 'id') else collection.get('id')
+        collection_id = (
+            collection.id if hasattr(collection, "id") else collection.get("id")
+        )
 
         print(f"✅ Collection: {collection_name}")
         print(f"   ID: {collection_id}")
@@ -168,7 +174,7 @@ def test_wal_persistence():
             VectorRecord(
                 id=f"wal_vec_{i}",
                 vector=[float(i + j * 0.1) for j in range(64)],
-                metadata={"index": i, "test": "wal"}
+                metadata={"index": i, "test": "wal"},
             )
             for i in range(20)
         ]
@@ -187,9 +193,9 @@ def test_wal_persistence():
         stop_server()
         raise
 
-    #=========================
+    # =========================
     # Step 2: Restart Server
-    #=========================
+    # =========================
     print("\n" + "=" * 80)
     print("STEP 2: Restart Server")
     print("=" * 80)
@@ -201,9 +207,9 @@ def test_wal_persistence():
 
     client = ProximaDBClient("http://localhost:5678", protocol="rest")
 
-    #=========================
+    # =========================
     # Step 3: Verify Recovery
-    #=========================
+    # =========================
     print("\n" + "=" * 80)
     print("STEP 3: Verify Data Recovery")
     print("=" * 80)
@@ -215,8 +221,8 @@ def test_wal_persistence():
         # Check collection exists
         collections = client.list_collections()
         for c in collections:
-            name = c.config.name if hasattr(c, 'config') else c.get('name', '')
-            cid = c.id if hasattr(c, 'id') else c.get('id', '')
+            name = c.config.name if hasattr(c, "config") else c.get("name", "")
+            cid = c.id if hasattr(c, "id") else c.get("id", "")
             if name == collection_name or cid == collection_id:
                 collection_found = True
                 print(f"✅ Collection recovered: {collection_name}")
@@ -228,9 +234,7 @@ def test_wal_persistence():
         # Search for vectors
         if collection_found:
             search_results = client.search(
-                collection_id=collection_name,
-                vector=[0.5] * 64,
-                top_k=20
+                collection_id=collection_name, vector=[0.5] * 64, top_k=20
             )
             recovered_vectors = len(search_results)
             print(f"✅ Recovered {recovered_vectors}/20 vectors")
@@ -245,16 +249,18 @@ def test_wal_persistence():
     except Exception as e:
         print(f"❌ Recovery verification failed: {e}")
 
-    #=========================
+    # =========================
     # Final Report
-    #=========================
+    # =========================
     print("\n" + "=" * 80)
     print("TEST RESULTS")
     print("=" * 80)
 
     print(f"\n📊 Recovery Status:")
     print(f"   Collection: {'✅ Recovered' if collection_found else '❌ Lost'}")
-    print(f"   Vectors: {recovered_vectors}/20 recovered ({recovered_vectors/20*100:.0f}%)")
+    print(
+        f"   Vectors: {recovered_vectors}/20 recovered ({recovered_vectors/20*100:.0f}%)"
+    )
 
     if collection_found and recovered_vectors >= 18:
         print(f"\n✅ SUCCESS: WAL persistence working correctly!")
@@ -278,6 +284,7 @@ def test_wal_persistence():
     assert recovered_vectors >= 18, f"Expected >=18 vectors, got {recovered_vectors}"
 
     return success
+
 
 if __name__ == "__main__":
     success = test_wal_persistence()

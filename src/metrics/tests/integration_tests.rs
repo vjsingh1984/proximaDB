@@ -2,17 +2,13 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::{
-        MetricsConfig,
-        store::MetricsPersistenceLayer,
-        updater::{
-            CompactionMetricsUpdate, FlushMetricsUpdate, InternalMetricsUpdater,
-            MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
-        },
-    };
+    use super::super::super::{MetricsConfig, store::MetricsPersistenceLayer};
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::metrics::InternalMetricsUpdater;
+    use crate::metrics::updater::{
+        MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
+    };
     use crate::proto::proximadb_v1::VectorRecord;
-    use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -29,7 +25,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
-    use tracing::{debug, error, info};
+    use tracing::{debug, info};
 
     /// Mock storage engine for integration testing
     #[derive(Debug, Clone)]

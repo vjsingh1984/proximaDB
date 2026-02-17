@@ -591,7 +591,7 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 
         // Add vector column if present in schema and requested
         if self.include_vectors && self.vector_dimension().is_some() {
-            let dimension = self.vector_dimension().unwrap() as i32;
+            let _dimension = self.vector_dimension().unwrap() as i32;
 
             // Store as FixedSizeListArray - each row contains one vector
             let vector_array = self.build_vector_array(records)?;

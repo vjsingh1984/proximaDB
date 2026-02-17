@@ -26,18 +26,21 @@ __all__ = [
 def get_rest_adapter():
     """Get REST adapter class (lazy import)."""
     from .rest_adapter import RestProtocolAdapter
+
     return RestProtocolAdapter
 
 
 def get_grpc_adapter():
     """Get gRPC adapter class (lazy import)."""
     from .grpc_adapter import GrpcProtocolAdapter
+
     return GrpcProtocolAdapter
 
 
 def get_embedded_adapter():
     """Get embedded adapter class (lazy import)."""
     from .embedded_adapter import EmbeddedProtocolAdapter
+
     return EmbeddedProtocolAdapter
 
 
@@ -56,19 +59,19 @@ def create_adapter(protocol: str, **kwargs) -> BaseProtocolAdapter:
     """
     protocol = protocol.lower()
 
-    if protocol == 'embedded':
+    if protocol == "embedded":
         adapter_cls = get_embedded_adapter()
         return adapter_cls(**kwargs)
 
-    elif protocol == 'grpc':
+    elif protocol == "grpc":
         adapter_cls = get_grpc_adapter()
         return adapter_cls(**kwargs)
 
-    elif protocol == 'rest':
+    elif protocol == "rest":
         adapter_cls = get_rest_adapter()
         return adapter_cls(**kwargs)
 
-    elif protocol == 'auto':
+    elif protocol == "auto":
         # Try gRPC first, fallback to REST
         try:
             adapter_cls = get_grpc_adapter()
@@ -78,19 +81,24 @@ def create_adapter(protocol: str, **kwargs) -> BaseProtocolAdapter:
             return adapter_cls(**kwargs)
 
     else:
-        raise ValueError(f"Unknown protocol: {protocol}. Supported: rest, grpc, embedded, auto")
+        raise ValueError(
+            f"Unknown protocol: {protocol}. Supported: rest, grpc, embedded, auto"
+        )
 
 
 # Lazy class imports for direct class access
 def __getattr__(name):
     """Lazy loading of adapter classes."""
-    if name == 'RestProtocolAdapter':
+    if name == "RestProtocolAdapter":
         from .rest_adapter import RestProtocolAdapter
+
         return RestProtocolAdapter
-    elif name == 'GrpcProtocolAdapter':
+    elif name == "GrpcProtocolAdapter":
         from .grpc_adapter import GrpcProtocolAdapter
+
         return GrpcProtocolAdapter
-    elif name == 'EmbeddedProtocolAdapter':
+    elif name == "EmbeddedProtocolAdapter":
         from .embedded_adapter import EmbeddedProtocolAdapter
+
         return EmbeddedProtocolAdapter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

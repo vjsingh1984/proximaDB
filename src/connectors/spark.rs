@@ -275,14 +275,19 @@ impl SparkScanBuilder {
 /// Spark PartitionReader - reads data from a single partition
 pub struct SparkPartitionReader {
     /// Partition being read
+    #[allow(dead_code)]
     partition: SparkInputPartition,
     /// Current split index
+    #[allow(dead_code)]
     current_split: usize,
     /// Batch size
+    #[allow(dead_code)]
     batch_size: usize,
     /// Records read so far
+    #[allow(dead_code)]
     records_read: usize,
     /// Whether reader is exhausted
+    #[allow(dead_code)]
     exhausted: bool,
 }
 
@@ -383,16 +388,22 @@ impl SparkWriteBuilder {
 /// Spark DataWriter - writes data from a single Spark task
 pub struct SparkDataWriter {
     /// Table name
+    #[allow(dead_code)]
     table_name: String,
     /// Schema
+    #[allow(dead_code)]
     schema: Arc<ArrowSchema>,
     /// Partition ID (task ID)
+    #[allow(dead_code)]
     partition_id: i32,
     /// Records written
+    #[allow(dead_code)]
     records_written: usize,
     /// Bytes written
+    #[allow(dead_code)]
     bytes_written: usize,
     /// Files created
+    #[allow(dead_code)]
     files_created: Vec<String>,
 }
 

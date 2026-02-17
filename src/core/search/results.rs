@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Convert SqlValue map to serde_json::Value map for compatibility
+#[allow(dead_code)]
 fn convert_sql_value_map_to_json_map(
     sql_map: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
 ) -> HashMap<String, serde_json::Value> {
@@ -36,6 +37,7 @@ fn convert_sql_value_map_to_json_map(
 }
 
 /// Convert serde_json::Value map to SqlValue map for compatibility
+#[allow(dead_code)]
 fn convert_json_map_to_sql_value_map(
     json_map: HashMap<String, serde_json::Value>,
 ) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
@@ -291,6 +293,7 @@ mod arc_slice_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
 
+    #[allow(dead_code)]
     pub fn serialize<S>(
         results: &Arc<[OptimizedSearchRecord]>,
         serializer: S,
@@ -301,6 +304,7 @@ mod arc_slice_serde {
         results.as_ref().serialize(serializer)
     }
 
+    #[allow(dead_code)]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[OptimizedSearchRecord]>, D::Error>
     where
         D: Deserializer<'de>,

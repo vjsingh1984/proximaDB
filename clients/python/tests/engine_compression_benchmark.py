@@ -28,6 +28,7 @@ import numpy as np
 # Try importing ProximaDB native module
 try:
     import proximadb_sdk
+
     PROXIMADB_AVAILABLE = True
     print(f"ProximaDB v{proximadb.__version__} loaded")
 except ImportError:
@@ -180,7 +181,9 @@ def run_comprehensive_benchmark(batch_sizes: List[int]):
     print("PROXIMADB ENGINE & COMPRESSION COMPREHENSIVE BENCHMARK")
     print("=" * 100)
     print()
-    print("Testing: All 6 storage engines with engine-specific compression configurations")
+    print(
+        "Testing: All 6 storage engines with engine-specific compression configurations"
+    )
     print("Batch sizes:", ", ".join(f"{s:,}" for s in batch_sizes))
     print("Metrics: Insert throughput, search latency, storage size, compression ratio")
     print()

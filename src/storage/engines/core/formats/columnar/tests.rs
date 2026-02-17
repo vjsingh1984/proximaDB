@@ -10,15 +10,12 @@
 use super::*;
 use crate::proto::proximadb_v1::{QuantizationConfig, SqlValue, VectorRecord};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
-use tokio;
 // Import column constants
 use super::constants::{FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32};
 use super::create_columnar_schema;
-use super::{FilterCondition, FilterLogic, MetadataFilter as ColumnarMetadataFilter};
 use super::{OptimizationRecommendations, QuantizationStrategy, QueryPattern, StorageBudget};
 use super::{ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader};
 
@@ -727,7 +724,7 @@ async fn test_dictionary_encoding_optimization() {
             "test".to_string(),
         ),
     );
-    let reader = UnifiedParquetReader::new(
+    let _reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         128,
         filesystem.clone(),
@@ -833,7 +830,7 @@ async fn test_customer_api_compatibility() {
             "test".to_string(),
         ),
     );
-    let reader = UnifiedParquetReader::new(
+    let _reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         384,
         filesystem.clone(),
@@ -949,7 +946,7 @@ async fn test_row_group_offset_optimization() {
             "test".to_string(),
         ),
     );
-    let reader = UnifiedParquetReader::new(
+    let _reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         128,
         filesystem.clone(),
@@ -1167,6 +1164,7 @@ fn test_optimization_recommendations_preserve_id_column() {
 }
 
 // Helper function to convert Arrow RecordBatch to VectorRecord for testing
+#[allow(dead_code)]
 fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<VectorRecord> {
     let mut records = Vec::new();
 

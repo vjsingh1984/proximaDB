@@ -77,7 +77,9 @@ pub enum AuditStorageBackend {
 /// Encryption key for sensitive audit data
 #[derive(Debug)]
 pub struct EncryptionKey {
+    #[allow(dead_code)]
     key: [u8; 32],
+    #[allow(dead_code)]
     algorithm: EncryptionAlgorithm,
 }
 
@@ -92,6 +94,7 @@ pub enum EncryptionAlgorithm {
 #[derive(Debug)]
 pub struct AlertSender {
     webhook_url: Option<String>,
+    #[allow(dead_code)]
     email_config: Option<EmailConfig>,
 }
 
@@ -278,11 +281,17 @@ impl AuditLogger {
                     super::storage::DatabaseAuditStorage::new(connection_string.clone()).await?;
                 Ok(Arc::new(storage))
             }
-            AuditStorageBackend::S3 { bucket, region } => {
+            AuditStorageBackend::S3 {
+                bucket: _,
+                region: _,
+            } => {
                 // Placeholder for S3 storage implementation
                 Err(anyhow!("S3 audit storage not yet implemented"))
             }
-            AuditStorageBackend::Combined { primary, secondary } => {
+            AuditStorageBackend::Combined {
+                primary: _,
+                secondary: _,
+            } => {
                 // Placeholder for combined storage implementation
                 Err(anyhow!("Combined audit storage not yet implemented"))
             }
@@ -565,7 +574,7 @@ impl AuditLogger {
     }
 
     /// Calculate data access risk score
-    async fn calculate_data_access_risk(&self, user_id: &str, action: &str) -> Option<f64> {
+    async fn calculate_data_access_risk(&self, _user_id: &str, action: &str) -> Option<f64> {
         let mut risk_score: f64 = 0.0;
 
         // Higher risk for bulk operations
@@ -713,5 +722,912 @@ impl AlertSender {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // ==================== AuditConfig Tests ====================
+
+    #[test]
+    fn test_audit_config_default() {
+        let config = AuditConfig::default();
+
+        assert!(config.enable_audit_logging);
+        assert!(!config.encryption_enabled);
+        assert!(config.external_audit_endpoint.is_none());
+        assert_eq!(config.retention_days, 30);
+        assert!(!config.enable_real_time_alerts);
+        assert!(config.alert_webhook_url.is_none());
+        assert!(config.compliance_frameworks.is_empty());
+    }
+
+    #[test]
+    fn test_audit_config_with_file_backend() {
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: "/tmp/audit".to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 90,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec!["SOC2".to_string(), "GDPR".to_string()],
+        };
+
+        assert!(config.enable_audit_logging);
+        assert_eq!(config.retention_days, 90);
+        assert_eq!(config.compliance_frameworks.len(), 2);
+    }
+
+    #[test]
+    fn test_audit_config_serialization() {
+        let config = AuditConfig::default();
+
+        let json = serde_json::to_string(&config).expect("Failed to serialize");
+        assert!(json.contains("enable_audit_logging"));
+        assert!(json.contains("retention_days"));
+
+        let deserialized: AuditConfig = serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(
+            deserialized.enable_audit_logging,
+            config.enable_audit_logging
+        );
+        assert_eq!(deserialized.retention_days, config.retention_days);
+    }
+
+    // ==================== AuditStorageBackend Tests ====================
+
+    #[test]
+    fn test_audit_storage_backend_file() {
+        let backend = AuditStorageBackend::File {
+            directory: "/tmp/audit_logs".to_string(),
+        };
+
+        if let AuditStorageBackend::File { directory } = backend {
+            assert_eq!(directory, "/tmp/audit_logs");
+        } else {
+            panic!("Expected File variant");
+        }
+    }
+
+    #[test]
+    fn test_audit_storage_backend_database() {
+        let backend = AuditStorageBackend::Database {
+            connection_string: "postgres://localhost/auditdb".to_string(),
+        };
+
+        if let AuditStorageBackend::Database { connection_string } = backend {
+            assert_eq!(connection_string, "postgres://localhost/auditdb");
+        } else {
+            panic!("Expected Database variant");
+        }
+    }
+
+    #[test]
+    fn test_audit_storage_backend_s3() {
+        let backend = AuditStorageBackend::S3 {
+            bucket: "my-audit-bucket".to_string(),
+            region: "us-west-2".to_string(),
+        };
+
+        if let AuditStorageBackend::S3 { bucket, region } = backend {
+            assert_eq!(bucket, "my-audit-bucket");
+            assert_eq!(region, "us-west-2");
+        } else {
+            panic!("Expected S3 variant");
+        }
+    }
+
+    #[test]
+    fn test_audit_storage_backend_combined() {
+        let primary = Box::new(AuditStorageBackend::File {
+            directory: "/tmp/primary".to_string(),
+        });
+        let secondary = Box::new(AuditStorageBackend::S3 {
+            bucket: "backup".to_string(),
+            region: "us-east-1".to_string(),
+        });
+
+        let backend = AuditStorageBackend::Combined { primary, secondary };
+
+        if let AuditStorageBackend::Combined {
+            primary: _,
+            secondary: _,
+        } = backend
+        {
+            // Test passes if we can create the combined backend
+        } else {
+            panic!("Expected Combined variant");
+        }
+    }
+
+    #[test]
+    fn test_audit_storage_backend_serialization() {
+        let backend = AuditStorageBackend::File {
+            directory: "/tmp/test".to_string(),
+        };
+
+        let json = serde_json::to_string(&backend).expect("Failed to serialize");
+        assert!(json.contains("/tmp/test"));
+    }
+
+    // ==================== EncryptionKey Tests ====================
+
+    #[test]
+    fn test_encryption_key_disabled() {
+        let key = EncryptionKey::new(false).expect("Failed to create disabled key");
+
+        // Disabled key should have zero bytes
+        assert_eq!(key.key, [0u8; 32]);
+        assert!(matches!(key.algorithm, EncryptionAlgorithm::AES256GCM));
+    }
+
+    #[test]
+    fn test_encryption_key_enabled() {
+        let key = EncryptionKey::new(true).expect("Failed to create enabled key");
+
+        // Enabled key should have random bytes (very unlikely to be all zeros)
+        let is_all_zeros = key.key.iter().all(|&b| b == 0);
+        assert!(!is_all_zeros);
+    }
+
+    #[test]
+    fn test_encryption_key_encrypt_decrypt() {
+        let key = EncryptionKey::new(true).expect("Failed to create key");
+
+        let plaintext = b"Hello, World!";
+        let encrypted = key.encrypt(plaintext).expect("Encryption failed");
+        let decrypted = key.decrypt(&encrypted).expect("Decryption failed");
+
+        // Note: placeholder implementation just returns the same data
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_encryption_key_encrypt_empty() {
+        let key = EncryptionKey::new(true).expect("Failed to create key");
+
+        let plaintext = b"";
+        let encrypted = key.encrypt(plaintext).expect("Encryption failed");
+
+        assert!(encrypted.is_empty());
+    }
+
+    // ==================== EncryptionAlgorithm Tests ====================
+
+    #[test]
+    fn test_encryption_algorithm_variants() {
+        let aes = EncryptionAlgorithm::AES256GCM;
+        let chacha = EncryptionAlgorithm::ChaCha20Poly1305;
+
+        assert!(matches!(aes, EncryptionAlgorithm::AES256GCM));
+        assert!(matches!(chacha, EncryptionAlgorithm::ChaCha20Poly1305));
+    }
+
+    #[test]
+    fn test_encryption_algorithm_serialization() {
+        let algo = EncryptionAlgorithm::AES256GCM;
+
+        let json = serde_json::to_string(&algo).expect("Failed to serialize");
+        assert!(json.contains("AES256GCM"));
+    }
+
+    // ==================== AlertSender Tests ====================
+
+    #[test]
+    fn test_alert_sender_creation_no_webhook() {
+        let config = AuditConfig::default();
+        let sender = AlertSender::new(&config).expect("Failed to create AlertSender");
+
+        assert!(sender.webhook_url.is_none());
+        assert!(sender.email_config.is_none());
+    }
+
+    #[test]
+    fn test_alert_sender_creation_with_webhook() {
+        let config = AuditConfig {
+            alert_webhook_url: Some("https://webhook.example.com/alerts".to_string()),
+            ..AuditConfig::default()
+        };
+        let sender = AlertSender::new(&config).expect("Failed to create AlertSender");
+
+        assert_eq!(
+            sender.webhook_url,
+            Some("https://webhook.example.com/alerts".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_alert_sender_send_alert_no_webhook() {
+        let config = AuditConfig::default();
+        let sender = AlertSender::new(&config).expect("Failed to create AlertSender");
+
+        let alert = SecurityAlert::new(
+            SecurityAlertType::SuspiciousAuthActivity,
+            SecurityAlertSeverity::High,
+            "Test alert".to_string(),
+        );
+
+        // Should succeed without webhook (no-op)
+        let result = sender.send_alert(&alert).await;
+        assert!(result.is_ok());
+    }
+
+    // ==================== EmailConfig Tests ====================
+
+    #[test]
+    fn test_email_config() {
+        let config = EmailConfig {
+            smtp_server: "smtp.example.com".to_string(),
+            smtp_port: 587,
+            username: "user@example.com".to_string(),
+            password: "secret".to_string(),
+            from_address: "alerts@example.com".to_string(),
+            to_addresses: vec!["admin@example.com".to_string()],
+        };
+
+        assert_eq!(config.smtp_server, "smtp.example.com");
+        assert_eq!(config.smtp_port, 587);
+        assert_eq!(config.to_addresses.len(), 1);
+    }
+
+    #[test]
+    fn test_email_config_serialization() {
+        let config = EmailConfig {
+            smtp_server: "smtp.test.com".to_string(),
+            smtp_port: 25,
+            username: "test".to_string(),
+            password: "pass".to_string(),
+            from_address: "from@test.com".to_string(),
+            to_addresses: vec!["to@test.com".to_string()],
+        };
+
+        let json = serde_json::to_string(&config).expect("Failed to serialize");
+        assert!(json.contains("smtp.test.com"));
+        assert!(json.contains("25"));
+    }
+
+    // ==================== IpGeolocation Tests ====================
+
+    #[test]
+    fn test_ip_geolocation() {
+        let geo = IpGeolocation {
+            country: "United States".to_string(),
+            region: "California".to_string(),
+            city: "San Francisco".to_string(),
+            latitude: Some(37.7749),
+            longitude: Some(-122.4194),
+        };
+
+        assert_eq!(geo.country, "United States");
+        assert_eq!(geo.region, "California");
+        assert_eq!(geo.city, "San Francisco");
+        assert!(geo.latitude.is_some());
+        assert!(geo.longitude.is_some());
+    }
+
+    #[test]
+    fn test_ip_geolocation_serialization() {
+        let geo = IpGeolocation {
+            country: "Germany".to_string(),
+            region: "Berlin".to_string(),
+            city: "Berlin".to_string(),
+            latitude: Some(52.52),
+            longitude: Some(13.405),
+        };
+
+        let json = serde_json::to_string(&geo).expect("Failed to serialize");
+        assert!(json.contains("Germany"));
+        assert!(json.contains("Berlin"));
+
+        let deserialized: IpGeolocation =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(deserialized.country, "Germany");
+    }
+
+    // ==================== AuditLogger Tests ====================
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_disabled() {
+        let config = AuditConfig {
+            enable_audit_logging: false,
+            ..AuditConfig::default()
+        };
+
+        let result = AuditLogger::new(config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_with_file_backend() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        };
+
+        let logger = AuditLogger::new(config).await;
+        assert!(logger.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_with_database_backend() {
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::Database {
+                connection_string: "postgres://localhost/test".to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        };
+
+        let logger = AuditLogger::new(config).await;
+        assert!(logger.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_s3_not_implemented() {
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::S3 {
+                bucket: "test-bucket".to_string(),
+                region: "us-west-2".to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        };
+
+        let result = AuditLogger::new(config).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_combined_not_implemented() {
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::Combined {
+                primary: Box::new(AuditStorageBackend::File {
+                    directory: "/tmp/primary".to_string(),
+                }),
+                secondary: Box::new(AuditStorageBackend::File {
+                    directory: "/tmp/secondary".to_string(),
+                }),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        };
+
+        let result = AuditLogger::new(config).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_with_encryption() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            encryption_enabled: true,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        };
+
+        let logger = AuditLogger::new(config).await;
+        assert!(logger.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_creation_with_alerts() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: true,
+            alert_webhook_url: Some("https://webhook.example.com".to_string()),
+            compliance_frameworks: vec![],
+        };
+
+        let logger = AuditLogger::new(config).await;
+        assert!(logger.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_event() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let resource = AuditResource::new("collection".to_string(), "test-collection".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        )
+        .with_user("test-user".to_string());
+
+        let result = logger.log_event(event).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_event_validation_empty_event_id() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let resource = AuditResource::new("test".to_string(), "test".to_string());
+        let mut event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        );
+        event.event_id = String::new(); // Empty event ID
+
+        let result = logger.log_event(event).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Event ID"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_event_validation_empty_action() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let resource = AuditResource::new("test".to_string(), "test".to_string());
+        let mut event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        );
+        event.action = String::new(); // Empty action
+
+        let result = logger.log_event(event).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Action"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_event_validation_empty_resource() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let resource = AuditResource::new(String::new(), String::new()); // Empty resource
+        let event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        );
+
+        let result = logger.log_event(event).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Resource"));
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_authentication_event() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let result = logger
+            .log_authentication_event(
+                "user-123",
+                "password",
+                AuditResult::Success,
+                Some("192.168.1.100".to_string()),
+                Some("Mozilla/5.0".to_string()),
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_authentication_event_failure() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let result = logger
+            .log_authentication_event(
+                "user-123",
+                "password",
+                AuditResult::Failure {
+                    error_code: "AUTH_FAILED".to_string(),
+                    error_message: "Invalid credentials".to_string(),
+                },
+                Some("192.168.1.100".to_string()),
+                None,
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_log_data_access_event() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let resource = AuditResource::new("collection".to_string(), "my-collection".to_string());
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("query".to_string(), serde_json::json!("test query"));
+
+        let result = logger
+            .log_data_access_event(
+                "user-456",
+                Some("tenant-123".to_string()),
+                resource,
+                "vector_search",
+                AuditResult::Success,
+                metadata,
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    // ==================== Sensitive Field Detection Tests ====================
+
+    #[tokio::test]
+    async fn test_audit_logger_is_sensitive_field() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        // Sensitive fields
+        assert!(logger.is_sensitive_field("email"));
+        assert!(logger.is_sensitive_field("user_email"));
+        assert!(logger.is_sensitive_field("EMAIL_ADDRESS"));
+        assert!(logger.is_sensitive_field("phone"));
+        assert!(logger.is_sensitive_field("ssn"));
+        assert!(logger.is_sensitive_field("credit_card"));
+        assert!(logger.is_sensitive_field("password"));
+        assert!(logger.is_sensitive_field("api_key"));
+        assert!(logger.is_sensitive_field("auth_token"));
+        assert!(logger.is_sensitive_field("secret_key"));
+        assert!(logger.is_sensitive_field("private_key"));
+
+        // Non-sensitive fields
+        assert!(!logger.is_sensitive_field("username"));
+        assert!(!logger.is_sensitive_field("collection_name"));
+        assert!(!logger.is_sensitive_field("timestamp"));
+        assert!(!logger.is_sensitive_field("action"));
+    }
+
+    // ==================== Debug Implementation Tests ====================
+
+    #[tokio::test]
+    async fn test_audit_logger_debug() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let debug_str = format!("{:?}", logger);
+        assert!(debug_str.contains("AuditLogger"));
+        assert!(debug_str.contains("config"));
+        assert!(debug_str.contains("storage"));
+    }
+
+    // ==================== Risk Score Calculation Tests ====================
+
+    #[tokio::test]
+    async fn test_audit_logger_calculate_data_access_risk_bulk_operations() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        // Bulk operations should have higher risk
+        let bulk_risk = logger
+            .calculate_data_access_risk("user-1", "bulk_export")
+            .await;
+        assert!(bulk_risk.is_some());
+        assert!(bulk_risk.unwrap() >= 0.4);
+
+        // Normal operations should have lower risk
+        let normal_risk = logger.calculate_data_access_risk("user-1", "read").await;
+        assert!(normal_risk.is_some());
+        assert!(normal_risk.unwrap() < 0.4);
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_calculate_data_access_risk_admin_operations() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        // Admin operations should have higher risk
+        let admin_risk = logger
+            .calculate_data_access_risk("user-1", "admin_delete")
+            .await;
+        assert!(admin_risk.is_some());
+        assert!(admin_risk.unwrap() >= 0.3);
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_calculate_authentication_risk() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            ..AuditConfig::default()
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let risk = logger
+            .calculate_authentication_risk("user-1", &Some("192.168.1.1".to_string()))
+            .await;
+
+        assert!(risk.is_some());
+        // Risk should be between 0 and 1
+        let risk_value = risk.unwrap();
+        assert!(risk_value >= 0.0 && risk_value <= 1.0);
+    }
+
+    // ==================== Integration Tests ====================
+
+    #[tokio::test]
+    async fn test_audit_logger_full_workflow() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec!["SOC2".to_string()],
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        // Log authentication event
+        logger
+            .log_authentication_event(
+                "user-1",
+                "sso",
+                AuditResult::Success,
+                Some("10.0.0.1".to_string()),
+                Some("Chrome".to_string()),
+            )
+            .await
+            .expect("Failed to log auth event");
+
+        // Log data access event
+        let resource = AuditResource::new("collection".to_string(), "vectors".to_string());
+        logger
+            .log_data_access_event(
+                "user-1",
+                Some("tenant-1".to_string()),
+                resource,
+                "search",
+                AuditResult::Success,
+                std::collections::HashMap::new(),
+            )
+            .await
+            .expect("Failed to log data access event");
+
+        // Log generic event
+        let generic_resource = AuditResource::new("system".to_string(), "config".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::SystemConfiguration,
+            generic_resource,
+            "update_settings".to_string(),
+            AuditResult::Success,
+        )
+        .with_user("admin".to_string());
+
+        logger
+            .log_event(event)
+            .await
+            .expect("Failed to log generic event");
+    }
+
+    #[tokio::test]
+    async fn test_audit_logger_with_compliance_frameworks() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let config = AuditConfig {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: temp_dir.path().to_string_lossy().to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 90,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![
+                "SOC2".to_string(),
+                "GDPR".to_string(),
+                "HIPAA".to_string(),
+            ],
+        };
+
+        let logger = AuditLogger::new(config)
+            .await
+            .expect("Failed to create logger");
+
+        let resource = AuditResource::new("pii_data".to_string(), "patient_records".to_string());
+        let event = AuditEvent::new(
+            AuditEventType::DataAccess,
+            resource,
+            "read".to_string(),
+            AuditResult::Success,
+        )
+        .with_user("healthcare_worker".to_string())
+        .with_tenant("hospital_a".to_string());
+
+        let result = logger.log_event(event).await;
+        assert!(result.is_ok());
     }
 }

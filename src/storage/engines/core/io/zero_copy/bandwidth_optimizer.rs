@@ -100,15 +100,19 @@ pub struct AccessPrediction {
     /// Probability of accessing this file again (0.0 - 1.0)
     pub future_access_probability: f32,
     /// Predicted time until next access
+    #[allow(dead_code)]
     pub predicted_next_access: Option<Duration>,
     /// Confidence in the prediction
+    #[allow(dead_code)]
     pub confidence: f32,
     /// Historical access pattern
+    #[allow(dead_code)]
     pub access_pattern: AccessPattern,
 }
 
 /// Historical access pattern classification
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AccessPattern {
     /// Never accessed before
     Unknown,
@@ -138,6 +142,7 @@ pub struct DecisionFactors {
     /// Future access probability (0.0 - 1.0)
     pub future_access_probability: f32,
     /// Total file size in bytes
+    #[allow(dead_code)]
     pub file_size_bytes: u64,
     /// Estimated cost savings with selective download
     pub cost_savings_estimate: f64,
@@ -155,8 +160,10 @@ pub struct DecisionRationale {
     /// Threshold values used
     pub thresholds_applied: HashMap<String, f32>,
     /// Estimated savings
+    #[allow(dead_code)]
     pub estimated_savings: f64,
     /// Risk factors considered
+    #[allow(dead_code)]
     pub risk_factors: Vec<String>,
 }
 
@@ -352,7 +359,7 @@ impl BandwidthOptimizer {
 
     async fn make_bandwidth_optimized_decision(
         &self,
-        file_path: &str,
+        _file_path: &str,
         file_size: u64,
         ranges: Vec<DataRange>,
         factors: &DecisionFactors,
@@ -554,6 +561,7 @@ impl BandwidthOptimizer {
         access_prediction: &AccessPrediction,
         request_priority: RequestPriority,
     ) -> f32 {
+        let _ = (_file_path, access_prediction); // Used in scoring logic below
         let mut score = 0.0;
 
         // Future access probability
@@ -588,7 +596,11 @@ impl BandwidthOptimizer {
     }
 
     /// Get bandwidth-aware threshold that considers network conditions
-    fn get_bandwidth_aware_threshold(&self, factors: &DecisionFactors, base_threshold: f32) -> f32 {
+    fn get_bandwidth_aware_threshold(
+        &self,
+        _factors: &DecisionFactors,
+        base_threshold: f32,
+    ) -> f32 {
         let (latency_ms, bandwidth_mbps) = self.network_tracker.get_current_conditions();
         let mut threshold = base_threshold;
 
@@ -610,7 +622,7 @@ impl BandwidthOptimizer {
     }
 
     /// Get latency-optimized request limit
-    fn get_latency_optimized_request_limit(&self, factors: &DecisionFactors) -> u32 {
+    fn get_latency_optimized_request_limit(&self, _factors: &DecisionFactors) -> u32 {
         let (latency_ms, _) = self.network_tracker.get_current_conditions();
         let base_limit = self.config.cost_optimization.max_range_requests;
 
@@ -655,7 +667,9 @@ impl BandwidthOptimizer {
 pub struct NetworkConditionTracker {
     current_latency_ms: f32,
     current_bandwidth_mbps: f32,
+    #[allow(dead_code)]
     high_latency_threshold: f32,
+    #[allow(dead_code)]
     low_bandwidth_threshold: f32,
 }
 
@@ -688,6 +702,7 @@ pub struct AccessPatternPredictor {
 #[derive(Debug, Clone)]
 struct AccessEvent {
     timestamp: Instant,
+    #[allow(dead_code)]
     query_type: QueryType,
 }
 

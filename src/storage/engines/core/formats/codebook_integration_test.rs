@@ -4,7 +4,6 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
     use crate::storage::engines::core::formats::codebook_metadata::{
         BinaryCodebook, CodebookSerializer, Int8Codebook, PqCodebook, PqTrainingConfig,
         QuantizationCodebookMetadata,

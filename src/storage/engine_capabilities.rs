@@ -20,9 +20,7 @@
 //! - Avoids duplication of capability definitions
 
 use crate::proto::proximadb_v1::CompressionAlgorithm;
-use crate::storage::trait_components::capabilities::{
-    CapabilityFactory, EngineCapabilities as EngineCapabilitiesTrait,
-};
+use crate::storage::trait_components::capabilities::CapabilityFactory;
 use std::collections::HashSet;
 
 // Re-export StorageEngine for external use

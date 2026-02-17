@@ -67,14 +67,24 @@ mod service_helpers;
 mod service_node_ops;
 #[path = "service_schema_validation.rs"]
 mod service_schema_validation;
+#[path = "service_transactions.rs"]
+mod service_transactions;
 #[path = "service_traversal_api.rs"]
 mod service_traversal_api;
-pub(super) use service_helpers::*;
+#[allow(clippy::wildcard_imports)]
+use service_helpers::*;
+pub use service_transactions::{
+    IsolationLevel, TransactionHandle, TransactionId, TransactionManager, TransactionState,
+    UnitOfWork,
+};
 
 use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     engines::{GraphEngine, orion::OrionGraphEngine},
+};
+use crate::security::unified_rbac::{
+    ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
@@ -110,8 +120,10 @@ pub struct GraphOperationsService {
     edge_type_counts: Arc<DashMap<String, AtomicU64>>,
     /// Graph traversal runtime settings
     graph_settings: crate::core::context::GraphTraversalSettings,
-    // Transaction coordinator (future: integrate with existing WAL)
-    // transaction_coordinator: Arc<TransactionCoordinator>,
+    /// Transaction manager for ACID transaction support
+    transaction_manager: Arc<service_transactions::TransactionManager>,
+    /// RBAC manager for permission validation
+    rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
 }
 
 impl GraphOperationsService {
@@ -124,6 +136,13 @@ impl GraphOperationsService {
         // Initialize graph settings from global if available
         let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
+        // Initialize transaction manager with empty shards (will be populated as graphs are created)
+        let transaction_manager =
+            Arc::new(service_transactions::TransactionManager::with_defaults(
+                std::collections::HashMap::new(),
+                std::time::Duration::from_secs(30),
+            ));
+
         let service = Self {
             mode: OperationMode::Unified,
             collection_service,
@@ -134,6 +153,8 @@ impl GraphOperationsService {
             stats_edges: Arc::new(AtomicU64::new(0)),
             edge_type_counts: Arc::new(DashMap::new()),
             graph_settings: default_settings,
+            transaction_manager,
+            rbac_manager: None,
         };
 
         // Register lightweight graph cache providers with orchestrator
@@ -190,6 +211,13 @@ impl GraphOperationsService {
 
         let default_settings = crate::core::context::global_graph_settings().unwrap_or_default();
 
+        // Initialize transaction manager with empty shards
+        let transaction_manager =
+            Arc::new(service_transactions::TransactionManager::with_defaults(
+                std::collections::HashMap::new(),
+                std::time::Duration::from_secs(30),
+            ));
+
         let service = Self {
             mode: OperationMode::Unified,
             collection_service,
@@ -200,6 +228,8 @@ impl GraphOperationsService {
             stats_edges: Arc::new(AtomicU64::new(0)),
             edge_type_counts: Arc::new(DashMap::new()),
             graph_settings: default_settings,
+            transaction_manager,
+            rbac_manager: None,
         };
 
         // Register cache providers
@@ -248,11 +278,62 @@ impl GraphOperationsService {
         service
     }
 
+    /// Create a new GraphOperationsService with RBAC enabled
+    pub fn with_rbac(mut self, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
+        self.rbac_manager = Some(rbac_manager);
+        self
+    }
+
+    /// Validate graph operation permission
+    #[allow(dead_code)]
+    async fn validate_graph_permission(
+        &self,
+        user_ctx: &UnifiedUserContext,
+        graph_id: &str,
+        operation: &str,
+    ) -> Result<()> {
+        let rbac_manager = self.rbac_manager.as_ref().ok_or_else(|| {
+            ProximaDBError::Internal(format!(
+                "Graph operation: {} on {} - RBAC manager not configured",
+                operation, graph_id
+            ))
+        })?;
+
+        let permission = match operation {
+            "read" | "traverse" => UnifiedPermission::GraphTraverse(graph_id.to_string()),
+            "create_node" | "create_edge" | "create_relations" => {
+                UnifiedPermission::GraphCreateRelations(graph_id.to_string())
+            }
+            "delete_node" | "delete_edge" | "delete_relations" => {
+                UnifiedPermission::GraphDeleteRelations(graph_id.to_string())
+            }
+            _ => UnifiedPermission::GraphTraverse(graph_id.to_string()),
+        };
+
+        let allowed = rbac_manager
+            .check_permission_cached(&user_ctx.user_id, &permission)
+            .await
+            .map_err(|e| {
+                ProximaDBError::Internal(format!(
+                    "Graph operation: {} on {} - Failed to check permission: {}",
+                    operation, graph_id, e
+                ))
+            })?;
+
+        if !allowed {
+            return Err(ProximaDBError::Internal(format!(
+                "Graph operation: {} on {} - Insufficient permissions",
+                operation, graph_id
+            )));
+        }
+
+        Ok(())
+    }
+
     // get_or_create_graph_engine moved to service_engine_factory.rs
 
-    /// Initialize constraint registries based on graph schema (unique constraints)
+    // /// Initialize constraint registries based on graph schema (unique constraints)
     // initialize_schema_constraints moved to service_engine_factory.rs
-
     /// List all active graph engines (not collections)
     pub fn list_active_graphs(&self) -> Vec<String> {
         self.graphs
@@ -431,7 +512,7 @@ impl GraphOperationsService {
         Ok(())
     }
 
-    /// Compute shortest path with algorithm selection and optional k-shortest support.
+    // /// Compute shortest path with algorithm selection and optional k-shortest support.
     /* moved to service_traversal_api.rs
     pub async fn shortest_path(
         &self,
@@ -640,6 +721,308 @@ impl GraphOperationsService {
         Ok(())
     }
 
+    // =========================================================================
+    // Transaction Management API
+    // =========================================================================
+
+    /// Begin a new transaction on a graph
+    ///
+    /// Creates a new transaction with the default isolation level (ReadCommitted).
+    /// All graph operations performed within this transaction will be atomic.
+    ///
+    /// # Arguments
+    /// * `graph_id` - The ID of the graph to operate on
+    ///
+    /// # Returns
+    /// * `TransactionId` - A unique identifier for this transaction
+    ///
+    /// # Example
+    /// ```ignore
+    /// let tx_id = service.begin_transaction("my_graph").await?;
+    /// // ... perform operations ...
+    /// service.commit_transaction(tx_id).await?;
+    /// ```
+    pub async fn begin_transaction(
+        &self,
+        graph_id: &str,
+    ) -> Result<service_transactions::TransactionId> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Ensure the graph exists
+        let _ = self.get_or_create_graph_engine(graph_id).await?;
+
+        // Use the graph ID as the shard ID for single-graph transactions
+        let shard_id = format!("shard_{}", graph_id);
+        self.transaction_manager
+            .begin_transaction(graph_id, vec![shard_id])
+            .await
+    }
+
+    /// Begin a transaction with specific isolation level
+    ///
+    /// # Arguments
+    /// * `graph_id` - The ID of the graph to operate on
+    /// * `isolation` - The isolation level for this transaction
+    ///
+    /// # Returns
+    /// * `TransactionId` - A unique identifier for this transaction
+    pub async fn begin_transaction_with_isolation(
+        &self,
+        graph_id: &str,
+        isolation: service_transactions::IsolationLevel,
+    ) -> Result<service_transactions::TransactionId> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Ensure the graph exists
+        let _ = self.get_or_create_graph_engine(graph_id).await?;
+
+        let shard_id = format!("shard_{}", graph_id);
+        self.transaction_manager
+            .begin_transaction_with_isolation(graph_id, vec![shard_id], isolation)
+            .await
+    }
+
+    /// Commit a transaction
+    ///
+    /// Atomically applies all changes made within the transaction. If any
+    /// operation fails, the entire transaction is rolled back.
+    ///
+    /// # Arguments
+    /// * `tx_id` - The transaction ID returned from `begin_transaction`
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The transaction does not exist
+    /// - The transaction has already been committed or rolled back
+    /// - A 2PC participant votes to abort
+    pub async fn commit_transaction(
+        &self,
+        tx_id: service_transactions::TransactionId,
+    ) -> Result<()> {
+        self.transaction_manager.commit_transaction(tx_id).await
+    }
+
+    /// Rollback a transaction
+    ///
+    /// Discards all pending changes and releases any acquired locks.
+    ///
+    /// # Arguments
+    /// * `tx_id` - The transaction ID returned from `begin_transaction`
+    pub async fn rollback_transaction(
+        &self,
+        tx_id: service_transactions::TransactionId,
+    ) -> Result<()> {
+        self.transaction_manager.rollback_transaction(tx_id).await
+    }
+
+    /// Get the current state of a transaction
+    ///
+    /// # Arguments
+    /// * `tx_id` - The transaction ID to query
+    ///
+    /// # Returns
+    /// The current `TransactionState` (Active, Preparing, Committed, etc.)
+    pub async fn get_transaction_state(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+    ) -> Result<service_transactions::TransactionState> {
+        self.transaction_manager.get_transaction_state(tx_id).await
+    }
+
+    /// Check if a transaction is still active
+    pub fn is_transaction_active(&self, tx_id: &service_transactions::TransactionId) -> bool {
+        self.transaction_manager.is_transaction_active(tx_id)
+    }
+
+    /// Get a RAII transaction handle for automatic rollback on drop
+    ///
+    /// The returned handle will automatically rollback the transaction if
+    /// dropped without an explicit commit or rollback call. This ensures
+    /// no dangling transactions.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let handle = service.begin_transaction_handle("my_graph").await?;
+    /// // ... perform operations using handle.id() ...
+    /// handle.commit().await?; // Or handle.rollback().await?
+    /// // If handle is dropped without commit/rollback, it auto-rollbacks
+    /// ```
+    pub async fn begin_transaction_handle(
+        &self,
+        graph_id: &str,
+    ) -> Result<service_transactions::TransactionHandle> {
+        let tx_id = self.begin_transaction(graph_id).await?;
+        Ok(service_transactions::TransactionHandle::new(
+            tx_id,
+            self.transaction_manager.clone(),
+        ))
+    }
+
+    // =========================================================================
+    // Transaction-Aware Graph Operations
+    // =========================================================================
+
+    /// Create a node within a transaction
+    ///
+    /// The node will not be visible to other transactions until commit.
+    pub async fn create_node_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        node: Node,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate schema before registering
+        self.enforce_schema_on_node(graph_id, &node).await?;
+        self.enforce_unique_constraints_on_node(graph_id, &node)?;
+        self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_node_insert(tx_id, node)
+            .await
+    }
+
+    /// Update a node within a transaction
+    pub async fn update_node_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        node: Node,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate schema before registering
+        self.enforce_schema_on_node(graph_id, &node).await?;
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_node_update(tx_id, node)
+            .await
+    }
+
+    /// Delete a node within a transaction
+    pub async fn delete_node_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        _graph_id: &str,
+        node_id: String,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_node_delete(tx_id, node_id)
+            .await
+    }
+
+    /// Create an edge within a transaction
+    pub async fn create_edge_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        edge: Edge,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate endpoints exist (best effort - may be in pending inserts)
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        if let (Some(from), Some(to)) = (
+            engine.get_node(&edge.from_node_id)?,
+            engine.get_node(&edge.to_node_id)?,
+        ) {
+            self.enforce_schema_on_edge(graph_id, &edge, &from.labels, &to.labels)
+                .await?;
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_edge_insert(tx_id, edge)
+            .await
+    }
+
+    /// Update an edge within a transaction
+    pub async fn update_edge_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        graph_id: &str,
+        edge: Edge,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Validate schema
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        if let (Some(from), Some(to)) = (
+            engine.get_node(&edge.from_node_id)?,
+            engine.get_node(&edge.to_node_id)?,
+        ) {
+            self.enforce_schema_on_edge(graph_id, &edge, &from.labels, &to.labels)
+                .await?;
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_edge_update(tx_id, edge)
+            .await
+    }
+
+    /// Delete an edge within a transaction
+    pub async fn delete_edge_in_transaction(
+        &self,
+        tx_id: &service_transactions::TransactionId,
+        _graph_id: &str,
+        edge_id: String,
+    ) -> Result<()> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Register in unit of work
+        self.transaction_manager
+            .register_edge_delete(tx_id, edge_id)
+            .await
+    }
+
+    /// Get access to the transaction manager for advanced usage
+    pub fn transaction_manager(&self) -> Arc<service_transactions::TransactionManager> {
+        self.transaction_manager.clone()
+    }
+
+    // =========================================================================
+    // End Transaction Management API
+    // =========================================================================
+
     // create_node moved to service_node_ops.rs
 
     // get_node moved to service_node_ops.rs
@@ -701,7 +1084,7 @@ impl GraphOperationsService {
         property: &str,
     ) -> Result<()> {
         // Get the graph engine to ensure it exists
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let _engine = self.get_or_create_graph_engine(graph_id).await?;
 
         // Remove constraint using graph-specific key
         let key = (
@@ -724,7 +1107,7 @@ impl GraphOperationsService {
 
     // update_edge moved to service_edge_ops.rs
 
-    /// Enforce schema constraints for a node if schema is defined
+    // /// Enforce schema constraints for a node if schema is defined
     /* moved to service_schema_validation.rs
     async fn enforce_schema_on_node(&self, graph_id: &str, node: &Node) -> Result<()> {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
@@ -734,15 +1117,17 @@ impl GraphOperationsService {
                 // Build quick lookup for node label schemas
                 for label in &node.labels {
                     let label_schema = schema.node_labels.iter().find(|ls| &ls.label == label);
-                    if label_schema.is_none() {
-                        if strict {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "Label '{}' is not allowed by schema", label
-                            )));
+                    let ls = match label_schema {
+                        Some(schema) => schema,
+                        None => {
+                            if strict {
+                                return Err(ProximaDBError::InvalidInput(format!(
+                                    "Label '{}' is not allowed by schema", label
+                                )));
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    let ls = label_schema.unwrap();
+                    };
                     // Required properties present
                     for req in &ls.required_properties {
                         if !node.properties.contains_key(req) {
@@ -783,7 +1168,7 @@ impl GraphOperationsService {
     }
     */
 
-    /// Enforce schema constraints for an edge if schema is defined
+    // /// Enforce schema constraints for an edge if schema is defined
     /* moved to service_schema_validation.rs
     async fn enforce_schema_on_edge(
         &self,
@@ -797,15 +1182,17 @@ impl GraphOperationsService {
             if let Some(schema) = &coll.schema {
                 let strict = schema.strict_mode;
                 let ets = schema.edge_types.iter().find(|et| et.edge_type == edge.edge_type);
-                if ets.is_none() {
-                    if strict {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Edge type '{}' is not allowed by schema", edge.edge_type
-                        )));
+                let ets = match ets {
+                    Some(edge_type_schema) => edge_type_schema,
+                    None => {
+                        if strict {
+                            return Err(ProximaDBError::InvalidInput(format!(
+                                "Edge type '{}' is not allowed by schema", edge.edge_type
+                            )));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
-                let ets = ets.unwrap();
+                };
                 // Required properties present
                 for req in &ets.required_properties {
                     if !edge.properties.contains_key(req) {
@@ -901,9 +1288,13 @@ impl GraphOperationsService {
             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                 Op::Equals => {
                     // Look up index for this property
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue, // Skip filters without values
+                    };
                     if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key)
                     {
-                        let key = index_key_for_value(filter.value.as_ref().unwrap());
+                        let key = index_key_for_value(filter_value);
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -921,12 +1312,18 @@ impl GraphOperationsService {
                     }
                 }
                 Op::StartsWith => {
-                    if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap())
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    if let Some(prefix) = extract_string_from_value(filter_value)
                     {
                         if let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            let map = map_lock.read().map_err(|_| {
+                                ProximaDBError::Internal("RwLock poisoned".to_string())
+                            })?;
                             let mut matched: HashSet<NodeId> = HashSet::new();
                             for (k, ids) in map
                                 .range(prefix.to_string()..)
@@ -945,11 +1342,17 @@ impl GraphOperationsService {
                 | Op::GreaterEqual
                 | Op::LessThan
                 | Op::LessEqual => {
-                    if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap()) {
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    if let Some(num) = extract_number_from_value(filter_value) {
                         if let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
                         {
-                            let map = map_lock.read().unwrap();
+                            let map = map_lock.read().map_err(|_| {
+                                ProximaDBError::Internal("RwLock poisoned".to_string())
+                            })?;
                             let mut matched: HashSet<NodeId> = HashSet::new();
                             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                 Op::GreaterThan => {
@@ -990,10 +1393,11 @@ impl GraphOperationsService {
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        let map = map_lock.read().unwrap();
+                        let map = map_lock.read().map_err(|_| {
+                            ProximaDBError::Internal("RwLock poisoned".to_string())
+                        })?;
                         let mut matched: HashSet<NodeId> = HashSet::new();
-                        let s =
-                            extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
+                        let s = extract_string_from_value(filter_value).unwrap_or("");
                         use std::ops::Bound::{Excluded, Included, Unbounded};
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
@@ -1038,32 +1442,36 @@ impl GraphOperationsService {
                 for filter in &query.filters {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
+                    let filter_value = match &filter.value {
+                        Some(v) => v,
+                        None => continue, // Skip filters without values
+                    };
                     let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
-                            Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                            Some(v) => v.value == filter_value.value,
                             None => false,
                         },
                         Op::NotEquals => match prop_val_opt {
-                            Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                            Some(v) => v.value != filter_value.value,
                             None => true,
                         },
                         Op::GreaterThan => {
-                            cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_gt(prop_val_opt, filter_value)
                         }
                         Op::GreaterEqual => {
-                            cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_ge(prop_val_opt, filter_value)
                         }
                         Op::LessThan => {
-                            cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_lt(prop_val_opt, filter_value)
                         }
                         Op::LessEqual => {
-                            cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
+                            cmp_prop_le(prop_val_opt, filter_value)
                         }
                         Op::StartsWith => {
-                            prop_starts_with(prop_val_opt, filter.value.as_ref().unwrap())
+                            prop_starts_with(prop_val_opt, filter_value)
                         }
                         Op::Contains => {
-                            prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
+                            prop_contains(prop_val_opt, filter_value)
                         }
                         _ => false,
                     };
@@ -1086,8 +1494,8 @@ impl GraphOperationsService {
         Ok(res.drain(offset..end).collect())
     }
     */
-
     /// Legacy query_edges (moved). Kept for reference; new implementation in service_edge_ops.rs
+    #[allow(dead_code)]
     pub(crate) async fn query_edges_legacy(
         &self,
         graph_id: &str,
@@ -1164,7 +1572,7 @@ impl GraphOperationsService {
                                     continue;
                                 };
                                 let mut matched = std::collections::HashSet::new();
-                                for (k, ids) in map
+                                for (_k, ids) in map
                                     .range(prefix.to_string()..)
                                     .take_while(|(k, _)| k.starts_with(prefix))
                                 {
@@ -1410,6 +1818,7 @@ impl GraphOperationsService {
     }
 
     /// Helper method to convert properties to proto format
+    #[allow(dead_code)]
     fn convert_properties_to_proto(
         &self,
         properties: &std::collections::HashMap<String, crate::graph::PropertyValue>,
@@ -1626,22 +2035,23 @@ impl GraphOperationsService {
     }
 
     // Helpers for range/string comparisons
+    #[allow(dead_code)]
     fn parse_f64_key(s: &str) -> Option<f64> {
         s.parse::<f64>().ok()
     }
 
     // traverse moved to service_traversal_api.rs
 
-    /// Perform graph traversal with per-call override hints (prefetch settings)
+    // /// Perform graph traversal with per-call override hints (prefetch settings)
     // traverse_with_overrides moved to service_traversal_api.rs
 
-    /// Execute traversal with specific configuration
+    // /// Execute traversal with specific configuration
     // traverse_with_config moved to service_traversal_api.rs
 
-    /// Get connected components (basic implementation)
+    // /// Get connected components (basic implementation)
     // connected_components moved to service_traversal_api.rs
 
-    /// Check for cycles (basic implementation)
+    // /// Check for cycles (basic implementation)
     // has_cycle moved to service_traversal_api.rs
 
     // ===== Unique (multi-field) and schema validation helpers =====
@@ -2227,7 +2637,7 @@ mod tests {
 
     #[test]
     fn test_node_operations() {
-        let service = GraphOperationsService::new();
+        let _service = GraphOperationsService::new();
 
         // Create a test node
         let node = Node {

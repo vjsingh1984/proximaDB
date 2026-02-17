@@ -39,7 +39,7 @@ pub struct AIEnterpiseIntelligenceCoordinator {
     ai_foundation: Arc<AIIntelligenceFoundation>,
 
     /// Natural language processing
-    nlp_engine: Arc<EnterpriseNLPEngine>,
+    _nlp_engine: Arc<EnterpriseNLPEngine>,
 
     /// Automated insights generation
     insights_engine: Arc<AutomatedInsightEngine>,
@@ -56,7 +56,7 @@ impl AIEnterpiseIntelligenceCoordinator {
     pub async fn new() -> Result<Self> {
         Ok(Self {
             ai_foundation: Arc::new(AIIntelligenceFoundation::new().await?),
-            nlp_engine: Arc::new(EnterpriseNLPEngine::new().await?),
+            _nlp_engine: Arc::new(EnterpriseNLPEngine::new().await?),
             insights_engine: Arc::new(AutomatedInsightEngine::new().await?),
             predictive_analytics: Arc::new(PredictiveAnalyticsEngine::new(
                 analytics::PredictiveAnalyticsConfig::default(),
@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ai_intelligence_coordinator_creation() {
-        let coordinator = AIEnterpiseIntelligenceCoordinator::new().await.unwrap();
+        let _coordinator = AIEnterpiseIntelligenceCoordinator::new().await.unwrap();
         // Basic validation that AI coordinator was created
         assert!(true);
     }

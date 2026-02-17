@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 /// Access pattern metrics collector that integrates with unified framework
 pub struct AccessPatternMetricsCollector {
     /// Current access pattern metrics (atomic counters for lock-free updates)
+    #[allow(dead_code)]
     metrics: Arc<AccessPatternMetrics>,
 
     /// Historical data for pattern analysis (beyond what unified framework rolls)
@@ -143,9 +144,11 @@ pub struct CorrelationTracker {
     file_correlations: Arc<DashMap<String, Vec<CorrelatedItem>>>,
 
     /// Collection correlation matrix
+    #[allow(dead_code)]
     collection_correlations: Arc<DashMap<String, Vec<CorrelatedItem>>>,
 
     /// Temporal correlations (time-based patterns)
+    #[allow(dead_code)]
     temporal_correlations: Arc<RwLock<TemporalCorrelations>>,
 }
 
@@ -162,9 +165,11 @@ pub struct CorrelatedItem {
 #[derive(Clone, Debug)]
 pub struct TemporalCorrelations {
     /// Files accessed together within time windows
+    #[allow(dead_code)]
     time_window_correlations: HashMap<Duration, Vec<(String, String, f64)>>,
 
     /// Periodic access patterns
+    #[allow(dead_code)]
     periodic_patterns: Vec<PeriodicPattern>,
 }
 
@@ -186,6 +191,7 @@ pub struct PatternRecognitionEngine {
     recognized_patterns: Arc<RwLock<Vec<RecognizedPattern>>>,
 
     /// Pattern detection thresholds
+    #[allow(dead_code)]
     thresholds: PatternThresholds,
 }
 

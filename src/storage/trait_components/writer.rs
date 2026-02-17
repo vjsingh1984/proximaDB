@@ -109,7 +109,7 @@ pub trait StorageWriter: StorageIdentity + Send + Sync {
     /// Ensure staging directory exists for the given operation type
     async fn ensure_staging_directory(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         collection_storage_url: &str,
         operation_type: &str,
     ) -> Result<String> {

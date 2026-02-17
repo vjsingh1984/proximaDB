@@ -711,6 +711,5 @@ pub struct AnnoyStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     // Annoy index tests would go here
 }

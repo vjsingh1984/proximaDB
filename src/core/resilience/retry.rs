@@ -251,11 +251,13 @@ impl Default for RetryPolicy {
 
 /// Helper trait for checking if an error is retryable
 pub trait RetryableError {
+    #[allow(dead_code)]
     fn is_retryable(&self) -> bool;
 }
 
 // Implement for std::io::Error
 impl RetryableError for std::io::Error {
+    #[allow(dead_code)]
     fn is_retryable(&self) -> bool {
         use std::io::ErrorKind;
         matches!(

@@ -12,14 +12,16 @@ Reports:
 - Recall@k accuracy
 """
 
-import time
-import numpy as np
-from typing import List, Tuple, Dict, Any
 import statistics
+import time
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
 
 # Import embedded ProximaDB
 try:
     import proximadb
+
     print(f"ProximaDB v{proximadb.__version__} loaded (embedded mode)")
 except ImportError as e:
     print(f"Error: Could not import proximadb: {e}")
@@ -37,7 +39,9 @@ def generate_sift_like_vectors(n: int, dim: int = 128) -> np.ndarray:
     return vectors
 
 
-def compute_ground_truth(base_vectors: np.ndarray, query_vectors: np.ndarray, k: int) -> List[List[int]]:
+def compute_ground_truth(
+    base_vectors: np.ndarray, query_vectors: np.ndarray, k: int
+) -> List[List[int]]:
     """Compute ground truth top-k neighbors using brute-force."""
     ground_truth = []
     for query in query_vectors:
@@ -113,11 +117,7 @@ def benchmark_sst_search(
     except:
         pass
 
-    collection = db.create_collection(
-        name=collection_name,
-        dimension=dim,
-        engine="sst"
-    )
+    collection = db.create_collection(name=collection_name, dimension=dim, engine="sst")
 
     # Insert vectors in batches to create multiple SST files
     batch_size = num_vectors // num_sst_files
@@ -130,14 +130,18 @@ def benchmark_sst_search(
 
         batch_records = []
         for i in range(start_idx, end_idx):
-            batch_records.append({
-                "id": f"vec_{i}",
-                "vector": base_vectors[i].tolist(),
-                "metadata": {"batch": batch_idx}
-            })
+            batch_records.append(
+                {
+                    "id": f"vec_{i}",
+                    "vector": base_vectors[i].tolist(),
+                    "metadata": {"batch": batch_idx},
+                }
+            )
 
         collection.insert(batch_records)
-        print(f"    Batch {batch_idx + 1}/{num_sst_files}: {len(batch_records)} vectors")
+        print(
+            f"    Batch {batch_idx + 1}/{num_sst_files}: {len(batch_records)} vectors"
+        )
 
     insert_time = time.perf_counter() - insert_start
     insert_rate = num_vectors / insert_time
@@ -152,12 +156,9 @@ def benchmark_sst_search(
             "dim": dim,
             "num_queries": num_queries,
             "k": k,
-            "num_sst_files": num_sst_files
+            "num_sst_files": num_sst_files,
         },
-        "insert": {
-            "time_ms": insert_time * 1000,
-            "rate_per_sec": insert_rate
-        }
+        "insert": {"time_ms": insert_time * 1000, "rate_per_sec": insert_rate},
     }
 
     # =====================================================================
@@ -188,7 +189,9 @@ def benchmark_sst_search(
     approx_qps = 1000 / approx_avg_latency
     approx_avg_recall = statistics.mean(approx_recalls) * 100
 
-    print(f"    Latency: {approx_avg_latency:.3f}ms avg, {approx_p99_latency:.3f}ms p99")
+    print(
+        f"    Latency: {approx_avg_latency:.3f}ms avg, {approx_p99_latency:.3f}ms p99"
+    )
     print(f"    Throughput: {approx_qps:.0f} QPS")
     print(f"    Recall@{k}: {approx_avg_recall:.1f}%")
 
@@ -196,7 +199,7 @@ def benchmark_sst_search(
         "latency_avg_ms": approx_avg_latency,
         "latency_p99_ms": approx_p99_latency,
         "qps": approx_qps,
-        "recall_at_k": approx_avg_recall
+        "recall_at_k": approx_avg_recall,
     }
 
     # =====================================================================
@@ -238,7 +241,7 @@ def benchmark_sst_search(
         "latency_avg_ms": exact_avg_latency,
         "latency_p99_ms": exact_p99_latency,
         "qps": exact_qps,
-        "recall_at_k": exact_avg_recall
+        "recall_at_k": exact_avg_recall,
     }
 
     # =====================================================================
@@ -249,22 +252,21 @@ def benchmark_sst_search(
     # For each query, check if SST found the exact same top-k as NumPy brute-force
     perfect_matches = 0
     for q_idx, query in enumerate(query_vectors):
-        search_results = collection.search(
-            query_vector=query.tolist(),
-            top_k=k
-        )
+        search_results = collection.search(query_vector=query.tolist(), top_k=k)
         result_ids = [r.get("id", "") for r in search_results]
         recall = compute_recall_at_k(ground_truth[q_idx], result_ids, k)
         if recall >= 0.999:  # 100% recall (with float tolerance)
             perfect_matches += 1
 
     perfect_match_rate = (perfect_matches / num_queries) * 100
-    print(f"    Queries with 100% recall: {perfect_matches}/{num_queries} ({perfect_match_rate:.1f}%)")
+    print(
+        f"    Queries with 100% recall: {perfect_matches}/{num_queries} ({perfect_match_rate:.1f}%)"
+    )
 
     results["ground_truth_comparison"] = {
         "perfect_match_rate": perfect_match_rate,
         "perfect_matches": perfect_matches,
-        "total_queries": num_queries
+        "total_queries": num_queries,
     }
 
     # Cleanup
@@ -290,23 +292,34 @@ def print_summary(results: Dict[str, Any]):
     print(f"  Time: {results['insert']['time_ms']:.1f}ms")
     print(f"  Rate: {results['insert']['rate_per_sec']:,.0f} vectors/sec")
 
-    print(f"\n{'Search Mode':<20} {'Latency (ms)':<15} {'p99 (ms)':<12} {'QPS':<10} {'Recall@K':<10}")
+    print(
+        f"\n{'Search Mode':<20} {'Latency (ms)':<15} {'p99 (ms)':<12} {'QPS':<10} {'Recall@K':<10}"
+    )
     print("-" * 70)
 
     approx = results["approximate"]
-    print(f"{'Approximate':<20} {approx['latency_avg_ms']:<15.3f} {approx['latency_p99_ms']:<12.3f} {approx['qps']:<10.0f} {approx['recall_at_k']:<10.1f}%")
+    print(
+        f"{'Approximate':<20} {approx['latency_avg_ms']:<15.3f} {approx['latency_p99_ms']:<12.3f} {approx['qps']:<10.0f} {approx['recall_at_k']:<10.1f}%"
+    )
 
     exact = results["exact"]
-    print(f"{'Exact (100%)':<20} {exact['latency_avg_ms']:<15.3f} {exact['latency_p99_ms']:<12.3f} {exact['qps']:<10.0f} {exact['recall_at_k']:<10.1f}%")
+    print(
+        f"{'Exact (100%)':<20} {exact['latency_avg_ms']:<15.3f} {exact['latency_p99_ms']:<12.3f} {exact['qps']:<10.0f} {exact['recall_at_k']:<10.1f}%"
+    )
 
     gt = results["ground_truth_comparison"]
     print(f"\nGround Truth Validation:")
-    print(f"  Queries with 100% recall: {gt['perfect_matches']}/{gt['total_queries']} ({gt['perfect_match_rate']:.1f}%)")
+    print(
+        f"  Queries with 100% recall: {gt['perfect_matches']}/{gt['total_queries']} ({gt['perfect_match_rate']:.1f}%)"
+    )
 
     # Speedup calculation
-    if exact['latency_avg_ms'] > 0 and approx['latency_avg_ms'] < exact['latency_avg_ms']:
-        speedup = exact['latency_avg_ms'] / approx['latency_avg_ms']
-        recall_diff = exact['recall_at_k'] - approx['recall_at_k']
+    if (
+        exact["latency_avg_ms"] > 0
+        and approx["latency_avg_ms"] < exact["latency_avg_ms"]
+    ):
+        speedup = exact["latency_avg_ms"] / approx["latency_avg_ms"]
+        recall_diff = exact["recall_at_k"] - approx["recall_at_k"]
         print(f"\nApproximate vs Exact:")
         print(f"  Speedup: {speedup:.2f}x faster")
         print(f"  Recall difference: {recall_diff:.1f}%")
@@ -320,7 +333,9 @@ if __name__ == "__main__":
     parser.add_argument("--dim", type=int, default=128, help="Vector dimension")
     parser.add_argument("--queries", type=int, default=100, help="Number of queries")
     parser.add_argument("--k", type=int, default=10, help="Top-K results")
-    parser.add_argument("--sst-files", type=int, default=10, help="Number of SST files to create")
+    parser.add_argument(
+        "--sst-files", type=int, default=10, help="Number of SST files to create"
+    )
 
     args = parser.parse_args()
 
@@ -329,7 +344,7 @@ if __name__ == "__main__":
         dim=args.dim,
         num_queries=args.queries,
         k=args.k,
-        num_sst_files=args.sst_files
+        num_sst_files=args.sst_files,
     )
 
     print_summary(results)

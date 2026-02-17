@@ -127,6 +127,7 @@ pub struct GraphProfiler {
     /// Completed profiles
     completed_profiles: Arc<RwLock<VecDeque<ProfileSummary>>>,
     /// Configuration
+    #[allow(dead_code)]
     config: Arc<MonitoringConfig>,
 }
 

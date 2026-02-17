@@ -90,7 +90,7 @@ arrow-array = { version = "57.1", default-features = false }
 arrow-buffer = { version = "57.1", default-features = false }
 arrow-schema = { version = "57.1", default-features = false }
 arrow-data = { version = "57.1", default-features = false }
-arrow-ipc = { version = "57.1", default-features = false }
+arrow-ipc = { version = "57.1", default-features = false, features = ["lz4", "zstd"] }
 arrow-select = { version = "57.1", default-features = false }
 arrow-ord = { version = "57.1", default-features = false }
 arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
@@ -199,10 +199,10 @@ moka = { version = "0.12", features = ["future"] }
 
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3
-pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
-# Zero-copy NumPy array access (matches PyO3 0.20 version)
+pyo3 = { version = "0.25", features = ["extension-module"], optional = true }
+# Zero-copy NumPy array access (matches PyO3 version)
 # Provides direct buffer access to numpy arrays without Python .tolist() conversion
-numpy = { version = "0.20", optional = true }
+numpy = { version = "0.25", optional = true }
 # Java bindings via JNI
 jni = { version = "0.21", optional = true }
 # Node.js bindings via NAPI-RS
@@ -238,8 +238,13 @@ ai_endpoints = []
 sales_endpoints = []
 tenant_access = []
 executive_intel = []
+# Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
+# server panics from unimplemented code paths. Enable for development/testing only.
+experimental-engines = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
+# AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
+avx512 = []
 distributed = []
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services
@@ -252,9 +257,51 @@ aws = ["dep:aws-config", "dep:aws-sdk-s3"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
 
-# Test gating (keeps default test runs lean)
-comprehensive_tests = []
-perf_tests = []
+# ============================================================================
+# TEST CATEGORIZATION (Strategic CI/CD Gating)
+# ============================================================================
+# These feature flags categorize tests for efficient CI pipeline execution.
+# Usage in CI:
+#   - Fast CI: cargo test --lib (unit tests only, ~2-5s)
+#   - Standard CI: cargo test (unit + integration, ~30-60s)
+#   - Full CI: cargo test --features test-full (all tests, ~5-10min)
+#
+# Test Categories:
+#   - test-unit: Unit tests in src/ (always run, fastest)
+#   - test-integration: Integration tests in tests/ (run on PRs)
+#   - test-graph: Graph database tests (test_graph_*, graph_*)
+#   - test-storage: Storage engine tests (sst, helix, viper, nova, swift, raptor)
+#   - test-query: Query engine tests (sql, unified_query, federated)
+#   - test-perf: Performance benchmarks (slow, CI-gated)
+#   - test-security: Security/penetration tests
+#   - test-cloud: Cloud backend tests (requires credentials)
+#
+# Example CI usage:
+#   cargo test --lib                           # Fast: unit tests only
+#   cargo test --features test-integration     # Standard: integration tests
+#   cargo test --features test-graph           # Graph-specific tests
+#   cargo test --features test-full            # All tests
+
+# Default test runs (lean - unit tests only in CI by default)
+comprehensive_tests = []  # Legacy flag for comprehensive tests
+perf_tests = []           # Legacy flag for performance tests
+
+# Strategic test categories for CI/CD
+test-unit = []        # Unit tests (always fast, always run)
+test-integration = [] # Integration tests (tests/*_test.rs)
+test-graph = []       # Graph database tests
+test-storage = []     # Storage engine tests
+test-query = []       # Query engine tests (SQL, unified, federated)
+test-perf = []        # Performance/benchmark tests
+test-security = []    # Security and penetration tests
+test-cloud = ["aws", "azure", "gcp"]  # Cloud backend tests
+
+# Composite test categories
+test-quick = ["test-unit"]  # Fast CI (<1min)
+test-standard = ["test-unit", "test-integration"]  # Standard CI (<5min)
+test-full = ["test-unit", "test-integration", "test-graph", "test-storage", "test-query"]  # Full CI
+
+# Cloud storage features (optional to avoid linking issues during testing)
 cloud-full = ["aws", "azure", "gcp"]
 
 # SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
@@ -523,6 +570,11 @@ path = "benches/bench_20_facade_routing.rs"
 name = "bench_21_query_cache"
 harness = false
 path = "benches/bench_21_query_cache.rs"
+
+[[bench]]
+name = "bench_22_multimodal_queries"
+harness = false
+path = "benches/bench_22_multimodal_queries.rs"
 
 [[bench]]
 name = "streaming_search_bench"

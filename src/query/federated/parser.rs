@@ -132,7 +132,6 @@ impl FederatedParser {
     pub fn parse(&self, sql: &str) -> Result<FederatedQuery> {
         let sql_upper = sql.to_uppercase();
         let mut extensions = Vec::new();
-        let mut targets = Vec::new();
         let mut query_type = QueryType::Sql;
         let mut is_cross_model_join = false;
 
@@ -175,7 +174,7 @@ impl FederatedParser {
         }
 
         // Parse FROM clause targets (excluding function calls)
-        targets = self.parse_from_targets(sql);
+        let targets = self.parse_from_targets(sql);
 
         // Filter out function calls (like VECTOR_SEARCH, GRAPH_QUERY) from targets
         let real_target_count = targets

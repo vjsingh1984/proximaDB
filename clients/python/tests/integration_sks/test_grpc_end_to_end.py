@@ -1,11 +1,12 @@
 import os
 import uuid
+
 import numpy as np
 import pytest
 
+from proximadb_sdk.models import DistanceMetricType, IndexType, StorageEngineType
 from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 from proximadb_sdk.v1 import collection_types_pb2 as v1_collection_types_pb2
-from proximadb_sdk.models import IndexType, DistanceMetricType, StorageEngineType
 
 
 def grpc_available(addr: str) -> bool:
@@ -24,7 +25,9 @@ def grpc_available(addr: str) -> bool:
 def test_grpc_end_to_end_basic():
     grpc_addr = os.getenv("PROXIMADB_GRPC", "localhost:5679")
     if not grpc_available(grpc_addr):
-        pytest.skip("ProximaDB gRPC server not available; set PROXIMADB_GRPC and start server to run integration tests.")
+        pytest.skip(
+            "ProximaDB gRPC server not available; set PROXIMADB_GRPC and start server to run integration tests."
+        )
 
     client = ProximaDBSyncGrpcClient(grpc_addr, timeout=10.0)
     coll = f"py_sdk_grpc_{uuid.uuid4().hex[:8]}"
@@ -32,9 +35,7 @@ def test_grpc_end_to_end_basic():
         # Create collection with HNSW primary
         # Use readable enum constants from models.py to avoid magic numbers
         ic = v1_collection_types_pb2.IndexConfig(
-            index_name=f"{coll}_primary",
-            algorithm=IndexType.HNSW,
-            is_primary=True
+            index_name=f"{coll}_primary", algorithm=IndexType.HNSW, is_primary=True
         )
         # Quantization is optional, omit it for simplicity
         client.create_collection(
@@ -54,13 +55,20 @@ def test_grpc_end_to_end_basic():
         assert ins.success is True
 
         # Search
-        results = client.search(collection_id=coll, query_vector=[0.1, 0.2, 0.3, 0.4], top_k=2)
+        results = client.search(
+            collection_id=coll, query_vector=[0.1, 0.2, 0.3, 0.4], top_k=2
+        )
         assert isinstance(results, list)
         assert len(results) >= 1
         assert results[0].id
 
         # Get single vector
-        got = client.get_vector(collection_id=coll, vector_id="g1", include_vector=False, include_metadata=True)
+        got = client.get_vector(
+            collection_id=coll,
+            vector_id="g1",
+            include_vector=False,
+            include_metadata=True,
+        )
         assert isinstance(got, dict)
         assert got.get("id") == "g1"
 
@@ -74,4 +82,3 @@ def test_grpc_end_to_end_basic():
         except Exception:
             pass
         client.close()
-

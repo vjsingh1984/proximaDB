@@ -26,15 +26,19 @@ pub struct EventLogService {
     inner: Arc<dyn EventLogServiceTrait>,
 
     /// Reference to collection cache (shared with other services)
+    #[allow(dead_code)]
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
 
     /// Filesystem factory for persistence
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 }
 
 impl EventLogService {
     /// Create and initialize EventLog service
-    /// This follows the same pattern as CollectionService::new()
+    ///
+    /// This follows the same pattern as CollectionService::new().
+    /// The service automatically recovers on creation.
     pub async fn new(
         collection_cache: Arc<DashMap<String, Arc<Collection>>>,
         filesystem_factory: Arc<FilesystemFactory>,
@@ -117,7 +121,9 @@ impl EventLogService {
     }
 
     /// Check if a file can be compacted
-    /// This is called by storage engines before compaction
+    ///
+    /// This is called by storage engines before compaction to check if the file
+    /// is safe to compact (i.e., no pending indexing operations).
     pub async fn can_compact(&self, collection_id: &str, file_path: &str) -> bool {
         match self.inner.can_compact(collection_id, file_path).await {
             Ok(can_compact) => can_compact,
@@ -133,7 +139,9 @@ impl EventLogService {
     }
 
     /// Notify about flush completion (synchronous acknowledgment)
-    /// Called by storage engines after flush - waits for EventLog to confirm recording
+    ///
+    /// Called by storage engines after flush - waits for EventLog to confirm recording.
+    /// This ensures flush knows the event has been recorded before proceeding.
     pub async fn notify_flush(
         &self,
         collection_id: &str,
@@ -167,7 +175,9 @@ impl EventLogService {
     }
 
     /// Notify about compaction completion (can remain fire-and-forget)
-    /// Called by storage engines after compaction
+    ///
+    /// Called by storage engines after compaction. This can be fire-and-forget
+    /// since compaction has already completed successfully.
     pub fn notify_compaction(
         &self,
         collection_id: &str,
@@ -193,6 +203,8 @@ impl EventLogService {
     }
 
     /// Cleanup after compaction
+    ///
+    /// Removes processed events from the EventLog after compaction completes.
     pub async fn cleanup_compacted_files(
         &self,
         collection_id: &str,
@@ -204,6 +216,9 @@ impl EventLogService {
     }
 
     /// Get service statistics
+    ///
+    /// Returns current statistics about the EventLog service including
+    /// pending events, processed events, active collections, and uptime.
     pub async fn stats(&self) -> EventLogStats {
         match self.inner.get_health().await {
             Ok(health) => EventLogStats {
@@ -217,6 +232,8 @@ impl EventLogService {
     }
 
     /// Shutdown the service gracefully
+    ///
+    /// Ensures all pending events are flushed before shutting down.
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down EventLog service");
         self.inner.shutdown().await

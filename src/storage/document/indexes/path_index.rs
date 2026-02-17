@@ -242,7 +242,7 @@ impl PathIndex {
             }
             PathQueryCondition::Gt(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in
+                for (_k, ids) in
                     tree.range((std::ops::Bound::Excluded(key), std::ops::Bound::Unbounded))
                 {
                     results.extend(ids.iter().cloned());
@@ -250,7 +250,7 @@ impl PathIndex {
             }
             PathQueryCondition::Gte(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in
+                for (_k, ids) in
                     tree.range((std::ops::Bound::Included(key), std::ops::Bound::Unbounded))
                 {
                     results.extend(ids.iter().cloned());
@@ -258,7 +258,7 @@ impl PathIndex {
             }
             PathQueryCondition::Lt(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in
+                for (_k, ids) in
                     tree.range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(key)))
                 {
                     results.extend(ids.iter().cloned());
@@ -266,7 +266,7 @@ impl PathIndex {
             }
             PathQueryCondition::Lte(value) => {
                 let key = IndexValueKey::from(value.clone());
-                for (k, ids) in
+                for (_k, ids) in
                     tree.range((std::ops::Bound::Unbounded, std::ops::Bound::Included(key)))
                 {
                     results.extend(ids.iter().cloned());
@@ -302,6 +302,7 @@ impl PathIndex {
             }
             PathQueryCondition::Regex(_pattern) => {
                 // TODO: Implement regex matching for string values
+                let _ = _pattern; // Suppress unused warning
             }
         }
 

@@ -529,7 +529,7 @@ impl PITRManager {
     async fn execute_recovery(
         &self,
         recovery_point: &RecoveryPoint,
-        collections: &[String],
+        _collections: &[String],
     ) -> Result<(u64, u64, Vec<String>)> {
         let mut entries_rolled_back = 0u64;
         let mut entries_replayed = 0u64;

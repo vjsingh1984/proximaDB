@@ -128,6 +128,8 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
             search_params,
             collection: std::sync::Arc::new(collection),
             metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let search_results = sst_storage.search_vectors_unified(&query_context).await?;

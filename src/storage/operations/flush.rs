@@ -140,7 +140,6 @@ impl FlushManager {
 }
 
 /// Engine-specific flush coordinators
-
 /// SST flush coordinator
 struct SstFlushCoordinator {
     // TODO: Add SST-specific flush coordination
@@ -248,6 +247,7 @@ struct SstFlushResult {
     sstable_files: Vec<String>,
     bytes_written: u64,
     l0_file_count: u32,
+    #[allow(dead_code)]
     bloom_filter_size: u64,
 }
 
@@ -256,6 +256,7 @@ struct ViperFlushResult {
     parquet_files: Vec<String>,
     bytes_written: u64,
     file_count: u32,
+    #[allow(dead_code)]
     compression_ratio: f64,
 }
 
@@ -264,6 +265,7 @@ struct HelixFlushResult {
     hilbert_sorted_files: Vec<String>,
     bytes_written: u64,
     clustering_quality: f64,
+    #[allow(dead_code)]
     pca_variance_retained: f64,
 }
 

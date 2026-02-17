@@ -8,12 +8,13 @@ Note: The SDK is now named `proximadb_sdk` to avoid conflict with the
 native `proximadb` module (PyO3/maturin-based embedded database).
 """
 
-import tempfile
 import shutil
+import tempfile
 import uuid
-from typing import Optional, List, Dict, Any, Union
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 
 # Import native ProximaDB module directly
@@ -30,6 +31,7 @@ except ImportError as e:
 @dataclass
 class InsertResponse:
     """Response from insert operation"""
+
     success: bool = True
     inserted: int = 0
     errors: List[str] = field(default_factory=list)
@@ -38,6 +40,7 @@ class InsertResponse:
 @dataclass
 class SearchResult:
     """Search result item"""
+
     id: str
     score: float
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -47,6 +50,7 @@ class SearchResult:
 @dataclass
 class CollectionInfo:
     """Collection information"""
+
     name: str
     dimension: int
     engine: str = "sst"
@@ -112,11 +116,7 @@ class EmbeddedClientAdapter:
     # Collection operations
 
     def create_collection(
-        self,
-        name: str,
-        dimension: int,
-        engine: Optional[str] = None,
-        **kwargs
+        self, name: str, dimension: int, engine: Optional[str] = None, **kwargs
     ) -> CollectionInfo:
         """Create a collection"""
         engine = engine or self._default_engine
@@ -137,10 +137,12 @@ class EmbeddedClientAdapter:
             info = self._db.get_collection(name)
             if info:
                 return CollectionInfo(
-                    name=info.name if hasattr(info, 'name') else name,
-                    dimension=info.dimension if hasattr(info, 'dimension') else 0,
-                    engine=info.engine if hasattr(info, 'engine') else "sst",
-                    vector_count=info.vector_count if hasattr(info, 'vector_count') else 0,
+                    name=info.name if hasattr(info, "name") else name,
+                    dimension=info.dimension if hasattr(info, "dimension") else 0,
+                    engine=info.engine if hasattr(info, "engine") else "sst",
+                    vector_count=(
+                        info.vector_count if hasattr(info, "vector_count") else 0
+                    ),
                 )
             return None
         except Exception:
@@ -152,10 +154,10 @@ class EmbeddedClientAdapter:
             collections = self._db.list_collections()
             return [
                 CollectionInfo(
-                    name=c.name if hasattr(c, 'name') else str(c),
-                    dimension=c.dimension if hasattr(c, 'dimension') else 0,
-                    engine=c.engine if hasattr(c, 'engine') else "sst",
-                    vector_count=c.vector_count if hasattr(c, 'vector_count') else 0,
+                    name=c.name if hasattr(c, "name") else str(c),
+                    dimension=c.dimension if hasattr(c, "dimension") else 0,
+                    engine=c.engine if hasattr(c, "engine") else "sst",
+                    vector_count=c.vector_count if hasattr(c, "vector_count") else 0,
                 )
                 for c in collections
             ]
@@ -171,7 +173,7 @@ class EmbeddedClientAdapter:
         vectors: Optional[List] = None,
         ids: Optional[List[str]] = None,
         metadata: Optional[List[Dict]] = None,
-        **kwargs
+        **kwargs,
     ) -> InsertResponse:
         """
         Insert vectors into a collection.
@@ -183,10 +185,16 @@ class EmbeddedClientAdapter:
             if records is not None:
                 ids = [r.id for r in records]
                 vectors = [
-                    np.array(r.vector, dtype=np.float32) if not isinstance(r.vector, np.ndarray) else r.vector
+                    (
+                        np.array(r.vector, dtype=np.float32)
+                        if not isinstance(r.vector, np.ndarray)
+                        else r.vector
+                    )
                     for r in records
                 ]
-                metadata = [r.metadata if hasattr(r, 'metadata') else {} for r in records]
+                metadata = [
+                    r.metadata if hasattr(r, "metadata") else {} for r in records
+                ]
 
                 # Stack vectors into 2D array
                 vectors = np.vstack(vectors) if len(vectors) > 0 else np.array([])
@@ -216,26 +224,21 @@ class EmbeddedClientAdapter:
         vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         filter: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> List[SearchResult]:
         """Search for similar vectors"""
         try:
             if not isinstance(vector, np.ndarray):
                 vector = np.array(vector, dtype=np.float32)
 
-            results = self._db.search(
-                collection_id,
-                vector,
-                top_k=top_k,
-                filter=filter
-            )
+            results = self._db.search(collection_id, vector, top_k=top_k, filter=filter)
 
             return [
                 SearchResult(
                     id=r.id,
                     score=r.score,
-                    metadata=r.metadata if hasattr(r, 'metadata') else {},
-                    vector=r.vector if hasattr(r, 'vector') else None,
+                    metadata=r.metadata if hasattr(r, "metadata") else {},
+                    vector=r.vector if hasattr(r, "vector") else None,
                 )
                 for r in results
             ]
@@ -244,20 +247,12 @@ class EmbeddedClientAdapter:
             print(f"Search error: {e}")
             return []
 
-    def get_vector(
-        self,
-        collection_id: str,
-        vector_id: str
-    ) -> Optional[SearchResult]:
+    def get_vector(self, collection_id: str, vector_id: str) -> Optional[SearchResult]:
         """Get a specific vector by ID"""
         # Not directly supported, use search as fallback
         return None
 
-    def delete_vectors(
-        self,
-        collection_id: str,
-        ids: List[str]
-    ) -> bool:
+    def delete_vectors(self, collection_id: str, ids: List[str]) -> bool:
         """Delete vectors by IDs"""
         # Not directly implemented in embedded module
         return False

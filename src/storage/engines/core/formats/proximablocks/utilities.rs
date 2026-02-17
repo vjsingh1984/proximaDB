@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::v1::VectorRecord;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -130,10 +130,10 @@ impl RowBasedUtilities {
             // Check for NaN or infinite values
             for (i, &value) in record.vector.iter().enumerate() {
                 if value.is_nan() {
-                    record_issues.push(format!("NaN value at position {}", i));
+                    record_issues.push(format!("NaN value at position {i}"));
                 }
                 if value.is_infinite() {
-                    record_issues.push(format!("Infinite value at position {}", i));
+                    record_issues.push(format!("Infinite value at position {i}"));
                 }
             }
 
@@ -370,7 +370,7 @@ impl PathResolver {
     pub fn resolve_backup_path(collection_path: &Path, timestamp: i64) -> PathBuf {
         collection_path
             .join("backups")
-            .join(format!("backup_{}", timestamp))
+            .join(format!("backup_{timestamp}"))
     }
 }
 
@@ -670,12 +670,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::compression::CompressionAlgorithm;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
-    use crate::storage::engines::core::formats::proximablocks::block_structures::{
-        BlockCompressionConfig, BlockStatistics, ProximaBlockMetadata,
-    };
+    use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
 
     #[test]
     fn test_memory_usage_calculation() {

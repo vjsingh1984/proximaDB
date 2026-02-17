@@ -36,6 +36,7 @@ pub struct VectorQuery {
 
 /// Reconstructs Parquet data from partial reads
 pub struct ParquetReconstructor {
+    #[allow(dead_code)]
     config: ReconstructorConfig,
 }
 
@@ -501,7 +502,6 @@ impl ParquetReconstructor {
     }
 
     /// Helper methods
-
     fn detect_compression(&self, _range: &FileSeekRange) -> Result<CompressionType> {
         // TODO: Detect compression from Parquet metadata
         Ok(CompressionType::None)

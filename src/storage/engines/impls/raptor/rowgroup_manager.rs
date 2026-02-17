@@ -56,8 +56,10 @@ pub struct RowGroups {
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
     /// Note: simd_encoder removed - encoding now done via ProximaCodec per-dimension
     /// Block compression configuration
+    #[allow(dead_code)]
     compression_config: BlockCompressionConfig,
     /// Configuration
+    #[allow(dead_code)]
     config: RaptorConfig,
 }
 
@@ -87,6 +89,9 @@ impl RowGroups {
             metadata_algorithm: None,
         };
 
+        // Use the configured compression settings from config, not local variable
+        // This avoids confusion with struct field of same name
+
         Ok(Self {
             row_groups: HashMap::new(),
             current_row_group: None,
@@ -95,7 +100,7 @@ impl RowGroups {
             optimal_size,
             quantization_engine,
             // Note: simd_encoder removed - encoding now done via ProximaCodec
-            compression_config,
+            compression_config: compression_config,
             config,
         })
     }
@@ -206,7 +211,7 @@ impl RowGroups {
         }
 
         // Process vectors and prepare metadata before getting mutable reference
-        let metadata_maps: Vec<_> = vectors
+        let _metadata_maps: Vec<_> = vectors
             .iter()
             .map(|record| record.metadata.clone())
             .collect();
@@ -423,6 +428,7 @@ impl RowGroups {
     }
 
     /// Add metadata in columnar format
+    #[allow(dead_code)]
     fn add_metadata_columnar(
         &self,
         metadata_columns: &mut MetadataColumns,
@@ -467,6 +473,7 @@ impl RowGroups {
     }
 
     /// Add empty metadata entries to maintain column alignment
+    #[allow(dead_code)]
     fn add_empty_metadata_columnar(&self, metadata_columns: &mut MetadataColumns) -> Result<()> {
         // Add None to all existing columns to maintain alignment
         for column in metadata_columns.string_columns.values_mut() {
@@ -636,7 +643,7 @@ impl RowGroups {
             }
 
             // Apply quantization
-            let quantized = quantization_engine.quantize_batch(&vectors, None).await?;
+            let _quantized = quantization_engine.quantize_batch(&vectors, None).await?;
 
             // Store quantized data in columnar format
             // Note: quantized is Vec<StorageQuantizedData>, need to extract data appropriately

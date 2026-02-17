@@ -81,7 +81,7 @@ pub struct IcebergCatalog {
     /// Catalog name
     name: String,
     /// Configuration
-    config: IcebergCatalogConfig,
+    _config: IcebergCatalogConfig,
     /// Backend type
     backend: IcebergBackend,
     /// Base path for local storage
@@ -194,7 +194,7 @@ impl IcebergCatalog {
 
         let catalog = Self {
             name,
-            config,
+            _config: config,
             backend,
             base_path,
             cache,

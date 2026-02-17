@@ -4,9 +4,10 @@ Instruction mixin
 Provides query instruction support for retrieval-optimized models.
 """
 
-from typing import List
-import numpy as np
 import logging
+from typing import List
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +119,7 @@ class InstructionMixin:
             >>> print(query_embs.shape)
             (2, 1536)
         """
-        instructed_queries = [
-            self.apply_instruction(q, is_query=True)
-            for q in queries
-        ]
+        instructed_queries = [self.apply_instruction(q, is_query=True) for q in queries]
         return self.embed(instructed_queries)
 
     def embed_passages(self, passages: List[str]) -> np.ndarray:
@@ -159,5 +157,8 @@ class InstructionMixin:
             >>> docs = [{"text": "ML is great", "id": "1"}]
             >>> doc_embs = provider.embed_documents(docs)
         """
-        texts = [doc.get("text", "") if isinstance(doc, dict) else str(doc) for doc in documents]
+        texts = [
+            doc.get("text", "") if isinstance(doc, dict) else str(doc)
+            for doc in documents
+        ]
         return self.embed_passages(texts)

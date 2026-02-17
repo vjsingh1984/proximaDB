@@ -6,9 +6,9 @@ infrastructure for the embedding provider system.
 """
 
 from .base import BaseEmbeddingProvider
-from .config import ProviderConfig, ModelMetadata
-from .registry import ProviderRegistry
 from .cache import ModelCache
+from .config import ModelMetadata, ProviderConfig
+from .registry import ProviderRegistry
 
 __all__ = [
     "BaseEmbeddingProvider",

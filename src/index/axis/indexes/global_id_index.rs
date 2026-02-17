@@ -41,6 +41,7 @@ pub struct GlobalIdIndex {
     /// Map from vector ID to storage location
     id_map: Arc<RwLock<HashMap<String, StorageLocation>>>,
     /// Index configuration
+    #[allow(dead_code)]
     config: GlobalIdIndexConfig,
     /// Collection ID for isolation
     collection_id: String,

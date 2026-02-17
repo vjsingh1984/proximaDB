@@ -142,7 +142,7 @@ struct VolatileState {
     /// Index of highest log entry known to be committed
     commit_index: u64,
     /// Index of highest log entry applied to state machine
-    last_applied: u64,
+    _last_applied: u64,
 }
 
 /// Volatile state on leaders (reinitialized after election)
@@ -194,13 +194,13 @@ pub struct RaftConsensus {
     /// Transport layer for RPC communication (optional, required for distributed mode)
     transport: Option<Arc<dyn ConsensusTransport>>,
     /// Connection manager for resilient connections
-    connection_manager: Option<Arc<ConnectionManager>>,
+    _connection_manager: Option<Arc<ConnectionManager>>,
     /// Peer nodes in the cluster
     peers: Arc<RwLock<Vec<NodeEndpoint>>>,
     /// Circuit breakers per peer (node_id -> CircuitBreaker)
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
     /// Retry policy for RPC calls
-    retry_policy: RetryPolicy,
+    _retry_policy: RetryPolicy,
     /// Shutdown signal sender
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Background task handles
@@ -220,10 +220,10 @@ impl RaftConsensus {
             current_leader: Arc::new(RwLock::new(None)),
             running: Arc::new(RwLock::new(false)),
             transport: None,
-            connection_manager: None,
+            _connection_manager: None,
             peers: Arc::new(RwLock::new(Vec::new())),
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
-            retry_policy: RetryPolicy::default(),
+            _retry_policy: RetryPolicy::default(),
             shutdown_tx: None,
             task_handles: Arc::new(RwLock::new(Vec::new())),
         })
@@ -281,10 +281,10 @@ impl RaftConsensus {
             current_leader: Arc::new(RwLock::new(None)),
             running: Arc::new(RwLock::new(false)),
             transport: Some(transport),
-            connection_manager: Some(connection_manager),
+            _connection_manager: Some(connection_manager),
             peers: Arc::new(RwLock::new(peers)),
             circuit_breakers: Arc::new(RwLock::new(breakers)),
-            retry_policy: RetryPolicy::default()
+            _retry_policy: RetryPolicy::default()
                 .with_max_retries(2)
                 .with_base_delay(Duration::from_millis(50)),
             shutdown_tx: None,
@@ -1354,6 +1354,7 @@ impl RaftConsensus {
     }
 
     /// Convert internal LogEntry to RPC LogEntry
+    #[allow(dead_code)]
     fn log_entry_to_rpc(entry: &LogEntry) -> RpcLogEntry {
         let command_bytes = serde_json::to_vec(&entry.command).unwrap_or_default();
         let entry_type = match &entry.command {
@@ -1371,6 +1372,7 @@ impl RaftConsensus {
     }
 
     /// Convert RPC LogEntry to internal LogEntry
+    #[allow(dead_code)]
     fn rpc_to_log_entry(rpc_entry: &RpcLogEntry) -> Option<LogEntry> {
         let command: Command = if rpc_entry.entry_type == LogEntryType::Noop {
             Command::Noop
@@ -1526,7 +1528,7 @@ mod tests {
         let consensus = consensus.unwrap();
         assert_eq!(consensus.node_id(), "node-1");
         assert!(consensus.transport.is_some());
-        assert!(consensus.connection_manager.is_some());
+        assert!(consensus._connection_manager.is_some());
 
         // Verify peers are set
         let peers = consensus.get_peers().await;

@@ -30,6 +30,14 @@ use self::promql::{PromQLExecutor, PromQLParser};
 pub use self::tantivy_log_index::{LogSearchOptions, LogSearchResult, TantivyLogIndex};
 
 /// Observability query engine
+///
+/// Provides unified query interface for logs, metrics, and traces.
+/// Features:
+/// - Full-text search with Tantivy (BM25 ranking)
+/// - Log queries with filtering (service, severity, source)
+/// - Metric aggregation with PromQL-like syntax
+/// - Trace queries and analysis
+/// - Automatic index management
 pub struct ObservabilityQueryEngine {
     /// Storage layer
     storage: Arc<ObservabilityStorage>,
@@ -44,6 +52,11 @@ impl ObservabilityQueryEngine {
             storage,
             log_indexes: tokio::sync::RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Get access to the storage layer
+    pub fn storage(&self) -> &Arc<ObservabilityStorage> {
+        &self.storage
     }
 
     /// Create or get a Tantivy log index for a namespace
@@ -730,6 +743,9 @@ impl ObservabilityQueryEngine {
 }
 
 /// Parameters for PromQL query
+///
+/// Configuration for executing PromQL (Prometheus Query Language) queries.
+/// Supports vector selectors, aggregations, and time range specification.
 #[derive(Debug, Clone)]
 pub struct PromQLQueryParams {
     /// PromQL query string
@@ -746,6 +762,7 @@ pub struct PromQLQueryParams {
 
 impl PromQLQueryParams {
     /// Create new PromQL query params
+    #[must_use]
     pub fn new(query: &str, start_time_ns: i64, end_time_ns: i64) -> Self {
         Self {
             query: query.to_string(),
@@ -757,12 +774,14 @@ impl PromQLQueryParams {
     }
 
     /// Set evaluation time
+    #[must_use]
     pub fn with_eval_time(mut self, eval_time_ns: i64) -> Self {
         self.eval_time_ns = Some(eval_time_ns);
         self
     }
 
     /// Set lookback window
+    #[must_use]
     pub fn with_lookback(mut self, lookback_ns: i64) -> Self {
         self.lookback_ns = Some(lookback_ns);
         self
@@ -770,6 +789,9 @@ impl PromQLQueryParams {
 }
 
 /// Result of a PromQL query
+///
+/// Contains the results of executing a PromQL query, including
+/// the metric values and query execution time.
 #[derive(Debug, Clone)]
 pub struct PromQLQueryResult {
     /// Query results
@@ -779,6 +801,9 @@ pub struct PromQLQueryResult {
 }
 
 /// Parameters for log aggregation
+///
+/// Configuration for aggregating logs with GROUP BY support.
+/// Enables counting, grouping by service/severity, and text filtering.
 #[derive(Debug, Clone)]
 pub struct LogAggregationParams {
     /// Start time (nanoseconds since epoch)
@@ -813,6 +838,7 @@ impl Default for LogAggregationParams {
 
 impl LogAggregationParams {
     /// Create new aggregation params
+    #[must_use]
     pub fn new(start_time_ns: i64, end_time_ns: i64, aggregation: LogAggregation) -> Self {
         Self {
             start_time_ns,
@@ -823,24 +849,28 @@ impl LogAggregationParams {
     }
 
     /// Add service filter
+    #[must_use]
     pub fn with_service(mut self, service: &str) -> Self {
         self.services.push(service.to_string());
         self
     }
 
     /// Add severity filter
+    #[must_use]
     pub fn with_severity(mut self, severity: Severity) -> Self {
         self.severities.push(severity);
         self
     }
 
     /// Set text query
+    #[must_use]
     pub fn with_query(mut self, query: &str) -> Self {
         self.query = Some(query.to_string());
         self
     }
 
     /// Set max logs to scan
+    #[must_use]
     pub fn with_max_logs(mut self, max: usize) -> Self {
         self.max_logs_to_scan = max;
         self
@@ -848,6 +878,10 @@ impl LogAggregationParams {
 }
 
 /// Parsed query structure
+///
+/// Internal representation of a parsed log query.
+/// Supports service, source, severity, trace ID, and attribute filters,
+/// along with full-text search terms.
 #[derive(Debug, Default)]
 struct ParsedQuery {
     /// Service filter
@@ -865,6 +899,9 @@ struct ParsedQuery {
 }
 
 /// Log index statistics
+///
+/// Statistics about the Tantivy full-text index for a namespace.
+/// Used to monitor index size and usage.
 #[derive(Debug, Clone)]
 pub struct LogIndexStats {
     /// Namespace name

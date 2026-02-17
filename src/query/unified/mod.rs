@@ -325,3 +325,7 @@ mod tests {
         assert!(config.enable_cache);
     }
 }
+
+// RBAC integration tests
+#[cfg(test)]
+pub mod rbac_integration_tests;

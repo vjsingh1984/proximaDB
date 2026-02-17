@@ -24,6 +24,9 @@ use crate::proto::proximadb_v1::{
     DocFilterCondition, DocFilterOperator, DocumentFilter, Severity, SqlValue,
     sql_value::Value as SqlValueVariant,
 };
+use crate::security::unified_rbac::{
+    ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
+};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentQueryParams, DocumentService};
 use crate::storage::traits::UnifiedStorageEngine;
@@ -34,6 +37,8 @@ pub struct ParallelExecutor {
     max_parallel: usize,
     /// Semaphore for concurrency control
     semaphore: Arc<Semaphore>,
+    /// RBAC manager for permission validation
+    rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
 }
 
 impl ParallelExecutor {
@@ -42,7 +47,117 @@ impl ParallelExecutor {
         Self {
             max_parallel,
             semaphore: Arc::new(Semaphore::new(max_parallel)),
+            rbac_manager: None,
         }
+    }
+
+    /// Create a new parallel executor with RBAC enabled
+    pub fn with_rbac(max_parallel: usize, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
+        Self {
+            max_parallel,
+            semaphore: Arc::new(Semaphore::new(max_parallel)),
+            rbac_manager: Some(rbac_manager),
+        }
+    }
+
+    /// Validate permissions for a query component
+    pub async fn validate_component_access(
+        &self,
+        user_ctx: &UnifiedUserContext,
+        component: &QueryComponent,
+    ) -> Result<()> {
+        let rbac_manager = self
+            .rbac_manager
+            .as_ref()
+            .ok_or_else(|| anyhow!("RBAC validation requested but RBAC manager not configured"))?;
+
+        // Match on the operation to extract the collection/resource ID
+        match &component.operation {
+            ModelOperation::VectorSearch(vector_expr) => {
+                let permission = UnifiedPermission::VectorSearch(vector_expr.collection.clone());
+                let allowed = rbac_manager
+                    .check_permission_cached(&user_ctx.user_id, &permission)
+                    .await
+                    .map_err(|e| anyhow!("Failed to check vector search permission: {}", e))?;
+
+                if !allowed {
+                    return Err(anyhow!(
+                        "Permission denied: Vector search on collection '{}'",
+                        vector_expr.collection
+                    ));
+                }
+            }
+            ModelOperation::GraphTraversal(graph_expr) => {
+                let permission = UnifiedPermission::GraphTraverse(graph_expr.graph_name.clone());
+                let allowed = rbac_manager
+                    .check_permission_cached(&user_ctx.user_id, &permission)
+                    .await
+                    .map_err(|e| anyhow!("Failed to check graph permission: {}", e))?;
+
+                if !allowed {
+                    return Err(anyhow!(
+                        "Permission denied: Graph traversal on '{}'",
+                        graph_expr.graph_name
+                    ));
+                }
+            }
+            ModelOperation::DocumentQuery(doc_expr) => {
+                let permission = UnifiedPermission::CollectionRead(doc_expr.collection.clone());
+                let allowed = rbac_manager
+                    .check_permission_cached(&user_ctx.user_id, &permission)
+                    .await
+                    .map_err(|e| anyhow!("Failed to check document permission: {}", e))?;
+
+                if !allowed {
+                    return Err(anyhow!(
+                        "Permission denied: Document query on collection '{}'",
+                        doc_expr.collection
+                    ));
+                }
+            }
+            ModelOperation::LogQuery(_) | ModelOperation::MetricQuery(_) => {
+                // Observability queries require SystemAdmin permission
+                let permission = UnifiedPermission::SystemAdmin;
+                let allowed = rbac_manager
+                    .check_permission_cached(&user_ctx.user_id, &permission)
+                    .await
+                    .map_err(|e| anyhow!("Failed to check observability permission: {}", e))?;
+
+                if !allowed {
+                    return Err(anyhow!(
+                        "Permission denied: Observability queries require system admin"
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute query with RBAC validation
+    pub async fn execute_with_auth(
+        &self,
+        query: &MultiModelQuery,
+        user_ctx: &UnifiedUserContext,
+        vector_ops: Option<Arc<VectorOperationsService>>,
+        document_service: Arc<DocumentService>,
+        graph_service: Option<Arc<GraphOperationsService>>,
+        observability_service: Option<Arc<ObservabilityService>>,
+    ) -> Result<Vec<SubQueryResult>> {
+        // Validate permissions for each component
+        for component in &query.components {
+            self.validate_component_access(user_ctx, component).await?;
+        }
+
+        // Proceed with execution
+        self.execute_parallel_with_all_services(
+            query,
+            vector_ops,
+            document_service,
+            graph_service,
+            observability_service,
+        )
+        .await
     }
 
     /// Execute query components in parallel
@@ -156,6 +271,7 @@ impl ParallelExecutor {
     }
 
     /// Execute a batch of parallelizable components
+    #[allow(dead_code)]
     async fn execute_parallel_batch(
         &self,
         components: Vec<(usize, QueryComponent)>,
@@ -220,6 +336,7 @@ impl ParallelExecutor {
     }
 
     /// Execute a single component with access to prior results (for dependencies)
+    #[allow(dead_code)]
     async fn execute_single_with_context(
         &self,
         idx: usize,
@@ -270,6 +387,7 @@ impl ParallelExecutor {
 }
 
 /// Execute a single query component
+#[allow(dead_code)]
 async fn execute_component(
     component: &QueryComponent,
     vector_ops: Option<Arc<VectorOperationsService>>,
@@ -312,6 +430,7 @@ async fn execute_component_full(
 }
 
 /// Execute a component with dependency context
+#[allow(dead_code)]
 async fn execute_component_with_context(
     component: &QueryComponent,
     vector_ops: Option<Arc<VectorOperationsService>>,
@@ -637,6 +756,7 @@ fn convert_filter_value_to_sql(value: &FilterValue) -> SqlValue {
 }
 
 /// Execute a graph traversal query (legacy - calls full version)
+#[allow(dead_code)]
 async fn execute_graph_traversal(expr: &GraphTraversalExpr) -> Result<SubQueryResult> {
     execute_graph_traversal_full(expr, None).await
 }
@@ -900,6 +1020,7 @@ fn extract_node_labels(filters: &[super::ast::NodeFilter]) -> Vec<String> {
 }
 
 /// Execute a graph traversal with input node IDs (legacy)
+#[allow(dead_code)]
 async fn execute_graph_traversal_with_input(
     expr: &GraphTraversalExpr,
     input_ids: Option<Vec<String>>,
@@ -908,6 +1029,7 @@ async fn execute_graph_traversal_with_input(
 }
 
 /// Execute a graph traversal with input node IDs and graph service
+#[allow(dead_code)]
 async fn execute_graph_traversal_with_input_full(
     expr: &GraphTraversalExpr,
     input_ids: Option<Vec<String>>,
@@ -985,6 +1107,7 @@ async fn execute_graph_traversal_with_input_full(
 }
 
 /// Execute a log query (legacy)
+#[allow(dead_code)]
 async fn execute_log_query(expr: &LogQueryExpr) -> Result<SubQueryResult> {
     execute_log_query_full(expr, None).await
 }
@@ -1075,6 +1198,7 @@ async fn execute_log_query_full(
 }
 
 /// Execute a metric query (legacy)
+#[allow(dead_code)]
 async fn execute_metric_query(expr: &MetricQueryExpr) -> Result<SubQueryResult> {
     execute_metric_query_full(expr, None).await
 }
@@ -1496,7 +1620,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_query_execution() {
-        let executor = ParallelExecutor::new(4);
+        let _executor = ParallelExecutor::new(4);
         let query = MultiModelQuery::new();
 
         // Need mock storage engine and document service for full test

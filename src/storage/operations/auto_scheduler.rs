@@ -28,7 +28,7 @@
 //! scheduler.stop().await?;
 //! ```
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -348,6 +348,7 @@ pub struct AutoScheduler {
     /// Workload analysis result
     workload_analysis: Arc<RwLock<WorkloadAnalysis>>,
     /// Scheduler state (running/paused)
+    #[allow(dead_code)]
     is_running: Arc<RwLock<bool>>,
     /// Shutdown signal sender
     shutdown_tx: broadcast::Sender<()>,

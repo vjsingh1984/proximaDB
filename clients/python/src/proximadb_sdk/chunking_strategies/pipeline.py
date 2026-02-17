@@ -18,28 +18,48 @@ Design Patterns:
 import asyncio
 import hashlib
 import logging
+import threading
 import time
+import weakref
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from queue import Empty, Queue
 from typing import (
-    Any, AsyncGenerator, AsyncIterator, Callable, Dict, Generator,
-    Generic, Iterator, List, Optional, Protocol, Tuple, TypeVar, Union
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Dict,
+    Generator,
+    Generic,
+    Iterator,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    TypeVar,
+    Union,
 )
-from contextlib import contextmanager, asynccontextmanager
-import threading
-from queue import Queue, Empty
-import weakref
 
-from .base import ChunkingStrategy, ChunkingStrategyInterface, ChunkingConfig, TextChunk
-from .factory import ChunkingStrategyFactory, get_chunking_strategy
+from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
 from .code import CodeChunkingConfig
+from .factory import ChunkingStrategyFactory, get_chunking_strategy
 from .parser_utils import (
-    ParserError, ParseError, ParserMetrics, MetricsCollector,
-    get_metrics_collector, ParserCache, get_parser_cache,
-    ValidationResult, ConfigValidator, FallbackStrategy, FallbackConfig
+    ConfigValidator,
+    FallbackConfig,
+    FallbackStrategy,
+    MetricsCollector,
+    ParseError,
+    ParserCache,
+    ParserError,
+    ParserMetrics,
+    ValidationResult,
+    get_metrics_collector,
+    get_parser_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,8 +69,8 @@ logger = logging.getLogger(__name__)
 # Type Definitions
 # =============================================================================
 
-T = TypeVar('T')
-ChunkType = TypeVar('ChunkType', bound=TextChunk)
+T = TypeVar("T")
+ChunkType = TypeVar("ChunkType", bound=TextChunk)
 
 
 class EmbeddingProvider(Protocol):
@@ -81,7 +101,7 @@ class VectorStore(Protocol):
         self,
         query_vector: List[float],
         top_k: int = 10,
-        filter: Optional[Dict[str, Any]] = None
+        filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Search for similar vectors"""
         ...
@@ -91,8 +111,10 @@ class VectorStore(Protocol):
 # Configuration
 # =============================================================================
 
+
 class ProcessingMode(Enum):
     """Processing mode for the pipeline"""
+
     SYNC = "sync"
     ASYNC = "async"
     STREAMING = "streaming"
@@ -101,6 +123,7 @@ class ProcessingMode(Enum):
 
 class ErrorHandling(Enum):
     """Error handling strategy"""
+
     FAIL_FAST = "fail_fast"
     SKIP_ERRORS = "skip_errors"
     COLLECT_ERRORS = "collect_errors"
@@ -151,6 +174,7 @@ class PipelineConfig:
 @dataclass
 class PipelineResult:
     """Result of a pipeline operation"""
+
     success: bool
     chunks: List[TextChunk] = field(default_factory=list)
     embeddings: List[List[float]] = field(default_factory=list)
@@ -171,13 +195,14 @@ class PipelineResult:
             "chunk_count": self.chunk_count,
             "error_count": self.error_count,
             "metrics": self.metrics,
-            "errors": self.errors[:10] if self.errors else []
+            "errors": self.errors[:10] if self.errors else [],
         }
 
 
 @dataclass
 class BatchResult:
     """Result of a batch processing operation"""
+
     total_items: int = 0
     processed_items: int = 0
     failed_items: int = 0
@@ -197,6 +222,7 @@ class BatchResult:
 # =============================================================================
 # Processing Stages
 # =============================================================================
+
 
 class PipelineStage(ABC, Generic[T]):
     """Abstract base class for pipeline stages"""
@@ -239,7 +265,7 @@ class ValidationStage(PipelineStage[TextChunk]):
         # Check text length
         if len(chunk.text) > self.config.max_text_length:
             if self.config.truncate_long_texts:
-                chunk.text = chunk.text[:self.config.max_text_length]
+                chunk.text = chunk.text[: self.config.max_text_length]
                 chunk.metadata["truncated"] = True
             else:
                 raise ValueError(
@@ -253,7 +279,9 @@ class ValidationStage(PipelineStage[TextChunk]):
 class EnrichmentStage(PipelineStage[TextChunk]):
     """Enriches chunks with additional metadata"""
 
-    def __init__(self, enrichment_funcs: Optional[List[Callable[[TextChunk], TextChunk]]] = None):
+    def __init__(
+        self, enrichment_funcs: Optional[List[Callable[[TextChunk], TextChunk]]] = None
+    ):
         self.enrichment_funcs = enrichment_funcs or []
 
     @property
@@ -285,8 +313,7 @@ class FilterStage(PipelineStage[List[TextChunk]]):
             return chunks
 
         return [
-            chunk for chunk in chunks
-            if all(pred(chunk) for pred in self.predicates)
+            chunk for chunk in chunks if all(pred(chunk) for pred in self.predicates)
         ]
 
     def add_predicate(self, predicate: Callable[[TextChunk], bool]) -> None:
@@ -298,6 +325,7 @@ class FilterStage(PipelineStage[List[TextChunk]]):
 # Batch Processor
 # =============================================================================
 
+
 class BatchEmbedder:
     """Handles batch embedding operations with rate limiting and retries"""
 
@@ -307,7 +335,7 @@ class BatchEmbedder:
         batch_size: int = 32,
         max_retries: int = 3,
         retry_delay: float = 1.0,
-        timeout: float = 30.0
+        timeout: float = 30.0,
     ):
         self.provider = provider
         self.batch_size = batch_size
@@ -323,7 +351,7 @@ class BatchEmbedder:
         all_embeddings = []
 
         for i in range(0, len(texts), self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             embeddings = self._embed_with_retry(batch)
             all_embeddings.extend(embeddings)
 
@@ -334,7 +362,7 @@ class BatchEmbedder:
         all_embeddings = []
 
         for i in range(0, len(texts), self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             embeddings = await self._embed_with_retry_async(batch)
             all_embeddings.extend(embeddings)
 
@@ -359,7 +387,9 @@ class BatchEmbedder:
                 if attempt < self.max_retries - 1:
                     time.sleep(self.retry_delay * (attempt + 1))
 
-        raise RuntimeError(f"Embedding failed after {self.max_retries} attempts: {last_error}")
+        raise RuntimeError(
+            f"Embedding failed after {self.max_retries} attempts: {last_error}"
+        )
 
     async def _embed_with_retry_async(self, texts: List[str]) -> List[List[float]]:
         """Async embed with retries"""
@@ -370,7 +400,7 @@ class BatchEmbedder:
                 with self._lock:
                     self._request_count += 1
 
-                if hasattr(self.provider, 'embed_texts_async'):
+                if hasattr(self.provider, "embed_texts_async"):
                     return await self.provider.embed_texts_async(texts)
                 else:
                     # Fallback to sync in thread pool
@@ -387,20 +417,23 @@ class BatchEmbedder:
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay * (attempt + 1))
 
-        raise RuntimeError(f"Async embedding failed after {self.max_retries} attempts: {last_error}")
+        raise RuntimeError(
+            f"Async embedding failed after {self.max_retries} attempts: {last_error}"
+        )
 
     @property
     def stats(self) -> Dict[str, Any]:
         return {
             "request_count": self._request_count,
             "total_tokens": self._total_tokens,
-            "batch_size": self.batch_size
+            "batch_size": self.batch_size,
         }
 
 
 # =============================================================================
 # Progress Tracking
 # =============================================================================
+
 
 class ProgressTracker:
     """Tracks progress of pipeline operations"""
@@ -460,6 +493,7 @@ class ProgressTracker:
 # Main Pipeline
 # =============================================================================
 
+
 class ChunkingPipeline:
     """
     Unified chunking pipeline that orchestrates all processing stages.
@@ -492,7 +526,7 @@ class ChunkingPipeline:
         self,
         config: Optional[PipelineConfig] = None,
         embedding_provider: Optional[EmbeddingProvider] = None,
-        vector_store: Optional[VectorStore] = None
+        vector_store: Optional[VectorStore] = None,
     ):
         self.config = config or PipelineConfig()
         self.embedding_provider = embedding_provider
@@ -518,17 +552,23 @@ class ChunkingPipeline:
             else:
                 # Create CodeChunkingConfig from ChunkingConfig values
                 config = CodeChunkingConfig(
-                    chunk_size=self.config.chunking_config.chunk_size if self.config.chunking_config else 512,
-                    chunk_overlap=self.config.chunking_config.chunk_overlap if self.config.chunking_config else 50,
+                    chunk_size=(
+                        self.config.chunking_config.chunk_size
+                        if self.config.chunking_config
+                        else 512
+                    ),
+                    chunk_overlap=(
+                        self.config.chunking_config.chunk_overlap
+                        if self.config.chunking_config
+                        else 50
+                    ),
                 )
             self.chunker = ChunkingStrategyFactory.create_strategy(
-                self.config.chunking_strategy,
-                config
+                self.config.chunking_strategy, config
             )
         else:
             self.chunker = ChunkingStrategyFactory.create_strategy(
-                self.config.chunking_strategy,
-                self.config.chunking_config
+                self.config.chunking_strategy, self.config.chunking_config
             )
 
     def _init_stages(self) -> None:
@@ -545,7 +585,7 @@ class ChunkingPipeline:
                 batch_size=self.config.embedding_batch_size,
                 max_retries=self.config.max_retries,
                 retry_delay=self.config.retry_delay,
-                timeout=self.config.embedding_timeout
+                timeout=self.config.embedding_timeout,
             )
         else:
             self.embedder = None
@@ -554,37 +594,40 @@ class ChunkingPipeline:
     # Configuration API (Builder Pattern)
     # -------------------------------------------------------------------------
 
-    def with_strategy(self, strategy: ChunkingStrategy) -> 'ChunkingPipeline':
+    def with_strategy(self, strategy: ChunkingStrategy) -> "ChunkingPipeline":
         """Set chunking strategy"""
         self.config.chunking_strategy = strategy
         self._init_chunker()
         return self
 
-    def with_embedding_provider(self, provider: EmbeddingProvider) -> 'ChunkingPipeline':
+    def with_embedding_provider(
+        self, provider: EmbeddingProvider
+    ) -> "ChunkingPipeline":
         """Set embedding provider"""
         self.embedding_provider = provider
         self._init_embedder()
         return self
 
-    def with_vector_store(self, store: VectorStore) -> 'ChunkingPipeline':
+    def with_vector_store(self, store: VectorStore) -> "ChunkingPipeline":
         """Set vector store"""
         self.vector_store = store
         return self
 
-    def with_enrichment(self, func: Callable[[TextChunk], TextChunk]) -> 'ChunkingPipeline':
+    def with_enrichment(
+        self, func: Callable[[TextChunk], TextChunk]
+    ) -> "ChunkingPipeline":
         """Add chunk enrichment function"""
         self.enrichment_stage.add_enrichment(func)
         return self
 
-    def with_filter(self, predicate: Callable[[TextChunk], bool]) -> 'ChunkingPipeline':
+    def with_filter(self, predicate: Callable[[TextChunk], bool]) -> "ChunkingPipeline":
         """Add chunk filter predicate"""
         self.filter_stage.add_predicate(predicate)
         return self
 
     def with_progress_callback(
-        self,
-        callback: Callable[[int, int, str], None]
-    ) -> 'ChunkingPipeline':
+        self, callback: Callable[[int, int, str], None]
+    ) -> "ChunkingPipeline":
         """Set progress callback"""
         self.config.progress_callback = callback
         self._progress = ProgressTracker(callback)
@@ -595,10 +638,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_text(
-        self,
-        text: str,
-        source_id: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
     ) -> PipelineResult:
         """
         Process text synchronously.
@@ -626,11 +666,13 @@ class ChunkingPipeline:
                     chunk = self.enrichment_stage.process(chunk)
                     processed_chunks.append(chunk)
                 except Exception as e:
-                    errors.append({
-                        "stage": "validation",
-                        "chunk_id": chunk.chunk_id,
-                        "error": str(e)
-                    })
+                    errors.append(
+                        {
+                            "stage": "validation",
+                            "chunk_id": chunk.chunk_id,
+                            "error": str(e),
+                        }
+                    )
                     if self.config.error_handling == ErrorHandling.FAIL_FAST:
                         raise
 
@@ -644,10 +686,7 @@ class ChunkingPipeline:
                     texts = [c.text for c in filtered_chunks]
                     embeddings = self.embedder.embed_batch(texts)
                 except Exception as e:
-                    errors.append({
-                        "stage": "embedding",
-                        "error": str(e)
-                    })
+                    errors.append({"stage": "embedding", "error": str(e)})
                     if self.config.error_handling == ErrorHandling.FAIL_FAST:
                         raise
 
@@ -658,7 +697,9 @@ class ChunkingPipeline:
                 "input_length": len(text),
                 "chunk_count": len(filtered_chunks),
                 "embedding_count": len(embeddings),
-                "chunks_per_second": len(filtered_chunks) / processing_time if processing_time > 0 else 0
+                "chunks_per_second": (
+                    len(filtered_chunks) / processing_time if processing_time > 0 else 0
+                ),
             }
 
             if self.config.enable_metrics:
@@ -669,7 +710,7 @@ class ChunkingPipeline:
                 chunks=filtered_chunks,
                 embeddings=embeddings,
                 errors=errors,
-                metrics=metrics
+                metrics=metrics,
             )
 
         except Exception as e:
@@ -677,14 +718,11 @@ class ChunkingPipeline:
             return PipelineResult(
                 success=False,
                 errors=[{"stage": "pipeline", "error": str(e)}],
-                metrics={"processing_time_sec": time.time() - start_time}
+                metrics={"processing_time_sec": time.time() - start_time},
             )
 
     async def process_text_async(
-        self,
-        text: str,
-        source_id: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
     ) -> PipelineResult:
         """
         Process text asynchronously.
@@ -698,8 +736,7 @@ class ChunkingPipeline:
             # Stage 1: Chunk (run in thread pool for CPU-bound work)
             loop = asyncio.get_event_loop()
             chunks = await loop.run_in_executor(
-                None,
-                lambda: self.chunker.chunk(text, source_id, metadata)
+                None, lambda: self.chunker.chunk(text, source_id, metadata)
             )
 
             # Stage 2: Validate and enrich
@@ -710,11 +747,13 @@ class ChunkingPipeline:
                     chunk = await self.enrichment_stage.process_async(chunk)
                     processed_chunks.append(chunk)
                 except Exception as e:
-                    errors.append({
-                        "stage": "validation",
-                        "chunk_id": chunk.chunk_id,
-                        "error": str(e)
-                    })
+                    errors.append(
+                        {
+                            "stage": "validation",
+                            "chunk_id": chunk.chunk_id,
+                            "error": str(e),
+                        }
+                    )
                     if self.config.error_handling == ErrorHandling.FAIL_FAST:
                         raise
 
@@ -728,10 +767,7 @@ class ChunkingPipeline:
                     texts = [c.text for c in filtered_chunks]
                     embeddings = await self.embedder.embed_batch_async(texts)
                 except Exception as e:
-                    errors.append({
-                        "stage": "embedding",
-                        "error": str(e)
-                    })
+                    errors.append({"stage": "embedding", "error": str(e)})
                     if self.config.error_handling == ErrorHandling.FAIL_FAST:
                         raise
 
@@ -742,8 +778,10 @@ class ChunkingPipeline:
                 "input_length": len(text),
                 "chunk_count": len(filtered_chunks),
                 "embedding_count": len(embeddings),
-                "chunks_per_second": len(filtered_chunks) / processing_time if processing_time > 0 else 0,
-                "mode": "async"
+                "chunks_per_second": (
+                    len(filtered_chunks) / processing_time if processing_time > 0 else 0
+                ),
+                "mode": "async",
             }
 
             if self.config.enable_metrics:
@@ -754,7 +792,7 @@ class ChunkingPipeline:
                 chunks=filtered_chunks,
                 embeddings=embeddings,
                 errors=errors,
-                metrics=metrics
+                metrics=metrics,
             )
 
         except Exception as e:
@@ -762,7 +800,7 @@ class ChunkingPipeline:
             return PipelineResult(
                 success=False,
                 errors=[{"stage": "pipeline", "error": str(e)}],
-                metrics={"processing_time_sec": time.time() - start_time}
+                metrics={"processing_time_sec": time.time() - start_time},
             )
 
     # -------------------------------------------------------------------------
@@ -770,10 +808,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_stream(
-        self,
-        text: str,
-        source_id: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
     ) -> Generator[TextChunk, None, None]:
         """
         Process text as a stream, yielding chunks as they're ready.
@@ -799,10 +834,7 @@ class ChunkingPipeline:
                 raise
 
     async def process_stream_async(
-        self,
-        text: str,
-        source_id: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
     ) -> AsyncGenerator[TextChunk, None]:
         """
         Async version of stream processing.
@@ -810,8 +842,7 @@ class ChunkingPipeline:
         try:
             loop = asyncio.get_event_loop()
             chunks = await loop.run_in_executor(
-                None,
-                lambda: self.chunker.chunk(text, source_id, metadata)
+                None, lambda: self.chunker.chunk(text, source_id, metadata)
             )
 
             for chunk in chunks:
@@ -833,10 +864,7 @@ class ChunkingPipeline:
     # Batch Processing
     # -------------------------------------------------------------------------
 
-    def process_batch(
-        self,
-        items: List[Dict[str, Any]]
-    ) -> BatchResult:
+    def process_batch(self, items: List[Dict[str, Any]]) -> BatchResult:
         """
         Process multiple items in batch.
 
@@ -869,11 +897,13 @@ class ChunkingPipeline:
                     errors.extend(result.errors)
 
             except Exception as e:
-                errors.append({
-                    "item_index": i,
-                    "source_id": item.get("source_id"),
-                    "error": str(e)
-                })
+                errors.append(
+                    {
+                        "item_index": i,
+                        "source_id": item.get("source_id"),
+                        "error": str(e),
+                    }
+                )
                 if self.config.error_handling == ErrorHandling.FAIL_FAST:
                     break
 
@@ -891,13 +921,11 @@ class ChunkingPipeline:
             total_chunks=total_chunks,
             total_embeddings=total_embeddings,
             processing_time_sec=time.time() - start_time,
-            errors=errors
+            errors=errors,
         )
 
     async def process_batch_async(
-        self,
-        items: List[Dict[str, Any]],
-        concurrent_limit: Optional[int] = None
+        self, items: List[Dict[str, Any]], concurrent_limit: Optional[int] = None
     ) -> BatchResult:
         """
         Process multiple items concurrently.
@@ -917,7 +945,9 @@ class ChunkingPipeline:
         # Create semaphore for concurrency control
         semaphore = asyncio.Semaphore(concurrent_limit)
 
-        async def process_item(item: Dict[str, Any], index: int) -> Tuple[int, PipelineResult]:
+        async def process_item(
+            item: Dict[str, Any], index: int
+        ) -> Tuple[int, PipelineResult]:
             async with semaphore:
                 text = item.get("text", "")
                 source_id = item.get("source_id", f"batch_{index}")
@@ -928,10 +958,7 @@ class ChunkingPipeline:
                 return index, result
 
         # Process all items concurrently
-        tasks = [
-            process_item(item, i)
-            for i, item in enumerate(items)
-        ]
+        tasks = [process_item(item, i) for i, item in enumerate(items)]
 
         completed = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -964,7 +991,7 @@ class ChunkingPipeline:
             total_chunks=total_chunks,
             total_embeddings=total_embeddings,
             processing_time_sec=time.time() - start_time,
-            errors=errors
+            errors=errors,
         )
 
     # -------------------------------------------------------------------------
@@ -972,9 +999,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_file(
-        self,
-        file_path: Union[str, Path],
-        encoding: str = "utf-8"
+        self, file_path: Union[str, Path], encoding: str = "utf-8"
     ) -> PipelineResult:
         """
         Process a file.
@@ -990,8 +1015,7 @@ class ChunkingPipeline:
 
         if not file_path.exists():
             return PipelineResult(
-                success=False,
-                errors=[{"error": f"File not found: {file_path}"}]
+                success=False, errors=[{"error": f"File not found: {file_path}"}]
             )
 
         try:
@@ -1002,34 +1026,29 @@ class ChunkingPipeline:
                 metadata={
                     "file_path": str(file_path),
                     "file_name": file_path.name,
-                    "file_extension": file_path.suffix
-                }
+                    "file_extension": file_path.suffix,
+                },
             )
         except Exception as e:
             return PipelineResult(
-                success=False,
-                errors=[{"error": f"Failed to read file: {e}"}]
+                success=False, errors=[{"error": f"Failed to read file: {e}"}]
             )
 
     async def process_file_async(
-        self,
-        file_path: Union[str, Path],
-        encoding: str = "utf-8"
+        self, file_path: Union[str, Path], encoding: str = "utf-8"
     ) -> PipelineResult:
         """Async version of process_file"""
         file_path = Path(file_path)
 
         if not file_path.exists():
             return PipelineResult(
-                success=False,
-                errors=[{"error": f"File not found: {file_path}"}]
+                success=False, errors=[{"error": f"File not found: {file_path}"}]
             )
 
         try:
             loop = asyncio.get_event_loop()
             text = await loop.run_in_executor(
-                None,
-                lambda: file_path.read_text(encoding=encoding)
+                None, lambda: file_path.read_text(encoding=encoding)
             )
 
             return await self.process_text_async(
@@ -1038,20 +1057,16 @@ class ChunkingPipeline:
                 metadata={
                     "file_path": str(file_path),
                     "file_name": file_path.name,
-                    "file_extension": file_path.suffix
-                }
+                    "file_extension": file_path.suffix,
+                },
             )
         except Exception as e:
             return PipelineResult(
-                success=False,
-                errors=[{"error": f"Failed to read file: {e}"}]
+                success=False, errors=[{"error": f"Failed to read file: {e}"}]
             )
 
     def process_directory(
-        self,
-        directory: Union[str, Path],
-        pattern: str = "**/*",
-        recursive: bool = True
+        self, directory: Union[str, Path], pattern: str = "**/*", recursive: bool = True
     ) -> BatchResult:
         """
         Process all matching files in a directory.
@@ -1080,8 +1095,7 @@ class ChunkingPipeline:
 
         # Process as batch
         items = [
-            {"text": None, "file_path": str(f), "source_id": str(f)}
-            for f in files
+            {"text": None, "file_path": str(f), "source_id": str(f)} for f in files
         ]
 
         start_time = time.time()
@@ -1111,7 +1125,7 @@ class ChunkingPipeline:
             total_chunks=total_chunks,
             total_embeddings=total_embeddings,
             processing_time_sec=time.time() - start_time,
-            errors=errors
+            errors=errors,
         )
 
     async def process_directory_async(
@@ -1119,7 +1133,7 @@ class ChunkingPipeline:
         directory: Union[str, Path],
         pattern: str = "**/*",
         recursive: bool = True,
-        concurrent_limit: Optional[int] = None
+        concurrent_limit: Optional[int] = None,
     ) -> BatchResult:
         """Async version of process_directory"""
         directory = Path(directory)
@@ -1158,10 +1172,7 @@ class ChunkingPipeline:
 
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                errors.append({
-                    "file": str(files[i]),
-                    "error": str(result)
-                })
+                errors.append({"file": str(files[i]), "error": str(result)})
             else:
                 processed_results.append(result)
                 if not result.success:
@@ -1179,7 +1190,7 @@ class ChunkingPipeline:
             total_chunks=total_chunks,
             total_embeddings=total_embeddings,
             processing_time_sec=time.time() - start_time,
-            errors=errors
+            errors=errors,
         )
 
     # -------------------------------------------------------------------------
@@ -1187,10 +1198,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     async def process_and_store(
-        self,
-        text: str,
-        source_id: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
     ) -> PipelineResult:
         """
         Process text and store results in vector store.
@@ -1212,15 +1220,17 @@ class ChunkingPipeline:
         # Create vector records
         records = []
         for chunk, embedding in zip(result.chunks, result.embeddings):
-            records.append({
-                "id": chunk.chunk_id,
-                "vector": embedding,
-                "metadata": {
-                    **chunk.metadata,
-                    "text": chunk.text,
-                    "source_id": source_id
+            records.append(
+                {
+                    "id": chunk.chunk_id,
+                    "vector": embedding,
+                    "metadata": {
+                        **chunk.metadata,
+                        "text": chunk.text,
+                        "source_id": source_id,
+                    },
                 }
-            })
+            )
 
         # Store in vector store
         try:
@@ -1260,8 +1270,8 @@ class ChunkingPipeline:
             "embedder_stats": self.embedder.stats if self.embedder else {},
             "progress": {
                 "elapsed_time": self._progress.elapsed_time,
-                "items_per_second": self._progress.items_per_second
-            }
+                "items_per_second": self._progress.items_per_second,
+            },
         }
 
     def reset_metrics(self) -> None:
@@ -1275,11 +1285,12 @@ class ChunkingPipeline:
 # Factory Functions
 # =============================================================================
 
+
 def create_pipeline(
     strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC,
     embedding_provider: Optional[EmbeddingProvider] = None,
     vector_store: Optional[VectorStore] = None,
-    **kwargs
+    **kwargs,
 ) -> ChunkingPipeline:
     """
     Create a configured pipeline instance.
@@ -1300,35 +1311,28 @@ def create_pipeline(
             max_concurrent_tasks=8
         )
     """
-    config = PipelineConfig(
-        chunking_strategy=strategy,
-        **kwargs
-    )
+    config = PipelineConfig(chunking_strategy=strategy, **kwargs)
 
     return ChunkingPipeline(
-        config=config,
-        embedding_provider=embedding_provider,
-        vector_store=vector_store
+        config=config, embedding_provider=embedding_provider, vector_store=vector_store
     )
 
 
 def create_code_pipeline(
-    embedding_provider: Optional[EmbeddingProvider] = None,
-    **kwargs
+    embedding_provider: Optional[EmbeddingProvider] = None, **kwargs
 ) -> ChunkingPipeline:
     """Create a pipeline optimized for code processing"""
     return create_pipeline(
         strategy=ChunkingStrategy.CODE,
         embedding_provider=embedding_provider,
         embedding_batch_size=16,  # Smaller batches for code
-        max_text_length=16384,    # Longer for code files
-        **kwargs
+        max_text_length=16384,  # Longer for code files
+        **kwargs,
     )
 
 
 def create_document_pipeline(
-    embedding_provider: Optional[EmbeddingProvider] = None,
-    **kwargs
+    embedding_provider: Optional[EmbeddingProvider] = None, **kwargs
 ) -> ChunkingPipeline:
     """Create a pipeline optimized for document processing"""
     return create_pipeline(
@@ -1336,7 +1340,7 @@ def create_document_pipeline(
         embedding_provider=embedding_provider,
         embedding_batch_size=32,
         max_text_length=8192,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -1344,10 +1348,10 @@ def create_document_pipeline(
 # Context Managers
 # =============================================================================
 
+
 @contextmanager
 def pipeline_context(
-    strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC,
-    **kwargs
+    strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC, **kwargs
 ) -> Generator[ChunkingPipeline, None, None]:
     """
     Context manager for pipeline usage.
@@ -1365,8 +1369,7 @@ def pipeline_context(
 
 @asynccontextmanager
 async def async_pipeline_context(
-    strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC,
-    **kwargs
+    strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC, **kwargs
 ) -> AsyncGenerator[ChunkingPipeline, None]:
     """
     Async context manager for pipeline usage.

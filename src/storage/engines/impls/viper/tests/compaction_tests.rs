@@ -84,6 +84,10 @@ fn create_test_collection(
             primary_index: Some("default".to_string()),
             auto_index_selection: Some(true),
             owner: Some("test".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
@@ -130,7 +134,7 @@ async fn test_insert_flush_compact_flow() {
 
     // Test complete flow: insert -> flush -> compact
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -418,7 +422,7 @@ async fn test_basic_compaction() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -845,7 +849,7 @@ async fn test_concurrent_compaction_and_reads() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
     let engine = Arc::new(
         {
@@ -1026,7 +1030,7 @@ async fn test_concurrent_compaction_across_collections() {
 
     // Test that we can compact different collections concurrently
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -1343,7 +1347,7 @@ async fn test_size_tiered_compaction_strategy() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -1466,7 +1470,7 @@ async fn test_compaction_with_metadata_filtering() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -1608,6 +1612,8 @@ async fn test_compaction_with_metadata_filtering() {
             storage_path: temp_dir.path().to_str().unwrap().to_string(), // base_location, not full path
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     // Debug: check if ANY vectors are returned using unified search
@@ -1685,7 +1691,7 @@ async fn test_incremental_compaction() {
     let _ = std::fs::remove_dir_all(test_dir);
     std::fs::create_dir_all(test_dir).unwrap();
 
-    let config = create_compaction_config(test_dir);
+    let _config = create_compaction_config(test_dir);
     // Incremental compaction is handled by CompactionParameters
 
     // Create filesystem factory with proper config (like HELIX does)

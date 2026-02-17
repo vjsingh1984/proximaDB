@@ -5,6 +5,7 @@
 
 #[derive(Debug, Clone)]
 pub struct AIShowcasePlatform {
+    #[allow(dead_code)]
     demo_scenarios: Vec<DemoScenario>,
 }
 

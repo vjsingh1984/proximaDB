@@ -118,11 +118,13 @@ pub struct Compaction {
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
+    #[allow(dead_code)]
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     unified_reader: Arc<UnifiedSstableReader>,
     sst_compactor: Option<Arc<SstCompactor>>,
     filesystem_factory: Arc<FilesystemFactory>,
     /// New compaction orchestrator
+    #[allow(dead_code)]
     compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }
@@ -146,6 +148,7 @@ impl std::fmt::Debug for Compaction {
 
 impl Compaction {
     /// Extract collection ID from file paths
+    #[allow(dead_code)]
     fn extract_collection_id_from_paths(&self, paths: &[PathBuf]) -> Result<String> {
         if paths.is_empty() {
             return Ok("unknown".to_string());
@@ -153,11 +156,11 @@ impl Compaction {
 
         // Extract collection ID from path like: /path/to/collection_id/data/level0/file.sst
         if let Some(path) = paths.first() {
-            if let Some(parent) = path.parent() {
-                if let Some(parent_parent) = parent.parent() {
-                    if let Some(parent_parent_parent) = parent_parent.parent() {
-                        if let Some(collection_id) = parent_parent_parent.file_name() {
-                            return Ok(collection_id.to_string_lossy().to_string());
+            if let Some(_parent) = path.parent() {
+                if let Some(_parent_parent) = _parent.parent() {
+                    if let Some(parent_parent_parent) = _parent_parent.parent() {
+                        if let Some(_collection_id) = parent_parent_parent.file_name() {
+                            return Ok(_collection_id.to_string_lossy().to_string());
                         }
                     }
                 }
@@ -201,7 +204,7 @@ impl Compaction {
         ));
 
         // Initialize zero-copy compactor with proper block size from config
-        let sst_compactor = if let Some(ref coord) = atomic_coordinator {
+        let sst_compactor = if let Some(ref _coord) = atomic_coordinator {
             // Create MVCC resolver for the compactor
             let mvcc_resolver = Arc::new(MvccResolver::new());
             debug!(
@@ -263,7 +266,7 @@ impl Compaction {
     pub async fn with_quantization_sorting(mut self) -> Result<Self> {
         // PQ-based sorting is now integrated directly into the compactor
         // using the unified quantization engine
-        if let Some(ref mut compactor) = self.sst_compactor {
+        if let Some(ref mut _compactor) = self.sst_compactor {
             // Create unified quantization engine for PQ-based sorting
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -298,7 +301,7 @@ impl Compaction {
                     self.filesystem_factory.clone(),
                     self.atomic_coordinator
                         .as_ref()
-                        .map(|coord| Arc::new(MvccResolver::new())),
+                        .map(|_coord| Arc::new(MvccResolver::new())),
                     self.config.block_size_kb,
                 )
                 .with_pq_sorting(quantization_engine),
@@ -653,6 +656,7 @@ impl Compaction {
     }
 
     /// Convert zero-copy stats to enhanced stats format
+    #[allow(dead_code)]
     fn convert_zero_copy_stats_to_enhanced(
         &self,
         stats: ZeroCopyCompactionStats,
@@ -1330,6 +1334,7 @@ impl Compaction {
     }
 
     /// Get SST files organized by level using unified framework
+    #[allow(dead_code)]
     async fn get_sst_files_by_level(
         &self,
         collection_dir: &Path,
@@ -1339,13 +1344,13 @@ impl Compaction {
             collection_dir.display()
         );
 
-        let collection_path = collection_dir.to_string_lossy();
+        let _collection_path = collection_dir.to_string_lossy();
 
         // Use new orchestrator if available, otherwise fall back to direct file discovery
         let unified_files = if let Some(ref orchestrator) = self.compaction_orchestrator {
             orchestrator
                 .registry
-                .discover_files(&orchestrator.filesystem, &collection_path, "sst")
+                .discover_files(&orchestrator.filesystem, &_collection_path, "sst")
                 .await
                 .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?
         } else {
@@ -1509,6 +1514,7 @@ impl Compaction {
 
     /// Fast parsing of data block optimized for compaction bulk reads
     /// Avoids full DataBlock struct deserialization for better performance
+    #[allow(dead_code)]
     fn fast_parse_data_block(
         &self,
         block_data: &[u8],

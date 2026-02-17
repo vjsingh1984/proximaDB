@@ -28,6 +28,7 @@ pub struct CompactionManager {
     state: Arc<RwLock<CompactionState>>,
 
     /// Performance metrics tracking
+    #[allow(dead_code)]
     metrics: Arc<CompactionMetrics>,
 }
 
@@ -35,18 +36,22 @@ pub struct CompactionManager {
 #[derive(Debug, Clone)]
 struct CompactionConfig {
     /// Maximum number of concurrent compactions
+    #[allow(dead_code)]
     max_concurrent_compactions: usize,
 
     /// Minimum files required to trigger minor compaction
+    #[allow(dead_code)]
     minor_compaction_threshold: usize,
 
-    /// Minimum files required to trigger major compaction  
+    /// Minimum files required to trigger major compaction
+    #[allow(dead_code)]
     major_compaction_threshold: usize,
 
     /// Maximum time between compactions (force compaction)
     max_compaction_interval: Duration,
 
     /// Target file size after compaction
+    #[allow(dead_code)]
     target_file_size_mb: usize,
 }
 
@@ -79,9 +84,13 @@ struct CompactionState {
 #[derive(Debug, Clone)]
 struct ActiveCompaction {
     operation_id: String,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     compaction_type: CompactionType,
+    #[allow(dead_code)]
     started_at: Instant,
+    #[allow(dead_code)]
     estimated_completion: Instant,
 }
 
@@ -101,9 +110,11 @@ pub enum CompactionType {
 struct CompactionStatistics {
     total_compactions: u64,
     successful_compactions: u64,
+    #[allow(dead_code)]
     failed_compactions: u64,
     total_bytes_compacted: u64,
     total_files_compacted: u64,
+    #[allow(dead_code)]
     average_compaction_time: Duration,
 }
 
@@ -111,6 +122,7 @@ struct CompactionStatistics {
 #[derive(Debug, Default)]
 pub struct CompactionMetrics {
     /// Performance counters
+    #[allow(dead_code)]
     counters: Arc<RwLock<CompactionStatistics>>,
 }
 

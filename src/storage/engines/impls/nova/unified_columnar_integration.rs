@@ -160,13 +160,21 @@ pub struct QualityThresholds {
 /// NOVA collection metadata with hierarchical statistics
 #[derive(Debug, Clone)]
 struct NovaCollectionMetadata {
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     dimension: usize,
-    quantization: Option<QuantizationConfig>,
-    filterable_columns: Vec<ColumnarFilterableSpec>,
+    #[allow(dead_code)]
     schema: Arc<arrow_schema::Schema>,
+    #[allow(dead_code)]
+    quantization: Option<QuantizationConfig>,
+    #[allow(dead_code)]
+    filterable_columns: Vec<ColumnarFilterableSpec>,
+    #[allow(dead_code)]
     compression_metadata: crate::storage::engines::core::formats::columnar::CompressionMetadata,
+    #[allow(dead_code)]
     hierarchical_stats: HierarchicalStatistics,
+    #[allow(dead_code)]
     zone_maps: Vec<ZoneMap>,
 }
 
@@ -246,6 +254,7 @@ pub struct ZoneMap {
 
 /// Hierarchical statistics manager
 pub struct HierarchicalStatsManager {
+    #[allow(dead_code)]
     config: NovaSpecificConfig,
     stats_cache: Arc<tokio::sync::RwLock<HashMap<String, HierarchicalStatistics>>>,
 }
@@ -268,6 +277,7 @@ impl HierarchicalStatsManager {
 
 /// Zone map manager
 pub struct ZoneMapManager {
+    #[allow(dead_code)]
     config: ZoneMapConfig,
     zone_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ZoneMap>>>>,
 }
@@ -313,16 +323,22 @@ impl StreamingProcessor {
 /// Active streaming session
 #[derive(Debug, Clone)]
 struct StreamingSession {
+    #[allow(dead_code)]
     session_id: String,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     stream_type: StreamType,
+    #[allow(dead_code)]
     buffer_size: usize,
     processed_count: usize,
+    #[allow(dead_code)]
     start_time: std::time::Instant,
 }
 
 /// Stream types
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum StreamType {
     Insert,
     Search,
@@ -337,7 +353,7 @@ fn dequantize_int8(data: &[i8], scale: f32, zero_point: i8) -> Vec<f32> {
         .collect()
 }
 
-fn compute_hamming_distance(query: &[f32], binary: &[u8]) -> u32 {
+fn compute_hamming_distance(_query: &[f32], binary: &[u8]) -> u32 {
     // Simple hamming distance - in production would use SIMD
     let mut distance = 0u32;
     for byte in binary {
@@ -392,7 +408,7 @@ impl NovaUnifiedEngine {
         &self,
         collection_id: &str,
         vector_stream: impl futures::Stream<Item = VectorRecord> + Send + Unpin,
-        quantization_engine: Option<
+        _quantization_engine: Option<
             Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
         >,
     ) -> Result<StreamingInsertResult> {
@@ -409,7 +425,7 @@ impl NovaUnifiedEngine {
         );
 
         // Initialize streaming session
-        let session = self
+        let _session = self
             .streaming_processor
             .start_session(
                 session_id.clone(),
@@ -578,7 +594,7 @@ impl NovaUnifiedEngine {
         // Phase 4: Progressive distance computation
         let computation_start = std::time::Instant::now();
         let distance_results = if search_options.enable_progressive {
-            let prog_results = self
+            let _prog_results = self
                 .compute_progressive_distances(
                     &query_vector,
                     &quantized_vectors,
@@ -599,7 +615,7 @@ impl NovaUnifiedEngine {
                 .as_ref()
                 .cloned()
                 .unwrap_or(SelectedFormat::FP32); // Default to full precision
-            let distances = distance_calc
+            let _distances = distance_calc
                 .compute_columnar_batch_distances(&query_vector, &quantized_vectors, format)
                 .await?;
 
@@ -780,7 +796,7 @@ impl NovaUnifiedEngine {
 
     async fn process_insert_batch(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         metadata: &NovaCollectionMetadata,
         batch: Vec<VectorRecord>,
     ) -> Result<BatchInsertResult> {
@@ -885,7 +901,7 @@ impl NovaUnifiedEngine {
             } else if let Some(binary_vec) = &vector.binary {
                 // Approximate: use binary hamming distance
                 let hamming_distance = compute_hamming_distance(query_vector, binary_vec);
-                let normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
+                let _normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
                 let sim = crate::compute::distance_computation::engine::SimilarityResult::new(
                     hamming_distance as f32,
                     DistanceMetric::Hamming,
@@ -963,12 +979,14 @@ pub struct StreamingInsertResult {
 #[derive(Debug)]
 struct BatchInsertResult {
     pub vectors_inserted: usize,
-    pub compression_ratio: f32,
+    #[allow(dead_code)]
+    compression_ratio: f32,
     pub hierarchical_updates: Vec<HierarchicalUpdate>,
 }
 
 /// Hierarchical statistics update
 #[derive(Debug)]
+#[allow(dead_code)]
 enum HierarchicalUpdate {
     SuperBlockCreated {
         super_block_id: usize,
@@ -980,8 +998,8 @@ enum HierarchicalUpdate {
         vector_count: usize,
     },
     StatisticsUpdated {
-        component: String,
-        change: f32,
+        _component: String,
+        _change: f32,
     },
 }
 
@@ -1086,6 +1104,7 @@ impl HierarchicalStatsManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn get_metrics(&self) -> HierarchicalMetrics {
         HierarchicalMetrics {
             super_blocks_count: 0,
@@ -1116,6 +1135,7 @@ impl ZoneMapManager {
         Ok(zone_maps.iter().map(|z| z.zone_id).collect())
     }
 
+    #[allow(dead_code)]
     async fn get_metrics(&self) -> ZoneMapMetrics {
         ZoneMapMetrics {
             zones_count: 0,
@@ -1162,6 +1182,7 @@ impl StreamingProcessor {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn get_metrics(&self) -> StreamingMetrics {
         let active_streams = self.active_streams.read().await;
         StreamingMetrics {

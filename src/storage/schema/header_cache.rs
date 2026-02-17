@@ -586,6 +586,7 @@ impl IoSavingsEstimate {
 struct CacheEntry {
     header: CachedHeader,
     last_access: Instant,
+    #[allow(dead_code)]
     access_count: u64,
 }
 

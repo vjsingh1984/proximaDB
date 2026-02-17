@@ -48,14 +48,14 @@ struct AnthropicMetadata {
 /// Anthropic API response structure
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
-    id: String,
+    _id: String,
     #[serde(rename = "type")]
-    response_type: String,
-    role: String,
+    _response_type: String,
+    _role: String,
     content: Vec<AnthropicContent>,
     model: String,
     stop_reason: Option<String>,
-    stop_sequence: Option<String>,
+    _stop_sequence: Option<String>,
     usage: AnthropicUsage,
 }
 

@@ -603,7 +603,7 @@ impl GlobalQuantizationCache {
     /// Uses intelligent caching strategy based on collection size and access patterns
     pub async fn get_or_create_engine(
         &self,
-        collection_id: String,
+        _collection_id: String,
     ) -> Arc<super::unified::UnifiedQuantizationEngine> {
         // For now, create a simple UnifiedQuantizationEngine with the global cache as codebook store
         // This provides the unified interface expected by the engines
@@ -626,7 +626,7 @@ impl GlobalQuantizationCache {
     }
 
     /// Check if collection should use hot (in-memory) or cold (persistent) storage
-    pub fn should_use_hot_storage(&self, collection_id: &str) -> bool {
+    pub fn should_use_hot_storage(&self, _collection_id: &str) -> bool {
         // Simple heuristic: collections with frequent access use hot storage
         // In practice, this would check access patterns and collection size
         true // Default to hot storage for now

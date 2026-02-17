@@ -725,6 +725,7 @@ impl CrossModalReranker {
 #[derive(Debug, Clone)]
 struct ScoredRecord {
     record: UnifiedRecord,
+    #[allow(dead_code)]
     original_rank: usize,
     base_score: f64,
     semantic_score: f64,

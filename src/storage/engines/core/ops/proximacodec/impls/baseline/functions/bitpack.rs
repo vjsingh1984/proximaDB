@@ -466,6 +466,7 @@ pub(crate) fn unbitpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i
 ///
 /// This variant treats all unpacked values as unsigned and casts directly to i32.
 /// Used by pfor_delta and pfor_double_delta where patches handle full precision.
+#[allow(dead_code)]
 pub(crate) fn unbitpack_i32_unsigned(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
     if bits > 32 {
         return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));

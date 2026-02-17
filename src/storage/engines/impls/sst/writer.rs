@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /*
  * Copyright 2025 ProximaDB
  *
@@ -60,7 +61,7 @@ use crate::storage::persistence::filesystem::{
 };
 
 use super::IndexEntry;
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
+use crate::core::bloom::{BloomFilterConfig, HashAlgorithm};
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::storage::engines::core::formats::proximablocks::{
     ProximaBlockMetadata, ProximaDataBlock,
@@ -108,12 +109,19 @@ use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 /// Proxima encoding markers as constants
 mod encoding_markers {
+    #[allow(dead_code)]
     pub const RAW: u8 = 0x00; // Raw/Uncompressed
+    #[allow(dead_code)]
     pub const BITPACKED: u8 = 0x10; // Proxima BitPacked
+    #[allow(dead_code)]
     pub const DELTA: u8 = 0x20; // Proxima Delta encoding
+    #[allow(dead_code)]
     pub const FRAME_OF_REF: u8 = 0x30; // Proxima FrameOfReference
+    #[allow(dead_code)]
     pub const PATCHED_BASE: u8 = 0x40; // Proxima PatchedBase
+    #[allow(dead_code)]
     pub const DICTIONARY: u8 = 0x50; // Proxima Dictionary
+    #[allow(dead_code)]
     pub const RUN_LENGTH: u8 = 0x60; // Proxima RunLength
 }
 
@@ -156,8 +164,10 @@ pub struct SstableWriter {
     /// Filesystem factory for atomic writes
     filesystem: Arc<FilesystemFactory>,
     /// Direct compression provider (no adapter indirection)
+    #[allow(dead_code)]
     compression_provider: StandardCompression,
     /// Unified quantization engine from compute module
+    #[allow(dead_code)]
     quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
     /// Compression configuration from flush parameters
@@ -362,7 +372,7 @@ impl SstableWriter {
             filesystem,
             compression_provider,
             quantization_engine,
-            compression_config: compression_config,
+            compression_config,
         }
     }
 
@@ -448,7 +458,7 @@ impl SstableWriter {
             .unwrap_or_default();
 
         // ✅ STEP 2: Process VectorRecords in streaming fashion - Proxima handles bloom filters!
-        for (key, vector_record) in sorted_records_vec.into_iter() {
+        for (_key, vector_record) in sorted_records_vec.into_iter() {
             // ✅ No manual bloom filter updates needed - Proxima automatically handles this!
 
             // FASTEST: Use existing protobuf serialization (already optimized)
@@ -655,7 +665,7 @@ impl SstableWriter {
         let current_offset = 0u64;
 
         // Create global header
-        let global_header = SstGlobalHeader {
+        let _global_header = SstGlobalHeader {
             file_size: 0, // Will be updated after writing all data
             num_blocks: data_blocks.len() as u32,
             bloom_filter_offset: current_offset as u32,
@@ -674,7 +684,7 @@ impl SstableWriter {
 
         // Create block headers for each data block
         let mut block_headers = Vec::new();
-        for (i, block) in data_blocks.iter().enumerate() {
+        for (_i, block) in data_blocks.iter().enumerate() {
             let header = SstBlockHeader {
                 offset: 0,            // Will be calculated during writing
                 compressed_size: 0,   // Will be calculated during compression
@@ -759,12 +769,12 @@ impl SstableWriter {
         // Calculate block offsets and build index (two-pass to resolve index size dependency)
         let mut index_bytes: Vec<u8> = Vec::new();
         let mut sorted_index_entries: Vec<IndexEntry> = Vec::new();
-        let mut blocks_start_offset: u64 = 0;
+        let mut _blocks_start_offset: u64 = 0;
         for _ in 0..2 {
-            blocks_start_offset = (output_data.len() + 4 + index_bytes.len()) as u64; // +4 for index length prefix
+            _blocks_start_offset = (output_data.len() + 4 + index_bytes.len()) as u64; // +4 for index length prefix
 
             // Update offsets in index entries based on current index size guess
-            let mut current_block_offset = blocks_start_offset;
+            let mut current_block_offset = _blocks_start_offset;
             for (i, entry) in layout_index_entries.iter_mut().enumerate() {
                 entry.offset = current_block_offset;
 
@@ -1012,7 +1022,7 @@ impl SstableWriter {
 
         // ✅ STEP 3: Add only SST-specific enhancements to Proxima capabilities
         // Create SST-specific metadata that composes with Proxima
-        let sst_metadata = SstBlockMetadata {
+        let _sst_metadata = SstBlockMetadata {
             proxima_metadata: proxima_metadata.clone(), // ✅ Reuse ALL auto-generated stats!
             sst_specific_data: SstSpecificData {
                 three_stage_filtering: true,
@@ -1035,8 +1045,11 @@ impl SstableWriter {
         // Add enhanced index entry leveraging Proxima capabilities
         if let Some(first_record) = current_block.first() {
             let first_id = first_record.id.clone();
+            // Get last key for proper B+ tree range queries
+            let last_id = current_block.last().map(|r| r.id.clone());
             index_entries.push(IndexEntry {
                 key: first_id,
+                last_key: last_id,
                 offset: 0,
                 size: block_size,
                 block_id,
@@ -1091,11 +1104,11 @@ impl SstableWriter {
     /// ❌ REMOVED: Manual bloom filter building - Proxima provides this automatically!
     /// Proxima automatically generates optimized bloom filters for every block.
     /// No need for manual implementation - just use block.bloom_filter and block.block_bloom_filter
-
+    ///
     /// ❌ REMOVED: Manual key bloom filter - Proxima generates optimal bloom filters automatically!
-
+    ///
     /// ❌ REMOVED: Manual metadata bloom filter - Proxima generates comprehensive metadata bloom filters automatically!
-
+    ///
     /// Analyze vector format for VectorRecord block
     fn analyze_vector_block_format(&self, block_records: &[VectorRecord]) -> super::VectorFormat {
         if block_records.is_empty() {
@@ -1163,7 +1176,6 @@ impl SstableWriter {
     // Quantization methods removed - now handled by unified compute module directly
 
     /// ❌ REMOVED: Duplicate finalize_block method - using finalize_vector_block with Proxima composition pattern!
-
     /// Set bloom filter configuration
     pub fn with_bloom_config(mut self, config: BloomFilterConfig) -> Self {
         self.bloom_config = config;
@@ -1274,7 +1286,7 @@ impl SstableWriter {
             let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::default();
             let num_keys = sorted_records.len();
             let optimal_size = adaptive_config.optimal_size(num_keys);
-            let optimal_hash_count = adaptive_config.optimal_hash_count(optimal_size, num_keys);
+            let _optimal_hash_count = adaptive_config.optimal_hash_count(optimal_size, num_keys);
 
             // Convert to bits_per_key for existing BloomFilterConfig
             let bits_per_key = if num_keys > 0 {
@@ -1306,7 +1318,7 @@ impl SstableWriter {
         file_content.extend_from_slice(&0u32.to_le_bytes()); // Index length = 0
 
         // Write data blocks (simplified - just serialize records)
-        for (key, record) in sorted_records {
+        for (_key, record) in sorted_records {
             let record_data = serde_json::to_vec(&record)?;
             let record_len = record_data.len() as u32;
             file_content.extend_from_slice(&record_len.to_le_bytes());
@@ -1486,11 +1498,11 @@ impl SstableWriter {
     }
 
     /// ❌ REMOVED: Manual block bloom filters - Proxima generates optimized bloom filters automatically!
-
+    ///
     /// ❌ REMOVED: Manual key bloom filter building - Proxima provides optimal bloom filters automatically!
-
+    ///
     /// ❌ REMOVED: Manual metadata bloom filter building - Proxima provides comprehensive metadata bloom filters automatically!
-
+    ///
     /// NEW: Analyze vector format across the entire file
     fn analyze_file_vector_format(
         &self,
@@ -1698,7 +1710,7 @@ mod tests {
     async fn test_sstable_writer_basic() {
         // Note: This test would need a mock filesystem for full testing
         // For now, just test the data structure building
-        let temp_file = NamedTempFile::new().unwrap();
+        let _temp_file = NamedTempFile::new().unwrap();
 
         // Create test records
         let mut records = BTreeMap::new();

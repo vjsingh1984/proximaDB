@@ -428,20 +428,59 @@ impl DocumentService {
     /// This is used for documents that have been flushed to storage
     /// but evicted from the in-memory hot cache.
     ///
-    /// Note: Currently returns empty results as cold tier reading requires
-    /// storage engine search with metadata filtering. This is a Phase 9 optimization.
+    /// The implementation follows SOLID principles:
+    /// - Uses DocumentMetadataFilterBuilder to construct the search filter (SRP)
+    /// - Uses ColdTierRetriever trait for storage access (DIP)
+    /// - Can be extended for different storage backends (OCP)
+    ///
+    /// Documents are stored as VectorRecords with metadata:
+    /// - `_type`: "document"
+    /// - `_collection`: collection name
+    /// - `_document`: serialized JSON content
+    /// - `_version`: document version
     #[allow(dead_code)]
     pub async fn read_from_storage(
         &self,
-        _collection: &str,
-        _ids: &[&str],
+        collection: &str,
+        ids: &[&str],
     ) -> Result<Vec<DocumentRecord>> {
-        // TODO: Implement cold tier reading by searching storage engine with metadata filter
-        // The storage engine doesn't have a simple get-by-id method, so we would need to
-        // use search with filter: {"_type": "document", "_collection": collection, "id": ...}
-        // For now, all documents are in the hot cache after WAL recovery.
-        debug!("Cold tier document reading not yet implemented - returning empty results");
-        Ok(Vec::new())
+        use crate::storage::document::storage::cold_tier::{
+            ColdTierRetriever, StorageEngineColdTierRetriever,
+        };
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "Cold tier: Reading {} documents from collection '{}'",
+            ids.len(),
+            collection
+        );
+
+        // Create the cold tier retriever using the storage engine
+        let retriever = StorageEngineColdTierRetriever::new(self.storage_engine.clone());
+
+        // Retrieve documents from cold storage
+        match retriever.retrieve_documents(collection, ids).await {
+            Ok(documents) => {
+                debug!(
+                    "Cold tier: Successfully retrieved {} of {} requested documents",
+                    documents.len(),
+                    ids.len()
+                );
+                Ok(documents)
+            }
+            Err(e) => {
+                warn!(
+                    "Cold tier: Failed to retrieve documents from collection '{}': {}",
+                    collection, e
+                );
+                // Return empty result on error to allow graceful degradation
+                // The caller can fall back to other retrieval mechanisms
+                Ok(Vec::new())
+            }
+        }
     }
 
     /// Convert a VectorRecord back to DocumentRecord
@@ -1376,6 +1415,114 @@ impl DocumentService {
             query_time_ms,
         })
     }
+
+    /// Aggregate documents with a pipeline
+    ///
+    /// Executes a MongoDB-style aggregation pipeline on documents in a collection.
+    /// Supports stages: match, group, project, sort, limit, skip, unwind.
+    ///
+    /// # Arguments
+    /// * `collection` - The collection name
+    /// * `filter` - Optional filter to apply before the pipeline
+    /// * `pipeline` - The aggregation pipeline stages
+    ///
+    /// # Returns
+    /// A vector of aggregated result documents
+    pub async fn aggregate_documents(
+        &self,
+        collection: &str,
+        filter: Option<crate::proto::proximadb_v1::DocumentFilter>,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<crate::storage::document::AggregateResult> {
+        use crate::storage::document::aggregation::AggregationExecutor;
+
+        let start = std::time::Instant::now();
+        debug!("Aggregating documents in {}", collection);
+
+        // Verify collection exists
+        self.get_collection(collection)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Get all documents from the collection
+        let documents: Vec<DocumentRecord> = {
+            let docs = self.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // Execute the aggregation pipeline
+        let executor = AggregationExecutor::new();
+        let results = executor.execute(documents, filter.as_ref(), &pipeline)?;
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+        debug!(
+            "Aggregation complete: {} results in {}ms",
+            results.len(),
+            query_time_ms
+        );
+
+        Ok(crate::storage::document::AggregateResult {
+            results,
+            query_time_ms,
+        })
+    }
+
+    /// Calculate full-text search scores for documents matching a query
+    ///
+    /// This provides basic TF-IDF-like scoring for text matching.
+    /// For production use, integrate with Tantivy index.
+    ///
+    /// # Arguments
+    /// * `collection` - The collection name
+    /// * `query_terms` - Terms to search for
+    /// * `text_paths` - Document paths to search in (e.g., ["title", "body"])
+    /// * `limit` - Maximum number of results
+    ///
+    /// # Returns
+    /// Documents sorted by relevance score (highest first)
+    pub async fn fulltext_search(
+        &self,
+        collection: &str,
+        query_terms: Vec<String>,
+        text_paths: Vec<String>,
+        limit: usize,
+    ) -> Result<Vec<(DocumentRecord, f32)>> {
+        use crate::storage::document::aggregation::AggregationExecutor;
+
+        debug!(
+            "Full-text search in {} for terms: {:?}",
+            collection, query_terms
+        );
+
+        // Verify collection exists
+        self.get_collection(collection)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Get all documents from the collection
+        let documents: Vec<DocumentRecord> = {
+            let docs = self.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // Calculate scores
+        let executor = AggregationExecutor::new();
+        let mut scored = executor.calculate_fulltext_scores(&documents, &query_terms, &text_paths);
+
+        // Sort by score descending
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Apply limit
+        scored.truncate(limit);
+
+        Ok(scored)
+    }
 }
 
 // =============================================================================
@@ -1504,7 +1651,5 @@ impl DocumentStorageOperations for DocumentService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // TODO: Add unit tests with mock storage engine
 }

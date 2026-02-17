@@ -158,6 +158,7 @@ pub struct DmlResult {
 }
 
 impl DmlResult {
+    /// Create a successful DML result
     pub fn success(rows_affected: u64, message: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -169,16 +170,19 @@ impl DmlResult {
         }
     }
 
+    /// Set the execution time for this result
     pub fn with_execution_time(mut self, time_us: u64) -> Self {
         self.execution_time_us = time_us;
         self
     }
 
+    /// Set the inserted IDs for this result
     pub fn with_inserted_ids(mut self, ids: Vec<String>) -> Self {
         self.inserted_ids = ids;
         self
     }
 
+    /// Add a warning to this result
     pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
@@ -256,7 +260,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // Get table schema for column mapping
@@ -305,7 +309,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // For now, UPDATE is not fully implemented
@@ -335,7 +339,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // Get IDs to delete based on WHERE clause
@@ -381,7 +385,7 @@ impl DmlService {
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
-            return Err(anyhow!("Table '{}' does not exist", table_name));
+            return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
         // Get table schema
@@ -551,7 +555,7 @@ impl DmlService {
                 // Parse ISO 8601 timestamp
                 use chrono::DateTime;
                 let dt = DateTime::parse_from_rfc3339(s)
-                    .map_err(|e| anyhow!("Invalid timestamp format: {}", e))?;
+                    .map_err(|e| anyhow!("Invalid timestamp format: {e}"))?;
                 Ok(Some(dt.timestamp_millis()))
             }
             SqlValueLiteral::Function { name, .. } if name.eq_ignore_ascii_case("NOW") => {
@@ -597,7 +601,7 @@ impl DmlService {
                 {
                     Value::Int64Value(chrono::Utc::now().timestamp_millis())
                 } else {
-                    return Err(anyhow!("Unsupported function: {}", name));
+                    return Err(anyhow!("Unsupported function: {name}"));
                 }
             }
         };
@@ -607,6 +611,8 @@ impl DmlService {
 
     /// Convert SqlValueLiteral to JSON value
     fn literal_to_json(&self, val: &SqlValueLiteral) -> Result<serde_json::Value> {
+        // Allow recursive calls - this is intentional for array processing
+        let _ = val; // Suppress unused warning while implementation is pending
         match val {
             SqlValueLiteral::Null => Ok(serde_json::Value::Null),
             SqlValueLiteral::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
@@ -642,9 +648,9 @@ mod tests {
         let null = SqlValueLiteral::Null;
         let bool_val = SqlValueLiteral::Boolean(true);
         let int_val = SqlValueLiteral::Integer(42);
-        let float_val = SqlValueLiteral::Float(3.14);
-        let string_val = SqlValueLiteral::String("hello".to_string());
-        let array_val = SqlValueLiteral::Array(vec![
+        let _float_val = SqlValueLiteral::Float(3.14);
+        let _string_val = SqlValueLiteral::String("hello".to_string());
+        let _array_val = SqlValueLiteral::Array(vec![
             SqlValueLiteral::Float(1.0),
             SqlValueLiteral::Float(2.0),
         ]);

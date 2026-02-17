@@ -168,7 +168,7 @@ impl CatalogBulkWriteService {
         &self,
         table_fqn: &str,
         batches: &[RecordBatch],
-        write_mode: BulkWriteMode,
+        _write_mode: BulkWriteMode,
     ) -> Result<(Vec<VectorRecord>, CatalogBulkWriteResult)> {
         let start = std::time::Instant::now();
         let mut result = CatalogBulkWriteResult {
@@ -537,7 +537,7 @@ impl CatalogBulkWriteService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::{Field, Schema};
 
     #[test]
     fn test_catalog_bulk_write_config_default() {

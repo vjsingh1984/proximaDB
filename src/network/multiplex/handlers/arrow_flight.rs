@@ -134,25 +134,27 @@ impl ProtocolHandler for ArrowFlightHandler {
 
 /// Builder for creating Arrow Flight handlers
 pub struct ArrowFlightHandlerBuilder {
-    ready: bool,
+    _ready: bool,
 }
 
 impl ArrowFlightHandlerBuilder {
     /// Create a new builder
     pub fn new() -> Self {
-        Self { ready: false }
+        Self { _ready: false }
     }
 
     /// Mark the handler as ready
+    #[allow(dead_code)]
     pub fn ready(mut self) -> Self {
-        self.ready = true;
+        self._ready = true;
         self
     }
 
     /// Build the Arrow Flight handler
+    #[allow(dead_code)]
     pub fn build(self) -> ArrowFlightHandler {
         ArrowFlightHandler {
-            ready: self.ready,
+            ready: self._ready,
             _router: None,
         }
     }

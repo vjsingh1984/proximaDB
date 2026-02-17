@@ -46,6 +46,11 @@ impl CollectionService for CollectionServiceImpl {
                 owner: Some(String::new()),
                 description: cfg.description.clone(),
                 tags: cfg.tags.clone(),
+                // ProximaRecord schema configuration (NEW)
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             query_params: Default::default(),
             options: Default::default(),

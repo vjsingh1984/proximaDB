@@ -233,6 +233,10 @@ mod performance_comparison_tests {
                     owner: None,
                     embedding_models: vec![],
                     storage_config: None,
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 }),
                 stats: None,
                 created_at: 0,
@@ -275,6 +279,8 @@ mod performance_comparison_tests {
                 search_params,
                 collection,
                 metadata,
+                user_context: None,
+                tenant_context: None,
             };
 
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -722,6 +728,10 @@ mod performance_comparison_tests {
                     owner: None,
                     embedding_models: vec![],
                     storage_config: None,
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 }),
                 stats: None,
                 created_at: 0,
@@ -736,6 +746,8 @@ mod performance_comparison_tests {
                 search_params,
                 collection,
                 metadata: StorageQueryMetadata::default(),
+                user_context: None,
+                tenant_context: None,
             };
 
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -985,9 +997,10 @@ mod performance_comparison_tests {
                                 auto_index_selection: Some(true),
                                 owner: Some("test".to_string()),
                                 embedding_models: vec![],
-                                //                    auto_create_shards: None, // Field not in proto
-                                //                    auto_balance: None, // Field not in proto
-                                //                    replication_factor: None, // Field not in proto
+                                record_schema: None,
+                                enable_proxima_record: None,
+                                text_columns: vec![],
+                                text_storage_configs: vec![],
                             }),
                             stats: None,
                             created_at: 0,
@@ -1004,6 +1017,8 @@ mod performance_comparison_tests {
                             search_params,
                             collection,
                             metadata: StorageQueryMetadata::default(),
+                            user_context: None,
+                            tenant_context: None,
                         };
                         engine_clone.search_vectors_unified(&ctx).await
                     });

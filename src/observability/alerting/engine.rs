@@ -211,8 +211,8 @@ impl Default for AlertEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observability::alerting::rules::AlertRule;
     use crate::observability::alerting::AlertSeverity;
+    use crate::observability::alerting::rules::AlertRule;
 
     #[tokio::test]
     async fn test_register_rule() {

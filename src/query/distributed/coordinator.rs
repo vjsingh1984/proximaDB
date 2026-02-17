@@ -116,6 +116,7 @@ pub struct DistributedQueryCoordinator {
     /// Result aggregator
     aggregator: ResultAggregator,
     /// Local parallel executor
+    #[allow(dead_code)]
     local_executor: ParallelExecutor,
     /// Execution statistics
     stats: Arc<RwLock<DistributedQueryStats>>,

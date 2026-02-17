@@ -121,7 +121,7 @@ impl crate::storage::engines::impls::sst::SstEngine {
             collection_id, index_name
         );
 
-        let index_filter = SstIndexFilter {
+        let _index_filter = SstIndexFilter {
             collection_id: collection_id.to_string(),
             index_name: index_name.to_string(),
             filter: filter.clone(),

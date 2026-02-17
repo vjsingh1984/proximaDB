@@ -87,7 +87,7 @@ impl UniversalQuantizedCalculator {
                     .collect();
                 let result = self.inner.calculate_distance(query, &fp32_vec, metric);
                 result.normalized_score
-            } else if let Some(ref pq_data) = candidate.pq {
+            } else if let Some(ref _pq_data) = candidate.pq {
                 // PQ distance computation - simplified
                 // In a real implementation, this would use codebook lookup
                 // Return a similarity score directly

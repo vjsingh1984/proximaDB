@@ -38,7 +38,7 @@ pub enum BatchStrategy {
 /// Batch strategy selector (thin wrapper over UnifiedDistanceCompute)
 pub struct BatchStrategySelector {
     /// Reference to unified distance compute for hardware-aware sizing
-    distance_compute: Arc<UnifiedDistanceCompute>,
+    _distance_compute: Arc<UnifiedDistanceCompute>,
 
     /// Lower threshold: Use sequential for batches ≤ this (default: 16)
     sequential_threshold: usize,
@@ -60,7 +60,7 @@ impl BatchStrategySelector {
     /// * `distance_compute` - Existing UnifiedDistanceCompute instance
     pub fn new(distance_compute: Arc<UnifiedDistanceCompute>) -> Self {
         Self {
-            distance_compute,
+            _distance_compute: distance_compute,
             sequential_threshold: 16, // Small batches: avoid parallel overhead
             parallel_threshold: 5000, // Large batches: parallel overhead dominates
         }

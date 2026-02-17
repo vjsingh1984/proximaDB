@@ -26,27 +26,42 @@ use tracing::{debug, info, warn};
 /// Statistics for zero-copy compaction with AXIS integration
 #[derive(Debug, Clone, Default)]
 pub struct ZeroCopyCompactionStats {
+    /// Number of records read during compaction
     pub records_read: u64,
+    /// Number of records written to output
     pub records_written: u64,
+    /// Number of records deleted
     pub records_deleted: u64,
+    /// Number of records merged
     pub records_merged: u64,
+    /// Bytes read from input files
     pub bytes_read: u64,
+    /// Bytes written to output file
     pub bytes_written: u64,
+    /// Number of files compacted
     pub files_compacted: usize,
+    /// Compaction time in milliseconds
     pub compaction_time_ms: u64,
 
     // AXIS integration: track changes for index updates
-    pub deleted_vector_ids: Vec<String>, // IDs of deleted/expired vectors
-    pub updated_vector_ids: Vec<String>, // IDs of vectors that were updated (version change)
-    pub tombstoned_ids: Vec<String>,     // IDs marked as tombstones
-    pub recommend_index_rebuild: bool,   // True if significant changes warrant index rebuild
+    /// IDs of deleted/expired vectors
+    pub deleted_vector_ids: Vec<String>,
+    /// IDs of vectors that were updated (version change)
+    pub updated_vector_ids: Vec<String>,
+    /// IDs marked as tombstones
+    pub tombstoned_ids: Vec<String>,
+    /// True if significant changes warrant index rebuild
+    pub recommend_index_rebuild: bool,
 }
 
 /// Entry in the k-way merge heap
 #[derive(Debug, Clone)]
 struct MergeEntry {
+    /// The vector record
     record: VectorRecord, // OPTIMIZED: Direct VectorRecord usage
+    /// Index of the file this record came from
     file_index: usize,
+    /// Timestamp for ordering
     timestamp: u32,
 }
 
@@ -112,10 +127,17 @@ impl Default for CompactionSortStrategy {
 
 /// Zero-copy SST compactor that works directly with VectorRecord
 pub struct SstCompactor {
+    /// Filesystem factory for I/O operations
     filesystem_factory: Arc<FilesystemFactory>,
+    /// Optional MVCC resolver for conflict resolution
+    #[allow(dead_code)]
     mvcc_resolver: Option<Arc<MvccResolver>>,
+    /// Block size for compaction
     block_size: usize,
+    /// Compression threshold in bytes
+    #[allow(dead_code)]
     compression_threshold: usize,
+    /// Sorting strategy for output records
     sort_strategy: CompactionSortStrategy,
 }
 
@@ -125,7 +147,7 @@ impl SstCompactor {
         &self,
         stats: &ZeroCopyCompactionStats,
         collection_id: &str,
-        output_file: &str,
+        _output_file: &str,
     ) -> Result<()> {
         // This would integrate with AXIS similar to how EnhancedCompactionStats does it
         // For now, just log the notification
@@ -252,7 +274,7 @@ impl SstCompactor {
         // Use streaming approach for memory-efficient compaction
         info!("🔄 Using streaming approach for zero-copy compaction_info");
         let mut streaming_iterators = Vec::new();
-        let total_records_estimate = 0;
+        let _total_records_estimate = 0;
         for (idx, file_path) in input_files.iter().enumerate() {
             debug!("   📂 Opening file {}: {}", idx, file_path);
             let mut direct_reader =
@@ -342,6 +364,7 @@ impl SstCompactor {
     /// K-way merge of pre-loaded SST records with proper MVCC resolution
     /// Implements upsert semantics: keeps highest continuous version for each ID
     /// FALLBACK: This batch loading approach is kept for compatibility/testing
+    #[allow(dead_code)]
     async fn k_way_merge_records(
         &self,
         file_records: Vec<(usize, Vec<VectorRecord>)>,
@@ -382,7 +405,7 @@ impl SstCompactor {
         }
 
         // Now apply MVCC resolution rules for each ID
-        let now = chrono::Utc::now().timestamp() as u32;
+        let _now = chrono::Utc::now().timestamp() as u32;
 
         for (id, mut versions) in id_versions {
             // Skip append-only IDs
@@ -587,7 +610,7 @@ impl SstCompactor {
         }
 
         // Now apply MVCC resolution rules for each ID
-        let now = chrono::Utc::now().timestamp() as u32;
+        let _now = chrono::Utc::now().timestamp() as u32;
 
         for (id, mut versions) in id_versions {
             // Skip append-only IDs
@@ -839,7 +862,7 @@ impl SstCompactor {
                 let sorted_indices = runtime
                     .block_on(async {
                         // Quantize the vectors using the quantization engine directly
-                        let quantized_data = adapter
+                        let _quantized_data = adapter
                             .quantize_batch(&vectors, Some(vector_ids.as_slice()))
                             .await
                             .map_err(|e| anyhow::anyhow!("Quantization failed: {}", e))?;

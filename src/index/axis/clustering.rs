@@ -174,6 +174,7 @@ pub struct AxisClusteringEngine {
     /// Configuration
     config: ClusteringConfig,
     /// Current models per collection
+    #[allow(dead_code)]
     models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
     /// Pending vectors for incremental updates
     pending_vectors: Arc<RwLock<HashMap<String, Vec<VectorRecord>>>>,
@@ -1009,7 +1010,7 @@ impl AxisClusteringEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::{debug, error, info};
+    use tracing::{error, info};
 
     #[tokio::test]
     async fn test_kmeans_clustering() {

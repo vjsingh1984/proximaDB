@@ -72,7 +72,7 @@ pub fn sparse_l2_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let mut sum = vdupq_n_f32(0.0);
 
         let chunks = len / 4;
-        let remainder = len % 4;
+        let _remainder = len % 4;
 
         // Process 4 elements at a time with NEON
         for i in 0..chunks {

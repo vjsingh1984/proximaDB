@@ -237,7 +237,7 @@ impl SpatialCode {
                 let epsilon = ((range as f64) * (percentage as f64 / 100.0)) as u128;
                 Self::Code128(epsilon.max(min_epsilon as u128))
             }
-            (Self::Code256 { low: al, high: ah }, Self::Code256 { low: bl, high: bh }) => {
+            (Self::Code256 { low: _, high: ah }, Self::Code256 { low: _, high: bh }) => {
                 // Approximate: use high part for range calculation
                 let range = ah.abs_diff(*bh);
                 let epsilon_high = ((range as f64) * (percentage as f64 / 100.0)) as u128;

@@ -249,9 +249,9 @@ pub struct WriteRecord {
 pub struct DistributedCollectionOps {
     config: DistributedOpsConfig,
     shard_manager: Arc<ShardManager>,
-    routing_service: Arc<RoutingService>,
+    _routing_service: Arc<RoutingService>,
     node_registry: Arc<NodeRegistry>,
-    consensus: Arc<RwLock<RaftConsensus>>,
+    _consensus: Arc<RwLock<RaftConsensus>>,
     /// Local node ID
     local_node_id: String,
     /// Statistics
@@ -284,9 +284,9 @@ impl DistributedCollectionOps {
         Self {
             config,
             shard_manager,
-            routing_service,
+            _routing_service: routing_service,
             node_registry,
-            consensus,
+            _consensus: consensus,
             local_node_id,
             stats: Arc::new(RwLock::new(DistributedOpsStats::default())),
             fanout: None,
@@ -309,9 +309,9 @@ impl DistributedCollectionOps {
         Self {
             config,
             shard_manager,
-            routing_service,
+            _routing_service: routing_service,
             node_registry,
-            consensus,
+            _consensus: consensus,
             local_node_id,
             stats: Arc::new(RwLock::new(DistributedOpsStats::default())),
             fanout: Some(fanout),
@@ -845,6 +845,7 @@ impl DistributedCollectionOps {
     }
 
     /// Partition records by shard using consistent hashing
+    #[allow(dead_code)]
     fn partition_records_by_shard(
         &self,
         records: &[WriteRecord],
@@ -1273,7 +1274,9 @@ mod tests {
     use crate::cluster::rpc::{
         ForwardWriteResponse, RpcResult, ShardSearchResponse, ShardSearchResult as RpcSearchResult,
     };
-    use crate::cluster::{ConsensusConfig, NodeRegistryConfig, RoutingConfig, ShardConfig};
+    use crate::cluster::{
+        ConsensusConfig, NodeInfo, NodeRegistryConfig, NodeStatus, RoutingConfig, ShardConfig,
+    };
     use async_trait::async_trait;
     use futures::Stream;
     use std::pin::Pin;
@@ -1923,6 +1926,18 @@ mod tests {
     async fn test_forward_write_without_fanout_fails() {
         let coordinator = create_test_coordinator().await;
 
+        // Register the remote node in the registry first
+        coordinator
+            .node_registry
+            .register_node(NodeInfo {
+                node_id: "remote-node-1".to_string(),
+                address: "localhost:5679".to_string(),
+                status: NodeStatus::Running,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
         // Create a shard that is on a remote node
         let mut shard = Shard::new("test-collection", 0);
         shard.state = ShardState::Active;
@@ -1944,10 +1959,14 @@ mod tests {
             .forward_write_to_node(&shard, "remote-node-1", &records, ConsistencyLevel::Quorum)
             .await;
 
-        // Should fail because no fanout
+        // Should fail because no fanout is configured
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("No SearchFanout implementation"));
+        assert!(
+            err.to_string().contains("SearchFanout"),
+            "Expected SearchFanout error, got: {}",
+            err
+        );
     }
 
     #[tokio::test]

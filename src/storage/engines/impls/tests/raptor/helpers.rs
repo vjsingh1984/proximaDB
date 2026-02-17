@@ -102,8 +102,6 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::engines::impls::raptor::RaptorEngine;
 use crate::storage::engines::impls::raptor::config::RaptorConfig;
-use crate::storage::persistence::filesystem::FileSystem;
-use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -144,7 +142,7 @@ pub fn generate_unique_collection_id() -> String {
 /// Create a test RAPTOR engine with default configuration
 /// Source: tests.rs
 #[allow(dead_code)]
-pub async fn create_test_engine() -> Result<RaptorEngine> {
+pub async fn create_test_engine() -> Result<RaptorEngine, anyhow::Error> {
     // Note: cleanup is now handled per-collection in create_test_collection_isolated
     RaptorEngine::new().await
 }
@@ -154,7 +152,7 @@ pub async fn create_test_engine() -> Result<RaptorEngine> {
 #[allow(dead_code)]
 pub async fn create_test_engine_with_compression(
     _compression: CompressionAlgorithm,
-) -> Result<RaptorEngine> {
+) -> Result<RaptorEngine, anyhow::Error> {
     // For now, just create a default engine since the constructor doesn't take config
     // Compression will be tested via the collection config in the flush parameters
     RaptorEngine::new().await
@@ -163,7 +161,7 @@ pub async fn create_test_engine_with_compression(
 /// Clean up test data directory for a specific path
 /// Source: tests.rs
 #[allow(dead_code)]
-pub async fn cleanup_test_data_at_path(base_path: &str) -> Result<()> {
+pub async fn cleanup_test_data_at_path(base_path: &str) -> Result<(), anyhow::Error> {
     // Create a filesystem instance using the factory
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let filesystem_factory =
@@ -196,7 +194,7 @@ pub async fn cleanup_test_data_at_path(base_path: &str) -> Result<()> {
 /// Clean up test data directory before each test (legacy, uses default path)
 /// Source: tests.rs
 #[allow(dead_code)]
-pub async fn cleanup_test_data() -> Result<()> {
+pub async fn cleanup_test_data() -> Result<(), anyhow::Error> {
     cleanup_test_data_at_path("/tmp/test_collection").await
 }
 

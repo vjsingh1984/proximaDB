@@ -16,19 +16,21 @@ Run with:
     PYTHONPATH=src pytest tests/integration/test_code_indexing_integration.py -v -s
 """
 
-import pytest
-import sys
 import asyncio
-import time
 import hashlib
-import requests
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+import sys
+import time
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
+
+import pytest
+import requests
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+
 
 # Check if server is available
 def is_server_available(url: str = "http://localhost:5678") -> bool:
@@ -42,14 +44,14 @@ def is_server_available(url: str = "http://localhost:5678") -> bool:
 
 # Skip all tests if server not available
 pytestmark = pytest.mark.skipif(
-    not is_server_available(),
-    reason="ProximaDB server not available at localhost:5678"
+    not is_server_available(), reason="ProximaDB server not available at localhost:5678"
 )
 
 
 # =============================================================================
 # Test Fixtures
 # =============================================================================
+
 
 @pytest.fixture(scope="module")
 def server_url():
@@ -158,7 +160,7 @@ def calculate_expression(expression: str) -> float:
 @pytest.fixture(scope="module")
 def sample_rust_code():
     """Sample Rust code for testing."""
-    return '''
+    return """
 //! Vector operations module for high-performance computing.
 
 use std::ops::{Add, Sub, Mul, Div};
@@ -273,14 +275,17 @@ mod tests {
         assert!((v.magnitude() - 5.0).abs() < 1e-10);
     }
 }
-'''
+"""
 
 
 # =============================================================================
 # Helper Functions
 # =============================================================================
 
-def create_collection(server_url: str, name: str, dimension: int = 384) -> Dict[str, Any]:
+
+def create_collection(
+    server_url: str, name: str, dimension: int = 384
+) -> Dict[str, Any]:
     """Create a vector collection via REST API.
 
     Uses CollectionRequest format with integer operation codes:
@@ -296,8 +301,8 @@ def create_collection(server_url: str, name: str, dimension: int = 384) -> Dict[
                 "name": name,
                 "dimension": dimension,
                 "distance_metric": 1,  # COSINE
-            }
-        }
+            },
+        },
     )
     return response.json()
 
@@ -336,7 +341,7 @@ def insert_vectors(
         json={
             "collection_id": collection_name,
             "vectors": formatted_vectors,
-        }
+        },
     )
     return response.json()
 
@@ -424,7 +429,9 @@ def to_sql_value(value: Any) -> Dict[str, Any]:
     elif isinstance(value, (list, tuple)):
         return {"array_value": {"values": [to_sql_value(v) for v in value]}}
     elif isinstance(value, dict):
-        return {"object_value": {"fields": {k: to_sql_value(v) for k, v in value.items()}}}
+        return {
+            "object_value": {"fields": {k: to_sql_value(v) for k, v in value.items()}}
+        }
     else:
         return {"string_value": str(value)}
 
@@ -460,6 +467,7 @@ def assert_success(result: Dict[str, Any], message: str = "API call failed"):
 # Test Classes
 # =============================================================================
 
+
 class TestServerConnection:
     """Test basic server connectivity."""
 
@@ -494,7 +502,9 @@ class TestCollectionOperations:
     def test_create_code_collection(self, server_url, unique_collection_name):
         """Test creating a collection for code embeddings."""
         try:
-            result = create_collection(server_url, unique_collection_name, dimension=384)
+            result = create_collection(
+                server_url, unique_collection_name, dimension=384
+            )
             # Check for success in response
             assert result.get("success", False) or "error" not in str(result).lower()
         finally:
@@ -520,7 +530,7 @@ class TestVectorOperations:
                         "type": "function",
                         "language": "python",
                         "file": "calculator.py",
-                    }
+                    },
                 },
                 {
                     "id": "func_subtract",
@@ -530,17 +540,19 @@ class TestVectorOperations:
                         "type": "function",
                         "language": "python",
                         "file": "calculator.py",
-                    }
+                    },
                 },
                 {
                     "id": "class_calculator",
-                    "vector": generate_embedding("calculator class for math operations"),
+                    "vector": generate_embedding(
+                        "calculator class for math operations"
+                    ),
                     "metadata": {
                         "name": "Calculator",
                         "type": "class",
                         "language": "python",
                         "file": "calculator.py",
-                    }
+                    },
                 },
             ]
 
@@ -559,7 +571,11 @@ class TestVectorOperations:
             )
 
             # Verify search results
-            assert "results" in search_result or "matches" in search_result or isinstance(search_result, list)
+            assert (
+                "results" in search_result
+                or "matches" in search_result
+                or isinstance(search_result, list)
+            )
 
         finally:
             delete_collection(server_url, unique_collection_name)
@@ -568,7 +584,9 @@ class TestVectorOperations:
 class TestPythonCodeIndexing:
     """Test indexing Python code."""
 
-    def test_index_python_functions(self, server_url, unique_collection_name, sample_python_code):
+    def test_index_python_functions(
+        self, server_url, unique_collection_name, sample_python_code
+    ):
         """Test indexing Python function definitions."""
         try:
             # Create collection
@@ -576,29 +594,55 @@ class TestPythonCodeIndexing:
 
             # Parse and create vectors for functions (simplified)
             functions = [
-                ("add", "Add two numbers.", "def add(self, a: float, b: float) -> float"),
-                ("subtract", "Subtract b from a.", "def subtract(self, a: float, b: float) -> float"),
-                ("multiply", "Multiply two numbers.", "def multiply(self, a: float, b: float) -> float"),
-                ("divide", "Divide a by b.", "def divide(self, a: float, b: float) -> float"),
-                ("create_calculator", "Factory function to create a calculator.", "def create_calculator(precision: int = 2) -> Calculator"),
-                ("calculate_expression", "Evaluate a simple mathematical expression.", "def calculate_expression(expression: str) -> float"),
+                (
+                    "add",
+                    "Add two numbers.",
+                    "def add(self, a: float, b: float) -> float",
+                ),
+                (
+                    "subtract",
+                    "Subtract b from a.",
+                    "def subtract(self, a: float, b: float) -> float",
+                ),
+                (
+                    "multiply",
+                    "Multiply two numbers.",
+                    "def multiply(self, a: float, b: float) -> float",
+                ),
+                (
+                    "divide",
+                    "Divide a by b.",
+                    "def divide(self, a: float, b: float) -> float",
+                ),
+                (
+                    "create_calculator",
+                    "Factory function to create a calculator.",
+                    "def create_calculator(precision: int = 2) -> Calculator",
+                ),
+                (
+                    "calculate_expression",
+                    "Evaluate a simple mathematical expression.",
+                    "def calculate_expression(expression: str) -> float",
+                ),
             ]
 
             vectors = []
             for name, doc, signature in functions:
                 embedding_text = f"{name} {doc} {signature}"
-                vectors.append({
-                    "id": f"py_func_{name}",
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "name": name,
-                        "type": "function",
-                        "language": "python",
-                        "docstring": doc,
-                        "signature": signature,
-                        "file": "calculator.py",
+                vectors.append(
+                    {
+                        "id": f"py_func_{name}",
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "name": name,
+                            "type": "function",
+                            "language": "python",
+                            "docstring": doc,
+                            "signature": signature,
+                            "file": "calculator.py",
+                        },
                     }
-                })
+                )
 
             # Insert vectors
             result = insert_vectors(server_url, unique_collection_name, vectors)
@@ -606,10 +650,14 @@ class TestPythonCodeIndexing:
 
             # Search for math operations
             query = generate_embedding("function to perform division")
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=3)
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=3
+            )
 
             # Verify we get results
-            results = search_result.get("results", search_result.get("matches", search_result))
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             if isinstance(results, list) and len(results) > 0:
                 # Check that divide function is in top results
                 result_ids = [r.get("id", r.get("vector_id", "")) for r in results]
@@ -618,34 +666,51 @@ class TestPythonCodeIndexing:
         finally:
             delete_collection(server_url, unique_collection_name)
 
-    def test_index_python_classes(self, server_url, unique_collection_name, sample_python_code):
+    def test_index_python_classes(
+        self, server_url, unique_collection_name, sample_python_code
+    ):
         """Test indexing Python class definitions."""
         try:
             # Create collection
             create_collection(server_url, unique_collection_name, dimension=384)
 
             # Create class vector
-            vectors = [{
-                "id": "py_class_Calculator",
-                "vector": generate_embedding("Calculator class for basic math operations add subtract multiply divide"),
-                "metadata": {
-                    "name": "Calculator",
-                    "type": "class",
-                    "language": "python",
-                    "docstring": "A simple calculator class.",
-                    "methods": ["add", "subtract", "multiply", "divide", "get_history", "clear_history"],
-                    "file": "calculator.py",
+            vectors = [
+                {
+                    "id": "py_class_Calculator",
+                    "vector": generate_embedding(
+                        "Calculator class for basic math operations add subtract multiply divide"
+                    ),
+                    "metadata": {
+                        "name": "Calculator",
+                        "type": "class",
+                        "language": "python",
+                        "docstring": "A simple calculator class.",
+                        "methods": [
+                            "add",
+                            "subtract",
+                            "multiply",
+                            "divide",
+                            "get_history",
+                            "clear_history",
+                        ],
+                        "file": "calculator.py",
+                    },
                 }
-            }]
+            ]
 
             result = insert_vectors(server_url, unique_collection_name, vectors)
             assert_success(result, "Vector operation failed")
 
             # Search for calculator
             query = generate_embedding("calculator for arithmetic operations")
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=1)
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=1
+            )
 
-            results = search_result.get("results", search_result.get("matches", search_result))
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             if isinstance(results, list):
                 print(f"Found {len(results)} results for 'calculator' search")
 
@@ -656,25 +721,31 @@ class TestPythonCodeIndexing:
 class TestRustCodeIndexing:
     """Test indexing Rust code."""
 
-    def test_index_rust_structs(self, server_url, unique_collection_name, sample_rust_code):
+    def test_index_rust_structs(
+        self, server_url, unique_collection_name, sample_rust_code
+    ):
         """Test indexing Rust struct definitions."""
         try:
             # Create collection
             create_collection(server_url, unique_collection_name, dimension=384)
 
             # Create struct vector
-            vectors = [{
-                "id": "rs_struct_Vector3D",
-                "vector": generate_embedding("Vector3D struct 3D vector mathematical operations x y z coordinates"),
-                "metadata": {
-                    "name": "Vector3D",
-                    "type": "struct",
-                    "language": "rust",
-                    "docstring": "A 3D vector for mathematical operations.",
-                    "fields": ["x", "y", "z"],
-                    "file": "vector.rs",
+            vectors = [
+                {
+                    "id": "rs_struct_Vector3D",
+                    "vector": generate_embedding(
+                        "Vector3D struct 3D vector mathematical operations x y z coordinates"
+                    ),
+                    "metadata": {
+                        "name": "Vector3D",
+                        "type": "struct",
+                        "language": "rust",
+                        "docstring": "A 3D vector for mathematical operations.",
+                        "fields": ["x", "y", "z"],
+                        "file": "vector.rs",
+                    },
                 }
-            }]
+            ]
 
             result = insert_vectors(server_url, unique_collection_name, vectors)
             assert_success(result, "Vector operation failed")
@@ -682,46 +753,82 @@ class TestRustCodeIndexing:
         finally:
             delete_collection(server_url, unique_collection_name)
 
-    def test_index_rust_functions(self, server_url, unique_collection_name, sample_rust_code):
+    def test_index_rust_functions(
+        self, server_url, unique_collection_name, sample_rust_code
+    ):
         """Test indexing Rust function definitions."""
         try:
             # Create collection
             create_collection(server_url, unique_collection_name, dimension=384)
 
             functions = [
-                ("new", "Create a new 3D vector.", "pub fn new(x: f64, y: f64, z: f64) -> Self"),
-                ("magnitude", "Calculate the magnitude (length) of the vector.", "pub fn magnitude(&self) -> f64"),
-                ("normalize", "Normalize the vector to unit length.", "pub fn normalize(&self) -> Self"),
-                ("dot", "Calculate dot product with another vector.", "pub fn dot(&self, other: &Self) -> f64"),
-                ("cross", "Calculate cross product with another vector.", "pub fn cross(&self, other: &Self) -> Self"),
-                ("angle_between", "Calculate the angle between two vectors in radians.", "pub fn angle_between(v1: &Vector3D, v2: &Vector3D) -> f64"),
-                ("project", "Project vector a onto vector b.", "pub fn project(a: &Vector3D, b: &Vector3D) -> Vector3D"),
+                (
+                    "new",
+                    "Create a new 3D vector.",
+                    "pub fn new(x: f64, y: f64, z: f64) -> Self",
+                ),
+                (
+                    "magnitude",
+                    "Calculate the magnitude (length) of the vector.",
+                    "pub fn magnitude(&self) -> f64",
+                ),
+                (
+                    "normalize",
+                    "Normalize the vector to unit length.",
+                    "pub fn normalize(&self) -> Self",
+                ),
+                (
+                    "dot",
+                    "Calculate dot product with another vector.",
+                    "pub fn dot(&self, other: &Self) -> f64",
+                ),
+                (
+                    "cross",
+                    "Calculate cross product with another vector.",
+                    "pub fn cross(&self, other: &Self) -> Self",
+                ),
+                (
+                    "angle_between",
+                    "Calculate the angle between two vectors in radians.",
+                    "pub fn angle_between(v1: &Vector3D, v2: &Vector3D) -> f64",
+                ),
+                (
+                    "project",
+                    "Project vector a onto vector b.",
+                    "pub fn project(a: &Vector3D, b: &Vector3D) -> Vector3D",
+                ),
             ]
 
             vectors = []
             for name, doc, signature in functions:
                 embedding_text = f"{name} {doc} {signature}"
-                vectors.append({
-                    "id": f"rs_func_{name}",
-                    "vector": generate_embedding(embedding_text),
-                    "metadata": {
-                        "name": name,
-                        "type": "function",
-                        "language": "rust",
-                        "docstring": doc,
-                        "signature": signature,
-                        "file": "vector.rs",
+                vectors.append(
+                    {
+                        "id": f"rs_func_{name}",
+                        "vector": generate_embedding(embedding_text),
+                        "metadata": {
+                            "name": name,
+                            "type": "function",
+                            "language": "rust",
+                            "docstring": doc,
+                            "signature": signature,
+                            "file": "vector.rs",
+                        },
                     }
-                })
+                )
 
             result = insert_vectors(server_url, unique_collection_name, vectors)
             assert_success(result, "Vector operation failed")
 
             # Search for vector operations
             query = generate_embedding("function to calculate vector length magnitude")
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=3)
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=3
+            )
 
-            results = search_result.get("results", search_result.get("matches", search_result))
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             if isinstance(results, list) and len(results) > 0:
                 result_ids = [r.get("id", r.get("vector_id", "")) for r in results]
                 print(f"Search results for 'magnitude': {result_ids}")
@@ -744,22 +851,32 @@ class TestCrossLanguageSearch:
                 {
                     "id": "py_add",
                     "vector": generate_embedding("add two numbers python function"),
-                    "metadata": {"name": "add", "language": "python", "type": "function"}
+                    "metadata": {
+                        "name": "add",
+                        "language": "python",
+                        "type": "function",
+                    },
                 },
                 {
                     "id": "rs_add",
                     "vector": generate_embedding("add two vectors rust implementation"),
-                    "metadata": {"name": "add", "language": "rust", "type": "impl"}
+                    "metadata": {"name": "add", "language": "rust", "type": "impl"},
                 },
                 {
                     "id": "py_subtract",
                     "vector": generate_embedding("subtract numbers python function"),
-                    "metadata": {"name": "subtract", "language": "python", "type": "function"}
+                    "metadata": {
+                        "name": "subtract",
+                        "language": "python",
+                        "type": "function",
+                    },
                 },
                 {
                     "id": "rs_sub",
-                    "vector": generate_embedding("subtract vectors rust implementation"),
-                    "metadata": {"name": "sub", "language": "rust", "type": "impl"}
+                    "vector": generate_embedding(
+                        "subtract vectors rust implementation"
+                    ),
+                    "metadata": {"name": "sub", "language": "rust", "type": "impl"},
                 },
             ]
 
@@ -768,9 +885,13 @@ class TestCrossLanguageSearch:
 
             # Search for addition - should find both languages
             query = generate_embedding("addition operation")
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=4)
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=4
+            )
 
-            results = search_result.get("results", search_result.get("matches", search_result))
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             if isinstance(results, list):
                 languages = set()
                 for r in results:
@@ -799,23 +920,27 @@ class TestCodeRelationships:
             relationships = [
                 {
                     "id": "rel_calc_expr_calls_create_calc",
-                    "vector": generate_embedding("calculate_expression calls create_calculator"),
+                    "vector": generate_embedding(
+                        "calculate_expression calls create_calculator"
+                    ),
                     "metadata": {
                         "type": "calls",
                         "source": "calculate_expression",
                         "target": "create_calculator",
                         "language": "python",
-                    }
+                    },
                 },
                 {
                     "id": "rel_create_calc_creates_calc",
-                    "vector": generate_embedding("create_calculator creates Calculator instance"),
+                    "vector": generate_embedding(
+                        "create_calculator creates Calculator instance"
+                    ),
                     "metadata": {
                         "type": "instantiates",
                         "source": "create_calculator",
                         "target": "Calculator",
                         "language": "python",
-                    }
+                    },
                 },
             ]
 
@@ -824,9 +949,13 @@ class TestCodeRelationships:
 
             # Search for relationships
             query = generate_embedding("what does calculate_expression call")
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=2)
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=2
+            )
 
-            results = search_result.get("results", search_result.get("matches", search_result))
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             if isinstance(results, list):
                 print(f"Found {len(results)} relationship results")
 
@@ -846,15 +975,19 @@ class TestBatchOperations:
             # Generate many vectors
             vectors = []
             for i in range(100):
-                vectors.append({
-                    "id": f"batch_vec_{i}",
-                    "vector": generate_embedding(f"function number {i} with operations"),
-                    "metadata": {
-                        "index": i,
-                        "type": "function",
-                        "language": "python" if i % 2 == 0 else "rust",
+                vectors.append(
+                    {
+                        "id": f"batch_vec_{i}",
+                        "vector": generate_embedding(
+                            f"function number {i} with operations"
+                        ),
+                        "metadata": {
+                            "index": i,
+                            "type": "function",
+                            "language": "python" if i % 2 == 0 else "rust",
+                        },
                     }
-                })
+                )
 
             # Batch insert
             start_time = time.time()
@@ -866,9 +999,13 @@ class TestBatchOperations:
 
             # Verify search works
             query = generate_embedding("function operations")
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=10)
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=10
+            )
 
-            results = search_result.get("results", search_result.get("matches", search_result))
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             assert results is not None
 
         finally:
@@ -889,17 +1026,17 @@ class TestMetadataFiltering:
                 {
                     "id": "py_1",
                     "vector": generate_embedding("function to process data"),
-                    "metadata": {"language": "python", "name": "process_py"}
+                    "metadata": {"language": "python", "name": "process_py"},
                 },
                 {
                     "id": "rs_1",
                     "vector": generate_embedding("function to process data"),
-                    "metadata": {"language": "rust", "name": "process_rs"}
+                    "metadata": {"language": "rust", "name": "process_rs"},
                 },
                 {
                     "id": "py_2",
                     "vector": generate_embedding("function to transform data"),
-                    "metadata": {"language": "python", "name": "transform_py"}
+                    "metadata": {"language": "python", "name": "transform_py"},
                 },
             ]
 
@@ -916,15 +1053,19 @@ class TestMetadataFiltering:
                     unique_collection_name,
                     query,
                     top_k=3,
-                    filters={"language": "python"}
+                    filters={"language": "python"},
                 )
                 print(f"Filtered search result: {search_result}")
             except Exception as e:
                 print(f"Filtered search not supported or failed: {e}")
 
             # Unfiltered search should work
-            search_result = search_vectors(server_url, unique_collection_name, query, top_k=3)
-            results = search_result.get("results", search_result.get("matches", search_result))
+            search_result = search_vectors(
+                server_url, unique_collection_name, query, top_k=3
+            )
+            results = search_result.get(
+                "results", search_result.get("matches", search_result)
+            )
             assert results is not None
 
         finally:
@@ -934,6 +1075,7 @@ class TestMetadataFiltering:
 # =============================================================================
 # Performance Tests
 # =============================================================================
+
 
 @pytest.mark.slow
 class TestPerformance:
@@ -949,7 +1091,7 @@ class TestPerformance:
                 {
                     "id": f"perf_vec_{i}",
                     "vector": generate_embedding(f"performance test vector {i}"),
-                    "metadata": {"index": i}
+                    "metadata": {"index": i},
                 }
                 for i in range(50)
             ]

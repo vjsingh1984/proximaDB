@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_unified_optimizer_creation() {
-    let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
+    let _optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
     // assert!(optimizer.file_metadata_cache.is_empty()); // Field is private
     // assert!(optimizer.column_metadata_cache.is_empty()); // Field is private
     assert!(true); // Placeholder - fields are private
@@ -61,9 +61,12 @@ async fn test_combined_optimization() {
         value: serde_json::json!("electronics"),
     };
 
+    // Store SearchParams in a variable to avoid temporary borrow issue
+    let search_params = SearchParams::default();
+
     let context = UnifiedQueryContext {
         collection,
-        search_params: Some(&SearchParams::default()),
+        search_params: Some(&search_params),
         filter_params: Some(&filter),
         optimization_goal: OptimizationGoal::Balanced,
         available_files: vec!["file1.parquet".to_string()],

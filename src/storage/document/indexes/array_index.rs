@@ -13,6 +13,7 @@ use super::IndexValue;
 /// Inverted index for array fields
 pub struct ArrayIndex {
     /// JSON path expression (e.g., "$.tags")
+    #[allow(dead_code)]
     path: String,
     /// Whether this is a sparse index
     sparse: bool,

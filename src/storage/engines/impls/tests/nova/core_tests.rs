@@ -13,9 +13,10 @@
 //! Total: 11 tests
 
 use std::sync::Arc;
+use crate::compute::distance_computation::DistanceMetric;
 use crate::storage::engines::impls::nova::*;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::compute::distance_computation::DistanceMetric;
+use crate::storage::traits::UnifiedStorageEngine;
 
 // ============================================================================
 // OPTIMIZED OPERATIONS TESTS (from optimized_operations.rs)

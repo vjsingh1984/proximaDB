@@ -162,6 +162,7 @@ pub struct HybridQueryEngine {
     /// Reference to graph memory pool
     graph_memory: Arc<GraphMemoryPool>,
     /// Reference to vector operations service
+    #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
     /// Hybrid query configuration
     config: HybridConfig,
@@ -484,6 +485,7 @@ impl Ord for SemanticTraversalNode {
 struct SemanticNeighbor {
     node_id: NodeId,
     similarity_score: f32,
+    #[allow(dead_code)]
     edge_weight: f32,
 }
 
@@ -1398,7 +1400,7 @@ impl HybridQueryEngine {
     /// Fallback vector search using graph nodes when VOS is unavailable
     async fn fallback_graph_vector_search(
         &self,
-        vector_comp: &VectorQueryComponent,
+        _vector_comp: &VectorQueryComponent,
         threshold: f32,
         max_results: usize,
     ) -> QueryResult<Vec<VectorCandidate>> {
@@ -1449,6 +1451,7 @@ impl HybridQueryEngine {
     }
 
     /// Convert protobuf metadata to HashMap
+    #[allow(dead_code)]
     fn convert_proto_metadata(
         &self,
         proto_metadata: &[crate::proto::proximadb_v1::MetadataItem],
@@ -1482,6 +1485,7 @@ impl HybridQueryEngine {
     }
 
     /// Convert TypedMetadata map to HashMap<String, String>
+    #[allow(dead_code)]
     fn convert_typed_metadata_to_map(
         &self,
         map: &std::collections::HashMap<String, crate::core::metadata_types::MetadataValue>,
@@ -1745,7 +1749,7 @@ impl HybridQueryEngine {
         end_node_id: &NodeId,
         parent: &HashMap<NodeId, (NodeId, EdgeId)>,
     ) -> QueryResult<Vec<PathStep>> {
-        let path: Vec<PathStep> = Vec::new();
+        let _path: Vec<PathStep> = Vec::new();
         let mut current_id = end_node_id.clone();
 
         // Build path backwards
@@ -1799,8 +1803,6 @@ impl HybridQueryEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphMemoryPool;
-    use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
 
     #[test]
     fn test_hybrid_config_default() {

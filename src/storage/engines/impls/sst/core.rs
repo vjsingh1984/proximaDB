@@ -172,6 +172,7 @@ pub struct SstEngine {
     /// - Prevents torn writes during system failures
     ///
     /// Always present, wraps filesystem with transactional semantics
+    #[allow(dead_code)]
     atomic_coordinator: Arc<TransactionCoordinator>,
 
     /// **SSTable Reader** (Shared)

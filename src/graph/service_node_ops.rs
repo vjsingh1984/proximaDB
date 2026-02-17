@@ -159,7 +159,7 @@ impl super::GraphOperationsService {
                             continue;
                         };
                         let mut matched = HashSet::new();
-                        for (k, ids) in map
+                        for (_k, ids) in map
                             .range(prefix.to_string()..)
                             .take_while(|(k, _)| k.starts_with(prefix))
                         {

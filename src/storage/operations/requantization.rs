@@ -23,6 +23,7 @@ pub struct RequantizationManager {
     state: Arc<RwLock<RequantizationState>>,
 
     /// Performance metrics tracking
+    #[allow(dead_code)]
     metrics: Arc<RequantizationMetrics>,
 
     /// Data distribution analyzers by collection (wrapped in RwLock for interior mutability)
@@ -31,6 +32,7 @@ pub struct RequantizationManager {
 
 /// Re-quantization configuration
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct RequantizationConfig {
     /// Minimum quality degradation threshold to trigger re-quantization
     quality_degradation_threshold: f64,
@@ -62,6 +64,7 @@ impl Default for RequantizationConfig {
 
 /// Current re-quantization state
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct RequantizationState {
     /// Active re-quantization operations
     active_operations: HashMap<String, ActiveRequantization>,
@@ -78,6 +81,7 @@ struct RequantizationState {
 
 /// Active re-quantization tracking
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ActiveRequantization {
     operation_id: String,
     collection_id: String,
@@ -117,6 +121,7 @@ pub enum RequantizationPhase {
 
 /// Re-quantization performance statistics
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 struct RequantizationStatistics {
     total_requantizations: u64,
     successful_requantizations: u64,
@@ -128,6 +133,7 @@ struct RequantizationStatistics {
 
 /// Quantization quality metrics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct QuantizationQuality {
     current_quality_score: f64,
     baseline_quality_score: f64,
@@ -138,11 +144,12 @@ struct QuantizationQuality {
 
 /// Quality trend tracking
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum QualityTrend {
     Improving,
     Stable,
     Degrading,
-    Rapid_Degradation,
+    RapidDegradation,
 }
 
 /// Data distribution analyzer for monitoring quantization effectiveness
@@ -156,6 +163,7 @@ pub struct DataDistributionAnalyzer {
 
 /// Snapshot of data distribution characteristics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct DataDistributionSnapshot {
     timestamp: Instant,
     vector_count: usize,
@@ -168,6 +176,7 @@ struct DataDistributionSnapshot {
 
 /// Re-quantization metrics tracking
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct RequantizationMetrics {
     /// Performance counters
     counters: Arc<RwLock<RequantizationStatistics>>,
@@ -339,7 +348,7 @@ impl RequantizationManager {
                 return true;
             }
 
-            if matches!(quality.degradation_trend, QualityTrend::Rapid_Degradation) {
+            if matches!(quality.degradation_trend, QualityTrend::RapidDegradation) {
                 return true;
             }
         }
@@ -364,7 +373,7 @@ impl RequantizationManager {
     async fn collect_distribution_snapshot(
         &self,
         collection_id: &str,
-        engine_type: StorageEngineType,
+        _engine_type: StorageEngineType,
     ) -> Result<DataDistributionSnapshot> {
         debug!(
             "📊 Collecting data distribution snapshot for collection: {}",
@@ -392,7 +401,7 @@ impl RequantizationManager {
         &self,
         collection_id: &str,
         quantization_type: QuantizationType,
-        engine_type: StorageEngineType,
+        _engine_type: StorageEngineType,
         operation_id: &str,
     ) -> Result<RequantizationResult> {
         let mut codebooks_updated = Vec::new();

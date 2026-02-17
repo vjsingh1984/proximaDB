@@ -379,6 +379,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Check if quantization level requires codebook
+    #[allow(dead_code)]
     fn requires_codebook(&self, level: &QuantizationLevel) -> bool {
         matches!(
             level,
@@ -391,6 +392,7 @@ impl QuantizedVectorSchemaBuilder {
 
     /// Build codebook field definition (NOT USED - codebooks are file-level metadata)
     /// This method is kept for backward compatibility but returns an error
+    #[allow(dead_code)]
     fn build_codebook_definition(
         &self,
         level: &QuantizationLevel,
@@ -484,6 +486,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Calculate number of subquantizers for PQ
+    #[allow(dead_code)]
     fn calculate_subquantizers(&self, bits_per_code: u8) -> Result<usize> {
         // Standard PQ: aim for 8-32 dimensions per subquantizer
         let target_dims_per_subq = match bits_per_code {
@@ -504,6 +507,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Get bits per code for quantization level
+    #[allow(dead_code)]
     fn get_bits_per_code(&self, level: &QuantizationLevel) -> u8 {
         match level {
             QuantizationLevel::PQ4 => 4,

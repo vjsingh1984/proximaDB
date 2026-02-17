@@ -36,7 +36,7 @@ pub struct CacheMetricsCollector {
     /// Collection interval
     collection_interval: Duration,
     /// Previous metrics for delta calculations
-    previous_metrics: tokio::sync::RwLock<CacheMetricsSnapshot>,
+    _previous_metrics: tokio::sync::RwLock<CacheMetricsSnapshot>,
 }
 
 /// Snapshot of cache metrics for delta calculations
@@ -97,7 +97,7 @@ impl CacheMetricsCollector {
             cache_orchestrator,
             metrics_collector,
             collection_interval: Duration::from_secs(30), // 30 seconds
-            previous_metrics: tokio::sync::RwLock::new(CacheMetricsSnapshot::default()),
+            _previous_metrics: tokio::sync::RwLock::new(CacheMetricsSnapshot::default()),
         }
     }
 
@@ -127,7 +127,7 @@ impl CacheMetricsCollector {
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
             let stats = query_cache.statistics().await;
             let total_requests = stats.hit_count + stats.miss_count;
-            let hit_rate = if total_requests > 0 {
+            let _hit_rate = if total_requests > 0 {
                 stats.hit_count as f64 / total_requests as f64
             } else {
                 0.0

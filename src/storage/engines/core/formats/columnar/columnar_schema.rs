@@ -17,6 +17,7 @@ pub struct ColumnarSchema {
     schema_cache: Arc<RwLock<HashMap<String, CachedSchema>>>,
 
     /// Default configuration
+    #[allow(dead_code)]
     default_config: QuantizationConfig,
 }
 
@@ -268,7 +269,7 @@ impl ColumnarSchema {
                     ) {
                         compatibility
                             .breaking_changes
-                            .push(format!("Incompatible type change: {}", change));
+                            .push(format!("Incompatible type change: {change}"));
                         compatibility.is_compatible = false;
                     }
                 }

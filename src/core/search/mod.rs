@@ -2,6 +2,7 @@
 
 pub mod bounded_queue;
 pub mod engine_benchmarks;
+pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
 pub mod metadata_filter_pushdown;
@@ -59,6 +60,25 @@ impl Default for SearchMode {
     fn default() -> Self {
         // Default to Exact mode to preserve 100% recall for accuracy-critical applications
         SearchMode::Exact
+    }
+}
+
+/// Hybrid search mode controlling how BM25 text and vector results are combined
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum HybridSearchMode {
+    /// Vector search only (default, ignores text_query)
+    VectorOnly,
+    /// Keyword/BM25 search only (ignores query vectors)
+    KeywordOnly,
+    /// Hybrid: combine BM25 + vector results using Reciprocal Rank Fusion
+    Hybrid,
+    /// Hybrid with custom RRF k parameter (default k=60)
+    HybridCustom { rrf_k: u32 },
+}
+
+impl Default for HybridSearchMode {
+    fn default() -> Self {
+        Self::VectorOnly
     }
 }
 
@@ -179,6 +199,16 @@ pub struct SearchParams {
 
     /// Block-level pruning configuration (applies to SST/HELIX/SWIFT engines)
     pub block_prune: BlockPruneConfig,
+
+    // Hybrid search parameters (BM25 + vector)
+    /// Text query for BM25 keyword search (used in hybrid mode)
+    pub text_query: Option<String>,
+
+    /// Hybrid search mode: how to combine vector and text results
+    pub hybrid_mode: HybridSearchMode,
+
+    /// Weight for vector scores in hybrid fusion (0.0-1.0, default 0.5)
+    pub vector_weight: Option<f32>,
 }
 
 /// Configuration for block-level centroid pruning.
@@ -260,6 +290,9 @@ impl Default for SearchParams {
             optimization_hint: None,
             search_mode: SearchMode::default(), // Exact mode by default for 100% recall
             block_prune: BlockPruneConfig::default(),
+            text_query: None,
+            hybrid_mode: HybridSearchMode::default(),
+            vector_weight: None,
         }
     }
 }

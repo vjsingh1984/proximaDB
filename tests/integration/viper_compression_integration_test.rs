@@ -1098,6 +1098,8 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
             dimension: dimension,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;

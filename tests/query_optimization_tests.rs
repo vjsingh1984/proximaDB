@@ -36,7 +36,7 @@ fn test_cost_model_selectivity() {
 
     #[allow(unreachable_code)]
     {
-        let cost_model = panic!("UnifiedCostModel::new() is private");
+        let _cost_model = panic!("UnifiedCostModel::new() is private");
 
         let _equals = FilterCondition::Equals {
             column: "id".to_string(),
@@ -70,9 +70,11 @@ async fn test_combined_optimization() {
         value: serde_json::json!("electronics"),
     };
 
+    // Create longer-lived binding for search_params to avoid temporary borrow
+    let search_params = SearchParams::default();
     let context = UnifiedQueryContext {
         collection,
-        search_params: Some(&SearchParams::default()),
+        search_params: Some(&search_params),
         filter_params: Some(&filter),
         optimization_goal: OptimizationGoal::Balanced,
         available_files: vec!["file1.parquet".to_string()],

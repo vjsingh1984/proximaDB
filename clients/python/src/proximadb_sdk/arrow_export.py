@@ -13,10 +13,10 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Iterator, List, Optional, Union
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 try:
     import pyarrow as pa
     import pyarrow.flight as flight
+
     _PYARROW_AVAILABLE = True
 except ImportError:
     _PYARROW_AVAILABLE = False
@@ -32,6 +33,7 @@ except ImportError:
 
 try:
     import polars as pl
+
     _POLARS_AVAILABLE = True
 except ImportError:
     _POLARS_AVAILABLE = False
@@ -39,6 +41,7 @@ except ImportError:
 
 try:
     import duckdb
+
     _DUCKDB_AVAILABLE = True
 except ImportError:
     _DUCKDB_AVAILABLE = False
@@ -47,14 +50,16 @@ except ImportError:
 
 class FileFormat(Enum):
     """Supported file formats for export."""
-    ARROW = "arrow"      # Arrow IPC format
+
+    ARROW = "arrow"  # Arrow IPC format
     PARQUET = "parquet"  # Parquet columnar format
-    SST = "sst"          # ProximaBlocks native format
+    SST = "sst"  # ProximaBlocks native format
 
 
 @dataclass
 class FileInfo:
     """Metadata about an exportable file."""
+
     path: str
     filename: str
     size_bytes: int
@@ -75,9 +80,9 @@ class FileInfo:
             for key, value in info.schema.metadata.items():
                 try:
                     if isinstance(key, bytes):
-                        key = key.decode('utf-8')
+                        key = key.decode("utf-8")
                     if isinstance(value, bytes):
-                        value = value.decode('utf-8')
+                        value = value.decode("utf-8")
                     metadata[key] = value
                 except (UnicodeDecodeError, AttributeError):
                     pass
@@ -85,8 +90,9 @@ class FileInfo:
         # Extract path from descriptor
         path = ""
         if info.descriptor and info.descriptor.path:
-            path = "/".join(p.decode() if isinstance(p, bytes) else p
-                          for p in info.descriptor.path)
+            path = "/".join(
+                p.decode() if isinstance(p, bytes) else p for p in info.descriptor.path
+            )
 
         # Determine format from path
         fmt = FileFormat.ARROW
@@ -99,7 +105,7 @@ class FileInfo:
         dimension = 0
         if info.schema:
             for field in info.schema:
-                if field.name == "vector" and hasattr(field.type, 'list_size'):
+                if field.name == "vector" and hasattr(field.type, "list_size"):
                     dimension = field.type.list_size
                     break
 
@@ -231,7 +237,7 @@ class ArrowExportClient:
             >>> arrow_files = client.list_files("embeddings", format_filter=FileFormat.ARROW)
         """
         # Build criteria for list_flights
-        criteria = collection_id.encode('utf-8')
+        criteria = collection_id.encode("utf-8")
 
         files = []
         for info in self.client.list_flights(criteria):
@@ -244,6 +250,7 @@ class ArrowExportClient:
             # Apply pattern filter (simple glob matching)
             if pattern:
                 import fnmatch
+
                 if not fnmatch.fnmatch(file_info.filename, pattern):
                     continue
 
@@ -400,9 +407,7 @@ class ArrowExportClient:
             >>> df.filter(pl.col("metadata.category") == "tech").head()
         """
         if not _POLARS_AVAILABLE:
-            raise ImportError(
-                "Polars is required. Install with: pip install polars"
-            )
+            raise ImportError("Polars is required. Install with: pip install polars")
 
         table = self.read_file(path)
         df = pl.from_arrow(table, rechunk=rechunk)
@@ -434,9 +439,7 @@ class ArrowExportClient:
             ... ''').fetchdf()
         """
         if not _DUCKDB_AVAILABLE:
-            raise ImportError(
-                "DuckDB is required. Install with: pip install duckdb"
-            )
+            raise ImportError("DuckDB is required. Install with: pip install duckdb")
 
         table = self.read_file(path)
 
@@ -547,10 +550,9 @@ class ArrowExportClient:
 
 # Convenience functions
 
+
 def connect_arrow(
-    host: str = "localhost",
-    port: int = 5680,
-    **kwargs
+    host: str = "localhost", port: int = 5680, **kwargs
 ) -> ArrowExportClient:
     """
     Create an Arrow export client.

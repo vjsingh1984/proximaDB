@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! =============================================================================
 //! HIGH-LEVEL SST QUERY ENGINE (sst_query_engine.rs)
 //! =============================================================================
@@ -105,6 +106,7 @@ pub enum SstableReadingStrategy {
 /// Leverages SharedSstFormatReader for actual file operations (eliminates code duplication)
 pub struct UnifiedSstableReader {
     // CORE READER: Delegates low-level file operations to shared infrastructure
+    #[allow(dead_code)]
     shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
     // UNIFIED CACHE: Using UnifiedCachingFilesystem for all caching needs
@@ -129,10 +131,13 @@ impl std::fmt::Debug for UnifiedSstableReader {
 /// Block cache for frequently accessed data blocks
 #[derive(Debug)]
 pub struct BlockCache {
+    #[allow(dead_code)]
     cache: Arc<
         tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<ProximaDataBlock>>>,
     >,
+    #[allow(dead_code)]
     max_size: usize,
+    #[allow(dead_code)]
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
 
@@ -141,6 +146,7 @@ pub struct BlockCache {
 pub struct IndexCache {
     indices: Arc<moka::future::Cache<String, Arc<SstableIndex>>>,
     bloom_filters: Arc<moka::future::Cache<String, Arc<SstableBloomFilter>>>,
+    #[allow(dead_code)]
     max_memory_mb: usize,
     metrics: Arc<tokio::sync::RwLock<CacheMetrics>>,
 }
@@ -158,7 +164,6 @@ pub struct CacheMetrics {
 use crate::storage::engines::impls::sst::SstableIndex;
 
 /// Enhanced bloom filter supporting metadata columns
-
 /// Reading strategy for SSTable access
 #[derive(Debug, Clone)]
 pub enum ReadStrategy {
@@ -174,6 +179,7 @@ pub enum ReadStrategy {
 
 impl ReadStrategy {
     /// Check if this strategy should use block filtering
+    #[allow(dead_code)]
     fn should_filter_blocks(&self) -> bool {
         !matches!(self, ReadStrategy::CompactionDirect)
     }
@@ -275,9 +281,11 @@ pub struct BlockIterator<T> {
     reader: Box<dyn Read + Send>,
     buffer: Vec<VectorRecord>, // OPTIMIZED: Direct VectorRecord streaming
     position: usize,
+    #[allow(dead_code)]
     block_size: usize,
     total_blocks: usize,
     current_block: usize,
+    #[allow(dead_code)]
     mode: ReadMode,
     _phantom: PhantomData<T>,
 }
@@ -828,6 +836,8 @@ impl ModularBlockReader {
         }
     }
 
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>> {
         match algorithm {
             CompressionAlgorithm::None => Ok(data.to_vec()),
@@ -1332,7 +1342,7 @@ impl UnifiedSstableReader {
             blocks.len()
         );
         if let Some(first_block) = blocks.first() {
-            if let Some(first_rec) = first_block.records.first() {}
+            if let Some(_first_rec) = first_block.records.first() {}
         }
 
         // Step 4: Process blocks and compute distances
@@ -1580,12 +1590,12 @@ impl UnifiedSstableReader {
         };
 
         // Apply bandwidth optimizer decisions if available
-        if let Some(optimizer) = bandwidth_optimizer {
+        if let Some(_optimizer) = bandwidth_optimizer {
             // Create query context for bandwidth decisions
             // TODO: Replace with UnifiedCachingFilesystem query context
             use std::collections::HashMap;
 
-            let query_context = (
+            let _query_context = (
                 params.top_k,
                 HashMap::<String, String>::new(), // metadata_filters
                 self.collection_id.clone(),
@@ -1635,12 +1645,12 @@ impl UnifiedSstableReader {
         };
 
         // Apply bandwidth optimizer decisions if available
-        if let Some(optimizer) = bandwidth_optimizer {
+        if let Some(_optimizer) = bandwidth_optimizer {
             // Create compaction query context
             use std::collections::HashMap;
 
             // TODO: Replace with UnifiedCachingFilesystem context
-            let query_context = (
+            let _query_context = (
                 self.collection_id.clone(),
                 HashMap::<String, String>::new(), // metadata_filters
                 1.0,                              // selectivity_hint for full scan
@@ -1728,7 +1738,7 @@ impl UnifiedSstableReader {
             // UnifiedCachingFilesystem handles caching internally
             // Try to get metadata (will use cache if available)
             match self.unified_filesystem.metadata(file_path).await {
-                Ok(metadata) => {
+                Ok(_metadata) => {
                     debug!("✅ Got metadata for file: {}", file_path);
                     // Convert FileMetadata to the format needed here
                     // For now, we'll need to load the file to get SSTable metadata
@@ -1877,23 +1887,6 @@ impl UnifiedSstableReader {
                         *enable_bloom_filters,
                         *enable_cache_lookup,
                         *enable_metadata_cache,
-                    )
-                    .await
-                }
-                SstableReadingStrategy::CompactionFullRead {
-                    skip_bloom_filters,
-                    skip_indexes,
-                    bypass_write_cache,
-                    use_disk_cache_if_exists,
-                    sequential_io,
-                } => {
-                    self.compaction_full_read_strategy(
-                        context,
-                        *skip_bloom_filters,
-                        *skip_indexes,
-                        *bypass_write_cache,
-                        *use_disk_cache_if_exists,
-                        *sequential_io,
                     )
                     .await
                 }
@@ -2550,7 +2543,7 @@ impl UnifiedSstableReader {
                     );
                 }
 
-                let sstable_index =
+                let _sstable_index =
                     crate::storage::cache::specialized::index_node_cache::SstableIndex {
                         file_path: file_path.clone(),
                         entries: cache_entries,
@@ -2753,7 +2746,7 @@ impl UnifiedSstableReader {
         if let Some(block) = block.as_ref() {
             // Cache the block's vectors in central cache
             // Convert SstRecord to VectorRecord for caching
-            let vector_records: Vec<VectorRecord> = block
+            let _vector_records: Vec<VectorRecord> = block
                 .records
                 .iter()
                 .map(|r| VectorRecord {
@@ -3540,7 +3533,7 @@ impl UnifiedSstableReader {
                 .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32));
             bitmap.insert(file_hash);
 
-            let cached_filter =
+            let _cached_filter =
                 crate::storage::cache::specialized::bitmap_filter_cache::CachedFilterResult {
                     bitmap,
                     filter_expr: format!("sstable:bloom:{}", file_path),
@@ -4173,7 +4166,7 @@ impl UnifiedSstableReader {
             data[offset + 2],
             data[offset + 3],
         ]) as usize;
-        offset += 4 + index_len;
+        let _offset = offset + 4 + index_len;
 
         // Convert ReadStrategy to block_filter QueryType
         let block_query_type = match search_strategy {
@@ -4385,7 +4378,7 @@ impl UnifiedSstableReader {
     async fn full_scan_strategy_modular(
         &self,
         context: &CollectionContext,
-        use_cache: bool,
+        _use_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         debug!(
             "🔍 Full scan modular strategy for {} files",
@@ -4406,7 +4399,7 @@ impl UnifiedSstableReader {
                 let entries = block_reader.read_index_blocks(&header).await?;
 
                 // Convert to cache's SstableIndex type
-                let cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                let _cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
                     file_path: file_path.to_string(),
                     entries: entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
                         key: e.key.clone(),
@@ -5019,6 +5012,7 @@ fn filter_blocks_by_zorder(
 /// Normalize coordinates to [0, 1] range for Z-Order encoding.
 ///
 /// Uses min-max normalization across all dimensions.
+#[allow(dead_code)]
 fn normalize_coords_for_zorder(coords: &[f32]) -> Vec<f32> {
     if coords.is_empty() {
         return Vec::new();
@@ -5133,6 +5127,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5150,6 +5145,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5167,6 +5163,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5184,6 +5181,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "d".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 3,
@@ -5218,6 +5216,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5235,6 +5234,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5279,6 +5279,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5296,6 +5297,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5313,6 +5315,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5357,6 +5360,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5374,6 +5378,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5391,6 +5396,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5408,6 +5414,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "d".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 3,
@@ -5453,6 +5460,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5470,6 +5478,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5487,6 +5496,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5536,6 +5546,7 @@ mod centroid_tests {
         let entries = (0..5)
             .map(|i| IndexEntry {
                 key: format!("block_{}", i),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: i,
@@ -5584,6 +5595,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5601,6 +5613,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5657,6 +5670,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5700,6 +5714,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5717,6 +5732,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5751,6 +5767,7 @@ mod centroid_tests {
         // Test with no Z-Order codes
         let entries = vec![IndexEntry {
             key: "a".into(),
+            last_key: None,
             offset: 0,
             size: 0,
             block_id: 0,
@@ -5785,6 +5802,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5802,6 +5820,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5819,6 +5838,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5875,6 +5895,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -5892,6 +5913,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -5909,6 +5931,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "c".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 2,
@@ -5927,6 +5950,7 @@ mod centroid_tests {
             // Block without Z-Order code (backward compatibility - always included)
             IndexEntry {
                 key: "d".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 3,
@@ -5993,6 +6017,7 @@ mod centroid_tests {
         let entries = vec![
             IndexEntry {
                 key: "a".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 0,
@@ -6010,6 +6035,7 @@ mod centroid_tests {
             },
             IndexEntry {
                 key: "b".into(),
+                last_key: None,
                 offset: 0,
                 size: 0,
                 block_id: 1,
@@ -6356,6 +6382,7 @@ impl Default for ReaderConfig {
 }
 
 // Helper function to convert JSON value to string for comparison
+#[allow(dead_code)]
 fn json_value_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s.clone(),

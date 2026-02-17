@@ -858,6 +858,7 @@ impl StorageQuantizationEngine {
     }
 
     /// Get or create PQ codebook for vector
+    #[allow(dead_code)]
     fn get_or_create_codebook(&self, _quantized_vector: &QuantizedVector) -> Result<Vec<Vec<f32>>> {
         // For now, return a dummy codebook
         // In practice, this would be stored during training

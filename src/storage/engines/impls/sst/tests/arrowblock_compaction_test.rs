@@ -419,8 +419,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let search_results = engine.search_vectors_unified(&ctx).await?;
 
             // Verify we got results
@@ -535,8 +536,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let results = engine.search_vectors_unified(&ctx).await?;
 
             if !results.is_empty() && results[0].id == original_vector.id {
@@ -738,8 +740,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let results = engine.search_vectors_unified(&ctx).await?;
 
             assert!(
@@ -809,7 +812,7 @@ mod tests {
         // Create first version of vectors
         let mut vectors_v1 = Vec::new();
         for i in 0..10 {
-            let mut values = vec![1.0f32; dimension]; // All 1.0 for v1
+            let values = vec![1.0f32; dimension]; // All 1.0 for v1
             vectors_v1.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: values,
@@ -836,7 +839,7 @@ mod tests {
         // Create second version of vectors (same IDs, different values, higher version)
         let mut vectors_v2 = Vec::new();
         for i in 0..10 {
-            let mut values = vec![2.0f32; dimension]; // All 2.0 for v2
+            let values = vec![2.0f32; dimension]; // All 2.0 for v2
             vectors_v2.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: values,
@@ -925,8 +928,9 @@ mod tests {
                     collection_id: collection_id.to_string(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
-
             let results = engine.search_vectors_unified(&ctx).await?;
 
             if !results.is_empty() {

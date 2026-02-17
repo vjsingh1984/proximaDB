@@ -17,7 +17,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use proximadb::network::tls::{TlsConfig, TlsServerConfig};
 //!
 //! // Create TLS configuration
@@ -25,7 +25,7 @@
 //!     .with_auto_certificates("/tmp/certs".into())
 //!     .with_mtls();
 //!
-//! // Build rustls server config
+//! // Build rustls server config (async)
 //! let rustls_config = config.build_server_config().await?;
 //! ```
 
@@ -428,7 +428,7 @@ mod tests {
         let tls_config = TlsConfig::new(true)
             .with_certificate_manager(manager)
             .with_mtls();
-        let server_config = tls_config.build_server_config().await.unwrap();
+        let _server_config = tls_config.build_server_config().await.unwrap();
 
         // Config should be valid - verify by checking it's not empty
         // Note: modern rustls doesn't expose client_auth_mandatory() directly

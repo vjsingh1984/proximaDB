@@ -143,7 +143,7 @@ pub use common::{
 // Export consolidated modules instead of deprecated ones
 pub use config::{AccuracyLevel, CompactionConfig, CompressionStrategy, PxKStrategy, RaptorConfig};
 pub use consolidated_compactor::RaptorCompactor;
-pub use consolidated_reader::RaptorReader; // Use consolidated reader
+pub use consolidated_reader::{IntraRowgroupMatrix, RaptorReader}; // Use consolidated reader
 pub use engine::RaptorEngine;
 pub use writer::RaptorWriter; // Use consolidated compactor
 // IvfManager removed - Matrix Trinity handles clustering via centroids

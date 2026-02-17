@@ -237,6 +237,7 @@ pub struct AdaptiveRangeCoalescer {
     /// Base coalescer
     base: DefaultRangeCoalescer,
     /// Storage tier latency (affects threshold calculation)
+    #[allow(dead_code)]
     storage_latency_us: u64,
     /// Target I/O size for this storage tier
     target_io_size: u64,
@@ -544,7 +545,7 @@ mod tests {
         ];
 
         // Cloud storage uses larger threshold (256KB)
-        let result = coalescer.coalesce(ranges.clone(), 0);
+        let _result = coalescer.coalesce(ranges.clone(), 0);
         // With 0 threshold, should not merge (gaps are not considered)
         // Need to use the calculated threshold
         let optimal_threshold = coalescer.calculate_optimal_threshold(&ranges);

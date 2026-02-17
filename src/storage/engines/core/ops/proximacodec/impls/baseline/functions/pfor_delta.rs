@@ -403,7 +403,7 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     // Read base
-    let base = i64::from_le_bytes([
+    let _base = i64::from_le_bytes([
         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
     ]);
 

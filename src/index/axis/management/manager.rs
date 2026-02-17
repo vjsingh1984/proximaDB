@@ -172,6 +172,7 @@ pub struct AxisManager {
 
     /// Join engine for hybrid queries
     /// Combines results from multiple indexes
+    #[allow(dead_code)]
     join_engine: Arc<JoinEngine>,
 
     /// Adaptive intelligence components for workload optimization
@@ -186,10 +187,12 @@ pub struct AxisManager {
 
     /// Tracks performance metrics and anomalies
     /// Monitors latency, throughput, accuracy, and resource usage
+    #[allow(dead_code)]
     performance_monitor: Arc<PerformanceMonitor>,
 
     /// Manages clustering for IVF indexes
     /// Performs k-means clustering and centroid optimization
+    #[allow(dead_code)]
     clustering_engine: Arc<AxisClusteringEngine>,
 
     /// Collection-specific configurations
@@ -203,6 +206,7 @@ pub struct AxisManager {
 
     /// Configuration and metrics
     /// Global AXIS configuration (thresholds, intervals, etc.)
+    #[allow(dead_code)]
     config: AxisConfig,
 
     /// Aggregated metrics across all managed indexes
@@ -837,8 +841,6 @@ impl AxisManager {
         collection_id: &str,
         query: &HybridQuery,
     ) -> Result<Vec<ScoredResult>> {
-        use crate::index::axis::index_factory::AxisVectorIndex;
-
         let indexes = self.ivf_indexes.read().await;
         if let Some(index_lock) = indexes.get(collection_id) {
             let index = index_lock.read().await;
@@ -1093,7 +1095,7 @@ impl AxisManager {
     }
 
     /// Maybe evaluate if search_strategy should change
-    async fn maybe_evaluate_strategy(&self, collection_id: &str) -> Result<()> {
+    async fn maybe_evaluate_strategy(&self, _collection_id: &str) -> Result<()> {
         // TODO: Implement periodic evaluation logic
         // For now, we'll rely on explicit analyze_and_optimize calls
         Ok(())
@@ -1278,7 +1280,7 @@ impl AxisManager {
     /// Get native index config for a collection
     pub async fn native_index_config(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<crate::index::config::IndexConfig> {
         // Return default config for now
         // In production, this would look up collection-specific configuration
@@ -1724,7 +1726,7 @@ impl AxisManager {
         );
 
         // Create quantization engine
-        let engine =
+        let _engine =
             StorageQuantizationEngine::new(unified_engine, distance_compute, storage_config);
 
         // For indexes, we don't actually quantize the vector data in the VectorRecord

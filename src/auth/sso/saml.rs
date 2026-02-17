@@ -198,6 +198,7 @@ impl SAMLIntegration {
     }
 
     /// Extract user attributes from SAML assertion
+    #[allow(dead_code)]
     fn extract_user_attributes(
         &self,
         _assertion: &SAMLAssertion,
@@ -208,6 +209,7 @@ impl SAMLIntegration {
     }
 
     /// Map SAML attributes to ProximaDB user context
+    #[allow(dead_code)]
     fn map_attributes_to_user_context(
         &self,
         attributes: &HashMap<String, Vec<String>>,
@@ -411,5 +413,535 @@ mod tests {
         let unknown_groups = vec!["unknown_group".to_string()];
         let default_roles = integration.map_groups_to_roles(&unknown_groups);
         assert!(default_roles.contains(&"saml_user".to_string()));
+    }
+
+    // ========================== Additional Tests for Coverage ==========================
+
+    // --- Configuration Validation Tests ---
+
+    #[test]
+    fn test_saml_config_missing_idp_metadata_url() {
+        let mut config = create_test_saml_config();
+        config.idp_metadata_url = String::new();
+        let result = SAMLIntegration::new(config);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.err().unwrap());
+        assert!(err_msg.contains("IdP metadata URL is required"));
+    }
+
+    #[test]
+    fn test_saml_config_missing_sp_entity_id() {
+        let mut config = create_test_saml_config();
+        config.sp_entity_id = String::new();
+        let result = SAMLIntegration::new(config);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.err().unwrap());
+        assert!(err_msg.contains("SP entity ID is required"));
+    }
+
+    #[test]
+    fn test_saml_config_missing_idp_certificate() {
+        let mut config = create_test_saml_config();
+        config.idp_certificate = String::new();
+        let result = SAMLIntegration::new(config);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.err().unwrap());
+        assert!(err_msg.contains("IdP certificate is required"));
+    }
+
+    // --- Default Configuration Tests ---
+
+    #[test]
+    fn test_saml_config_default() {
+        let config = SAMLConfig::default();
+        assert!(config.idp_metadata_url.is_empty());
+        assert_eq!(config.sp_entity_id, "proximadb");
+        assert!(!config.acs_url.is_empty());
+        assert!(config.sls_url.is_some());
+        assert!(config.idp_certificate.is_empty());
+        assert!(config.sp_private_key.is_none());
+        assert_eq!(config.allowed_audiences.len(), 1);
+        assert!(config.allowed_audiences.contains(&"proximadb".to_string()));
+        assert_eq!(config.max_assertion_age_minutes, 5);
+        assert_eq!(config.default_tenant_id, "saml_users");
+        assert!(config.role_mapping.is_empty());
+    }
+
+    #[test]
+    fn test_saml_attribute_mappings_default() {
+        let mappings = SAMLAttributeMappings::default();
+        assert_eq!(mappings.user_id_attribute, "NameID");
+        assert_eq!(mappings.email_attribute, "email");
+        assert_eq!(mappings.display_name_attribute, "displayName");
+        assert_eq!(mappings.groups_attribute, Some("groups".to_string()));
+        assert_eq!(mappings.tenant_attribute, Some("organization".to_string()));
+        assert!(mappings.custom_attributes.is_empty());
+    }
+
+    // --- Auth Request Generation Tests ---
+
+    #[tokio::test]
+    async fn test_saml_auth_request_without_relay_state() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let auth_request = integration.generate_auth_request(None);
+        assert!(auth_request.is_ok());
+
+        let request = auth_request.unwrap();
+        assert!(request.relay_state.is_none());
+        assert!(!request.request_id.is_empty());
+        assert!(request.request_id.starts_with("saml_req_"));
+    }
+
+    #[tokio::test]
+    async fn test_saml_auth_request_fields() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let auth_request = integration.generate_auth_request(Some("relay123")).unwrap();
+
+        assert_eq!(auth_request.destination, "https://idp.example.com/metadata");
+        assert_eq!(
+            auth_request.acs_url,
+            "https://proximadb.test.com/auth/saml/acs"
+        );
+        assert_eq!(auth_request.sp_entity_id, "proximadb-test");
+        assert_eq!(auth_request.relay_state, Some("relay123".to_string()));
+        // Verify created_at is recent
+        let now = Utc::now();
+        assert!(auth_request.created_at <= now);
+        assert!(auth_request.created_at > now - chrono::Duration::seconds(5));
+    }
+
+    // --- Assertion Validation Tests ---
+
+    #[tokio::test]
+    async fn test_saml_assertion_validation_user_context_fields() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let result = integration
+            .validate_assertion("<saml:Response>valid</saml:Response>")
+            .await
+            .unwrap();
+
+        assert!(!result.user_id.is_empty());
+        assert!(!result.email.is_empty());
+        assert!(result.email.contains("@"));
+        assert!(!result.display_name.is_empty());
+        assert_eq!(result.tenant_id, "saml_tenant");
+        assert_eq!(result.organization_id, "saml_org");
+        assert_eq!(result.security_clearance, SecurityClearance::Internal);
+        assert!(!result.session_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_saml_assertion_validation_provider_context() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let result = integration
+            .validate_assertion("<saml:Response>test</saml:Response>")
+            .await
+            .unwrap();
+
+        match &result.provider_context {
+            ProviderUserContext::Generic {
+                provider_user_id,
+                attributes,
+            } => {
+                assert!(!provider_user_id.is_empty());
+                assert!(attributes.contains_key("provider"));
+                assert_eq!(attributes.get("provider"), Some(&"saml".to_string()));
+                assert!(attributes.contains_key("sp_entity_id"));
+                assert_eq!(
+                    attributes.get("sp_entity_id"),
+                    Some(&"proximadb-test".to_string())
+                );
+            }
+            _ => panic!("Expected Generic provider context"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_saml_assertion_validation_whitespace_only() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        // Whitespace-only is not empty
+        let result = integration.validate_assertion("   ").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_saml_assertion_validation_long_response() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let long_response = format!("<saml:Response>{}</saml:Response>", "a".repeat(10000));
+        let result = integration.validate_assertion(&long_response).await;
+        assert!(result.is_ok());
+    }
+
+    // --- Group Role Mapping Tests ---
+
+    #[test]
+    fn test_group_role_mapping_multiple_groups() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let groups = vec!["admin_group".to_string(), "user_group".to_string()];
+        let roles = integration.map_groups_to_roles(&groups);
+
+        assert!(roles.contains(&"admin".to_string()));
+        assert!(roles.contains(&"user".to_string()));
+        assert_eq!(roles.len(), 2);
+    }
+
+    #[test]
+    fn test_group_role_mapping_empty_groups() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let empty_groups: Vec<String> = vec![];
+        let roles = integration.map_groups_to_roles(&empty_groups);
+
+        // Should return default role
+        assert!(roles.contains(&"saml_user".to_string()));
+        assert_eq!(roles.len(), 1);
+    }
+
+    #[test]
+    fn test_group_role_mapping_partial_match() {
+        let mut role_mapping = HashMap::new();
+        role_mapping.insert("admin_group".to_string(), vec!["admin".to_string()]);
+        role_mapping.insert(
+            "power_users".to_string(),
+            vec!["power_user".to_string(), "writer".to_string()],
+        );
+
+        let config = SAMLConfig {
+            role_mapping,
+            ..create_test_saml_config()
+        };
+
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let groups = vec![
+            "admin_group".to_string(),
+            "unknown_group".to_string(),
+            "power_users".to_string(),
+        ];
+        let roles = integration.map_groups_to_roles(&groups);
+
+        assert!(roles.contains(&"admin".to_string()));
+        assert!(roles.contains(&"power_user".to_string()));
+        assert!(roles.contains(&"writer".to_string()));
+        // unknown_group is ignored, no default added because we have matches
+    }
+
+    // --- Attribute Mapping Tests ---
+
+    #[test]
+    fn test_map_attributes_to_user_context_complete() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("NameID".to_string(), vec!["user123".to_string()]);
+        attributes.insert("email".to_string(), vec!["user@example.com".to_string()]);
+        attributes.insert("displayName".to_string(), vec!["John Doe".to_string()]);
+        attributes.insert("groups".to_string(), vec!["admin_group".to_string()]);
+        attributes.insert("organization".to_string(), vec!["test_org".to_string()]);
+
+        let result = integration.map_attributes_to_user_context(&attributes);
+        assert!(result.is_ok());
+
+        let user_context = result.unwrap();
+        assert_eq!(user_context.user_id, "user123");
+        assert_eq!(user_context.email, "user@example.com");
+        assert_eq!(user_context.display_name, "John Doe");
+        assert_eq!(user_context.tenant_id, "test_org");
+        assert!(user_context.roles.contains(&"admin".to_string()));
+    }
+
+    #[test]
+    fn test_map_attributes_to_user_context_missing_user_id() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let attributes: HashMap<String, Vec<String>> = HashMap::new();
+
+        let result = integration.map_attributes_to_user_context(&attributes);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("user ID attribute")
+        );
+    }
+
+    #[test]
+    fn test_map_attributes_to_user_context_minimal() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("NameID".to_string(), vec!["minimal_user".to_string()]);
+
+        let result = integration.map_attributes_to_user_context(&attributes);
+        assert!(result.is_ok());
+
+        let user_context = result.unwrap();
+        assert_eq!(user_context.user_id, "minimal_user");
+        // Email defaults to user_id
+        assert_eq!(user_context.email, "minimal_user");
+        // Display name defaults to user_id
+        assert_eq!(user_context.display_name, "minimal_user");
+        // Tenant defaults to config default
+        assert_eq!(user_context.tenant_id, "saml_tenant");
+        // Should have default role
+        assert!(user_context.roles.contains(&"saml_user".to_string()));
+    }
+
+    #[test]
+    fn test_map_attributes_without_groups_claim() {
+        let config = SAMLConfig {
+            attribute_mappings: SAMLAttributeMappings {
+                groups_attribute: None,
+                ..SAMLAttributeMappings::default()
+            },
+            ..create_test_saml_config()
+        };
+
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("NameID".to_string(), vec!["user1".to_string()]);
+
+        let result = integration
+            .map_attributes_to_user_context(&attributes)
+            .unwrap();
+        assert!(result.roles.contains(&"saml_user".to_string()));
+    }
+
+    #[test]
+    fn test_map_attributes_without_tenant_claim() {
+        let config = SAMLConfig {
+            attribute_mappings: SAMLAttributeMappings {
+                tenant_attribute: None,
+                ..SAMLAttributeMappings::default()
+            },
+            ..create_test_saml_config()
+        };
+
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let mut attributes = HashMap::new();
+        attributes.insert("NameID".to_string(), vec!["user1".to_string()]);
+
+        let result = integration
+            .map_attributes_to_user_context(&attributes)
+            .unwrap();
+        // Should use default tenant
+        assert_eq!(result.tenant_id, "saml_tenant");
+    }
+
+    // --- User Attributes Extraction Tests ---
+
+    #[test]
+    fn test_extract_user_attributes_placeholder() {
+        let config = create_test_saml_config();
+        let integration = SAMLIntegration::new(config).unwrap();
+
+        let assertion = SAMLAssertion {
+            assertion_id: "assertion_123".to_string(),
+            issuer: "https://idp.example.com".to_string(),
+            subject: "user@example.com".to_string(),
+            attributes: HashMap::new(),
+            not_before: Utc::now(),
+            not_on_or_after: Utc::now() + chrono::Duration::minutes(5),
+        };
+
+        // Currently returns empty HashMap (placeholder)
+        let attributes = integration.extract_user_attributes(&assertion).unwrap();
+        assert!(attributes.is_empty());
+    }
+
+    // --- SAML Assertion Structure Tests ---
+
+    #[test]
+    fn test_saml_assertion_structure() {
+        let mut attrs = HashMap::new();
+        attrs.insert("email".to_string(), vec!["user@example.com".to_string()]);
+        attrs.insert(
+            "groups".to_string(),
+            vec!["group1".to_string(), "group2".to_string()],
+        );
+
+        let assertion = SAMLAssertion {
+            assertion_id: "id_12345".to_string(),
+            issuer: "https://idp.example.com".to_string(),
+            subject: "user_subject".to_string(),
+            attributes: attrs,
+            not_before: Utc::now() - chrono::Duration::minutes(1),
+            not_on_or_after: Utc::now() + chrono::Duration::minutes(5),
+        };
+
+        assert_eq!(assertion.assertion_id, "id_12345");
+        assert_eq!(assertion.issuer, "https://idp.example.com");
+        assert_eq!(assertion.subject, "user_subject");
+        assert_eq!(assertion.attributes.len(), 2);
+        assert!(assertion.not_before < assertion.not_on_or_after);
+    }
+
+    // --- SAML Auth Request Structure Tests ---
+
+    #[test]
+    fn test_saml_auth_request_structure() {
+        let request = SAMLAuthRequest {
+            request_id: "saml_req_abc".to_string(),
+            destination: "https://idp.example.com/sso".to_string(),
+            acs_url: "https://sp.example.com/acs".to_string(),
+            sp_entity_id: "sp_entity".to_string(),
+            relay_state: Some("state_value".to_string()),
+            created_at: Utc::now(),
+        };
+
+        assert_eq!(request.request_id, "saml_req_abc");
+        assert_eq!(request.destination, "https://idp.example.com/sso");
+        assert_eq!(request.acs_url, "https://sp.example.com/acs");
+        assert_eq!(request.sp_entity_id, "sp_entity");
+        assert_eq!(request.relay_state, Some("state_value".to_string()));
+    }
+
+    // --- Configuration Serialization Tests ---
+
+    #[test]
+    fn test_saml_config_serialization() {
+        let config = create_test_saml_config();
+        let json = serde_json::to_string(&config).unwrap();
+
+        assert!(json.contains("idp_metadata_url"));
+        assert!(json.contains("sp_entity_id"));
+        assert!(json.contains("idp_certificate"));
+        assert!(json.contains("attribute_mappings"));
+
+        let deserialized: SAMLConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.idp_metadata_url, config.idp_metadata_url);
+        assert_eq!(deserialized.sp_entity_id, config.sp_entity_id);
+        assert_eq!(
+            deserialized.max_assertion_age_minutes,
+            config.max_assertion_age_minutes
+        );
+    }
+
+    #[test]
+    fn test_saml_attribute_mappings_serialization() {
+        let mut custom_attrs = HashMap::new();
+        custom_attrs.insert("attr1".to_string(), "value1".to_string());
+
+        let mappings = SAMLAttributeMappings {
+            custom_attributes: custom_attrs,
+            ..SAMLAttributeMappings::default()
+        };
+
+        let json = serde_json::to_string(&mappings).unwrap();
+        let deserialized: SAMLAttributeMappings = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.user_id_attribute, mappings.user_id_attribute);
+        assert_eq!(
+            deserialized.custom_attributes.get("attr1"),
+            Some(&"value1".to_string())
+        );
+    }
+
+    // --- Role Mapping Configuration Tests ---
+
+    #[test]
+    fn test_saml_config_with_complex_role_mappings() {
+        let mut role_mapping = HashMap::new();
+        role_mapping.insert(
+            "executives".to_string(),
+            vec!["admin".to_string(), "executive".to_string()],
+        );
+        role_mapping.insert(
+            "engineers".to_string(),
+            vec!["developer".to_string(), "reader".to_string()],
+        );
+        role_mapping.insert("interns".to_string(), vec!["reader".to_string()]);
+
+        let config = SAMLConfig {
+            role_mapping,
+            ..create_test_saml_config()
+        };
+
+        assert_eq!(config.role_mapping.len(), 3);
+        assert_eq!(config.role_mapping.get("executives").unwrap().len(), 2);
+    }
+
+    // --- Allowed Audiences Tests ---
+
+    #[test]
+    fn test_saml_config_multiple_audiences() {
+        let config = SAMLConfig {
+            allowed_audiences: vec![
+                "audience1".to_string(),
+                "audience2".to_string(),
+                "audience3".to_string(),
+            ],
+            ..create_test_saml_config()
+        };
+
+        assert_eq!(config.allowed_audiences.len(), 3);
+    }
+
+    // --- SLS URL Tests ---
+
+    #[test]
+    fn test_saml_config_without_sls_url() {
+        let config = SAMLConfig {
+            sls_url: None,
+            ..create_test_saml_config()
+        };
+
+        assert!(config.sls_url.is_none());
+    }
+
+    // --- Private Key Tests ---
+
+    #[test]
+    fn test_saml_config_without_private_key() {
+        let config = SAMLConfig {
+            sp_private_key: None,
+            ..create_test_saml_config()
+        };
+
+        assert!(config.sp_private_key.is_none());
+    }
+
+    // --- Custom Attribute Mappings Tests ---
+
+    #[test]
+    fn test_custom_attribute_mappings() {
+        let mut custom_attributes = HashMap::new();
+        custom_attributes.insert("department".to_string(), "dept".to_string());
+        custom_attributes.insert("employee_id".to_string(), "emp_id".to_string());
+        custom_attributes.insert("manager".to_string(), "manager_email".to_string());
+
+        let mappings = SAMLAttributeMappings {
+            user_id_attribute: "uid".to_string(),
+            email_attribute: "mail".to_string(),
+            display_name_attribute: "cn".to_string(),
+            groups_attribute: Some("memberOf".to_string()),
+            tenant_attribute: Some("company".to_string()),
+            custom_attributes,
+        };
+
+        assert_eq!(mappings.user_id_attribute, "uid");
+        assert_eq!(mappings.email_attribute, "mail");
+        assert_eq!(mappings.custom_attributes.len(), 3);
     }
 }

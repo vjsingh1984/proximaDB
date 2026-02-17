@@ -19,9 +19,17 @@ Developer-first documentation for building multi-model applications on ProximaDB
 
 ---
 
-== Vision & Strategy
+== Product & Strategy
 
-ProximaDB is a format-first, multi-model database. Development follows three phases:
+|===
+| Doc | Purpose
+
+| link:00-product/VISION.adoc[Vision] | "The Context Database" — category definition, design principles, 3-year horizon
+| link:00-product/PRD.adoc[PRD] | MoSCoW feature requirements, quality targets, release milestones
+| link:00-product/COMPETITIVE_LANDSCAPE.adoc[Competitive Landscape] | Market sizing, competitor matrices, SWOT, positioning
+|===
+
+ProximaDB development follows four phases:
 
 |===
 | Phase | Focus | Status
@@ -29,9 +37,10 @@ ProximaDB is a format-first, multi-model database. Development follows three pha
 | **Phase 1** | Storage formats, catalog, core APIs | ✅ Complete
 | **Phase 2** | Cross-model queries, graph, observability | ✅ Complete
 | **Phase 3** | Ecosystem integration, streaming, SDKs | 🔄 In Progress
+| **Phase 4** | Time-series, event sourcing, hybrid search, framework integrations | Planned
 |===
 
-For detailed strategy, see link:concepts/vision.adoc[Vision Document].
+For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
 
 ---
 
@@ -40,10 +49,10 @@ For detailed strategy, see link:concepts/vision.adoc[Vision Document].
 |===
 | Topic | Doc | Why it matters
 
-| Multi-model design | link:concepts/architecture.adoc[Architecture] | How models share the data plane
-| Vision and use cases | link:concepts/vision.adoc[Vision] | Strategy, guiding principles, and roadmap framing
+| Multi-model design | link:concepts/architecture.adoc[Architecture] | How 8 models share the data plane
 | Storage engine selection | link:concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
 | Graph engines | link:concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+| Design patterns | link:12-design/DESIGN_PATTERNS.adoc[Design Patterns] | Storage, consensus, caching, query optimization patterns
 |===
 
 ---
@@ -72,6 +81,29 @@ For detailed strategy, see link:concepts/vision.adoc[Vision Document].
 
 ---
 
+== Use Cases & Dogfooding
+
+|===
+| Doc | Purpose
+
+| link:11-usecases/USECASE_CATALOG.adoc[Use Case Catalog] | 6 industry use cases with data models, query patterns, fit scores
+| link:11-usecases/IBKRTRADING_DOGFOOD.adoc[ibkrtrading Dogfood] | Integration blueprint: replace PostgreSQL + SQLite + JSONL with ProximaDB embedded
+|===
+
+---
+
+== Quality & Technical Debt
+
+|===
+| Doc | Purpose
+
+| link:10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis] | Comprehensive gap analysis, competitive position, feature audit
+| link:10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] | TD-001 through TD-017 with priority, effort, phase alignment
+| link:10-quality/code-coverage-report.adoc[Code Coverage Report] | Module-level coverage analysis and TDD action plan
+|===
+
+---
+
 == Deep Dives (For Engine Builders)
 
 |===
@@ -88,6 +120,7 @@ For detailed strategy, see link:concepts/vision.adoc[Vision Document].
 
 * ProximaDB is evolving quickly; experimental features are documented in each API section.
 * Internal roadmap and archived docs live under `docs/_internal/` and are not part of the public API.
-* MVP (Phase 1 + Phase 2) is 96% complete; Phase 3 ecosystem features are in progress.
+* Phase 1 + Phase 2 complete; Phase 3 ecosystem features in progress; Phase 4 planned.
+* Anchoring artifacts: `docs/00-product/` (vision, PRD, competitive), `docs/11-usecases/` (use cases, dogfood), `docs/12-design/` (design patterns).
 
-_Version 0.2.0_ | _December 2025_
+_Version 0.2.0_ | _February 2026_

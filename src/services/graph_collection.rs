@@ -124,6 +124,7 @@ pub struct GraphCollectionService {
 
     /// Configuration
     max_graphs: usize,
+    #[allow(dead_code)]
     metadata_cache_size: usize,
 }
 

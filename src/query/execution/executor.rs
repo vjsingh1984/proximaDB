@@ -91,6 +91,7 @@ impl VectorPool {
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
     graph_service: Arc<GraphOperationsService>,
+    #[allow(dead_code)]
     memory_pool: VectorPool,
 }
 
@@ -1130,6 +1131,7 @@ impl QueryExecutor {
         }
     }
 
+    #[allow(dead_code)]
     fn parse_join_on(on: &str) -> Option<(String, String)> {
         let re =
             regex::Regex::new("Identifier\\(\"([^\"]+)\"\\).+Identifier\\(\"([^\"]+)\"\\)").ok()?;
@@ -1329,7 +1331,7 @@ impl QueryExecutor {
         vector_results: &[QueryRow],
         graph_results: &[QueryRow],
         strategy: &crate::query::execution::FusionStrategy,
-        weights: &[f64],
+        _weights: &[f64],
     ) -> Result<Vec<QueryRow>> {
         match strategy {
             crate::query::execution::FusionStrategy::ReciprocalRankFusion { k } => {
@@ -1562,6 +1564,7 @@ impl QueryExecutor {
     /// Convert v1 metadata HashMap to field map for result formatting
     ///
     /// This method showcases the HashMap metadata structure in action
+    #[allow(dead_code)]
     fn convert_metadata_to_fields(
         &self,
         metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
@@ -1814,16 +1817,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_collection".to_string(), mock_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_collection".to_string(), mock_rows);
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_collection".to_string(), mock_rows);
         }
 
         // Create execution plan with metadata filtering
@@ -1875,16 +1872,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_collection".to_string(), mock_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_collection".to_string(), mock_rows);
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_collection".to_string(), mock_rows);
         }
 
         // Create hybrid execution plan
@@ -1952,16 +1943,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_collection".to_string(), mock_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_collection".to_string(), mock_rows);
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_collection".to_string(), mock_rows);
         }
 
         // Create query with multiple metadata filters
@@ -2124,16 +2109,10 @@ mod executor_tests {
             provenance: None,
         }];
 
-        if let Some(map) = TEST_GRAPH_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("test_graph".to_string(), mock_graph_rows);
-            }
-        } else {
-            let _ = TEST_GRAPH_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert("test_graph".to_string(), mock_graph_rows);
-                m
-            }));
+        let map = TEST_GRAPH_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("test_graph".to_string(), mock_graph_rows);
         }
 
         // Mock vector search to return both n1 (for seeding) and vecA (for averaged embedding)
@@ -2174,27 +2153,10 @@ mod executor_tests {
             graph_distance: None,
             provenance: None,
         }];
-        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
-            if let Ok(mut guard) = map.lock() {
-                guard.insert("c1".to_string(), mock_similar_rows);
-            }
-        } else {
-            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
-                let mut m = std::collections::HashMap::new();
-                m.insert(
-                    "c1".to_string(),
-                    vec![QueryRow {
-                        fields: std::collections::HashMap::from([(
-                            "id".to_string(),
-                            serde_json::Value::String("vecA".to_string()),
-                        )]),
-                        similarity_score: Some(0.99),
-                        graph_distance: None,
-                        provenance: None,
-                    }],
-                );
-                m
-            }));
+        let map = TEST_SIMILAR_RESULTS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert("c1".to_string(), mock_similar_rows);
         }
 
         // Build plan: VectorSearch then GraphTraversal with empty seeds (to be seeded)
@@ -2448,6 +2410,10 @@ mod executor_tests {
             auto_index_selection: Some(true),
             owner: None,
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
         let _ = collection_service.create_collection(&config).await;
 

@@ -6,8 +6,6 @@ use super::super::*;
 // // use super::super::optimization::*;  // TODO: Add optimization module
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
-
 /// Test cache configuration loading and validation
 #[tokio::test]
 async fn test_cache_config_validation() {
@@ -92,11 +90,11 @@ async fn test_cache_optimizer() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));
-    let config = CacheConfig::default();
+    let _coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));
+    let _config = CacheConfig::default();
 
     // TODO: Implement CacheOptimizer and uncomment this test
-    // let optimizer = CacheOptimizer::new(coordinator.clone(), config);
+    // let optimizer = CacheOptimizer::new(_coordinator.clone(), _config);
     // let report = optimizer.analyze().await;
     // assert!(report.current_performance.hit_rate_percent >= 0.0);
 }
@@ -136,7 +134,7 @@ async fn test_alert_management() {
 
     use crate::metrics::CacheMetricsSnapshot;
 
-    let thresholds = super::super::config::AlertThresholds {
+    let _thresholds = super::super::config::AlertThresholds {
         min_hit_rate: 0.7,
         max_memory_usage: 0.9,
         max_eviction_rate: 100.0,
@@ -144,13 +142,13 @@ async fn test_alert_management() {
         max_prefetch_queue: 5000,
     };
 
-    // let alert_manager = AlertManager::new(&thresholds); // TODO: Add monitoring module
+    // let alert_manager = AlertManager::new(&_thresholds); // TODO: Add monitoring module
 
     // Create metrics that trigger alerts
-    let mut metrics = CacheMetricsSnapshot::default();
-    metrics.overall_hit_rate = 0.5; // Below threshold
-    metrics.memory_usage.used_bytes = 900;
-    metrics.memory_usage.total_allocated_bytes = 1000; // 90% usage
+    let mut _metrics = CacheMetricsSnapshot::default();
+    _metrics.overall_hit_rate = 0.5; // Below threshold
+    _metrics.memory_usage.used_bytes = 900;
+    _metrics.memory_usage.total_allocated_bytes = 1000; // 90% usage
 
     // alert_manager.check_alerts(&metrics, &thresholds).await;
     //
@@ -305,19 +303,19 @@ async fn test_optimization_recommendations() {
 
     use crate::metrics::CacheMetricsSnapshot;
 
-    let coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));
-    let config = CacheConfig::default();
-    // let optimizer = CacheOptimizer::new(coordinator, config); // TODO: Add optimization module
+    let _coordinator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100));
+    let _config = CacheConfig::default();
+    // let optimizer = CacheOptimizer::new(_coordinator, _config); // TODO: Add optimization module
 
     // Create metrics scenarios
-    let mut low_hit_rate_metrics = CacheMetricsSnapshot::default();
-    low_hit_rate_metrics.overall_hit_rate = 0.3;
+    let mut _low_hit_rate_metrics = CacheMetricsSnapshot::default();
+    _low_hit_rate_metrics.overall_hit_rate = 0.3;
 
-    let mut high_eviction_metrics = CacheMetricsSnapshot::default();
-    high_eviction_metrics
+    let mut _high_eviction_metrics = CacheMetricsSnapshot::default();
+    _high_eviction_metrics
         .eviction_metrics
         .memory_pressure_evictions = 800;
-    high_eviction_metrics.eviction_metrics.total_evictions = 1000;
+    _high_eviction_metrics.eviction_metrics.total_evictions = 1000;
 
     // Test recommendations for different scenarios
     // (Would call optimizer methods with these metrics)

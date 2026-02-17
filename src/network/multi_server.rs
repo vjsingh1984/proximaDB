@@ -1024,6 +1024,11 @@ impl SharedServices {
                     tags: vec![],
                     owner: None,
                     embedding_models: vec![], // No embedding models for imported collections
+                    // ProximaRecord schema configuration (NEW)
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {
@@ -1742,6 +1747,14 @@ impl MultiServer {
             let streaming_service = streaming_service_impl.into_server();
             debug!("✅ Added StreamingService to gRPC server");
 
+            // Add V2 ProximaRecordService for typed fields and schema support
+            let proxima_record_service_impl =
+                crate::network::grpc::v2::ProximaRecordServiceImpl::new(
+                    services.unified_handlers.clone(),
+                );
+            let proxima_record_service = proxima_record_service_impl.into_server();
+            debug!("✅ Added V2 ProximaRecordService to gRPC server");
+
             // Build server with all services
             let server = server_builder
                 .add_service(vector_service)
@@ -1750,7 +1763,8 @@ impl MultiServer {
                 .add_service(graph_service)
                 .add_service(document_service)
                 .add_service(observability_service)
-                .add_service(streaming_service);
+                .add_service(streaming_service)
+                .add_service(proxima_record_service);
 
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {

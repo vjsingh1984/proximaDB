@@ -35,7 +35,7 @@ mod tests {
     fn create_test_record(
         id: String,
         vector: Vec<f32>,
-        metadata: Vec<MetadataItem>,
+        _metadata: Vec<MetadataItem>,
     ) -> Arc<VectorRecord> {
         Arc::new(VectorRecord {
             id,

@@ -212,7 +212,7 @@ impl LLMMetrics {
         for (provider, metrics) in provider_metrics.iter() {
             let total_requests = metrics.total_requests.load(Ordering::Relaxed);
             let successful_requests = metrics.successful_requests.load(Ordering::Relaxed);
-            let failed_requests = metrics.failed_requests.load(Ordering::Relaxed);
+            let _failed_requests = metrics.failed_requests.load(Ordering::Relaxed);
             let total_response_time = metrics.total_response_time_ms.load(Ordering::Relaxed);
             let rate_limit_hits = metrics.rate_limit_hits.load(Ordering::Relaxed);
 

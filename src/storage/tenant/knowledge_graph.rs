@@ -25,6 +25,7 @@ pub struct DomainKnowledgeGraph {
     entities: Arc<DashMap<String, Entity>>,
 
     /// Entity relationships within domain
+    #[allow(dead_code)]
     relationships: Arc<DashMap<String, EntityRelationship>>,
 
     /// Business intelligence engine for domain
@@ -39,8 +40,10 @@ pub struct DomainKnowledgeGraph {
 
 /// Business intelligence engine for domain-specific operations
 pub struct DomainBusinessIntelligence {
+    #[allow(dead_code)]
     domain_id: String,
     business_context: BusinessContext,
+    #[allow(dead_code)]
     intelligence_rules: Vec<BusinessIntelligenceRule>,
     pattern_analyzer: Arc<DomainPatternAnalyzer>,
 }
@@ -49,6 +52,7 @@ pub struct DomainBusinessIntelligence {
 pub struct DomainQueryOptimizer {
     domain_id: String,
     business_context: BusinessContext,
+    #[allow(dead_code)]
     optimization_rules: Vec<QueryOptimizationRule>,
     performance_cache: Arc<DashMap<String, OptimizationResult>>,
 }
@@ -344,8 +348,8 @@ impl DomainKnowledgeGraph {
 
     fn create_business_mapping_for_collection(
         &self,
-        collection_id: &str,
-        bridge_config: &CollectionBridgeConfig,
+        _collection_id: &str,
+        _bridge_config: &CollectionBridgeConfig,
     ) -> Result<BusinessMapping> {
         // Create business mapping based on domain context
         Ok(BusinessMapping {
@@ -362,7 +366,7 @@ impl DomainKnowledgeGraph {
     fn apply_cross_domain_business_intelligence(
         &self,
         composed_results: &[DomainCompositionResult],
-        composition_query: &CrossDomainCompositionQuery,
+        _composition_query: &CrossDomainCompositionQuery,
     ) -> Result<CrossDomainBusinessIntelligence> {
         // Foundation implementation for cross-domain intelligence
         Ok(CrossDomainBusinessIntelligence {
@@ -505,7 +509,7 @@ impl DomainQueryOptimizer {
         Ok(optimized)
     }
 
-    fn extract_entity_type_filter(&self, query: &DomainEntityQuery) -> Option<String> {
+    fn extract_entity_type_filter(&self, _query: &DomainEntityQuery) -> Option<String> {
         // Extract entity type based on business context
         match self.business_context.primary_function.as_str() {
             "risk_management" => Some("risk_entity".to_string()),
@@ -514,7 +518,7 @@ impl DomainQueryOptimizer {
         }
     }
 
-    fn generate_performance_hints(&self, query: &DomainEntityQuery) -> Vec<String> {
+    fn generate_performance_hints(&self, _query: &DomainEntityQuery) -> Vec<String> {
         let mut hints = Vec::new();
 
         // Business context-specific performance hints

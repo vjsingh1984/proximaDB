@@ -3,7 +3,7 @@
 //! Tests edge cases and boundary conditions for AXIS index integration
 //! across all 6 storage engines: SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR.
 
-use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use proximadb::embedded::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 use tempfile::TempDir;
 
 /// Test engines to validate
@@ -27,6 +27,8 @@ fn create_test_db() -> (TempDir, EmbeddedProximaDB) {
         block_prune_max_keep: 0,
         enable_rl_planner: false,
         rl_policy_path: None,
+        access_mode: AccessMode::Exclusive,
+        node_id: None,
     };
     let db = EmbeddedProximaDB::new(config).expect("Failed to create embedded database");
     (temp_dir, db)

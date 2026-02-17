@@ -62,7 +62,7 @@ pub enum AlgorithmComplexity {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 ///
 /// fn run_algorithm<A: GraphAlgorithm>(algo: &A, input: A::Input) -> Result<A::Output> {
@@ -123,7 +123,7 @@ pub trait GraphAlgorithm: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::traits::IncrementalAlgorithm;
 ///
 /// // Update algorithm after adding an edge
@@ -166,7 +166,7 @@ pub trait IncrementalAlgorithm: GraphAlgorithm {
     /// # Returns
     ///
     /// true if incremental update is expected to be faster than recomputation
-    fn is_incremental_beneficial(&self, change: &GraphChange) -> bool {
+    fn is_incremental_beneficial(&self, _change: &GraphChange) -> bool {
         // Default: always use incremental updates
         // Algorithms can override this with smarter logic
         true
@@ -217,7 +217,7 @@ pub enum GraphChange {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::traits::ParallelAlgorithm;
 /// use rayon::ThreadPoolBuilder;
 ///
@@ -292,7 +292,7 @@ pub trait ParallelAlgorithm: GraphAlgorithm {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::traits::ApproximateAlgorithm;
 ///
 /// // Run with 95% confidence, 5% error

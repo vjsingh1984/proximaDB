@@ -81,6 +81,7 @@ impl SinkFactory {
 /// Multi-sink that writes to multiple destinations
 pub struct MultiSink {
     sinks: Vec<Box<dyn CdcSink>>,
+    #[allow(dead_code)]
     mode: MultiSinkMode,
 }
 

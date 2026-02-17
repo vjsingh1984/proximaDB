@@ -5,11 +5,10 @@ Microsoft's excellent general-purpose embeddings with query/passage prefix suppo
 """
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-from ...mixins.sentence_transformer import SentenceTransformerMixin
 from ...mixins.instruction import InstructionMixin
-
+from ...mixins.sentence_transformer import SentenceTransformerMixin
 
 E5_MODELS = {
     "intfloat/e5-large-v2": ModelMetadata(
@@ -22,7 +21,7 @@ E5_MODELS = {
         mteb_score=65.0,
         languages="en",
         description="Best quality, top MTEB performer",
-        use_case="Maximum accuracy for English text"
+        use_case="Maximum accuracy for English text",
     ),
     "intfloat/e5-base-v2": ModelMetadata(
         name="intfloat/e5-base-v2",
@@ -34,7 +33,7 @@ E5_MODELS = {
         mteb_score=64.5,
         languages="en",
         description="Balanced quality and speed",
-        use_case="Production systems"
+        use_case="Production systems",
     ),
     "intfloat/e5-small-v2": ModelMetadata(
         name="intfloat/e5-small-v2",
@@ -46,7 +45,7 @@ E5_MODELS = {
         mteb_score=62.8,
         languages="en",
         description="Fast and efficient",
-        use_case="High-throughput applications"
+        use_case="High-throughput applications",
     ),
     "intfloat/multilingual-e5-large": ModelMetadata(
         name="intfloat/multilingual-e5-large",
@@ -58,8 +57,8 @@ E5_MODELS = {
         mteb_score=64.0,
         languages="100+",
         description="Multilingual support for 100+ languages",
-        use_case="Multilingual applications"
-    )
+        use_case="Multilingual applications",
+    ),
 }
 
 
@@ -67,13 +66,9 @@ E5_MODELS = {
     name="e5",
     models=E5_MODELS,
     aliases=["microsoft-e5"],
-    description="Microsoft's excellent general-purpose embeddings"
+    description="Microsoft's excellent general-purpose embeddings",
 )
-class E5Provider(
-    InstructionMixin,
-    SentenceTransformerMixin,
-    BaseEmbeddingProvider
-):
+class E5Provider(InstructionMixin, SentenceTransformerMixin, BaseEmbeddingProvider):
     """
     E5 embedding provider
 
@@ -108,5 +103,5 @@ class E5Provider(
             model=E5_MODELS["intfloat/e5-large-v2"],
             batch_size=32,
             normalize=True,
-            extra={"use_query_instruction": True}
+            extra={"use_query_instruction": True},
         )

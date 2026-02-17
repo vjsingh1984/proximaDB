@@ -269,8 +269,10 @@ tests_new/
 obsolete/
 simple_wal_test
 
-# Test-generated WAL and metadata files
-metadata/
+# Test-generated WAL and metadata files (not source code)
+/metadata/
+**/test_*/metadata/
+**/data/metadata/
 segment_*/
 *.wal
 *.bcwal
@@ -286,6 +288,9 @@ docs/log/
 !package.json
 !config.json
 !clients/**/package.json
+!clients/**/tsconfig.json
+!clients/**/tsconfig.*.json
+!clients/**/package-lock.json
 !examples/**/*.json
 bert_*.json
 msmarco_*.json
@@ -336,6 +341,7 @@ reports/
 *.html
 !docs/**/*.html
 !target/criterion/**/*.html
+!src/network/rest/dashboard.html
 
 # Generated configuration files (but keep examples)
 #*_config.toml

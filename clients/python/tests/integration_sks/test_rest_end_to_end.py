@@ -1,15 +1,17 @@
 import os
 import time
 import uuid
+
 import numpy as np
 import pytest
 
-from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 from proximadb_sdk.models import CollectionConfig
+from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
 
 def server_available(url: str) -> bool:
     import httpx
+
     try:
         r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return r.status_code < 500
@@ -21,7 +23,9 @@ def server_available(url: str) -> bool:
 def test_rest_end_to_end_sks_or_legacy():
     base_url = os.getenv("PROXIMADB_URL", "http://localhost:5678")
     if not server_available(base_url):
-        pytest.skip("ProximaDB REST server not available; set PROXIMADB_URL and start server to run integration tests.")
+        pytest.skip(
+            "ProximaDB REST server not available; set PROXIMADB_URL and start server to run integration tests."
+        )
 
     client = ProximaDBClient(url=base_url)
 
@@ -33,7 +37,9 @@ def test_rest_end_to_end_sks_or_legacy():
         client.create_collection(name=coll, config=cfg)
 
         # Insert a few vectors
-        vectors = np.array([[0.1, 0.2, 0.3, 0.4], [0.11, 0.21, 0.29, 0.41]], dtype=np.float32)
+        vectors = np.array(
+            [[0.1, 0.2, 0.3, 0.4], [0.11, 0.21, 0.29, 0.41]], dtype=np.float32
+        )
         ids = [f"vec_{i}" for i in range(len(vectors))]
         res = client.insert_vectors(coll, vectors, ids, upsert=True)
         assert res.success >= 1
@@ -52,4 +58,3 @@ def test_rest_end_to_end_sks_or_legacy():
             client.delete_collection(coll)
         except Exception:
             pass
-

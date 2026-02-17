@@ -108,8 +108,6 @@ impl<T: InternalCollectionProvider + Send + Sync> InternalCollectionProvider
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-
     // Mock implementation for testing
     struct MockProvider {
         fail_on_get: bool,

@@ -317,8 +317,8 @@ impl FilestoreCheckpoint {
             operation_type: op_type,
             sequence: sequence_number as u64,
             timestamp: timestamp_i64,
-            collection_id: collection_id,
-            collection_data: collection_data,
+            collection_id,
+            collection_data,
         })
     }
 

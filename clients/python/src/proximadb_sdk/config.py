@@ -17,29 +17,32 @@ limitations under the License.
 """
 
 import os
+from enum import Enum
 from typing import Dict, Optional, Union
 from urllib.parse import urlparse
-from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Protocol(str, Enum):
     """Supported communication protocols"""
-    AUTO = "auto"           # Auto-select best available
-    GRPC = "grpc"           # gRPC (high performance, binary protocol)
-    REST = "rest"           # REST (web compatibility)
+
+    AUTO = "auto"  # Auto-select best available
+    GRPC = "grpc"  # gRPC (high performance, binary protocol)
+    REST = "rest"  # REST (web compatibility)
     ARROW_FLIGHT = "arrow_flight"  # Apache Arrow Flight (bulk data transfer)
 
 
 class PortMode(str, Enum):
     """Server port configuration mode"""
-    MULTI = "multi"    # Legacy multi-port mode (different ports for REST/gRPC)
+
+    MULTI = "multi"  # Legacy multi-port mode (different ports for REST/gRPC)
     UNIFIED = "unified"  # New unified port mode (single port for all protocols)
 
 
 class LogLevel(str, Enum):
     """Logging levels"""
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -53,6 +56,7 @@ from .resilience import NetworkRetryPolicy as RetryConfig
 
 class ConnectionConfig(BaseModel):
     """Connection pool configuration"""
+
     pool_size: int = Field(default=10, ge=1, le=100)
     pool_maxsize: int = Field(default=100, ge=1, le=1000)
     keepalive_timeout: float = Field(default=30.0, ge=1.0)
@@ -63,17 +67,23 @@ class ConnectionConfig(BaseModel):
 
 class CompressionConfig(BaseModel):
     """Compression configuration for Release 1.0
-    
+
     Clean configuration without legacy compatibility.
     """
+
     enabled: bool = Field(default=False, description="Enable compression")
     algorithm: str = Field(default="gzip", description="Compression algorithm")
-    threshold_bytes: int = Field(default=1024, ge=0, description="Minimum size to compress")
-    level: Optional[int] = Field(default=None, ge=1, le=9, description="Compression level")
+    threshold_bytes: int = Field(
+        default=1024, ge=0, description="Minimum size to compress"
+    )
+    level: Optional[int] = Field(
+        default=None, ge=1, le=9, description="Compression level"
+    )
 
 
 class TLSConfig(BaseModel):
     """TLS/SSL configuration"""
+
     verify: bool = True
     ca_bundle: Optional[str] = None
     cert_file: Optional[str] = None
@@ -86,81 +96,91 @@ class ClientConfig(BaseModel):
 
     # Connection settings
     url: str = Field(..., description="ProximaDB server URL")
-    api_key: Optional[str] = Field(default=None, description="API key for authentication")
-    protocol: Protocol = Field(default=Protocol.AUTO, description="Communication protocol")
-    port_mode: PortMode = Field(default=PortMode.UNIFIED, description="Server port mode (unified or multi)")
-    
+    api_key: Optional[str] = Field(
+        default=None, description="API key for authentication"
+    )
+    protocol: Protocol = Field(
+        default=Protocol.AUTO, description="Communication protocol"
+    )
+    port_mode: PortMode = Field(
+        default=PortMode.UNIFIED, description="Server port mode (unified or multi)"
+    )
+
     # Timeouts
-    timeout: float = Field(default=30.0, ge=0.1, le=300.0, description="Default request timeout")
-    
+    timeout: float = Field(
+        default=30.0, ge=0.1, le=300.0, description="Default request timeout"
+    )
+
     # Retry configuration
     retry: RetryConfig = Field(default_factory=RetryConfig)
-    
+
     # Connection configuration
     connection: ConnectionConfig = Field(default_factory=ConnectionConfig)
-    
+
     # Compression
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
-    
+
     # TLS/SSL
     tls: TLSConfig = Field(default_factory=TLSConfig)
-    
+
     # Headers and metadata
-    user_agent: Optional[str] = Field(default=None, description="Custom User-Agent header")
+    user_agent: Optional[str] = Field(
+        default=None, description="Custom User-Agent header"
+    )
     custom_headers: Dict[str, str] = Field(default_factory=dict)
-    
+
     # Logging
     log_level: LogLevel = Field(default=LogLevel.INFO)
     enable_debug_logging: bool = False
-    
+
     # Performance tuning
     enable_keepalive: bool = True
     enable_http2: bool = True
     max_concurrent_requests: int = Field(default=100, ge=1, le=1000)
-    
+
     # Client behavior
     validate_inputs: bool = True
     auto_convert_numpy: bool = True
     default_batch_size: int = Field(default=1000, ge=1, le=10000)
-    
+
     model_config = ConfigDict(use_enum_values=True)
-    
-    @field_validator('url')
+
+    @field_validator("url")
     def validate_url(cls, v: str) -> str:
         """Validate and normalize URL"""
         if not v:
             raise ValueError("URL cannot be empty")
-        
+
         parsed = urlparse(v)
         if not parsed.scheme:
             # For gRPC format like "localhost:5679", keep as-is
-            if ':' in v and not v.startswith(('http://', 'https://', 'grpc://')):
+            if ":" in v and not v.startswith(("http://", "https://", "grpc://")):
                 # This looks like host:port format for gRPC
                 return v
             # Otherwise add https as default scheme
             v = f"https://{v}"
             parsed = urlparse(v)
-        
-        if parsed.scheme and parsed.scheme not in ('http', 'https', 'grpc'):
+
+        if parsed.scheme and parsed.scheme not in ("http", "https", "grpc"):
             raise ValueError("URL must use http, https, or grpc scheme")
-        
+
         if parsed.scheme and not parsed.netloc:
             raise ValueError("URL must include hostname")
-        
+
         return v
-    
-    @field_validator('api_key')
+
+    @field_validator("api_key")
     def validate_api_key(cls, v: Optional[str]) -> Optional[str]:
         """Validate API key format"""
         if v and len(v) < 10:
             raise ValueError("API key appears to be too short")
         return v
-    
+
     @classmethod
     def from_env(cls, **overrides) -> "ClientConfig":
         """Create configuration from environment variables"""
         config_dict = {}
-        
+
         # Basic settings
         if url := os.getenv("PROXIMADB_URL"):
             config_dict["url"] = url
@@ -172,7 +192,7 @@ class ClientConfig(BaseModel):
             config_dict["port_mode"] = PortMode(port_mode.lower())
         if timeout := os.getenv("PROXIMADB_TIMEOUT"):
             config_dict["timeout"] = float(timeout)
-        
+
         # Retry settings
         retry_config = {}
         if max_retries := os.getenv("PROXIMADB_MAX_RETRIES"):
@@ -181,7 +201,7 @@ class ClientConfig(BaseModel):
             retry_config["backoff_factor"] = float(backoff_factor)
         if retry_config:
             config_dict["retry"] = RetryConfig(**retry_config)
-        
+
         # Connection settings
         connection_config = {}
         if pool_size := os.getenv("PROXIMADB_POOL_SIZE"):
@@ -190,7 +210,7 @@ class ClientConfig(BaseModel):
             connection_config["read_timeout"] = float(read_timeout)
         if connection_config:
             config_dict["connection"] = ConnectionConfig(**connection_config)
-        
+
         # TLS settings
         tls_config = {}
         if verify := os.getenv("PROXIMADB_TLS_VERIFY"):
@@ -203,32 +223,34 @@ class ClientConfig(BaseModel):
             tls_config["key_file"] = key_file
         if tls_config:
             config_dict["tls"] = TLSConfig(**tls_config)
-        
+
         # Logging
         if log_level := os.getenv("PROXIMADB_LOG_LEVEL"):
             config_dict["log_level"] = log_level.upper()
         if debug := os.getenv("PROXIMADB_DEBUG"):
             config_dict["enable_debug_logging"] = debug.lower() in ("true", "1", "yes")
-        
+
         # Performance
         if batch_size := os.getenv("PROXIMADB_BATCH_SIZE"):
             config_dict["default_batch_size"] = int(batch_size)
         if max_concurrent := os.getenv("PROXIMADB_MAX_CONCURRENT"):
             config_dict["max_concurrent_requests"] = int(max_concurrent)
-        
+
         # Apply overrides
         config_dict.update(overrides)
-        
+
         # URL is required
         if "url" not in config_dict:
-            raise ValueError("URL must be provided via PROXIMADB_URL environment variable or constructor")
-        
+            raise ValueError(
+                "URL must be provided via PROXIMADB_URL environment variable or constructor"
+            )
+
         # Convert protocol string to enum if needed
         if "protocol" in config_dict and isinstance(config_dict["protocol"], str):
             config_dict["protocol"] = Protocol(config_dict["protocol"].lower())
-        
+
         return cls(**config_dict)
-    
+
     def get_base_headers(self) -> Dict[str, str]:
         """Get base headers for requests"""
         headers = {
@@ -236,59 +258,62 @@ class ClientConfig(BaseModel):
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
-        
+
         # Add compression headers if enabled
         if self.compression.enabled:
             headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
-        
+
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        
+
         # Add custom headers
         headers.update(self.custom_headers)
-        
+
         return headers
-    
+
     def get_grpc_metadata(self) -> list:
         """Get gRPC metadata for requests"""
         metadata = []
-        
+
         if self.api_key:
             metadata.append(("authorization", f"Bearer {self.api_key}"))
-        
-        metadata.append(("user-agent", self.user_agent or f"proximadb-python/{self._get_version()}"))
-        
+
+        metadata.append(
+            ("user-agent", self.user_agent or f"proximadb-python/{self._get_version()}")
+        )
+
         # Add custom headers as metadata
         for key, value in self.custom_headers.items():
             metadata.append((key.lower(), value))
-        
+
         return metadata
-    
+
     def _get_version(self) -> str:
         """Get client version"""
         try:
             from . import __version__
+
             return __version__
         except ImportError:
             return "unknown"
-    
+
     def is_secure(self) -> bool:
         """Check if connection should use TLS"""
         parsed = urlparse(self.url)
         return parsed.scheme == "https"
-    
+
     def get_host_port(self) -> tuple:
         """Get host and port from URL"""
         parsed = urlparse(self.url)
         host = parsed.hostname or "localhost"
-        
+
         if parsed.port:
             port = parsed.port
         else:
             port = 443 if self.is_secure() else 80
-        
+
         return host, port
-    
+
     def should_use_grpc(self) -> bool:
         """Determine if gRPC should be used"""
         if self.protocol == Protocol.GRPC:
@@ -298,7 +323,7 @@ class ClientConfig(BaseModel):
         else:  # AUTO
             # Use gRPC by default for better performance
             return True
-    
+
     def get_protocol_url(self, target_protocol: Protocol) -> str:
         """Get URL for specific protocol with correct port.
 
@@ -354,7 +379,7 @@ def load_config(
     url: Optional[str] = None,
     api_key: Optional[str] = None,
     config_file: Optional[str] = None,
-    **kwargs
+    **kwargs,
 ) -> ClientConfig:
     """Load configuration from multiple sources with precedence:
     1. Explicit parameters
@@ -363,19 +388,19 @@ def load_config(
     4. Defaults
     """
     config_dict = {}
-    
+
     # Load from config file if provided
     if config_file:
         config_dict.update(load_config_file(config_file))
-    
+
     # Override with explicit parameters
     if url:
         config_dict["url"] = url
     if api_key:
         config_dict["api_key"] = api_key
-    
+
     config_dict.update(kwargs)
-    
+
     # Create from environment with overrides
     return ClientConfig.from_env(**config_dict)
 
@@ -384,26 +409,28 @@ def load_config_file(file_path: str) -> dict:
     """Load configuration from file (JSON, YAML, or TOML)"""
     import json
     from pathlib import Path
-    
+
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Configuration file not found: {file_path}")
-    
+
     content = path.read_text()
-    
-    if file_path.endswith(('.yml', '.yaml')):
+
+    if file_path.endswith((".yml", ".yaml")):
         try:
             import yaml
+
             return yaml.safe_load(content)
         except ImportError:
             raise ImportError("PyYAML is required to load YAML configuration files")
-    
-    elif file_path.endswith('.toml'):
+
+    elif file_path.endswith(".toml"):
         try:
             import tomli
+
             return tomli.loads(content)
         except ImportError:
             raise ImportError("tomli is required to load TOML configuration files")
-    
+
     else:  # JSON
         return json.loads(content)

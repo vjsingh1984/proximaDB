@@ -367,7 +367,8 @@ pub struct BatchDistanceResults {
     pub distances: PooledItem<Vec<f32>>,
     /// The metric used for distance calculation
     pub metric: DistanceMetric,
-    /// Reference to compute engine for normalization
+    /// Reference to compute engine for normalization (reserved for future use)
+    #[allow(dead_code)]
     compute: UnifiedDistanceCompute,
 }
 
@@ -1501,6 +1502,7 @@ impl UnifiedDistanceCompute {
     }
 
     /// Normalize distance based on metric type
+    #[allow(dead_code)]
     fn normalize_distance(&self, distance: f32, metric: &DistanceMetric) -> f32 {
         match metric {
             DistanceMetric::Cosine => 1.0 - distance,

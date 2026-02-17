@@ -40,7 +40,7 @@ impl NovaSearchOperations {
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
         let k = ctx.top_k();
-        let distance_metric = ctx.distance_metric();
+        let _distance_metric = ctx.distance_metric();
         let collection_id = &ctx.collection.id;
         let filter_expression = ctx.search_params.filter_expression.as_ref();
 
@@ -89,7 +89,7 @@ impl NovaSearchOperations {
     async fn search_standard(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::core::search::results::OptimizedSearchRecord;
         use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
@@ -192,7 +192,7 @@ impl NovaSearchOperations {
             )?;
 
             // Convert filter if provided
-            let metadata_filter = filter_expression.as_ref().map(|_f| {
+            let _metadata_filter = filter_expression.as_ref().map(|_f| {
                 // Convert FilterExpression to MetadataFilter
                 // This is a simplified conversion - real implementation would be more complex
                 crate::storage::engines::core::formats::columnar::MetadataFilter {
@@ -273,7 +273,7 @@ impl NovaSearchOperations {
     /// Search by vector ID
     pub async fn vector_by_id(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
         // Implement ID-based search using bloom filters and hierarchical index

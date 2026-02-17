@@ -194,7 +194,7 @@ impl EnhancedRBACManager {
         self.validate_admin_permission(assigner_context, tenant_id)?;
 
         // Get role definition
-        let role = self.get_tenant_role(tenant_id, role_name)?;
+        let _role = self.get_tenant_role(tenant_id, role_name)?;
 
         // Get or create user assignment
         let user_key = format!("{}::{}", tenant_id, user_id);

@@ -450,6 +450,7 @@ impl WalSubscriber {
 }
 
 /// Builder for creating WalSubscriber instances
+#[allow(dead_code)]
 pub struct WalSubscriberBuilder {
     subscription_id: String,
     config: OutboundConfig,
@@ -457,6 +458,7 @@ pub struct WalSubscriberBuilder {
     exactly_once: Option<Arc<ExactlyOnceManager>>,
 }
 
+#[allow(dead_code)]
 impl WalSubscriberBuilder {
     /// Create a new builder
     pub fn new(subscription_id: impl Into<String>) -> Self {

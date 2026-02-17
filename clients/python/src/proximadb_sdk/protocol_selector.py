@@ -5,20 +5,24 @@ This module provides backward compatibility for the legacy ProtocolSelector inte
 All functionality has been moved to intelligent_router.py
 """
 
+from .config import ClientConfig
+
 # Import everything from unified module for backward compatibility
 from .intelligent_router import (
+    IntelligentRouter,
     OperationType,
-    RoutingStrategy as SelectionStrategy,  # Map to legacy name
     ProtocolHealth,
-    RoutingRule,
     ProtocolMetrics,
     RoutingConfig,
-    IntelligentRouter,
+    RoutingRule,
 )
-from .config import ClientConfig
+from .intelligent_router import (
+    RoutingStrategy as SelectionStrategy,  # Map to legacy name
+)
 
 # Legacy aliases
 ProtocolSelector = IntelligentRouter
+
 
 # Legacy factory function for backward compatibility
 def create_protocol_selector(
@@ -26,14 +30,15 @@ def create_protocol_selector(
     strategy: SelectionStrategy = SelectionStrategy.BALANCED,
     grpc_factory=None,
     rest_factory=None,
-    **kwargs
+    **kwargs,
 ) -> ProtocolSelector:
     """Create a protocol selector with backward-compatible interface"""
     from .config import Protocol
 
     # Filter out client factory functions from RoutingConfig kwargs
-    routing_kwargs = {k: v for k, v in kwargs.items()
-                     if k not in ['grpc_factory', 'rest_factory']}
+    routing_kwargs = {
+        k: v for k, v in kwargs.items() if k not in ["grpc_factory", "rest_factory"]
+    }
 
     routing_config = RoutingConfig(strategy=strategy, **routing_kwargs)
     selector = ProtocolSelector(config=routing_config, client_config=config)
@@ -46,11 +51,12 @@ def create_protocol_selector(
 
     return selector
 
+
 __all__ = [
     "OperationType",
     "SelectionStrategy",
     "ProtocolHealth",
-    "RoutingRule", 
+    "RoutingRule",
     "ProtocolMetrics",
     "RoutingConfig",
     "IntelligentRouter",

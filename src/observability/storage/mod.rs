@@ -30,6 +30,14 @@ use crate::storage::persistence::write_ahead_log::unified_operations::{
 };
 
 /// Observability storage service
+///
+/// Manages storage for logs, metrics, and traces across multiple namespaces.
+/// Features:
+/// - WAL-backed durability for all writes
+/// - Time-partitioned log storage
+/// - Time-series metric storage with downsampling
+/// - Trace storage with span assembly
+/// - Namespace isolation
 pub struct ObservabilityStorage {
     /// Namespace configurations
     namespaces: RwLock<HashMap<String, NamespaceStorage>>,
@@ -42,8 +50,12 @@ pub struct ObservabilityStorage {
 }
 
 /// Storage for a single namespace
+///
+/// Isolated storage for a single observability namespace.
+/// Contains separate storage engines for logs, metrics, and traces.
 struct NamespaceStorage {
     /// Configuration
+    #[allow(dead_code)]
     config: ObservabilityNamespaceConfig,
     /// Partitioned log storage
     logs: partitioned::PartitionedStorage,
@@ -241,6 +253,26 @@ impl ObservabilityStorage {
         Ok(())
     }
 
+    /// Delete a namespace
+    pub async fn delete_namespace(&self, name: &str) -> Result<()> {
+        info!("Deleting observability namespace: {}", name);
+
+        // Write to WAL first
+        self.write_to_wal(ObservabilityOperation::DeleteNamespace {
+            namespace: name.to_string(),
+        })
+        .await?;
+
+        // Remove from in-memory map
+        let mut namespaces = self.namespaces.write().await;
+        namespaces
+            .remove(name)
+            .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", name))?;
+
+        info!("Deleted observability namespace: {}", name);
+        Ok(())
+    }
+
     /// Write a log entry
     pub async fn write_log(&self, namespace: &str, log: &LogEntry) -> Result<()> {
         // Write to WAL first
@@ -335,6 +367,41 @@ impl ObservabilityStorage {
         ns.traces.query_by_trace_id(trace_id).await
     }
 
+    /// Query traces by time range
+    pub async fn query_traces_by_time(
+        &self,
+        namespace: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<traces::TraceSummary>> {
+        let namespaces = self.namespaces.read().await;
+        let ns = namespaces
+            .get(namespace)
+            .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", namespace))?;
+
+        ns.traces.query_by_time(start_ns, end_ns, limit).await
+    }
+
+    /// Query traces by service
+    pub async fn query_traces_by_service(
+        &self,
+        namespace: &str,
+        service: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+    ) -> Result<Vec<traces::TraceSummary>> {
+        let namespaces = self.namespaces.read().await;
+        let ns = namespaces
+            .get(namespace)
+            .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", namespace))?;
+
+        ns.traces
+            .query_by_service(service, start_ns, end_ns, limit)
+            .await
+    }
+
     /// Get storage statistics for a namespace
     pub async fn stats(&self, namespace: &str) -> Result<StorageStats> {
         let namespaces = self.namespaces.read().await;
@@ -352,6 +419,9 @@ impl ObservabilityStorage {
 }
 
 /// Storage statistics
+///
+/// Provides statistics about a namespace's storage usage,
+/// including counts of logs, metric series, and traces.
 #[derive(Debug, Clone)]
 pub struct StorageStats {
     /// Number of log entries

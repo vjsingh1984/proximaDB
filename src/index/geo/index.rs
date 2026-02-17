@@ -77,13 +77,23 @@ impl GeoIndex {
 
         // Insert into entries map
         {
-            let mut entries = self.entries.write().unwrap();
+            // CRITICAL: Lock poisoning indicates thread panic during write.
+            // In production, this is unrecoverable and we propagate the panic.
+            let mut entries = self
+                .entries
+                .write()
+                .expect("GeoIndex entries lock poisoned - unrecoverable state");
             entries.insert(id.clone(), entry);
         }
 
         // Insert into hash index
         {
-            let mut hash_index = self.hash_index.write().unwrap();
+            // CRITICAL: Lock poisoning indicates thread panic during write.
+            // In production, this is unrecoverable and we propagate the panic.
+            let mut hash_index = self
+                .hash_index
+                .write()
+                .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
             hash_index.entry(geohash).or_default().push(id);
         }
     }
@@ -91,12 +101,22 @@ impl GeoIndex {
     /// Delete a point from the index
     pub fn delete(&self, id: &str) -> bool {
         let entry = {
-            let mut entries = self.entries.write().unwrap();
+            // CRITICAL: Lock poisoning indicates thread panic during write.
+            // In production, this is unrecoverable and we propagate the panic.
+            let mut entries = self
+                .entries
+                .write()
+                .expect("GeoIndex entries lock poisoned - unrecoverable state");
             entries.remove(id)
         };
 
         if let Some(entry) = entry {
-            let mut hash_index = self.hash_index.write().unwrap();
+            // CRITICAL: Lock poisoning indicates thread panic during write.
+            // In production, this is unrecoverable and we propagate the panic.
+            let mut hash_index = self
+                .hash_index
+                .write()
+                .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
             if let Some(ids) = hash_index.get_mut(&entry.geohash) {
                 ids.retain(|i| i != id);
                 if ids.is_empty() {
@@ -121,13 +141,19 @@ impl GeoIndex {
 
     /// Get entry by ID
     pub fn get(&self, id: &str) -> Option<GeoIndexEntry> {
-        let entries = self.entries.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
         entries.get(id).cloned()
     }
 
     /// Get number of entries
     pub fn len(&self) -> usize {
-        let entries = self.entries.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
         entries.len()
     }
 
@@ -164,8 +190,14 @@ impl GeoIndex {
         let candidate_hashes = self.get_candidate_hashes(&search_bbox);
 
         // Filter and compute distances
-        let entries = self.entries.read().unwrap();
-        let hash_index = self.hash_index.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+        let hash_index = self
+            .hash_index
+            .read()
+            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
 
         let mut results: Vec<GeoQueryResult> = Vec::new();
 
@@ -207,8 +239,14 @@ impl GeoIndex {
     fn search_within_box(&self, bbox: &GeoBoundingBox) -> Vec<GeoQueryResult> {
         let candidate_hashes = self.get_candidate_hashes(bbox);
 
-        let entries = self.entries.read().unwrap();
-        let hash_index = self.hash_index.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+        let hash_index = self
+            .hash_index
+            .read()
+            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
 
         let mut results: Vec<GeoQueryResult> = Vec::new();
         let mut seen = HashSet::new();
@@ -305,8 +343,14 @@ impl GeoIndex {
 
     /// Get statistics about the index
     pub fn stats(&self) -> GeoIndexStats {
-        let entries = self.entries.read().unwrap();
-        let hash_index = self.hash_index.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+        let hash_index = self
+            .hash_index
+            .read()
+            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
 
         let total_entries = entries.len();
         let unique_hashes = hash_index.len();
@@ -330,8 +374,14 @@ impl GeoIndex {
 
     /// Clear all entries from the index
     pub fn clear(&self) {
-        let mut entries = self.entries.write().unwrap();
-        let mut hash_index = self.hash_index.write().unwrap();
+        let mut entries = self
+            .entries
+            .write()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+        let mut hash_index = self
+            .hash_index
+            .write()
+            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
 
         entries.clear();
         hash_index.clear();
@@ -339,8 +389,14 @@ impl GeoIndex {
 
     /// Get all entries within a geohash prefix
     pub fn get_by_geohash_prefix(&self, prefix: &str) -> Vec<GeoIndexEntry> {
-        let entries = self.entries.read().unwrap();
-        let hash_index = self.hash_index.read().unwrap();
+        let entries = self
+            .entries
+            .read()
+            .expect("GeoIndex entries lock poisoned - unrecoverable state");
+        let hash_index = self
+            .hash_index
+            .read()
+            .expect("GeoIndex hash_index lock poisoned - unrecoverable state");
 
         let mut results = Vec::new();
 

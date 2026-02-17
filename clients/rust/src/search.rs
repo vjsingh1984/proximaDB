@@ -2,15 +2,68 @@
 //!
 //! This module provides the `SearchBuilder` for building and executing
 //! vector similarity searches with filtering and configuration options.
+//!
+//! # Examples
+//!
+//! ```rust,ignore
+//! use proximadb_sdk::{ProximaClient, FilterBuilder};
+//!
+//! let client = ProximaClient::connect("http://localhost:5678")?;
+//!
+//! // Basic search
+//! let results = client.collection("products")
+//!     .search()
+//!     .vector(&query)
+//!     .top_k(10)
+//!     .execute()
+//!     .await?;
+//!
+//! // Search with string filter
+//! let results = client.collection("products")
+//!     .search()
+//!     .vector(&query)
+//!     .top_k(10)
+//!     .filter("category = 'electronics'")
+//!     .execute()
+//!     .await?;
+//!
+//! // Search with fluent filter builder
+//! let filter = FilterBuilder::new()
+//!     .eq("category", "electronics")
+//!     .gte("price", 100)
+//!     .lte("price", 500)
+//!     .build();
+//!
+//! let results = client.collection("products")
+//!     .search()
+//!     .vector(&query)
+//!     .top_k(10)
+//!     .with_filter(filter)
+//!     .execute()
+//!     .await?;
+//!
+//! // Search with inline filter methods
+//! let results = client.collection("products")
+//!     .search()
+//!     .vector(&query)
+//!     .top_k(10)
+//!     .filter_eq("category", "electronics")
+//!     .filter_range("price", 100, 500)
+//!     .execute()
+//!     .await?;
+//! ```
 
 use crate::error::{ProximaError, Result, SearchError};
+use crate::filter::{Filter, FilterBuilder};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 /// Search mode for controlling recall vs performance tradeoff
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchMode {
     /// Exact search - 100% recall, searches all partitions
+    #[default]
     Exact,
     /// Approximate search - faster with ~95% recall
     Approximate {
@@ -24,20 +77,14 @@ pub enum SearchMode {
     },
 }
 
-impl Default for SearchMode {
-    fn default() -> Self {
-        SearchMode::Exact
-    }
-}
-
 impl SearchMode {
     /// Convert to string representation for API
     pub fn as_str(&self) -> String {
         match self {
             SearchMode::Exact => "exact".to_string(),
             SearchMode::Approximate { nprobe: None } => "approximate".to_string(),
-            SearchMode::Approximate { nprobe: Some(n) } => format!("approximate:{}", n),
-            SearchMode::Adaptive { threshold } => format!("adaptive:{}", threshold),
+            SearchMode::Approximate { nprobe: Some(n) } => format!("approximate:{n}"),
+            SearchMode::Adaptive { threshold } => format!("adaptive:{threshold}"),
         }
     }
 }
@@ -69,10 +116,12 @@ pub struct SearchBuilder<'a> {
     vector: Option<Vec<f32>>,
     top_k: usize,
     filter: Option<String>,
+    filter_builder: Option<FilterBuilder>,
     mode: SearchMode,
     include_vectors: bool,
     include_metadata: bool,
     min_score: Option<f32>,
+    timeout_ms: Option<u64>,
 }
 
 impl<'a> SearchBuilder<'a> {
@@ -87,10 +136,12 @@ impl<'a> SearchBuilder<'a> {
             vector: None,
             top_k: 10,
             filter: None,
+            filter_builder: None,
             mode: SearchMode::default(),
             include_vectors: false,
             include_metadata: true,
             min_score: None,
+            timeout_ms: None,
         }
     }
 
@@ -105,10 +156,12 @@ impl<'a> SearchBuilder<'a> {
             vector: None,
             top_k: 10,
             filter: None,
+            filter_builder: None,
             mode: SearchMode::default(),
             include_vectors: false,
             include_metadata: true,
             min_score: None,
+            timeout_ms: None,
         }
     }
 
@@ -196,12 +249,146 @@ impl<'a> SearchBuilder<'a> {
         self
     }
 
+    /// Set request timeout in milliseconds
+    pub fn timeout_ms(mut self, timeout: u64) -> Self {
+        self.timeout_ms = Some(timeout);
+        self
+    }
+
+    /// Set timeout in seconds (convenience method)
+    pub fn timeout_secs(mut self, secs: u64) -> Self {
+        self.timeout_ms = Some(secs * 1000);
+        self
+    }
+
+    /// Apply a pre-built filter
+    pub fn with_filter(mut self, filter: Filter) -> Self {
+        self.filter = Some(filter.to_expression());
+        self
+    }
+
+    /// Add an equality filter condition
+    pub fn filter_eq(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).eq(field, value);
+        }
+        self
+    }
+
+    /// Add a not-equal filter condition
+    pub fn filter_ne(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).ne(field, value);
+        }
+        self
+    }
+
+    /// Add a greater-than filter condition
+    pub fn filter_gt(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).gt(field, value);
+        }
+        self
+    }
+
+    /// Add a greater-than-or-equal filter condition
+    pub fn filter_gte(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).gte(field, value);
+        }
+        self
+    }
+
+    /// Add a less-than filter condition
+    pub fn filter_lt(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).lt(field, value);
+        }
+        self
+    }
+
+    /// Add a less-than-or-equal filter condition
+    pub fn filter_lte(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).lte(field, value);
+        }
+        self
+    }
+
+    /// Add a range filter condition (inclusive)
+    pub fn filter_range<V: Into<Value> + Clone>(
+        mut self,
+        field: impl Into<String>,
+        min: V,
+        max: V,
+    ) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).range(field, min, max);
+        }
+        self
+    }
+
+    /// Add an IN filter condition
+    pub fn filter_in<V: Into<Value>>(mut self, field: impl Into<String>, values: Vec<V>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).in_list(field, values);
+        }
+        self
+    }
+
+    /// Add a contains filter condition
+    pub fn filter_contains(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).contains(field, value);
+        }
+        self
+    }
+
+    /// Add an exists filter condition
+    pub fn filter_exists(mut self, field: impl Into<String>) -> Self {
+        self.ensure_filter_builder();
+        if let Some(ref mut fb) = self.filter_builder {
+            *fb = std::mem::take(fb).exists(field);
+        }
+        self
+    }
+
+    /// Helper to ensure filter builder exists
+    fn ensure_filter_builder(&mut self) {
+        if self.filter_builder.is_none() {
+            self.filter_builder = Some(FilterBuilder::new());
+        }
+    }
+
+    /// Build the final filter expression (combines string filter and builder)
+    fn build_filter(&self) -> Option<String> {
+        // If there's a filter builder, use its expression
+        if let Some(ref fb) = self.filter_builder {
+            let filter = fb.clone().build();
+            return Some(filter.to_expression());
+        }
+        // Otherwise use the string filter
+        self.filter.clone()
+    }
+
     /// Execute the search (async, client mode)
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<Vec<SearchResult>> {
         let client = self
             .client
             .ok_or_else(|| ProximaError::Internal("No client reference for search".to_string()))?;
+
+        // Build the filter expression before moving self.vector
+        let filter_expr = self.build_filter();
 
         let vector = self.vector.ok_or_else(|| {
             ProximaError::Search(SearchError::InvalidFilter {
@@ -220,10 +407,11 @@ impl<'a> SearchBuilder<'a> {
             collection: self.collection,
             vector,
             top_k: self.top_k,
-            filter: self.filter,
+            filter: filter_expr,
             search_mode: Some(self.mode.as_str()),
             include_vectors: self.include_vectors,
             include_metadata: self.include_metadata,
+            timeout_ms: self.timeout_ms,
         };
 
         let url = format!("{}/api/v1/vectors/search", client.url());
@@ -246,6 +434,9 @@ impl<'a> SearchBuilder<'a> {
             ProximaError::Internal("No embedded DB reference for search".to_string())
         })?;
 
+        // Build the filter expression before moving self.vector
+        let filter_expr = self.build_filter();
+
         let vector = self.vector.ok_or_else(|| {
             ProximaError::Search(SearchError::InvalidFilter {
                 reason: "query vector is required".to_string(),
@@ -260,7 +451,7 @@ impl<'a> SearchBuilder<'a> {
         }
 
         let mut results =
-            db.search_internal(&self.collection, vector, self.top_k, self.filter, self.mode)?;
+            db.search_internal(&self.collection, vector, self.top_k, filter_expr, self.mode)?;
 
         // Apply min_score filter if set
         if let Some(min) = self.min_score {
@@ -330,6 +521,8 @@ struct SearchRequest {
     include_vectors: bool,
     #[serde(default)]
     include_metadata: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

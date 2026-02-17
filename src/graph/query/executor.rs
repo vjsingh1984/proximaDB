@@ -51,7 +51,7 @@ impl QueryExecutor {
             match &step.step_type {
                 PlanStepType::NodeScan {
                     labels,
-                    property_filters,
+                    property_filters: _property_filters,
                 } => {
                     // Execute NodeScan
                     let nodes = if let Some(labels) = labels {
@@ -89,8 +89,8 @@ impl QueryExecutor {
                     }
                 }
                 PlanStepType::IndexSeek {
-                    index_name,
-                    key_value,
+                    index_name: _index_name,
+                    key_value: _key_value,
                 } => {
                     // TODO: Implement IndexSeek execution
                     return Err(ProximaDBError::Query(QueryError::InvalidQuery(
@@ -98,9 +98,9 @@ impl QueryExecutor {
                     )));
                 }
                 PlanStepType::Traverse {
-                    algorithm,
-                    max_depth,
-                    edge_filters,
+                    algorithm: _algorithm,
+                    max_depth: _max_depth,
+                    edge_filters: _edge_filters,
                 } => {
                     // TODO: Implement Traversal execution
                     return Err(ProximaDBError::Query(QueryError::InvalidQuery(
@@ -126,9 +126,7 @@ impl QueryExecutor {
 mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
-    use crate::graph::query::planner::{
-        CostEstimate, PlanStep, PlanStepType, QueryPlan, TraversalAlgorithm,
-    };
+    use crate::graph::query::planner::{CostEstimate, PlanStep, PlanStepType, QueryPlan};
     use crate::utils::Uuid;
     use std::time::SystemTime;
 

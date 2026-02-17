@@ -1,12 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::core::config::HardwareConfig;
-    use crate::core::hardware_capabilities::{HardwareCapabilities, GpuBackend, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
-    
-    
+use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, GpuBackend, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
+
     #[test]
     fn test_hardware_config_defaults() {
+        use crate::core::config::HardwareConfig;
         let config = HardwareConfig::default();
         
         assert!(config.enable_detection);
@@ -21,6 +19,7 @@ mod tests {
     
     #[test]
     fn test_hardware_capabilities_detection_with_config() {
+        use crate::core::config::HardwareConfig;
         // Test with default config (everything enabled)
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
@@ -40,6 +39,7 @@ mod tests {
     
     #[test]
     fn test_hardware_capabilities_disabled() {
+        use crate::core::config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_detection = false;
         
@@ -53,6 +53,7 @@ mod tests {
     
     #[test]
     fn test_hardware_capabilities_gpu_disabled() {
+        use crate::core::config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_gpu_acceleration = false;
         
@@ -66,6 +67,7 @@ mod tests {
     
     #[test]
     fn test_hardware_capabilities_simd_disabled() {
+        use crate::core::config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_simd = false;
         
@@ -78,6 +80,7 @@ mod tests {
     
     #[test]
     fn test_hardware_capabilities_avx512_disabled() {
+        use crate::core::config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_avx512 = false;
         
@@ -90,6 +93,7 @@ mod tests {
     
     #[test]
     fn test_gpu_threshold_checks() {
+        use crate::core::config::HardwareConfig;
         let config = HardwareConfig {
             gpu_min_vector_size: 128,
             gpu_min_batch_size: 500,
@@ -119,13 +123,14 @@ mod tests {
     
     #[test]
     fn test_preferred_backend_logic() {
+        use crate::core::config::HardwareConfig;
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
-        
-        let backend = caps.preferred_backend();
-        
+
+        let _backend = caps.preferred_backend();
+
         // Should return a valid backend
-        match backend {
+        match _backend {
             HardwareBackend::Scalar |
             HardwareBackend::CUDA |
             HardwareBackend::ROCm |
@@ -138,10 +143,10 @@ mod tests {
                 // Valid backend
             }
         }
-        
+
         // Verify backend is consistent with capabilities
         if caps.has_gpu() {
-            match backend {
+            match _backend {
                 HardwareBackend::CUDA |
                 HardwareBackend::ROCm |
                 HardwareBackend::MPS |
@@ -173,8 +178,8 @@ mod tests {
         let _ = initialize_hardware_capabilities_default();
         
         // Test HardwareQuery static methods
-        let has_avx512 = HardwareQuery::has_avx512();
-        let has_gpu = HardwareQuery::has_gpu();
+        let _has_avx512 = HardwareQuery::has_avx512();
+        let _has_gpu = HardwareQuery::has_gpu();
         let cpu_cores = HardwareQuery::cpu_cores();
         let thread_pool_size = HardwareQuery::recommended_thread_pool_size();
         let cache_size = HardwareQuery::recommended_cache_size();
@@ -230,7 +235,7 @@ mod tests {
         assert!(!cpu.model_name.is_empty());
         
         // SIMD capabilities should be detected
-        let simd = cpu.simd;
+        let _simd = cpu.simd;
         // At least one should be available on modern systems (platform-dependent)
         // Just verify detection doesn't crash
     }
@@ -264,6 +269,7 @@ mod tests {
     
     #[test]
     fn test_configuration_edge_cases() {
+        use crate::core::config::HardwareConfig;
         // Test configuration with all features disabled
         let config = HardwareConfig {
             enable_detection: true, // Keep detection on
@@ -292,9 +298,7 @@ mod tests {
     
     #[test]
     fn test_concurrent_initialization() {
-        use std::sync::Arc;
         use std::thread;
-        
         // Test that concurrent initialization doesn't cause issues
         let handles: Vec<_> = (0..10).map(|_| {
             thread::spawn(|| {

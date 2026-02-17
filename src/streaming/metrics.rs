@@ -368,11 +368,13 @@ impl Default for StreamMetrics {
 }
 
 /// Global streaming metrics instance
-static STREAM_METRICS: std::sync::OnceLock<Arc<StreamMetrics>> = std::sync::OnceLock::new();
+#[allow(dead_code)]
+static _STREAM_METRICS: std::sync::OnceLock<Arc<StreamMetrics>> = std::sync::OnceLock::new();
 
 /// Get or initialize the global streaming metrics
-pub fn get_or_init_metrics() -> Arc<StreamMetrics> {
-    STREAM_METRICS
+#[allow(dead_code)]
+pub fn _get_or_init_metrics() -> Arc<StreamMetrics> {
+    _STREAM_METRICS
         .get_or_init(|| Arc::new(StreamMetrics::new()))
         .clone()
 }
@@ -392,8 +394,8 @@ mod tests {
 
     #[test]
     fn test_global_metrics() {
-        let m1 = get_or_init_metrics();
-        let m2 = get_or_init_metrics();
+        let m1 = _get_or_init_metrics();
+        let m2 = _get_or_init_metrics();
         // Should be the same instance
         assert!(Arc::ptr_eq(&m1, &m2));
     }

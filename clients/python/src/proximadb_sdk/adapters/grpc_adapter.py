@@ -11,20 +11,20 @@ Licensed under the Apache License, Version 2.0
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from .base import BaseProtocolAdapter
 from ..models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
     FilterDict,
+    HealthStatus,
+    MetadataDict,
     OperationMetrics,
+    SearchResult,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 from ..proto_conversion import ProtoConverter
+from .base import BaseProtocolAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         timeout: float = 60.0,
         pool_size: int = 5,
         max_message_size: int = 64 * 1024 * 1024,
-        **kwargs
+        **kwargs,
     ):
         """Initialize gRPC protocol adapter.
 
@@ -62,7 +62,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             timeout=timeout,
             pool_size=pool_size,
             max_message_size=max_message_size,
-            **kwargs
+            **kwargs,
         )
         self._server_address = server_address
         self._connected = True
@@ -87,20 +87,17 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             result = self._client.health_check()
 
             # Convert HealthCheckResponse to HealthStatus
-            if hasattr(result, 'healthy'):
+            if hasattr(result, "healthy"):
                 return HealthStatus(
                     status="healthy" if result.healthy else "unhealthy",
                     healthy=result.healthy,
-                    timestamp_ms=int(getattr(result, 'latency_ms', 0)),
+                    timestamp_ms=int(getattr(result, "latency_ms", 0)),
                     services={"grpc": "ok" if result.healthy else "error"},
-                    version=getattr(result, 'version', None),
+                    version=getattr(result, "version", None),
                 )
 
             return HealthStatus(
-                status="unknown",
-                healthy=False,
-                timestamp_ms=0,
-                services={}
+                status="unknown", healthy=False, timestamp_ms=0, services={}
             )
         except Exception as e:
             logger.error(f"Health check failed: {e}")
@@ -108,7 +105,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
                 status="unhealthy",
                 healthy=False,
                 timestamp_ms=0,
-                services={"grpc": str(e)}
+                services={"grpc": str(e)},
             )
 
     # ==========================================================================
@@ -116,19 +113,16 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self,
-        name: str,
-        config: Optional[CollectionConfig] = None,
-        **kwargs
+        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         # Extract parameters from config or kwargs
-        dimension = config.dimension if config else kwargs.get('dimension', 128)
+        dimension = config.dimension if config else kwargs.get("dimension", 128)
         distance_metric = ProtoConverter.distance_metric_to_int(
-            config.distance_metric if config else kwargs.get('distance_metric')
+            config.distance_metric if config else kwargs.get("distance_metric")
         )
         storage_engine = ProtoConverter.storage_engine_to_int(
-            config.storage_engine if config else kwargs.get('storage_engine')
+            config.storage_engine if config else kwargs.get("storage_engine")
         )
 
         result = self._client.create_collection(
@@ -136,7 +130,11 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             dimension=dimension,
             distance_metric=distance_metric,
             storage_engine=storage_engine,
-            **{k: v for k, v in kwargs.items() if k not in ['dimension', 'distance_metric', 'storage_engine']}
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["dimension", "distance_metric", "storage_engine"]
+            },
         )
 
         # Convert CollectionWrapper or proto to Collection
@@ -160,7 +158,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         results = self._client.list_collections()
 
         collections = []
-        for item in (results or []):
+        for item in results or []:
             try:
                 collections.append(self._to_collection(item))
             except Exception as e:
@@ -173,7 +171,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         try:
             result = self._client.delete_collection(collection_id)
 
-            if hasattr(result, 'success'):
+            if hasattr(result, "success"):
                 return result.success
             return True
         except Exception as e:
@@ -181,10 +179,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             return False
 
     def _to_collection(
-        self,
-        result: Any,
-        fallback_name: str = '',
-        fallback_dimension: int = 0
+        self, result: Any, fallback_name: str = "", fallback_dimension: int = 0
     ) -> Collection:
         """Convert various result types to Collection model."""
         if isinstance(result, Collection):
@@ -194,9 +189,9 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             return Collection(**result)
 
         # Handle CollectionWrapper or protobuf objects
-        name = getattr(result, 'name', fallback_name)
-        dimension = getattr(result, 'dimension', fallback_dimension)
-        coll_id = getattr(result, 'id', name)
+        name = getattr(result, "name", fallback_name)
+        dimension = getattr(result, "dimension", fallback_dimension)
+        coll_id = getattr(result, "id", name)
 
         return Collection(
             id=coll_id,
@@ -212,7 +207,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         self,
         collection_id: str,
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Insert vectors into a collection."""
         # Convert VectorRecord objects to dicts
@@ -220,24 +215,22 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         for v in vectors:
             if isinstance(v, dict):
                 vector_dicts.append(v)
-            elif hasattr(v, 'model_dump'):
+            elif hasattr(v, "model_dump"):
                 vector_dicts.append(v.model_dump(exclude_none=True))
             else:
                 vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
 
         result = self._client.insert_vectors(
-            collection_id=collection_id,
-            vectors=vector_dicts,
-            **kwargs
+            collection_id=collection_id, vectors=vector_dicts, **kwargs
         )
 
-        return self._to_vector_operation_response(result, 'INSERT', len(vectors))
+        return self._to_vector_operation_response(result, "INSERT", len(vectors))
 
     def upsert_vectors(
         self,
         collection_id: str,
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Upsert (insert or update) vectors in a collection."""
         # Convert VectorRecord objects to dicts
@@ -245,35 +238,29 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         for v in vectors:
             if isinstance(v, dict):
                 vector_dicts.append(v)
-            elif hasattr(v, 'model_dump'):
+            elif hasattr(v, "model_dump"):
                 vector_dicts.append(v.model_dump(exclude_none=True))
             else:
                 vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
 
         # gRPC insert with upsert flag
         result = self._client.insert_vectors(
-            collection_id=collection_id,
-            vectors=vector_dicts,
-            upsert=True,
-            **kwargs
+            collection_id=collection_id, vectors=vector_dicts, upsert=True, **kwargs
         )
 
-        return self._to_vector_operation_response(result, 'UPSERT', len(vectors))
+        return self._to_vector_operation_response(result, "UPSERT", len(vectors))
 
     def get_vectors(
         self,
         collection_id: str,
         vector_ids: List[str],
         include_vectors: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[VectorRecord]:
         """Get vectors by IDs."""
-        if hasattr(self._client, 'get_vectors'):
+        if hasattr(self._client, "get_vectors"):
             results = self._client.get_vectors(
-                collection_id,
-                vector_ids,
-                include_vectors=include_vectors,
-                **kwargs
+                collection_id, vector_ids, include_vectors=include_vectors, **kwargs
             )
         else:
             # Fallback: not implemented in gRPC client
@@ -282,65 +269,57 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
         # Convert to VectorRecord list
         records = []
-        for r in (results or []):
+        for r in results or []:
             if isinstance(r, VectorRecord):
                 records.append(r)
             elif isinstance(r, dict):
                 records.append(VectorRecord(**r))
-            elif hasattr(r, 'id'):
-                records.append(VectorRecord(
-                    id=getattr(r, 'id', ''),
-                    vector=list(getattr(r, 'vector', [])),
-                    metadata=dict(getattr(r, 'metadata', {})),
-                ))
+            elif hasattr(r, "id"):
+                records.append(
+                    VectorRecord(
+                        id=getattr(r, "id", ""),
+                        vector=list(getattr(r, "vector", [])),
+                        metadata=dict(getattr(r, "metadata", {})),
+                    )
+                )
 
         return records
 
     def delete_vectors(
-        self,
-        collection_id: str,
-        vector_ids: List[str],
-        **kwargs
+        self, collection_id: str, vector_ids: List[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
-        if hasattr(self._client, 'delete_vectors'):
+        if hasattr(self._client, "delete_vectors"):
             result = self._client.delete_vectors(collection_id, vector_ids, **kwargs)
         else:
             # Fallback: not implemented
             return VectorOperationResponse(
                 success=False,
-                operation='DELETE',
-                error_message="delete_vectors not implemented in gRPC client"
+                operation="DELETE",
+                error_message="delete_vectors not implemented in gRPC client",
             )
 
-        return self._to_vector_operation_response(result, 'DELETE', len(vector_ids))
+        return self._to_vector_operation_response(result, "DELETE", len(vector_ids))
 
     def update_vector_metadata(
-        self,
-        collection_id: str,
-        vector_id: str,
-        metadata: MetadataDict,
-        **kwargs
+        self, collection_id: str, vector_id: str, metadata: MetadataDict, **kwargs
     ) -> VectorOperationResponse:
         """Update metadata for a specific vector."""
-        if hasattr(self._client, 'update_vector_metadata'):
+        if hasattr(self._client, "update_vector_metadata"):
             result = self._client.update_vector_metadata(
                 collection_id, vector_id, metadata, **kwargs
             )
-            return self._to_vector_operation_response(result, 'UPDATE', 1)
+            return self._to_vector_operation_response(result, "UPDATE", 1)
 
         # Fallback: not implemented
         return VectorOperationResponse(
             success=False,
-            operation='UPDATE',
-            error_message="update_vector_metadata not implemented in gRPC client"
+            operation="UPDATE",
+            error_message="update_vector_metadata not implemented in gRPC client",
         )
 
     def _to_vector_operation_response(
-        self,
-        result: Any,
-        operation: str,
-        total_count: int
+        self, result: Any, operation: str, total_count: int
     ) -> VectorOperationResponse:
         """Convert various result types to VectorOperationResponse."""
         if isinstance(result, VectorOperationResponse):
@@ -348,31 +327,31 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
         if isinstance(result, dict):
             return VectorOperationResponse(
-                success=result.get('success', True),
+                success=result.get("success", True),
                 operation=operation,
                 metrics=OperationMetrics(
-                    successful_count=result.get('successful_count', total_count),
-                    failed_count=result.get('failed_count', 0),
+                    successful_count=result.get("successful_count", total_count),
+                    failed_count=result.get("failed_count", 0),
                     total_count=total_count,
                 ),
-                error_message=result.get('error_message')
+                error_message=result.get("error_message"),
             )
 
         # Handle wrapper objects
-        success = getattr(result, 'success', True)
-        metrics = getattr(result, 'metrics', None)
+        success = getattr(result, "success", True)
+        metrics = getattr(result, "metrics", None)
 
         if metrics:
             return VectorOperationResponse(
                 success=success,
                 operation=operation,
                 metrics=OperationMetrics(
-                    successful_count=getattr(metrics, 'successful_count', total_count),
-                    failed_count=getattr(metrics, 'failed_count', 0),
-                    duration_ms=getattr(metrics, 'duration_ms', 0),
+                    successful_count=getattr(metrics, "successful_count", total_count),
+                    failed_count=getattr(metrics, "failed_count", 0),
+                    duration_ms=getattr(metrics, "duration_ms", 0),
                     total_count=total_count,
                 ),
-                error_message=getattr(result, 'error_message', None)
+                error_message=getattr(result, "error_message", None),
             )
 
         return VectorOperationResponse(
@@ -383,7 +362,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
                 failed_count=0 if success else total_count,
                 total_count=total_count,
             ),
-            error_message=getattr(result, 'error_message', None)
+            error_message=getattr(result, "error_message", None),
         )
 
     # ==========================================================================
@@ -398,11 +377,11 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[SearchResult]:
         """Search for similar vectors."""
         # Normalize query vector
-        if hasattr(query_vector, 'tolist'):
+        if hasattr(query_vector, "tolist"):
             query_vector = query_vector.tolist()
 
         results = self._client.search_vectors(
@@ -412,7 +391,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             metadata_filters=filter,
             include_vectors=include_vectors,
             include_metadata=include_metadata,
-            **kwargs
+            **kwargs,
         )
 
         return self._to_search_results(results, include_vectors, include_metadata)
@@ -425,13 +404,13 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[List[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
         for qv in query_vectors:
-            if hasattr(qv, 'tolist'):
+            if hasattr(qv, "tolist"):
                 normalized_queries.append(qv.tolist())
             else:
                 normalized_queries.append(list(qv))
@@ -444,7 +423,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             metadata_filters=filter,
             include_vectors=include_vectors,
             include_metadata=include_metadata,
-            **kwargs
+            **kwargs,
         )
 
         # Handle single query result vs batch results
@@ -454,18 +433,17 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
         # Multiple query results
         batch_results = []
-        for query_results in (results or []):
+        for query_results in results or []:
             batch_results.append(
-                self._to_search_results(query_results, include_vectors, include_metadata)
+                self._to_search_results(
+                    query_results, include_vectors, include_metadata
+                )
             )
 
         return batch_results
 
     def _to_search_results(
-        self,
-        results: Any,
-        include_vectors: bool,
-        include_metadata: bool
+        self, results: Any, include_vectors: bool, include_metadata: bool
     ) -> List[SearchResult]:
         """Convert various result types to SearchResult list."""
         if results is None:
@@ -476,27 +454,31 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             if isinstance(r, SearchResult):
                 search_results.append(r)
             elif isinstance(r, dict):
-                search_results.append(SearchResult(
-                    id=r.get('id', r.get('vector_id', '')),
-                    score=r.get('score', r.get('distance', 0.0)),
-                    vector=r.get('vector') if include_vectors else None,
-                    metadata=r.get('metadata') if include_metadata else None,
-                ))
-            elif hasattr(r, 'id'):
+                search_results.append(
+                    SearchResult(
+                        id=r.get("id", r.get("vector_id", "")),
+                        score=r.get("score", r.get("distance", 0.0)),
+                        vector=r.get("vector") if include_vectors else None,
+                        metadata=r.get("metadata") if include_metadata else None,
+                    )
+                )
+            elif hasattr(r, "id"):
                 vector = None
-                if include_vectors and hasattr(r, 'vector'):
+                if include_vectors and hasattr(r, "vector"):
                     vector = list(r.vector) if r.vector else None
 
                 metadata = None
-                if include_metadata and hasattr(r, 'metadata'):
+                if include_metadata and hasattr(r, "metadata"):
                     metadata = dict(r.metadata) if r.metadata else {}
 
-                search_results.append(SearchResult(
-                    id=getattr(r, 'id', ''),
-                    score=getattr(r, 'score', getattr(r, 'distance', 0.0)),
-                    vector=vector,
-                    metadata=metadata,
-                ))
+                search_results.append(
+                    SearchResult(
+                        id=getattr(r, "id", ""),
+                        score=getattr(r, "score", getattr(r, "distance", 0.0)),
+                        vector=vector,
+                        metadata=metadata,
+                    )
+                )
 
         return search_results
 
@@ -506,6 +488,6 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
     def close(self) -> None:
         """Close the gRPC client connection pool."""
-        if hasattr(self._client, 'close'):
+        if hasattr(self._client, "close"):
             self._client.close()
         self._connected = False

@@ -83,6 +83,7 @@ use crate::query::unified::executor::ParallelExecutor;
 use crate::query::unified::{
     DataModel, FusionStrategy, QueryDecomposer, ResultFuser, UnifiedQueryConfig,
 };
+use crate::security::unified_rbac::ConsolidatedRBACManager;
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -120,6 +121,12 @@ pub struct UnifiedQueryApiState {
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
 
     // =========================================================================
+    // SECURITY - RBAC Manager for permission validation
+    // =========================================================================
+    /// RBAC manager for validating query permissions
+    pub rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
+
+    // =========================================================================
     // PREPARED STATEMENTS - Thread-safe statement cache
     // =========================================================================
     /// Prepared statement cache for parse-once-execute-many pattern
@@ -152,6 +159,7 @@ pub struct UnifiedQueryApiState {
     /// Federated query context for SQL with multi-model extensions (legacy mode)
     pub federated_context: Option<Arc<FederatedQueryContext>>,
     /// Federated parser for detecting multi-model query patterns (legacy mode)
+    #[allow(dead_code)]
     federated_parser: Arc<FederatedParser>,
 }
 
@@ -175,6 +183,7 @@ impl UnifiedQueryApiState {
         let config = UnifiedQueryConfig::default();
         Self {
             query_adapter: Some(adapter),
+            rbac_manager: None, // RBAC manager can be added later
             // Prepared statement cache with default configuration
             prepared_statement_cache: Arc::new(PreparedStatementCache::new(
                 PreparedStatementConfig::default(),
@@ -217,6 +226,7 @@ impl UnifiedQueryApiState {
         let config = UnifiedQueryConfig::default();
         Self {
             query_adapter: Some(adapter),
+            rbac_manager: None,
             prepared_statement_cache: Arc::new(PreparedStatementCache::new(prepared_config)),
             document_service,
             storage_engine,
@@ -230,6 +240,12 @@ impl UnifiedQueryApiState {
             federated_context: None,
             federated_parser: Arc::new(FederatedParser::new()),
         }
+    }
+
+    /// Set RBAC manager for permission validation
+    pub fn with_rbac_manager(mut self, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
+        self.rbac_manager = Some(rbac_manager);
+        self
     }
 }
 
@@ -783,6 +799,7 @@ async fn explain_query(
 }
 
 /// Parse fusion strategy from string
+#[allow(dead_code)]
 fn parse_fusion_strategy(s: &str) -> FusionStrategy {
     match s.to_lowercase().as_str() {
         "intersection" | "and" => FusionStrategy::Intersection,
@@ -797,6 +814,7 @@ fn parse_fusion_strategy(s: &str) -> FusionStrategy {
 }
 
 /// Estimate cost for a data model
+#[allow(dead_code)]
 fn estimate_cost(model: &DataModel) -> f64 {
     match model {
         DataModel::Vector => 1.0,
@@ -874,6 +892,7 @@ async fn execute_federated_query(
 }
 
 /// Convert Arrow RecordBatches to JSON records for the federated response
+#[allow(dead_code)]
 fn convert_arrow_to_records(
     result: &crate::query::federated::ExecutionResult,
     limit: usize,
@@ -930,6 +949,7 @@ fn convert_arrow_to_records(
 }
 
 /// Convert Arrow RecordBatches to unified record format
+#[allow(dead_code)]
 fn convert_arrow_to_unified_records(
     result: &crate::query::federated::ExecutionResult,
     _query_type: &FederatedQueryType,
@@ -950,6 +970,7 @@ fn convert_arrow_to_unified_records(
 }
 
 /// Extract a JSON value from an Arrow array at the given row index
+#[allow(dead_code)]
 fn extract_value_from_array(array: &dyn arrow::array::Array, row_idx: usize) -> serde_json::Value {
     use arrow::array::{
         BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, StringArray,

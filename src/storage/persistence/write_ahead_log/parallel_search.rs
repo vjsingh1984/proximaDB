@@ -28,9 +28,11 @@ pub struct ParallelWALSearch {
     distance_compute: Arc<UnifiedDistanceCompute>,
 
     /// Batch size for parallel processing
+    #[allow(dead_code)]
     parallel_batch_size: usize,
 
     /// Early termination threshold (stop when we have k * multiplier candidates)
+    #[allow(dead_code)]
     early_termination_multiplier: f32,
 }
 
@@ -448,7 +450,7 @@ impl ParallelWALSearch {
 
 /// Intermediate search candidate
 #[derive(Clone)]
-struct SearchCandidate {
+pub struct SearchCandidate {
     record: VectorRecord,
     score: f32,
     include_vectors: bool,

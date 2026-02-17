@@ -13,28 +13,28 @@ Licensed under the Apache License, Version 2.0
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
-from .config import ClientConfig, load_config, Protocol
+from .adapters import BaseProtocolAdapter, create_adapter
+from .config import ClientConfig, Protocol, load_config
+from .exceptions import ProximaDBError
 from .models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    OperationMetrics,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
-    FilterDict,
     DistanceMetric,
+    FilterDict,
+    HealthStatus,
+    MetadataDict,
+    OperationMetrics,
+    SearchResult,
     StorageEngine,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
-from .exceptions import ProximaDBError
-from .adapters import BaseProtocolAdapter, create_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class ProximaDBClient:
         data_dir: Optional[str] = None,
         pool_size: int = 10,
         timeout: float = 60.0,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize ProximaDB client.
@@ -87,56 +87,60 @@ class ProximaDBClient:
 
     def _setup_adapter(self):
         """Setup the appropriate protocol adapter."""
-        protocol_name = self._protocol.value.lower() if hasattr(self._protocol, 'value') else str(self._protocol).lower()
+        protocol_name = (
+            self._protocol.value.lower()
+            if hasattr(self._protocol, "value")
+            else str(self._protocol).lower()
+        )
 
-        if protocol_name == 'embedded':
+        if protocol_name == "embedded":
             self._adapter = create_adapter(
-                'embedded',
-                data_dir=self._data_dir or '/tmp/proximadb/data',
-                **self._kwargs
+                "embedded",
+                data_dir=self._data_dir or "/tmp/proximadb/data",
+                **self._kwargs,
             )
             logger.info("Using embedded adapter (in-process)")
 
-        elif protocol_name == 'grpc':
+        elif protocol_name == "grpc":
             # Extract gRPC address
             grpc_url = self._get_grpc_url()
             self._adapter = create_adapter(
-                'grpc',
+                "grpc",
                 server_address=grpc_url,
                 timeout=self._timeout,
                 pool_size=self._pool_size,
-                **self._kwargs
+                **self._kwargs,
             )
             logger.info(f"Using gRPC adapter: {grpc_url}")
 
-        elif protocol_name == 'rest':
+        elif protocol_name == "rest":
             self._adapter = create_adapter(
-                'rest',
-                url=self._url or 'http://localhost:5678',
+                "rest",
+                url=self._url or "http://localhost:5678",
                 timeout=self._timeout,
-                **self._kwargs
+                **self._kwargs,
             )
             logger.info(f"Using REST adapter: {self._url}")
 
-        elif protocol_name == 'auto':
+        elif protocol_name == "auto":
             # Try gRPC first, fallback to REST
             try:
                 grpc_url = self._get_grpc_url()
                 self._adapter = create_adapter(
-                    'grpc',
+                    "grpc",
                     server_address=grpc_url,
                     timeout=self._timeout,
                     pool_size=self._pool_size,
-                    **self._kwargs
+                    **self._kwargs,
                 )
                 self._protocol = Protocol.GRPC
                 logger.info(f"Auto-selected gRPC adapter: {grpc_url}")
             except ImportError:
                 self._adapter = create_adapter(
-                    'rest',
-                    url=self._url or 'http://localhost:5678',
+                    "rest",
+                    url=self._url or "http://localhost:5678",
                     timeout=self._timeout,
-                    **self._kwargs
+                    **self._kwargs,
                 )
                 self._protocol = Protocol.REST
                 logger.info(f"Auto-selected REST adapter: {self._url}")
@@ -145,20 +149,21 @@ class ProximaDBClient:
 
     def _get_grpc_url(self) -> str:
         """Get gRPC server address from config or URL."""
-        if hasattr(self.config, 'get_protocol_url'):
+        if hasattr(self.config, "get_protocol_url"):
             return self.config.get_protocol_url(Protocol.GRPC)
 
         # Extract from URL
         if self._url:
             # Convert http://host:port to host:grpc_port
             from urllib.parse import urlparse
+
             parsed = urlparse(self._url)
-            host = parsed.hostname or 'localhost'
+            host = parsed.hostname or "localhost"
             # gRPC typically on port + 1
             grpc_port = (parsed.port or 5678) + 1
             return f"{host}:{grpc_port}"
 
-        return 'localhost:5679'
+        return "localhost:5679"
 
     @property
     def active_protocol(self) -> Protocol:
@@ -183,10 +188,7 @@ class ProximaDBClient:
     # ==========================================================================
 
     def create_collection(
-        self,
-        name: str,
-        config: Optional[CollectionConfig] = None,
-        **kwargs
+        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         if config is None:
@@ -212,11 +214,13 @@ class ProximaDBClient:
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Optional[Union[List[List[float]], List[VectorRecord], np.ndarray]] = None,
+        vectors: Optional[
+            Union[List[List[float]], List[VectorRecord], np.ndarray]
+        ] = None,
         ids: Optional[List[str]] = None,
         metadata: Optional[List[Dict[str, Any]]] = None,
         records: Optional[List[VectorRecord]] = None,
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Insert vectors into a collection.
 
@@ -224,22 +228,34 @@ class ProximaDBClient:
         """
         # Handle backward compatibility
         if vectors is not None:
-            if hasattr(vectors, 'tolist'):
+            if hasattr(vectors, "tolist"):
                 vectors = vectors.tolist()
 
             # Check if vectors is already a list of VectorRecord
-            if (hasattr(vectors, '__len__') and len(vectors) > 0 and
-                hasattr(vectors[0], 'vector') and hasattr(vectors[0], 'id')):
+            if (
+                hasattr(vectors, "__len__")
+                and len(vectors) > 0
+                and hasattr(vectors[0], "vector")
+                and hasattr(vectors[0], "id")
+            ):
                 records = vectors
             else:
                 # Convert old API to VectorRecord objects
                 records = []
                 for i, vector in enumerate(vectors):
-                    vec_list = vector if isinstance(vector, list) else vector.tolist() if hasattr(vector, 'tolist') else list(vector)
+                    vec_list = (
+                        vector
+                        if isinstance(vector, list)
+                        else (
+                            vector.tolist()
+                            if hasattr(vector, "tolist")
+                            else list(vector)
+                        )
+                    )
                     record = VectorRecord(
                         id=ids[i] if ids and i < len(ids) else None,
                         vector=vec_list,
-                        metadata=metadata[i] if metadata and i < len(metadata) else {}
+                        metadata=metadata[i] if metadata and i < len(metadata) else {},
                     )
                     records.append(record)
 
@@ -249,9 +265,7 @@ class ProximaDBClient:
         return self._adapter.insert_vectors(collection_id, records, **kwargs)
 
     def upsert_vectors(
-        self,
-        collection_id: str,
-        records: List[VectorRecord]
+        self, collection_id: str, records: List[VectorRecord]
     ) -> VectorOperationResponse:
         """Upsert vectors into a collection."""
         return self._adapter.upsert_vectors(collection_id, records)
@@ -261,7 +275,7 @@ class ProximaDBClient:
         collection_id: str,
         vector_ids: List[str],
         include_vectors: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[VectorRecord]:
         """Get vectors by IDs."""
         return self._adapter.get_vectors(
@@ -280,27 +294,19 @@ class ProximaDBClient:
         return results[0] if results else None
 
     def delete_vectors(
-        self,
-        collection_id: str,
-        vector_ids: List[str]
+        self, collection_id: str, vector_ids: List[str]
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         return self._adapter.delete_vectors(collection_id, vector_ids)
 
     def delete_vector(
-        self,
-        collection_id: str,
-        vector_id: str
+        self, collection_id: str, vector_id: str
     ) -> VectorOperationResponse:
         """Delete a single vector."""
         return self.delete_vectors(collection_id, [vector_id])
 
     def update_vector_metadata(
-        self,
-        collection_id: str,
-        vector_id: str,
-        metadata: MetadataDict,
-        **kwargs
+        self, collection_id: str, vector_id: str, metadata: MetadataDict, **kwargs
     ) -> VectorOperationResponse:
         """Update metadata for a specific vector."""
         return self._adapter.update_vector_metadata(
@@ -314,13 +320,13 @@ class ProximaDBClient:
         vector: Union[List[float], np.ndarray],
         metadata: Optional[Dict[str, Any]] = None,
         upsert: bool = False,
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Insert a single vector."""
         record = VectorRecord(
             id=vector_id,
             vector=vector if isinstance(vector, list) else vector.tolist(),
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
         if upsert:
@@ -340,7 +346,7 @@ class ProximaDBClient:
         metadata_filter: Optional[FilterDict] = None,
         include_metadata: bool = True,
         include_vectors: bool = False,
-        **kwargs
+        **kwargs,
     ) -> List[SearchResult]:
         """Search for similar vectors."""
         if top_k <= 0:
@@ -355,7 +361,7 @@ class ProximaDBClient:
             filter=metadata_filter,
             include_vectors=include_vectors,
             include_metadata=include_metadata,
-            **kwargs
+            **kwargs,
         )
 
     def search_single(
@@ -364,7 +370,7 @@ class ProximaDBClient:
         vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         metadata_filter: Optional[FilterDict] = None,
-        **kwargs
+        **kwargs,
     ) -> List[SearchResult]:
         """Alias for search() for backward compatibility."""
         return self.search(
@@ -372,7 +378,7 @@ class ProximaDBClient:
             vector=vector,
             top_k=top_k,
             metadata_filter=metadata_filter,
-            **kwargs
+            **kwargs,
         )
 
     def search_batch(
@@ -381,7 +387,7 @@ class ProximaDBClient:
         vectors: Union[List[List[float]], np.ndarray],
         top_k: int = 10,
         metadata_filter: Optional[FilterDict] = None,
-        **kwargs
+        **kwargs,
     ) -> List[List[SearchResult]]:
         """Batch search for similar vectors."""
         if isinstance(vectors, np.ndarray):
@@ -392,7 +398,7 @@ class ProximaDBClient:
             query_vectors=vectors,
             top_k=top_k,
             filter=metadata_filter,
-            **kwargs
+            **kwargs,
         )
 
     # ==========================================================================
@@ -404,7 +410,7 @@ class ProximaDBClient:
         collection_id: str,
         vectors: Union[List[List[float]], np.ndarray],
         ids: Optional[List[str]] = None,
-        metadata: Optional[List[Dict[str, Any]]] = None
+        metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> VectorOperationResponse:
         """Legacy insert method."""
         return self.insert_vectors(collection_id, vectors, ids, metadata)
@@ -414,7 +420,7 @@ class ProximaDBClient:
         collection_id: str,
         vectors: Union[List[List[float]], np.ndarray],
         ids: List[str],
-        metadata: Optional[List[Dict[str, Any]]] = None
+        metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> VectorOperationResponse:
         """Legacy upsert method."""
         if isinstance(vectors, np.ndarray):
@@ -425,17 +431,13 @@ class ProximaDBClient:
             record = VectorRecord(
                 vector=vector,
                 id=vector_id,
-                metadata=metadata[i] if metadata and i < len(metadata) else {}
+                metadata=metadata[i] if metadata and i < len(metadata) else {},
             )
             records.append(record)
 
         return self.upsert_vectors(collection_id, records)
 
-    def delete(
-        self,
-        collection_id: str,
-        ids: List[str]
-    ) -> VectorOperationResponse:
+    def delete(self, collection_id: str, ids: List[str]) -> VectorOperationResponse:
         """Legacy delete method."""
         return self.delete_vectors(collection_id, ids)
 
@@ -464,7 +466,7 @@ class ProximaDBClient:
                 "advantages": [
                     "40% smaller payloads (binary protobuf)",
                     "HTTP/2 multiplexing",
-                    "Better type safety"
+                    "Better type safety",
                 ],
             }
         elif self._protocol == Protocol.REST:
@@ -473,7 +475,7 @@ class ProximaDBClient:
                 "advantages": [
                     "Universal compatibility",
                     "Easy debugging",
-                    "Human-readable JSON"
+                    "Human-readable JSON",
                 ],
             }
         else:
@@ -482,7 +484,7 @@ class ProximaDBClient:
                 "advantages": [
                     "Zero network latency",
                     "Direct memory access",
-                    "Lowest overhead"
+                    "Lowest overhead",
                 ],
             }
 
@@ -516,37 +518,33 @@ class ProximaDBClient:
 # Convenience Functions
 # ==========================================================================
 
+
 def connect(
     url: Optional[str] = None,
     api_key: Optional[str] = None,
     protocol: Union[Protocol, str] = Protocol.AUTO,
-    **kwargs
+    **kwargs,
 ) -> ProximaDBClient:
     """Create a ProximaDB client with simplified parameters."""
     return ProximaDBClient(url=url, api_key=api_key, protocol=protocol, **kwargs)
 
 
 def connect_grpc(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    **kwargs
+    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using gRPC protocol."""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.GRPC, **kwargs)
 
 
 def connect_rest(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    **kwargs
+    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using REST protocol."""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.REST, **kwargs)
 
 
 def connect_embedded(
-    data_dir: str = '/tmp/proximadb/data',
-    **kwargs
+    data_dir: str = "/tmp/proximadb/data", **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using embedded mode."""
-    return ProximaDBClient(protocol='embedded', data_dir=data_dir, **kwargs)
+    return ProximaDBClient(protocol="embedded", data_dir=data_dir, **kwargs)

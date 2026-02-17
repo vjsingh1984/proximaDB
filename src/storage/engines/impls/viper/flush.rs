@@ -46,7 +46,7 @@ pub struct Flush {
     atomic_coordinator: Arc<TransactionCoordinator>,
 
     /// Direct compression provider (no adapter indirection)
-    compression_provider: StandardCompression,
+    _compression_provider: StandardCompression,
 
     /// Metrics updater for flush operation tracking
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
@@ -107,7 +107,7 @@ impl Flush {
             collection_service,
             filesystem_factory,
             atomic_coordinator,
-            compression_provider,
+            _compression_provider: compression_provider,
             metrics_updater: None, // Set via set_metrics_updater for dependency injection
             quantization_engine,
         })
@@ -452,7 +452,6 @@ impl Flush {
                         let sidecar_url =
                             final_url.replace(".parquet", &format!(".{}", sidecar_ext));
                         if let Ok(fs) = self.filesystem_factory.get_filesystem(&sidecar_url) {
-                            use crate::storage::persistence::filesystem::FileSystem;
                             match fs.write(&sidecar_url, &sidecar_bytes, None).await {
                                 Ok(_) => {
                                     debug!(
@@ -670,6 +669,7 @@ impl Flush {
 
     /// INT8 Quantization for Parquet columnar storage
     /// Delegates to unified quantization engine for consistency across all engines
+    #[allow(dead_code)]
     fn quantize_to_int8(
         &self,
         fp32_vector: &[f32],
@@ -756,7 +756,7 @@ impl Flush {
         );
 
         // Check if we have UnifiedCachingFilesystem for optimal performance
-        if let Some(unified_fs) =
+        if let Some(_unified_fs) =
             fs.as_any()
                 .downcast_ref::<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>()
         {
@@ -1000,6 +1000,7 @@ impl Flush {
     }
 
     /// Apply mixed compression strategy with per-column optimization
+    #[allow(dead_code)]
     fn apply_mixed_compression_strategy(
         &self,
         mut props_builder: parquet::file::properties::WriterPropertiesBuilder,

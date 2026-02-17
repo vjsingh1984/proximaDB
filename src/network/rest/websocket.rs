@@ -191,6 +191,7 @@ struct InsertMessage {
     vectors: Vec<VectorInput>,
     sequence: u64,
     #[serde(default)]
+    #[allow(dead_code)]
     partition_key: Option<String>,
 }
 
@@ -206,10 +207,12 @@ struct VectorInput {
 /// Subscribe to live query results
 #[derive(Debug, Deserialize)]
 struct SubscribeMessage {
+    #[allow(dead_code)]
     vector: Vec<f32>,
     #[serde(default = "default_top_k")]
     top_k: u32,
     #[serde(default)]
+    #[allow(dead_code)]
     score_threshold: f32,
     #[serde(default)]
     include_initial: bool,
@@ -483,7 +486,7 @@ async fn ws_subscribe_handler(
 }
 
 /// Handle WebSocket connection for live query subscription
-async fn handle_subscribe_socket(socket: WebSocket, collection: String, state: WebSocketState) {
+async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: WebSocketState) {
     let (mut sender, mut receiver) = socket.split();
 
     let subscription_id = StreamId::new().to_string();

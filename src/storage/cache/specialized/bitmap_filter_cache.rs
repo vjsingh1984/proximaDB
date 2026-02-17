@@ -35,6 +35,7 @@ impl CacheValue for CachedFilterResult {
 /// Filter optimizer for decomposing complex filters
 pub struct FilterOptimizer {
     /// Cache of atomic filter components
+    #[allow(dead_code)]
     atomic_filters: Arc<RwLock<HashMap<String, RoaringBitmap>>>,
 }
 
@@ -143,6 +144,7 @@ pub struct BitmapFilterCache {
     optimizer: Arc<FilterOptimizer>,
     updater: Arc<IncrementalUpdater>,
     /// Roaring bitmap store for efficient storage
+    #[allow(dead_code)]
     bitmap_store: Arc<RwLock<HashMap<String, RoaringBitmap>>>,
 }
 

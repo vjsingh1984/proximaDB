@@ -6,9 +6,8 @@ This module contains various Python constructs to test AST parsing.
 
 import os
 import sys
-from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
-
+from typing import Any, Dict, List, Optional
 
 # Constants
 MAX_RETRIES = 3
@@ -18,6 +17,7 @@ DEFAULT_TIMEOUT = 30.0
 @dataclass
 class User:
     """Represents a user in the system."""
+
     id: str
     name: str
     email: Optional[str] = None

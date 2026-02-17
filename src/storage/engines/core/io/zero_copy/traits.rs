@@ -296,6 +296,7 @@ pub enum RequestPriority {
 
 /// Result of metadata analysis
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MetadataAnalysisResult {
     /// Can the entire file be skipped?
     pub can_skip_file: bool,

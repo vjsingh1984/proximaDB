@@ -42,6 +42,7 @@ pub struct CachedResponse {
 #[derive(Debug, Clone)]
 struct CacheEntry {
     /// Cache key (hash of question)
+    #[allow(dead_code)]
     key: u64,
     /// Cached response
     response: CachedResponse,
@@ -133,7 +134,7 @@ impl SemanticCache {
         &self,
         question: &str,
         collection: &str,
-        question_embedding: &[f32],
+        _question_embedding: &[f32],
     ) -> Option<CachedResponse> {
         if !self.config.enabled {
             return None;

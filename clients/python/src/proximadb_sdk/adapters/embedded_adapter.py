@@ -15,22 +15,22 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Union
 
-from .base import BaseProtocolAdapter
 from ..models import (
     Collection,
     CollectionConfig,
-    SearchResult,
-    VectorOperationResponse,
-    HealthStatus,
-    VectorRecord,
-    VectorArray,
-    MetadataDict,
-    FilterDict,
-    OperationMetrics,
     DistanceMetric,
+    FilterDict,
+    HealthStatus,
+    MetadataDict,
+    OperationMetrics,
+    SearchResult,
     StorageEngine,
+    VectorArray,
+    VectorOperationResponse,
+    VectorRecord,
 )
 from ..proto_conversion import ProtoConverter
+from .base import BaseProtocolAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         self,
         data_dir: str = "/tmp/proximadb/data",
         config: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ):
         """Initialize embedded protocol adapter.
 
@@ -63,16 +63,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """
         try:
             # Import the PyO3 bindings
-            from ..embedded import EmbeddedProximaDB, EmbeddedConfig
+            from ..embedded import EmbeddedConfig, EmbeddedProximaDB
 
             # Build config
             if config:
                 embedded_config = EmbeddedConfig(**config)
             else:
-                embedded_config = EmbeddedConfig(
-                    data_dir=data_dir,
-                    **kwargs
-                )
+                embedded_config = EmbeddedConfig(data_dir=data_dir, **kwargs)
 
             # Create the embedded database instance
             self._db = EmbeddedProximaDB(config=embedded_config)
@@ -108,12 +105,16 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 status="unhealthy",
                 healthy=False,
                 timestamp_ms=int(time.time() * 1000),
-                services={"embedded": "not initialized"}
+                services={"embedded": "not initialized"},
             )
 
         try:
             # Basic health check - list collections to verify DB is operational
-            collections = self._db.list_collections() if hasattr(self._db, 'list_collections') else []
+            collections = (
+                self._db.list_collections()
+                if hasattr(self._db, "list_collections")
+                else []
+            )
 
             return HealthStatus(
                 status="healthy",
@@ -121,15 +122,15 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 timestamp_ms=int(time.time() * 1000),
                 services={
                     "embedded": "ok",
-                    "collections_count": len(collections) if collections else 0
-                }
+                    "collections_count": len(collections) if collections else 0,
+                },
             )
         except Exception as e:
             return HealthStatus(
                 status="unhealthy",
                 healthy=False,
                 timestamp_ms=int(time.time() * 1000),
-                services={"embedded": str(e)}
+                services={"embedded": str(e)},
             )
 
     # ==========================================================================
@@ -137,28 +138,29 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self,
-        name: str,
-        config: Optional[CollectionConfig] = None,
-        **kwargs
+        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         # Extract parameters from config or kwargs
-        dimension = config.dimension if config else kwargs.get('dimension', 128)
+        dimension = config.dimension if config else kwargs.get("dimension", 128)
 
         # Convert distance metric to string for embedded API
         distance_metric = "cosine"
         if config and config.distance_metric:
-            distance_metric = ProtoConverter.distance_metric_to_str(config.distance_metric)
-        elif 'distance_metric' in kwargs:
-            distance_metric = ProtoConverter.distance_metric_to_str(kwargs['distance_metric'])
+            distance_metric = ProtoConverter.distance_metric_to_str(
+                config.distance_metric
+            )
+        elif "distance_metric" in kwargs:
+            distance_metric = ProtoConverter.distance_metric_to_str(
+                kwargs["distance_metric"]
+            )
 
         # Convert storage engine to string for embedded API
         storage_engine = "sst"
         if config and config.storage_engine:
             storage_engine = ProtoConverter.storage_engine_to_str(config.storage_engine)
-        elif 'storage_engine' in kwargs or 'engine' in kwargs:
-            engine = kwargs.get('storage_engine') or kwargs.get('engine')
+        elif "storage_engine" in kwargs or "engine" in kwargs:
+            engine = kwargs.get("storage_engine") or kwargs.get("engine")
             storage_engine = ProtoConverter.storage_engine_to_str(engine)
 
         # Create collection via embedded API
@@ -193,13 +195,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             return self._collections[collection_id]
 
         try:
-            if hasattr(self._db, 'get_collection'):
+            if hasattr(self._db, "get_collection"):
                 result = self._db.get_collection(collection_id)
                 if result:
                     collection = Collection(
                         id=collection_id,
-                        name=getattr(result, 'name', collection_id),
-                        dimension=getattr(result, 'dimension', 0),
+                        name=getattr(result, "name", collection_id),
+                        dimension=getattr(result, "dimension", 0),
                     )
                     self._collections[collection_id] = collection
                     return collection
@@ -218,22 +220,22 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def list_collections(self) -> List[Collection]:
         """List all collections."""
         try:
-            if hasattr(self._db, 'list_collections'):
+            if hasattr(self._db, "list_collections"):
                 results = self._db.list_collections()
 
                 collections = []
-                for item in (results or []):
+                for item in results or []:
                     if isinstance(item, Collection):
                         collections.append(item)
                     elif isinstance(item, str):
                         # Some embedded APIs return just names
                         collection = Collection(id=item, name=item, dimension=0)
                         collections.append(collection)
-                    elif hasattr(item, 'name'):
+                    elif hasattr(item, "name"):
                         collection = Collection(
-                            id=getattr(item, 'id', getattr(item, 'name', '')),
-                            name=getattr(item, 'name', ''),
-                            dimension=getattr(item, 'dimension', 0),
+                            id=getattr(item, "id", getattr(item, "name", "")),
+                            name=getattr(item, "name", ""),
+                            dimension=getattr(item, "dimension", 0),
                         )
                         collections.append(collection)
 
@@ -247,7 +249,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection."""
         try:
-            if hasattr(self._db, 'delete_collection'):
+            if hasattr(self._db, "delete_collection"):
                 self._db.delete_collection(collection_id)
 
             # Remove from cache
@@ -265,7 +267,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         self,
         collection_id: str,
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Insert vectors into a collection.
 
@@ -279,7 +281,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         for v in vectors:
             if isinstance(v, dict):
                 vector_data.append(v)
-            elif hasattr(v, 'model_dump'):
+            elif hasattr(v, "model_dump"):
                 vector_data.append(v.model_dump(exclude_none=True))
             else:
                 vector_data.append(ProtoConverter.vector_record_to_dict(v))
@@ -295,13 +297,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 # Embedded API returns count of inserted vectors
                 return VectorOperationResponse(
                     success=True,
-                    operation='INSERT',
+                    operation="INSERT",
                     metrics=OperationMetrics(
                         successful_count=result,
                         failed_count=len(vectors) - result,
                         duration_ms=duration_ms,
                         total_count=len(vectors),
-                    )
+                    ),
                 )
             elif isinstance(result, VectorOperationResponse):
                 return result
@@ -309,34 +311,34 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 # Assume success if we got here
                 return VectorOperationResponse(
                     success=True,
-                    operation='INSERT',
+                    operation="INSERT",
                     metrics=OperationMetrics(
                         successful_count=len(vectors),
                         failed_count=0,
                         duration_ms=duration_ms,
                         total_count=len(vectors),
-                    )
+                    ),
                 )
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             return VectorOperationResponse(
                 success=False,
-                operation='INSERT',
+                operation="INSERT",
                 error_message=str(e),
                 metrics=OperationMetrics(
                     successful_count=0,
                     failed_count=len(vectors),
                     duration_ms=duration_ms,
                     total_count=len(vectors),
-                )
+                ),
             )
 
     def upsert_vectors(
         self,
         collection_id: str,
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
-        **kwargs
+        **kwargs,
     ) -> VectorOperationResponse:
         """Upsert (insert or update) vectors in a collection."""
         start_time = time.time()
@@ -346,14 +348,14 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         for v in vectors:
             if isinstance(v, dict):
                 vector_data.append(v)
-            elif hasattr(v, 'model_dump'):
+            elif hasattr(v, "model_dump"):
                 vector_data.append(v.model_dump(exclude_none=True))
             else:
                 vector_data.append(ProtoConverter.vector_record_to_dict(v))
 
         try:
             # Use upsert if available, otherwise insert
-            if hasattr(self._db, 'upsert'):
+            if hasattr(self._db, "upsert"):
                 result = self._db.upsert(collection_id, vector_data)
             else:
                 result = self._db.insert(collection_id, vector_data)
@@ -363,38 +365,38 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             if isinstance(result, int):
                 return VectorOperationResponse(
                     success=True,
-                    operation='UPSERT',
+                    operation="UPSERT",
                     metrics=OperationMetrics(
                         successful_count=result,
                         failed_count=len(vectors) - result,
                         duration_ms=duration_ms,
                         total_count=len(vectors),
-                    )
+                    ),
                 )
 
             return VectorOperationResponse(
                 success=True,
-                operation='UPSERT',
+                operation="UPSERT",
                 metrics=OperationMetrics(
                     successful_count=len(vectors),
                     failed_count=0,
                     duration_ms=duration_ms,
                     total_count=len(vectors),
-                )
+                ),
             )
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             return VectorOperationResponse(
                 success=False,
-                operation='UPSERT',
+                operation="UPSERT",
                 error_message=str(e),
                 metrics=OperationMetrics(
                     successful_count=0,
                     failed_count=len(vectors),
                     duration_ms=duration_ms,
                     total_count=len(vectors),
-                )
+                ),
             )
 
     def get_vectors(
@@ -402,31 +404,41 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         collection_id: str,
         vector_ids: List[str],
         include_vectors: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[VectorRecord]:
         """Get vectors by IDs."""
         try:
-            if hasattr(self._db, 'get'):
-                results = self._db.get(collection_id, vector_ids, include_vectors=include_vectors)
-            elif hasattr(self._db, 'get_vectors'):
-                results = self._db.get_vectors(collection_id, vector_ids, include_vectors=include_vectors)
+            if hasattr(self._db, "get"):
+                results = self._db.get(
+                    collection_id, vector_ids, include_vectors=include_vectors
+                )
+            elif hasattr(self._db, "get_vectors"):
+                results = self._db.get_vectors(
+                    collection_id, vector_ids, include_vectors=include_vectors
+                )
             else:
                 logger.warning("get_vectors not implemented in embedded API")
                 return []
 
             # Convert to VectorRecord list
             records = []
-            for r in (results or []):
+            for r in results or []:
                 if isinstance(r, VectorRecord):
                     records.append(r)
                 elif isinstance(r, dict):
                     records.append(VectorRecord(**r))
-                elif hasattr(r, 'id'):
-                    records.append(VectorRecord(
-                        id=getattr(r, 'id', ''),
-                        vector=list(getattr(r, 'vector', [])) if include_vectors else None,
-                        metadata=dict(getattr(r, 'metadata', {})),
-                    ))
+                elif hasattr(r, "id"):
+                    records.append(
+                        VectorRecord(
+                            id=getattr(r, "id", ""),
+                            vector=(
+                                list(getattr(r, "vector", []))
+                                if include_vectors
+                                else None
+                            ),
+                            metadata=dict(getattr(r, "metadata", {})),
+                        )
+                    )
 
             return records
 
@@ -435,24 +447,21 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             return []
 
     def delete_vectors(
-        self,
-        collection_id: str,
-        vector_ids: List[str],
-        **kwargs
+        self, collection_id: str, vector_ids: List[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         start_time = time.time()
 
         try:
-            if hasattr(self._db, 'delete'):
+            if hasattr(self._db, "delete"):
                 result = self._db.delete(collection_id, vector_ids)
-            elif hasattr(self._db, 'delete_vectors'):
+            elif hasattr(self._db, "delete_vectors"):
                 result = self._db.delete_vectors(collection_id, vector_ids)
             else:
                 return VectorOperationResponse(
                     success=False,
-                    operation='DELETE',
-                    error_message="delete_vectors not implemented in embedded API"
+                    operation="DELETE",
+                    error_message="delete_vectors not implemented in embedded API",
                 )
 
             duration_ms = (time.time() - start_time) * 1000
@@ -460,94 +469,96 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             if isinstance(result, int):
                 return VectorOperationResponse(
                     success=True,
-                    operation='DELETE',
+                    operation="DELETE",
                     metrics=OperationMetrics(
                         successful_count=result,
                         failed_count=len(vector_ids) - result,
                         duration_ms=duration_ms,
                         total_count=len(vector_ids),
-                    )
+                    ),
                 )
 
             return VectorOperationResponse(
                 success=True,
-                operation='DELETE',
+                operation="DELETE",
                 metrics=OperationMetrics(
                     successful_count=len(vector_ids),
                     failed_count=0,
                     duration_ms=duration_ms,
                     total_count=len(vector_ids),
-                )
+                ),
             )
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             return VectorOperationResponse(
                 success=False,
-                operation='DELETE',
+                operation="DELETE",
                 error_message=str(e),
                 metrics=OperationMetrics(
                     successful_count=0,
                     failed_count=len(vector_ids),
                     duration_ms=duration_ms,
                     total_count=len(vector_ids),
-                )
+                ),
             )
 
     def update_vector_metadata(
-        self,
-        collection_id: str,
-        vector_id: str,
-        metadata: MetadataDict,
-        **kwargs
+        self, collection_id: str, vector_id: str, metadata: MetadataDict, **kwargs
     ) -> VectorOperationResponse:
         """Update metadata for a specific vector."""
         start_time = time.time()
 
         try:
-            if hasattr(self._db, 'update_metadata'):
+            if hasattr(self._db, "update_metadata"):
                 result = self._db.update_metadata(collection_id, vector_id, metadata)
             else:
                 # Fallback: get, update, upsert
                 vectors = self.get_vectors(collection_id, [vector_id])
                 if vectors:
                     v = vectors[0]
-                    updated_meta = {**v.metadata, **metadata} if v.metadata else metadata
+                    updated_meta = (
+                        {**v.metadata, **metadata} if v.metadata else metadata
+                    )
                     return self.upsert_vectors(
                         collection_id,
-                        [VectorRecord(id=vector_id, vector=v.vector, metadata=updated_meta)]
+                        [
+                            VectorRecord(
+                                id=vector_id, vector=v.vector, metadata=updated_meta
+                            )
+                        ],
                     )
                 return VectorOperationResponse(
                     success=False,
-                    operation='UPDATE',
-                    error_message=f"Vector {vector_id} not found"
+                    operation="UPDATE",
+                    error_message=f"Vector {vector_id} not found",
                 )
 
             duration_ms = (time.time() - start_time) * 1000
 
             return VectorOperationResponse(
                 success=True,
-                operation='UPDATE',
+                operation="UPDATE",
                 metrics=OperationMetrics(
                     successful_count=1,
                     failed_count=0,
                     duration_ms=duration_ms,
                     total_count=1,
-                )
+                ),
             )
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             return VectorOperationResponse(
                 success=False,
-                operation='UPDATE',
+                operation="UPDATE",
                 error_message=str(e),
                 metrics=OperationMetrics(
                     successful_count=0,
                     failed_count=1,
                     duration_ms=duration_ms,
                     total_count=1,
-                )
+                ),
             )
 
     # ==========================================================================
@@ -562,7 +573,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[SearchResult]:
         """Search for similar vectors.
 
@@ -570,7 +581,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         This method converts them to SearchResult objects.
         """
         # Normalize query vector to list
-        if hasattr(query_vector, 'tolist'):
+        if hasattr(query_vector, "tolist"):
             query_vector = query_vector.tolist()
         else:
             query_vector = list(query_vector)
@@ -600,19 +611,19 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         filter: Optional[FilterDict] = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        **kwargs
+        **kwargs,
     ) -> List[List[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
         for qv in query_vectors:
-            if hasattr(qv, 'tolist'):
+            if hasattr(qv, "tolist"):
                 normalized_queries.append(qv.tolist())
             else:
                 normalized_queries.append(list(qv))
 
         try:
-            if hasattr(self._db, 'batch_search'):
+            if hasattr(self._db, "batch_search"):
                 results = self._db.batch_search(
                     collection_id,
                     normalized_queries,
@@ -624,9 +635,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
                 # Convert batch results
                 batch_results = []
-                for query_results in (results or []):
+                for query_results in results or []:
                     batch_results.append(
-                        self._to_search_results(query_results, include_vectors, include_metadata)
+                        self._to_search_results(
+                            query_results, include_vectors, include_metadata
+                        )
                     )
                 return batch_results
 
@@ -635,8 +648,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                 batch_results = []
                 for qv in normalized_queries:
                     r = self.search(
-                        collection_id, qv, top_k, filter,
-                        include_vectors, include_metadata, **kwargs
+                        collection_id,
+                        qv,
+                        top_k,
+                        filter,
+                        include_vectors,
+                        include_metadata,
+                        **kwargs,
                     )
                     batch_results.append(r)
                 return batch_results
@@ -646,10 +664,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             return [[] for _ in query_vectors]
 
     def _to_search_results(
-        self,
-        results: Any,
-        include_vectors: bool,
-        include_metadata: bool
+        self, results: Any, include_vectors: bool, include_metadata: bool
     ) -> List[SearchResult]:
         """Convert embedded search results to SearchResult list.
 
@@ -668,39 +683,45 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                     search_results.append(r)
                 elif isinstance(r, tuple):
                     # Common format: (id, score, metadata, vector) or (id, score)
-                    result_id = r[0] if len(r) > 0 else ''
+                    result_id = r[0] if len(r) > 0 else ""
                     score = r[1] if len(r) > 1 else 0.0
                     metadata = r[2] if len(r) > 2 and include_metadata else None
                     vector = r[3] if len(r) > 3 and include_vectors else None
 
-                    search_results.append(SearchResult(
-                        id=str(result_id),
-                        score=float(score),
-                        vector=list(vector) if vector else None,
-                        metadata=dict(metadata) if metadata else None,
-                    ))
+                    search_results.append(
+                        SearchResult(
+                            id=str(result_id),
+                            score=float(score),
+                            vector=list(vector) if vector else None,
+                            metadata=dict(metadata) if metadata else None,
+                        )
+                    )
                 elif isinstance(r, dict):
-                    search_results.append(SearchResult(
-                        id=r.get('id', r.get('vector_id', '')),
-                        score=r.get('score', r.get('distance', 0.0)),
-                        vector=r.get('vector') if include_vectors else None,
-                        metadata=r.get('metadata') if include_metadata else None,
-                    ))
-                elif hasattr(r, 'id'):
+                    search_results.append(
+                        SearchResult(
+                            id=r.get("id", r.get("vector_id", "")),
+                            score=r.get("score", r.get("distance", 0.0)),
+                            vector=r.get("vector") if include_vectors else None,
+                            metadata=r.get("metadata") if include_metadata else None,
+                        )
+                    )
+                elif hasattr(r, "id"):
                     vector = None
-                    if include_vectors and hasattr(r, 'vector'):
+                    if include_vectors and hasattr(r, "vector"):
                         vector = list(r.vector) if r.vector else None
 
                     metadata = None
-                    if include_metadata and hasattr(r, 'metadata'):
+                    if include_metadata and hasattr(r, "metadata"):
                         metadata = dict(r.metadata) if r.metadata else {}
 
-                    search_results.append(SearchResult(
-                        id=getattr(r, 'id', ''),
-                        score=getattr(r, 'score', getattr(r, 'distance', 0.0)),
-                        vector=vector,
-                        metadata=metadata,
-                    ))
+                    search_results.append(
+                        SearchResult(
+                            id=getattr(r, "id", ""),
+                            score=getattr(r, "score", getattr(r, "distance", 0.0)),
+                            vector=vector,
+                            metadata=metadata,
+                        )
+                    )
             except Exception as e:
                 logger.warning(f"Failed to convert search result: {e}")
 
@@ -714,9 +735,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """Close the embedded database."""
         if self._db is not None:
             try:
-                if hasattr(self._db, 'close'):
+                if hasattr(self._db, "close"):
                     self._db.close()
-                elif hasattr(self._db, 'shutdown'):
+                elif hasattr(self._db, "shutdown"):
                     self._db.shutdown()
             except Exception as e:
                 logger.warning(f"Error closing embedded database: {e}")

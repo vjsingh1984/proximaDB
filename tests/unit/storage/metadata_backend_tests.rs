@@ -103,6 +103,10 @@ async fn test_single_metadata_backend_instance() {
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
     };
 
     let result = collection_service
@@ -182,6 +186,10 @@ async fn test_collection_service_dependency_injection() {
             description: Some("Test proto-first collection".to_string()),
             tags: vec!["test".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }),
         stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
             vector_count: 0,
@@ -303,6 +311,10 @@ async fn test_metadata_backend_persistence() {
                     description: Some(format!("Proto-first collection {}", i)),
                     tags: vec![format!("proto-tag{}", i), "persist-test".to_string()],
                     owner: Some("test_user".to_string()),
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 }),
                 stats: Some(CollectionStats {
                     vector_count: 100 * i as i64,
@@ -438,6 +450,10 @@ async fn test_metadata_backend_deletion() {
                 description: None,
                 tags: vec!["deletable".to_string()],
                 owner: None,
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 50,
@@ -557,6 +573,10 @@ async fn test_concurrent_metadata_operations() {
                     description: None,
                     tags: vec!["concurrent".to_string()],
                     owner: None,
+                    record_schema: None,
+                    enable_proxima_record: None,
+                    text_columns: vec![],
+                    text_storage_configs: vec![],
                 }),
                 stats: Some(CollectionStats {
                     vector_count: 10 * i as i64,
@@ -657,6 +677,10 @@ async fn test_metadata_backend_updates() {
             description: Some("Initial description".to_string()),
             tags: vec!["v1".to_string()],
             owner: Some("user1".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }),
         stats: Some(CollectionStats {
             vector_count: 0,
@@ -873,6 +897,10 @@ async fn test_metadata_backend_trait_implementation() {
             description: Some("Testing proto-first trait implementation".to_string()),
             tags: vec!["trait".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }),
         stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
             vector_count: 0,

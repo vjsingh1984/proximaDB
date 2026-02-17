@@ -26,18 +26,23 @@ pub type MonitoringMetrics = SystemMetrics;
 /// Performance monitor for AXIS with real-time alerting
 pub struct PerformanceMonitor {
     /// Configuration
+    #[allow(dead_code)]
     config: MonitoringConfig,
 
     /// Metrics collector
+    #[allow(dead_code)]
     metrics_collector: Arc<MetricsCollector>,
 
     /// Alert manager
+    #[allow(dead_code)]
     alert_manager: Arc<AlertManager>,
 
     /// Performance tracker
+    #[allow(dead_code)]
     performance_tracker: Arc<PerformanceTracker>,
 
     /// Health checker
+    #[allow(dead_code)]
     health_checker: Arc<HealthChecker>,
 
     /// Event broadcaster
@@ -86,12 +91,15 @@ struct AlertManager {
 /// Performance tracker for trends and predictions
 struct PerformanceTracker {
     /// Performance trends per collection
+    #[allow(dead_code)]
     trends: Arc<RwLock<HashMap<String, PerformanceTrend>>>,
 
     /// Baseline performance metrics
+    #[allow(dead_code)]
     baselines: Arc<RwLock<HashMap<String, BaselineMetrics>>>,
 
     /// Anomaly detector
+    #[allow(dead_code)]
     anomaly_detector: Arc<AnomalyDetector>,
 }
 
@@ -101,6 +109,7 @@ struct HealthChecker {
     component_health: Arc<RwLock<HashMap<String, ComponentHealth>>>,
 
     /// Health check interval
+    #[allow(dead_code)]
     check_interval: Duration,
 }
 
@@ -162,9 +171,13 @@ pub struct SystemMetrics {
 /// Historical metric entry
 #[derive(Debug, Clone)]
 struct HistoricalMetric {
+    #[allow(dead_code)]
     pub timestamp: DateTime<Utc>,
+    #[allow(dead_code)]
     pub collection_id: Option<String>,
+    #[allow(dead_code)]
     pub metric_type: MetricType,
+    #[allow(dead_code)]
     pub value: f64,
 }
 
@@ -217,8 +230,11 @@ pub enum AlertSeverity {
 /// Alert history entry
 #[derive(Debug, Clone)]
 struct AlertHistory {
+    #[allow(dead_code)]
     pub alert: Alert,
+    #[allow(dead_code)]
     pub resolved_at: Option<DateTime<Utc>>,
+    #[allow(dead_code)]
     pub resolution_time_ms: Option<u64>,
 }
 
@@ -232,52 +248,75 @@ pub trait AlertSubscriber {
 /// Performance trend analysis
 #[derive(Debug, Clone)]
 pub struct PerformanceTrend {
+    /// Collection identifier
     pub collection_id: String,
+    /// Latency trend direction
     pub latency_trend: TrendDirection,
+    /// Throughput trend direction
     pub throughput_trend: TrendDirection,
+    /// Error rate trend direction
     pub error_rate_trend: TrendDirection,
+    /// Confidence in trend analysis (0.0-1.0)
     pub trend_confidence: f64,
+    /// When the trend was last analyzed
     pub last_analyzed: DateTime<Utc>,
 }
 
-/// Trend directions
-#[derive(Debug, Clone, Copy)]
-enum TrendDirection {
+/// Trend directions for performance metrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrendDirection {
+    /// Performance is improving
     Improving,
+    /// Performance is stable
     Stable,
+    /// Performance is degrading
     Degrading,
+    /// Trend is unknown
     Unknown,
 }
 
 /// Baseline performance metrics
 #[derive(Debug, Clone)]
 struct BaselineMetrics {
+    #[allow(dead_code)]
     pub collection_id: String,
+    #[allow(dead_code)]
     pub baseline_latency_ms: f64,
+    #[allow(dead_code)]
     pub baseline_throughput_qps: f64,
+    #[allow(dead_code)]
     pub baseline_error_rate: f64,
+    #[allow(dead_code)]
     pub established_at: DateTime<Utc>,
+    #[allow(dead_code)]
     pub sample_count: u64,
 }
 
 /// Anomaly detector
 struct AnomalyDetector {
     /// Anomaly detection models per collection
+    #[allow(dead_code)]
     models: Arc<RwLock<HashMap<String, AnomalyModel>>>,
 }
 
 /// Anomaly detection model
 #[derive(Debug, Clone)]
 struct AnomalyModel {
+    #[allow(dead_code)]
     pub collection_id: String,
+    #[allow(dead_code)]
     pub model_type: AnomalyModelType,
+    #[allow(dead_code)]
     pub sensitivity: f64,
+    #[allow(dead_code)]
     pub training_data: Vec<f64>,
+    #[allow(dead_code)]
     pub last_trained: DateTime<Utc>,
 }
 
 /// Types of anomaly detection models
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum AnomalyModelType {
     StatisticalThreshold,
     MovingAverage,
@@ -288,9 +327,13 @@ enum AnomalyModelType {
 /// Component health status
 #[derive(Debug, Clone)]
 struct ComponentHealth {
+    #[allow(dead_code)]
     pub component_name: String,
+    #[allow(dead_code)]
     pub status: HealthStatus,
+    #[allow(dead_code)]
     pub last_check: DateTime<Utc>,
+    #[allow(dead_code)]
     pub response_time_ms: f64,
 }
 
@@ -300,6 +343,7 @@ enum HealthStatus {
     Healthy,
     Degraded,
     Unhealthy,
+    #[allow(dead_code)]
     Unknown,
 }
 
@@ -610,6 +654,7 @@ impl AlertManager {
     }
 
     /// Get active alerts
+    #[allow(dead_code)]
     async fn get_active_alerts(&self) -> Vec<Alert> {
         let active_alerts = self.active_alerts.read().await;
         active_alerts.values().cloned().collect()
@@ -745,7 +790,7 @@ impl PerformanceTracker {
     }
 
     /// Update performance trends
-    async fn update_trends(&self, collection_id: &str, _metrics: &CollectionMetrics) {
+    async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
         // TODO: Implement trend analysis
     }
 }

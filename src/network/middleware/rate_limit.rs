@@ -52,12 +52,15 @@ pub struct RateLimitConfig {
 }
 
 // Default functions for serde
+#[allow(dead_code)]
 fn default_requests_per_minute() -> u32 {
     1000
 }
+#[allow(dead_code)]
 fn default_burst_size() -> u32 {
     100
 }
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
@@ -203,13 +206,13 @@ pub struct RateLimitErrorResponse {
 
 /// Rate limiting layer for Axum
 pub struct RateLimitLayer {
-    state: Arc<RateLimitState>,
+    _state: Arc<RateLimitState>,
 }
 
 impl RateLimitLayer {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            state: Arc::new(RateLimitState::new(config.to_middleware_config())),
+            _state: Arc::new(RateLimitState::new(config.to_middleware_config())),
         }
     }
 

@@ -64,13 +64,16 @@ impl RetryConfig {
 
 /// Filesystem instance cache key (URL without file path)
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[allow(dead_code)]
 struct FilesystemKey {
     scheme: String,
     host: Option<String>,
     base_path: String,
 }
 
+#[allow(dead_code)]
 impl FilesystemKey {
+    #[allow(dead_code)]
     fn from_url(url: &str) -> FsResult<Self> {
         let parsed = Url::parse(url)?;
 
@@ -106,11 +109,15 @@ impl FilesystemKey {
 
 /// Managed filesystem instance with error handling  
 pub struct ManagedFilesystem {
+    #[allow(dead_code)]
     filesystem: Box<dyn FileSystem>,
+    #[allow(dead_code)]
     base_path: String,
+    #[allow(dead_code)]
     retry_config: RetryConfig,
 }
 
+#[allow(dead_code)]
 impl ManagedFilesystem {
     /// Execute operation with retry and auth refresh
     async fn execute_with_retry<F, T>(&self, operation: F) -> FsResult<T>
@@ -138,6 +145,7 @@ impl ManagedFilesystem {
         }
     }
 
+    #[allow(dead_code)]
     fn is_auth_error(&self, err: &FilesystemError) -> bool {
         match err {
             FilesystemError::Auth(_) => true,
@@ -160,6 +168,7 @@ impl ManagedFilesystem {
     }
 
     /// Resolve relative path to absolute path within this filesystem's base
+    #[allow(dead_code)]
     fn resolve_path(&self, relative_path: &str) -> String {
         if self.base_path.is_empty() {
             relative_path.to_string()

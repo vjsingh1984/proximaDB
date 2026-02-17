@@ -36,6 +36,7 @@ pub struct PostgresProtocol {
     /// Session state
     session: Arc<RwLock<Session>>,
     /// Storage engine
+    #[allow(dead_code)]
     storage: Arc<RwLock<StorageEngine>>,
     /// Collection service
     collection_service: Arc<CollectionService>,
@@ -44,6 +45,7 @@ pub struct PostgresProtocol {
     /// Query translator
     translator: QueryTranslator,
     /// Read buffer
+    #[allow(dead_code)]
     read_buffer: BytesMut,
     /// Write buffer
     write_buffer: BytesMut,
@@ -52,6 +54,7 @@ pub struct PostgresProtocol {
     /// Portals (bound statements ready for execution)
     portals: HashMap<String, Portal>,
     /// DDL service for CREATE/DROP/ALTER operations (optional, for catalog integration)
+    #[allow(dead_code)]
     ddl_service: Option<Arc<DdlService>>,
     /// DML service for INSERT/UPDATE/DELETE operations (optional, for catalog integration)
     dml_service: Option<Arc<DmlService>>,
@@ -62,6 +65,7 @@ struct PreparedStatement {
     /// Original query
     query: String,
     /// Translated query
+    #[allow(dead_code)]
     translated: String,
     /// Parameter types
     param_types: Vec<PgType>,
@@ -71,14 +75,18 @@ struct PreparedStatement {
 #[derive(Clone)]
 struct Portal {
     /// Statement name this portal was bound from
+    #[allow(dead_code)]
     statement_name: String,
     /// Bound query with parameters substituted
     bound_query: String,
     /// Original translated query
+    #[allow(dead_code)]
     translated: String,
     /// Parameter values (already bound)
+    #[allow(dead_code)]
     param_values: Vec<Option<Vec<u8>>>,
     /// Max rows to return (0 = unlimited)
+    #[allow(dead_code)]
     max_rows: i32,
 }
 
@@ -259,7 +267,7 @@ impl PostgresProtocol {
         // Check for SSL request
         if version == 80877103 {
             // SSL request - send 'N' (no SSL)
-            self.stream.write_all(&[b'N']).await?;
+            self.stream.write_all(b"N").await?;
             // Use Box::pin for async recursion
             return Box::pin(self.handle_startup()).await;
         }
@@ -896,7 +904,7 @@ impl PostgresProtocol {
         };
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let one_hour_ns = 3600_000_000_000i64;
+        let one_hour_ns = 3_600_000_000_000_i64;
 
         // Extract time range from WHERE clause
         let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
@@ -983,7 +991,7 @@ impl PostgresProtocol {
         };
 
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let one_hour_ns = 3600_000_000_000i64;
+        let one_hour_ns = 3_600_000_000_000_i64;
 
         let (start_time, end_time) = self.extract_time_range(query, now_ns, one_hour_ns);
 
@@ -1040,7 +1048,7 @@ impl PostgresProtocol {
     }
 
     /// Execute a graph query
-    async fn execute_graph_query(&mut self, table_name: &str, query: &str) -> Result<()> {
+    async fn execute_graph_query(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Executing graph query on table: {}", table_name);
 
         // For now, return basic graph info
@@ -1068,7 +1076,7 @@ impl PostgresProtocol {
         let upper = query.to_uppercase();
 
         // Look for BETWEEN ... AND ...
-        if let Some(between_pos) = upper.find("BETWEEN") {
+        if let Some(_between_pos) = upper.find("BETWEEN") {
             // Complex parsing - for now use defaults
             return (default_start - default_range, default_start);
         }
@@ -1309,7 +1317,7 @@ impl PostgresProtocol {
 
         use crate::proto::proximadb_v1::DocumentCollectionConfig;
 
-        let config = DocumentCollectionConfig {
+        let _config = DocumentCollectionConfig {
             name: table_name.to_string(),
             enable_fulltext: true,
             ..Default::default()
@@ -2051,7 +2059,6 @@ impl PostgresProtocol {
         format: &CopyFormat,
     ) -> Result<usize> {
         let mut all_data = Vec::new();
-        let mut row_count = 0;
 
         loop {
             // Read message type
@@ -2089,7 +2096,7 @@ impl PostgresProtocol {
         }
 
         // Process the collected data based on format
-        row_count = match format {
+        let row_count = match format {
             CopyFormat::Arrow => {
                 self.process_arrow_copy_data(table_name, store_type, &all_data)
                     .await?

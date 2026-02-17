@@ -31,6 +31,7 @@ pub struct DiskCacheManager {
 
 /// Cache entry metadata
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct CacheEntry {
     /// Path to cached file on disk
     local_path: PathBuf,

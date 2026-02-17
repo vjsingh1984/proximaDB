@@ -141,6 +141,8 @@ async fn test_sst_zorder_pruning_effectiveness() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results_pruned = engine.search_vectors_unified(&ctx_pruned).await?;
@@ -168,6 +170,8 @@ async fn test_sst_zorder_pruning_effectiveness() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results_exact = engine.search_vectors_unified(&ctx_exact).await?;
@@ -260,6 +264,8 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
     let sqrt_results = engine.search_vectors_unified(&ctx_sqrt).await?;
 
@@ -285,6 +291,8 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
     let ratio_results = engine.search_vectors_unified(&ctx_ratio).await?;
 
@@ -310,6 +318,8 @@ async fn test_sst_pruning_modes() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
     let fixed_results = engine.search_vectors_unified(&ctx_fixed).await?;
 
@@ -397,6 +407,8 @@ async fn test_sst_min_max_keep_constraints() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
     let min_results = engine.search_vectors_unified(&ctx_min).await?;
     assert!(!min_results.is_empty(), "min_keep should ensure results");
@@ -423,6 +435,8 @@ async fn test_sst_min_max_keep_constraints() -> anyhow::Result<()> {
             collection_id: collection_id.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
     let max_results = engine.search_vectors_unified(&ctx_max).await?;
     assert!(
@@ -495,6 +509,8 @@ async fn test_sst_backward_compatibility() -> anyhow::Result<()> {
             collection_id,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;

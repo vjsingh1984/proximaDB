@@ -764,6 +764,8 @@ impl ParquetTestDataGenerator {
     }
 
     /// Generate quantized vectors array
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn generate_quantized_vectors_array(
         &mut self,
         num_vectors: usize,

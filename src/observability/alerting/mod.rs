@@ -58,7 +58,7 @@ impl AlertingService {
         // Check for duplicate/aggregation
         {
             let alerts = self.active_alerts.read().await;
-            if let Some(existing) = alerts.get(&alert_key) {
+            if let Some(_existing) = alerts.get(&alert_key) {
                 // Update existing alert
                 debug!("Alert already active: {}", alert_key);
                 return Ok(());
@@ -109,6 +109,7 @@ impl AlertingService {
     }
 
     /// Get all active alerts
+    #[allow(dead_code)]
     pub async fn get_active_alerts(&self) -> Vec<ActiveAlert> {
         self.active_alerts.read().await.values().cloned().collect()
     }
@@ -126,6 +127,10 @@ impl Default for AlertingService {
 }
 
 /// Alert definition
+///
+/// Represents an alert event that can be fired by the alerting system.
+/// Contains information about what triggered the alert, its severity,
+/// and associated metadata.
 #[derive(Debug, Clone)]
 pub struct Alert {
     /// Alert name
@@ -150,12 +155,19 @@ pub struct Alert {
 
 impl Alert {
     /// Generate alert key for deduplication
+    ///
+    /// Creates a unique key for this alert based on its name and source.
+    /// Used to prevent duplicate alerts from being fired.
+    #[must_use]
     pub fn key(&self) -> String {
         format!("{}:{}", self.name, self.source)
     }
 }
 
 /// Alert severity levels
+///
+/// Defines the severity levels for alerts, from informational to critical.
+/// Each level indicates the urgency of attention required.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertSeverity {
     /// Low severity (informational)
@@ -180,6 +192,9 @@ impl std::fmt::Display for AlertSeverity {
 }
 
 /// Active alert state
+///
+/// Represents an alert that is currently active in the system.
+/// Tracks the alert details along with acknowledgment state.
 #[derive(Debug, Clone)]
 pub struct ActiveAlert {
     /// Alert details

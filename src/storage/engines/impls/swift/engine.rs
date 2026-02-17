@@ -121,6 +121,7 @@ pub struct SwiftEngine {
     /// - Hierarchical index navigation
     ///
     /// Critical for achieving sub-millisecond latencies
+    #[allow(dead_code)]
     optimized_ops: Arc<OptimizedSwiftOperations>,
 
     /// **Engine Statistics** (RwLock for concurrent access)
@@ -165,6 +166,7 @@ pub struct SwiftEngine {
     /// - ZSTD (best compression when latency allows)
     ///
     /// Vectors use Proxima encoding, not general compression
+    #[allow(dead_code)]
     compression_provider: StandardCompression,
 
     /// **Storage Quantization Engine** (Collection-Aware)
@@ -251,6 +253,7 @@ pub struct SwiftEngine {
     >,
 }
 
+#[allow(dead_code)]
 impl SwiftEngine {
     /// Create a new SWIFT engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
@@ -1318,7 +1321,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         );
 
         // Construct data directory from base_path and collection_id
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let _data_dir = StoragePath::collection_data_path(base_path, &collection_id);
 
         // TODO: Load actual SST files from data_dir
         // For now, return None as placeholder
@@ -1332,7 +1335,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        let search_start = std::time::Instant::now();
+        let _search_start = std::time::Instant::now();
 
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();
@@ -1342,7 +1345,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .ok_or_else(|| anyhow!("No query vector in context"))?;
         let top_k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
-        let dimension = ctx.dimension();
+        let _dimension = ctx.dimension();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
         let _search_params = ctx.search_params.custom_hints.clone();
         let mut timer = self.start_operation_timer("search");
@@ -1772,6 +1775,7 @@ impl SwiftEngine {
 
     /// Fallback to direct search when orchestration is not available
     /// This is the expected path until AXIS/orchestration is fully integrated for SWIFT
+    #[allow(dead_code)]
     async fn fallback_to_direct_search(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
@@ -1857,7 +1861,7 @@ mod tests {
     async fn test_swift_engine_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Need to create distance engine and axis manager for new()
-        let distance_engine = Arc::new(
+        let _distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
@@ -1871,7 +1875,7 @@ mod tests {
     async fn test_swift_feature_support() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Need to create distance engine and axis manager for new()
-        let distance_engine = Arc::new(
+        let _distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),

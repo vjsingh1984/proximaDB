@@ -13,7 +13,10 @@
 //! - src/storage/engines/impls/nova/streaming_processor.rs (3 tests)
 //! - src/storage/engines/impls/nova/batch_operations.rs (3 tests)
 
-use super::helpers::*;
+use crate::storage::engines::impls::nova::batch_operations::BatchConfig;
+use crate::storage::engines::impls::nova::streaming_processor::{
+    StreamingConfig, StreamingRowGroupProcessor,
+};
 
 // ============================================================================
 // Tests from streaming_search.rs
@@ -32,7 +35,6 @@ fn test_streaming_search_config() {
 
 #[test]
 fn test_performance_tracker() {
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::impls::nova::streaming_search::*;
 
     // PerformanceTracker is private, so we test through public APIs
@@ -59,7 +61,6 @@ fn test_execution_plan() {
 fn test_binary_sketch() {
     use crate::storage::engines::impls::nova::progressive_search::*;
 
-    let vector = vec![0.5, -0.3, 0.8, -0.1, 0.0];
     // BinarySketch is private, test via ProgressiveSearchConfig
     let config = ProgressiveSearchConfig::default();
     assert_eq!(config.binary_config.max_candidates, 10000);
@@ -69,7 +70,6 @@ fn test_binary_sketch() {
 fn test_int8_vector() {
     use crate::storage::engines::impls::nova::progressive_search::*;
 
-    let vector = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     // Int8Vector is private, test via int8 config
     let config = ProgressiveSearchConfig::default();
     assert_eq!(config.int8_config.max_candidates, 1000);
@@ -123,19 +123,15 @@ fn test_memory_tracker() {
     use crate::storage::engines::impls::nova::streaming_processor::*;
 
     // MemoryTracker is private, test configuration instead
-    let config = StreamingConfig::default();
-    assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);
-    assert_eq!(config.backpressure_threshold, 0.8);
+    let _config = StreamingConfig::default();
+    assert_eq!(_config.max_memory_bytes, 512 * 1024 * 1024);
+    assert_eq!(_config.backpressure_threshold, 0.8);
 }
 
 #[tokio::test]
 async fn test_streaming_processor_creation() {
-    use crate::storage::engines::impls::nova::streaming_processor::{
-        ProcessingStage, StreamingConfig, StreamingRowGroupProcessor,
-    };
-
     let config = StreamingConfig::default();
-    let processor = StreamingRowGroupProcessor::new(config);
+    let _processor = StreamingRowGroupProcessor::new(config);
 
     // Processor has private fields, but we can verify it was created
     // by checking its public behavior through the config
@@ -149,9 +145,6 @@ async fn test_streaming_processor_creation() {
 
 #[test]
 fn test_group_by_row_group() {
-    use crate::storage::engines::core::formats::columnar::ParquetLocation;
-    use crate::storage::engines::impls::nova::batch_operations::*;
-
     // Function is private, test indirectly through BatchConfig
     let config = BatchConfig::default();
     assert_eq!(config.max_concurrent_row_groups, 4);
@@ -180,7 +173,7 @@ fn test_batch_stats() {
 fn test_vector_deserialization() {
     use crate::storage::engines::impls::nova::batch_operations::*;
 
-    let bytes = vec![
+    let _bytes = vec![
         0x00, 0x00, 0x80, 0x3f, // 1.0 in little-endian
         0x00, 0x00, 0x00, 0x40, // 2.0 in little-endian
         0x00, 0x00, 0x40, 0x40, // 3.0 in little-endian

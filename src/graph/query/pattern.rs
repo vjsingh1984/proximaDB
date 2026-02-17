@@ -70,9 +70,13 @@ pub struct PatternMatcher {
 /// Pattern compiler for parsing Cypher-like patterns
 pub struct PatternCompiler {
     /// Regular expressions for pattern parsing
+    #[allow(dead_code)]
     node_pattern_regex: Regex,
+    #[allow(dead_code)]
     edge_pattern_regex: Regex,
+    #[allow(dead_code)]
     path_pattern_regex: Regex,
+    #[allow(dead_code)]
     property_pattern_regex: Regex,
 }
 
@@ -1020,7 +1024,6 @@ impl Default for PatternMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphMemoryPool;
     use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
 
     #[test]

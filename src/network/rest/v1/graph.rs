@@ -84,34 +84,52 @@ use crate::graph::canonical::{
 
 /// REST-compatible TraversalRequest wrapper for JSON deserialization
 #[derive(Debug, serde::Deserialize)]
-struct RestTraversalRequest {
+pub struct RestTraversalRequest {
+    /// Starting node ID for the traversal
     start_node_id: String,
+    /// Maximum depth to traverse
     max_depth: u32,
+    /// Edge types to follow (empty means all types)
     edge_types: Vec<String>,
+    /// Node labels to filter (empty means all labels)
     node_labels: Vec<String>,
-    return_path: bool,
+    /// Whether to return the full path
+    _return_path: bool,
+    /// Traversal algorithm (bfs, dfs, parallel_bfs)
     algorithm: String,
 }
 
 /// REST-compatible NodeQuery wrapper for JSON deserialization
 #[derive(Debug, Clone, serde::Deserialize)]
-struct RestNodeQuery {
+pub struct RestNodeQuery {
+    /// Node labels to filter by
     labels: Vec<String>,
+    /// Property filters as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Maximum number of results to return
     limit: u32,
+    /// Offset for pagination
     offset: Option<u32>,
+    /// Token for continuing a previous query
     continuation_token: Option<String>,
 }
 
 /// REST-compatible EdgeQuery wrapper for JSON deserialization
 #[derive(Debug, Clone, serde::Deserialize)]
-struct RestEdgeQuery {
+pub struct RestEdgeQuery {
+    /// Edge type to filter by
     edge_type: String,
+    /// Optional source node ID
     from_node_id: Option<String>,
+    /// Optional target node ID
     to_node_id: Option<String>,
+    /// Property filters as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Maximum number of results to return
     limit: u32,
+    /// Offset for pagination
     offset: Option<u32>,
+    /// Token for continuing a previous query
     continuation_token: Option<String>,
 }
 
@@ -227,21 +245,31 @@ struct RestEmbeddingVersion {
 
 /// REST input for creating/updating nodes
 #[derive(Debug, Deserialize)]
-struct RestNodeInput {
+pub struct RestNodeInput {
+    /// Unique node identifier
     id: String,
+    /// Node labels (e.g., Person, Organization)
     labels: Vec<String>,
+    /// Node properties as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Optional embedding vector with version info
     embedding: Option<RestEmbeddingVersionInput>,
 }
 
 /// REST input for creating/updating edges
 #[derive(Debug, Deserialize)]
-struct RestEdgeInput {
+pub struct RestEdgeInput {
+    /// Unique edge identifier
     id: String,
+    /// Source node ID
     from_node_id: String,
+    /// Target node ID
     to_node_id: String,
+    /// Edge type (e.g., KNOWS, WORKS_FOR)
     edge_type: String,
+    /// Edge properties as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Optional edge weight for weighted algorithms
     weight: Option<f64>,
 }
 
@@ -312,28 +340,34 @@ struct RestEdgeTypeStats {
 
 /// Create node request
 #[derive(Debug, Deserialize)]
-struct CreateNodeRequest {
+pub struct CreateNodeRequest {
+    /// Node data to create
     node: RestNodeInput,
 }
 
 /// Create edge request
 #[derive(Debug, Deserialize)]
-struct CreateEdgeRequest {
+pub struct CreateEdgeRequest {
+    /// Edge data to create
     edge: RestEdgeInput,
 }
 
 /// Batch create nodes request
 #[derive(Debug, Deserialize)]
-struct BatchCreateNodesRequest {
+pub struct BatchCreateNodesRequest {
+    /// Nodes to create
     nodes: Vec<RestNodeInput>,
-    if_exists: Option<String>, // "update" | "skip" | "error"
+    /// Conflict resolution strategy: "update", "skip", or "error"
+    if_exists: Option<String>,
 }
 
 /// Batch create edges request
 #[derive(Debug, Deserialize)]
-struct BatchCreateEdgesRequest {
+pub struct BatchCreateEdgesRequest {
+    /// Edges to create
     edges: Vec<RestEdgeInput>,
-    if_exists: Option<String>, // "update" | "skip" | "error"
+    /// Conflict resolution strategy: "update", "skip", or "error"
+    if_exists: Option<String>,
 }
 
 // Conversion functions
@@ -925,20 +959,30 @@ pub async fn create_edge(
 }
 
 #[derive(Debug, Deserialize)]
-struct ShortestPathRequest {
+pub struct ShortestPathRequest {
+    /// Starting node ID
     start_node_id: String,
+    /// Target node ID
     target_node_id: String,
+    /// Maximum search depth
     max_depth: Option<u32>,
+    /// Edge types to traverse (empty means all)
     edge_types: Option<Vec<String>>,
-    algorithm: Option<String>, // "DIJKSTRA" or "ASTAR"
+    /// Algorithm: "DIJKSTRA" or "ASTAR"
+    algorithm: Option<String>,
+    /// K for k-shortest paths
     k: Option<u32>,
+    /// Enable prefetch optimization
     enable_prefetch: Option<bool>,
+    /// Prefetch budget (number of nodes)
     prefetch_budget: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
-struct UniqueConstraintRequest {
+pub struct UniqueConstraintRequest {
+    /// Node label to constrain
     label: String,
+    /// Property that must be unique
     property: String,
 }
 
@@ -1605,11 +1649,13 @@ pub async fn get_graph_stats_legacy(State(app_state): State<AppState>) -> impl I
 
 /// Input for creating a graph collection
 #[derive(Debug, Deserialize)]
-struct CreateGraphCollectionRequest {
+pub struct CreateGraphCollectionRequest {
+    /// Unique graph identifier
     graph_id: String,
+    /// Human-readable name
     name: Option<String>,
+    /// Graph description
     description: Option<String>,
-    // Schema and configuration can be added later
 }
 
 /// Response for graph collection operations - contains collection metadata
@@ -1805,12 +1851,12 @@ pub async fn update_graph_schema(
 
 /// Request body for executing a declarative graph query
 #[derive(Debug, Deserialize)]
-struct GraphQueryRequest {
+pub struct GraphQueryRequest {
     /// The Cypher query string
     query: String,
     /// Query language (currently only "cypher" is supported)
     #[serde(default = "default_query_language")]
-    language: String,
+    _language: String,
 }
 
 fn default_query_language() -> String {
@@ -1823,6 +1869,7 @@ struct GraphQueryResultResponse {
     /// Result rows
     rows: Vec<serde_json::Value>,
     /// Total number of rows returned
+    #[allow(dead_code)]
     row_count: u64,
     /// Execution time in milliseconds
     execution_time_ms: f64,

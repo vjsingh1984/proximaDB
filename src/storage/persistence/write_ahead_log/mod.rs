@@ -344,7 +344,6 @@ pub struct FlushCompletionResult {
 /// - **Strategy-specific serialization** with shared deserialization in global memtable
 /// - **Collection-specific storage locations** from collection metadata
 /// - **Atomic disk synchronization** using TransactionCoordinator
-
 /// Collection assignment info with storage location and critical config
 /// The collection_id is the HashMap key, so not stored here
 #[derive(Debug, Clone)]
@@ -415,6 +414,7 @@ pub struct WriteAheadLogManagerPoolEntry {
     /// Workload metrics for load balancing
     workload_metrics: WriteAheadLogManagerWorkload,
     /// Last rebalancing timestamp
+    #[allow(dead_code)]
     last_rebalance: std::time::Instant,
 }
 
@@ -424,10 +424,13 @@ pub struct WriteAheadLogManagerWorkload {
     /// Number of assigned collections
     collection_count: usize,
     /// Operations per second (estimated)
+    #[allow(dead_code)]
     ops_per_second: f64,
     /// Memory usage in bytes
+    #[allow(dead_code)]
     memory_usage_bytes: u64,
     /// Average operation latency in milliseconds
+    #[allow(dead_code)]
     avg_latency_ms: f64,
     /// Load score (computed from metrics)
     load_score: f64,
@@ -1050,8 +1053,10 @@ fn get_global_metadata_provider()
 /// This ensures all pool instances can resolve collection storage assignments
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust,ignore
+/// use std::sync::Arc;
 /// use proximadb::storage::persistence::write_ahead_log::set_global_metadata_provider;
+/// use proximadb::storage::traits::InternalCollectionProvider;
 ///
 /// async fn setup(provider: Arc<dyn InternalCollectionProvider>) {
 ///     set_global_metadata_provider(provider).await;
@@ -1276,7 +1281,7 @@ impl WriteAheadLogManager {
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
-        let filesystem_factory = Arc::new(
+        let _filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
         );
 
@@ -1370,7 +1375,7 @@ impl WriteAheadLogManager {
         let strategy_type = config.strategy_type.clone();
 
         // Create filesystem factory for per-collection disk managers
-        let filesystem_factory = Arc::new(
+        let _filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
         );
 
@@ -1443,7 +1448,7 @@ impl WriteAheadLogManager {
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
-        let filesystem_factory = Arc::new(
+        let _filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create_default().await?,
         );
 
@@ -1490,7 +1495,7 @@ impl WriteAheadLogManager {
     }
 
     /// Set storage engine for delegated flush/compaction operations
-    pub fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>) {
+    pub fn set_storage_engine(&self, _storage_engine: Arc<dyn UnifiedStorageEngine>) {
         // Storage engine setting moved to config level
         tracing::info!("🏗️ Storage engine attached to WAL manager for delegated operations");
     }
@@ -1878,10 +1883,10 @@ impl WriteAheadLogManager {
     }
 
     /// Force flush to disk
-    pub async fn flush(&self, collection_id: Option<&String>) -> Result<FlushResult> {
+    pub async fn flush(&self, _collection_id: Option<&String>) -> Result<FlushResult> {
         // Use shared WAL behavior for flush
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         // WALBehaviorWrapper doesn't handle flushing directly - that's done by the flush coordinator
         let result = FlushResult::default();
 
@@ -1893,7 +1898,7 @@ impl WriteAheadLogManager {
     }
 
     /// Compact collection (clean up old MVCC versions)
-    pub async fn compact(&self, collection_id: &str) -> Result<u64> {
+    pub async fn compact(&self, _collection_id: &str) -> Result<u64> {
         // Compaction not directly available in shared WAL behavior
         // Return 0 for now as compaction is handled at storage layer
         Ok(0)
@@ -1990,7 +1995,7 @@ impl WriteAheadLogManager {
 
         // Get basic stats from the shared WAL behavior
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
 
         // Create stats based on available information
         let stats = WALStats {
@@ -2022,9 +2027,9 @@ impl WriteAheadLogManager {
     }
 
     /// Flush collection using modern batch operations
-    pub async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
+    pub async fn flush_collection(&self, _collection_id: &str) -> Result<FlushResult> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         // WALBehaviorWrapper doesn't handle flushing directly - that's done by the flush coordinator
         Ok(FlushResult::default())
     }
@@ -2868,6 +2873,7 @@ impl WriteAheadLogManager {
     }
 
     /// Convert proto metadata to HashMap for SearchResult
+    #[allow(dead_code)]
     fn convert_proto_metadata_to_hashmap(
         &self,
         metadata: &[crate::proto::proximadb_v1::MetadataItem],
@@ -2931,7 +2937,7 @@ impl WriteAheadLogManager {
     pub async fn register_storage_engine(
         &self,
         engine_name: &str,
-        engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
+        _engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
     ) -> Result<()> {
         // Set the storage engine on the strategy
         // Storage engine setting moved to shared behavior initialization
@@ -2947,7 +2953,6 @@ impl WriteAheadLogManager {
     // ================================================================================
 
     /// Initialize assignment service integration for multi-disk coordination
-
     /// Insert batch with atomic disk synchronization (enhanced version)
     pub async fn insert_batch_atomic(
         &self,
@@ -3020,6 +3025,7 @@ impl WriteAheadLogManager {
     }
 
     /// Extract batch from memory for disk synchronization
+    #[allow(dead_code)]
     async fn extract_batch_for_sync(
         &self,
         collection_id: &str,

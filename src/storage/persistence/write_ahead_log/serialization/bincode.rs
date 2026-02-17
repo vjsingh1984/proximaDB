@@ -33,7 +33,6 @@ impl super::VectorBatchSerializer for BincodeSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::MetadataItem;
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
 
     fn create_test_vector() -> VectorRecord {

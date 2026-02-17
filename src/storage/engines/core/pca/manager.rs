@@ -387,7 +387,7 @@ impl PCAModelManager {
     /// Get model quality metrics for the active version
     pub async fn get_quality_metrics(&self) -> Option<ModelQuality> {
         let guard = self.active_model.read().await;
-        let model = guard.as_ref()?;
+        let _model = guard.as_ref()?;
 
         let version_meta = self
             .version_history

@@ -34,6 +34,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+use crate::security::validation::{
+    CollectionNameValidator, MetadataValidationConfig, MetadataValidator,
+};
 use crate::storage::traits::UnifiedStorageEngine;
 
 use crate::compute::quantization::types::{
@@ -48,6 +51,7 @@ use crate::query::unified_query_optimizer::{
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
 
+#[allow(dead_code)]
 fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {
     let level_type = match strategy.quantization_type {
         QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {
@@ -163,6 +167,13 @@ pub struct VectorOperationsService {
     /// Bulk write router for intelligent write path selection
     /// Routes large batches to direct storage write, bypassing WAL+memtable
     bulk_write_router: BulkWriteRouter,
+
+    /// Security validation for metadata fields
+    /// Validates metadata for SQL injection and data integrity
+    metadata_validator: MetadataValidator,
+
+    /// Collection name validator for security
+    collection_name_validator: CollectionNameValidator,
 }
 
 impl VectorOperationsService {
@@ -474,6 +485,10 @@ impl VectorOperationsService {
 
             // Bulk write router for intelligent write path selection
             bulk_write_router: BulkWriteRouter::new(),
+
+            // Security validation for metadata fields
+            metadata_validator: MetadataValidator::default(),
+            collection_name_validator: CollectionNameValidator::default(),
         }
     }
 
@@ -510,6 +525,19 @@ impl VectorOperationsService {
         config: crate::services::operations::BulkWriteConfig,
     ) -> Self {
         self.bulk_write_router = BulkWriteRouter::with_config(config);
+        self
+    }
+
+    /// Set custom metadata validation configuration (builder-style)
+    ///
+    /// This allows customization of metadata validation rules, including:
+    /// - SQL injection detection sensitivity
+    /// - Maximum string length
+    /// - Maximum binary size
+    /// - Maximum JSON nesting depth
+    /// - Strict mode for enhanced security
+    pub fn with_metadata_validation_config(mut self, config: MetadataValidationConfig) -> Self {
+        self.metadata_validator = MetadataValidator::new(config);
         self
     }
 
@@ -641,7 +669,7 @@ impl VectorOperationsService {
         {
             Ok(_) => {
                 let duration = start_time.elapsed();
-                let vectors_per_sec = if duration.as_secs_f64() > 0.0 {
+                let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
                     (vector_count as f64 / duration.as_secs_f64()) as u64
                 } else {
                     vector_count as u64
@@ -1401,7 +1429,7 @@ impl VectorOperationsService {
         );
 
         // Create search parameters with progressive settings
-        let search_params = crate::core::search::SearchParams {
+        let _search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
             filter_expression: filter.clone(),
             requires_ordering: Some(true),
@@ -1742,7 +1770,7 @@ impl VectorOperationsService {
     /// Apply filter pushdown to storage layer - NEW optimization!
     async fn apply_filter_pushdown(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         pushdown_op: crate::query::unified_query_optimizer::FilterPushdownOperation,
     ) -> Result<()> {
         use crate::query::unified_query_optimizer::FilterPushdownOperation;
@@ -1807,7 +1835,7 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
-        quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
+        _quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
@@ -2197,7 +2225,7 @@ impl VectorOperationsService {
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
         _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
+        _input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "🔍 Executing metadata filter for collection {}",
@@ -2451,7 +2479,7 @@ impl VectorOperationsService {
 
         // Write vectors to WAL
         let start = std::time::Instant::now();
-        let batch_result = self
+        let _batch_result = self
             .wal_manager
             .write_vector_batch_native_arc(collection_id, vectors.clone())
             .await?;
@@ -2501,12 +2529,58 @@ impl VectorOperationsService {
 
     /// Validate vectors for insertion based on collection requirements
     /// OPTIMIZED: Purely in-memory validation with inline operations
+    ///
+    /// Validation includes:
+    /// - Collection name validation (SQL injection prevention)
+    /// - Metadata field validation (SQL injection, length limits)
+    /// - Dimension validation
+    /// - ID validation and uniqueness
     #[inline(always)]
     async fn validate_vectors_for_insert(
         &self,
         collection_id: &str,
         vectors: &[VectorRecord],
     ) -> Result<()> {
+        // SECURITY: Validate collection name to prevent SQL injection
+        if let Err(e) = self.collection_name_validator.validate(collection_id) {
+            warn!(
+                "Collection name validation failed for '{}': {:?}",
+                collection_id, e
+            );
+            return Err(anyhow::anyhow!(
+                "Invalid collection name '{}': {}",
+                collection_id,
+                e
+            ));
+        }
+
+        // SECURITY: Validate metadata for all vectors
+        let metadata_errors = self.metadata_validator.validate_batch(vectors);
+        if !metadata_errors.is_empty() {
+            let error_count = metadata_errors.len();
+            let first_error = metadata_errors.iter().next();
+            if let Some((vector_id, errors)) = first_error {
+                let first_field_error = errors.first();
+                if let Some((field_name, err)) = first_field_error {
+                    warn!(
+                        "Metadata validation failed for {} vectors. First error: vector '{}', field '{}': {:?}",
+                        error_count, vector_id, field_name, err
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Metadata validation failed for vector '{}', field '{}': {}. Total {} vectors with errors.",
+                        vector_id,
+                        field_name,
+                        err,
+                        error_count
+                    ));
+                }
+            }
+            return Err(anyhow::anyhow!(
+                "Metadata validation failed for {} vectors",
+                error_count
+            ));
+        }
+
         // Get collection configuration - this is cached after first load
         let collection = self.get_or_load_collection(collection_id).await?;
 
@@ -2777,7 +2851,7 @@ impl VectorOperationsService {
     }
 
     pub async fn health_check(&self) -> Result<serde_json::Value> {
-        let status = "healthy";
+        let _status = "healthy";
         let issues: Vec<String> = Vec::new();
 
         // Check WAL health
@@ -2870,7 +2944,7 @@ impl VectorOperationsService {
     /// Debug method to list unflushed vectors
     pub async fn debug_list_all_unflushed_vectors(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         // Get all unflushed vectors from WAL
         // TODO: Implement list_unflushed_vectors in WAL manager
@@ -2893,6 +2967,7 @@ impl VectorOperationsService {
     }
 
     /// v1: Convert OptimizedSearchRecord to proximadb_v1::SearchResult
+    #[allow(dead_code)]
     fn convert_to_proto_search_result_v1(
         &self,
         optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord>,
@@ -2928,6 +3003,7 @@ impl VectorOperationsService {
 
 impl VectorOperationsService {
     /// Convert OptimizedSearchRecord to proto SearchVectorRecord
+    #[allow(dead_code)]
     fn optimized_to_proto(
         &self,
         result: &crate::core::search::results::OptimizedSearchRecord,

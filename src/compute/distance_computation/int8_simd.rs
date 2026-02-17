@@ -148,7 +148,7 @@ pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 
         let len = vec_a.len();
         let chunks = len / 16; // 16 INT8 values per NEON register
-        let remainder = len % 16;
+        let _remainder = len % 16;
 
         let mut sum_vec = vdupq_n_s32(0);
 
@@ -203,7 +203,7 @@ pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 
         let len = vec_a.len();
         let chunks = len / 16;
-        let remainder = len % 16;
+        let _remainder = len % 16;
 
         let mut sum_vec = vdupq_n_s32(0);
 

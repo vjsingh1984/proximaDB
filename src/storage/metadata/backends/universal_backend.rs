@@ -28,25 +28,37 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{MetadataProvider, UnifiedMetricsCollector};
 
 /// Protobuf operation for incremental collection storage
+///
+/// Represents a single metadata operation in the WAL (Write-Ahead Log).
 #[derive(Clone, Message)]
 pub struct ProtoIncrementalOperation {
+    /// Sequence number for ordering
     #[prost(uint64, tag = "1")]
     pub sequence: u64,
+    /// Unix timestamp
     #[prost(int64, tag = "2")]
     pub timestamp: i64,
+    /// Operation type (ProtoOperationType as i32)
     #[prost(int32, tag = "3")]
-    pub operation_type: i32, // ProtoOperationType as i32
+    pub operation_type: i32,
+    /// Collection identifier
     #[prost(string, tag = "4")]
     pub collection_id: String,
+    /// Collection data (if applicable)
     #[prost(message, optional, tag = "5")]
     pub collection_data: Option<Collection>,
 }
 
 /// Operation types for protobuf storage
+///
+/// Defines the type of metadata operation being performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtoOperationType {
+    /// Create a new collection
     Create = 1,
+    /// Update an existing collection
     Update = 2,
+    /// Delete a collection
     Delete = 3,
 }
 use crate::storage::traits::InternalCollectionProvider;
@@ -55,6 +67,8 @@ use crate::storage::transaction_coordinator::{
 };
 
 /// Configuration for filestore metadata backend
+///
+/// Defines storage and behavior settings for the metadata backend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UniversalMetadataConfig {
     /// Storage URL (file://, s3://, gcs://, adls://)
@@ -79,12 +93,15 @@ pub struct UniversalMetadataConfig {
     pub temp_dir: Option<String>,
 }
 
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
+#[allow(dead_code)]
 fn default_snapshot_threshold() -> u64 {
     1000
 }
+#[allow(dead_code)]
 fn default_keep_snapshots() -> usize {
     3
 }
@@ -104,32 +121,51 @@ impl Default for UniversalMetadataConfig {
 }
 
 /// Operation type for WAL-style logging
+///
+/// Defines the type of operation for write-ahead logging.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OperationType {
+    /// Create a new collection
     Create,
+    /// Update an existing collection
     Update,
+    /// Delete a collection
     Delete,
 }
 
 /// Incremental operation for WAL
+///
+/// Represents a single operation in the write-ahead log.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IncrementalOperation {
+    /// Sequence number
     pub sequence: u64,
+    /// Unix timestamp
     pub timestamp: i64,
+    /// Type of operation
     pub operation_type: OperationType,
+    /// Collection identifier
     pub collection_id: String,
+    /// Collection data (if applicable)
     pub collection_data: Option<Collection>,
 }
 
 /// Prepared write data for atomic operations
+///
+/// Holds data for an atomic write operation that can be committed or rolled back.
 #[derive(Debug)]
 struct PreparedWrite {
+    /// Temporary file path
     temp_path: PathBuf,
+    /// Final file path
     final_path: PathBuf,
+    /// Data to write
     data: Vec<u8>,
 }
 
 /// Filestore metadata backend implementation
+///
+/// A cloud-optimized metadata backend with WAL support, snapshots, and atomic operations.
 pub struct UniversalMetadataBackend {
     /// Configuration
     config: UniversalMetadataConfig,
@@ -159,7 +195,7 @@ pub struct UniversalMetadataBackend {
     atomic_coordinator: Arc<TransactionCoordinator>,
 
     /// Optional unified metrics collector (injected)
-    metrics_collector: Option<UnifiedMetricsCollector>,
+    _metrics_collector: Option<UnifiedMetricsCollector>,
 }
 
 impl UniversalMetadataBackend {
@@ -201,7 +237,7 @@ impl UniversalMetadataBackend {
             ops_since_snapshot: AtomicU64::new(0),
             atomic_operations_enabled: true,
             atomic_coordinator,
-            metrics_collector: None, // Metrics are optional and injected
+            _metrics_collector: None, // Metrics are optional and injected
         };
 
         // Initialize storage directories
@@ -266,7 +302,7 @@ impl UniversalMetadataBackend {
             ops_since_snapshot: AtomicU64::new(0),
             atomic_operations_enabled: false, // Disabled for testing
             atomic_coordinator,
-            metrics_collector: None, // Metrics are optional
+            _metrics_collector: None, // Metrics are optional
         };
 
         // Initialize storage directories
@@ -806,6 +842,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Execute atomic write across memtable, secondary index, and filestore
+    #[allow(dead_code)]
     async fn execute_atomic_write(
         &self,
         operation: &IncrementalOperation,
@@ -860,6 +897,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Check if we should create a checkpoint at restart
+    #[allow(dead_code)]
     async fn maybe_checkpoint_at_restart(&self) -> Result<()> {
         // Count operation files in the current directory
         let fs = self.get_fs()?;
@@ -922,6 +960,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Clean up operation files after successful snapshot
+    #[allow(dead_code)]
     async fn cleanup_operation_files(&self) -> Result<()> {
         let fs = self.get_fs()?;
         let ops_dir = self.base_path.join("current");
@@ -1071,6 +1110,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Convert protobuf collection to core Collection for fast in-memory index
+    #[allow(dead_code)]
     fn convert_proto_to_core(&self, proto: &Collection) -> Collection {
         // Proto Collection is already the core type - no conversion needed
         proto.clone()
@@ -1177,8 +1217,8 @@ impl UniversalMetadataBackend {
         self.execute_atomic_write(operation, prepared_data).await
     }
     */
-
     /// Serialize record to bytes for rollback
+    #[allow(dead_code)]
     fn serialize_record(&self, record: &Collection) -> Result<Vec<u8>> {
         // Proto-first: serialize directly to protobuf
         let mut buf = Vec::new();
@@ -1542,7 +1582,9 @@ impl MetadataProvider for UniversalMetadataBackend {
 
 /// Snapshot manager for periodic state persistence
 struct SnapshotManager {
+    #[allow(dead_code)]
     threshold: u64,
+    #[allow(dead_code)]
     keep_count: usize,
     base_path: PathBuf,
 }
@@ -1769,6 +1811,10 @@ mod tests {
             owner: Some("test".to_string()),
             storage_config: None,
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         // Create a proto collection
@@ -1811,7 +1857,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats, IndexingAlgorithm};
+    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -1859,6 +1905,10 @@ mod integration_tests {
                 owner: Some("test_user".to_string()),
                 storage_config: None,
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -1943,6 +1993,10 @@ mod integration_tests {
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,

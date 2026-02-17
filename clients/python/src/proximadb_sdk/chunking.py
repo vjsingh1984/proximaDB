@@ -11,61 +11,61 @@ Usage:
     # Basic chunking using strategy pattern
     chunker = TextChunker(ChunkingConfig(strategy=ChunkingStrategy.SEMANTIC))
     chunks = chunker.chunk_text("Your text here", source_id="doc_1")
-    
+
     # With pooling for better performance
     config = ChunkingConfig(strategy=ChunkingStrategy.RECURSIVE)
     with PooledChunkerContext(config) as chunker:
         chunks = chunker.chunk_text(text, source_id="doc_1")
-    
+
     # Create vector records from chunks and embeddings
     records = create_vector_records(chunks, embeddings, collection_metadata)
-    
+
     # Convenience function that combines chunking and embedding
     records = chunk_and_embed_text(text, source_id, embedding_provider, config)
 """
 
-import time
 import threading
-from typing import List, Dict, Any, Optional, Union, Callable
+import time
 from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # Import from chunking strategies for clean separation
 from .chunking_strategies import (
-    ChunkingStrategy,
     ChunkingConfig,
-    TextChunk,
+    ChunkingStrategy,
     ChunkingStrategyInterface,
+    TextChunk,
     get_chunking_strategy,
 )
 from .models import VectorRecord
-from .resource_pool import ResourcePool, ResourceFactory
+from .resource_pool import ResourceFactory, ResourcePool
 
 
 class ChunkerFactory(ResourceFactory):
     """Factory for creating TextChunker instances"""
-    
+
     def __init__(self, config: ChunkingConfig):
         self.config = config
-        
-    def create(self) -> 'TextChunker':
+
+    def create(self) -> "TextChunker":
         """Create new TextChunker instance"""
         return TextChunker(self.config)
-        
-    def validate(self, resource: 'TextChunker') -> bool:
+
+    def validate(self, resource: "TextChunker") -> bool:
         """Validate chunker is still usable"""
         return resource._strategy is not None
-        
-    def reset(self, resource: 'TextChunker') -> None:
+
+    def reset(self, resource: "TextChunker") -> None:
         """Reset chunker state if needed"""
         # TextChunker is stateless, no reset needed
         pass
-        
-    def dispose(self, resource: 'TextChunker') -> None:
+
+    def dispose(self, resource: "TextChunker") -> None:
         """Dispose of chunker"""
         # No special cleanup needed
         pass
-    
-    def destroy(self, resource: 'TextChunker') -> None:
+
+    def destroy(self, resource: "TextChunker") -> None:
         """Destroy resource - alias for dispose"""
         self.dispose(resource)
 
@@ -73,88 +73,89 @@ class ChunkerFactory(ResourceFactory):
 class ChunkerPool:
     """
     Thread-safe chunker instance pool using unified ResourcePool
-    
+
     Features:
     - Reuses TextChunker instances to avoid creation overhead
     - Thread-safe access with minimal lock contention
     - Auto-scaling pool size based on usage patterns
     - Performance monitoring and metrics via ResourcePool
-    
+
     Performance Benefit: 10-15% improvement for recursive/semantic chunking
     """
-    
+
     _instance = None
     _lock = threading.RLock()
-    
+
     def __init__(self, max_pool_size: int = 50):
         self.max_pool_size = max_pool_size
         self._pools: Dict[str, ResourcePool[TextChunker]] = {}
         self._pool_locks: Dict[str, threading.RLock] = defaultdict(threading.RLock)
-        
+
     @classmethod
-    def get_instance(cls) -> 'ChunkerPool':
+    def get_instance(cls) -> "ChunkerPool":
         """Get singleton instance of chunker pool"""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
-    
+
     def _get_pool_key(self, config: ChunkingConfig) -> str:
         """Generate pool key for chunker configuration"""
         return f"{config.strategy.value}_{config.chunk_size}_{config.chunk_overlap}_{config.min_chunk_size}"
-    
-    def _get_or_create_pool(self, config: ChunkingConfig) -> ResourcePool['TextChunker']:
+
+    def _get_or_create_pool(
+        self, config: ChunkingConfig
+    ) -> ResourcePool["TextChunker"]:
         """Get or create resource pool for config"""
         pool_key = self._get_pool_key(config)
-        
+
         with self._pool_locks[pool_key]:
             if pool_key not in self._pools:
                 factory = ChunkerFactory(config)
                 self._pools[pool_key] = ResourcePool(
-                    factory=factory,
-                    max_size=self.max_pool_size
+                    factory=factory, max_size=self.max_pool_size
                 )
             return self._pools[pool_key]
-    
-    def get_chunker(self, config: ChunkingConfig) -> 'TextChunker':
+
+    def get_chunker(self, config: ChunkingConfig) -> "TextChunker":
         """Get chunker instance from pool or create new one"""
         pool = self._get_or_create_pool(config)
         return pool.acquire()
-    
-    def return_chunker(self, chunker: 'TextChunker', config: ChunkingConfig):
+
+    def return_chunker(self, chunker: "TextChunker", config: ChunkingConfig):
         """Return chunker to pool for reuse"""
         pool = self._get_or_create_pool(config)
         pool.release(chunker)
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get pool performance statistics"""
         all_stats = {}
         for pool_key, pool in self._pools.items():
             metrics = pool.get_metrics()
             all_stats[pool_key] = {
-                'total_requests': metrics['total_acquisitions'],
-                'active': metrics['active_resources'],
-                'available': metrics['available_resources'],
-                'total_created': metrics['total_created'],
-                'health': pool.health_check()
+                "total_requests": metrics["total_acquisitions"],
+                "active": metrics["active_resources"],
+                "available": metrics["available_resources"],
+                "total_created": metrics["total_created"],
+                "health": pool.health_check(),
             }
-        
+
         # Calculate aggregate stats
         total_hits = sum(
-            stats['total_requests'] - stats['total_created'] 
+            stats["total_requests"] - stats["total_created"]
             for stats in all_stats.values()
         )
-        total_requests = sum(stats['total_requests'] for stats in all_stats.values())
+        total_requests = sum(stats["total_requests"] for stats in all_stats.values())
         hit_rate = (total_hits / total_requests * 100) if total_requests > 0 else 0
-        
+
         return {
-            'hit_rate_percent': hit_rate,
-            'total_requests': total_requests,
-            'active_pools': len(self._pools),
-            'pool_stats': all_stats
+            "hit_rate_percent": hit_rate,
+            "total_requests": total_requests,
+            "active_pools": len(self._pools),
+            "pool_stats": all_stats,
         }
-    
+
     def cleanup_unused_pools(self, max_idle_time: float = 300.0):
         """Clean up unused pools"""
         # ResourcePool handles its own cleanup via background maintenance
@@ -167,16 +168,16 @@ _global_chunker_pool = ChunkerPool()
 
 class PooledChunkerContext:
     """Context manager for using pooled chunker instances"""
-    
+
     def __init__(self, config: ChunkingConfig, pool: ChunkerPool = None):
         self.config = config
         self.pool = pool or _global_chunker_pool
         self.chunker = None
-    
-    def __enter__(self) -> 'TextChunker':
+
+    def __enter__(self) -> "TextChunker":
         self.chunker = self.pool.get_chunker(self.config)
         return self.chunker
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.chunker:
             self.pool.return_chunker(self.chunker, self.config)
@@ -185,22 +186,22 @@ class PooledChunkerContext:
 class TextChunker:
     """
     Main text chunking interface that delegates to strategy pattern
-    
+
     This class provides a clean interface that delegates all chunking logic
     to the appropriate strategy while maintaining compatibility with existing code.
     """
-    
+
     def __init__(self, config: Optional[ChunkingConfig] = None):
         """
         Initialize text chunker
-        
+
         Args:
             config: Chunking configuration (uses defaults if not provided)
         """
         self.config = config or ChunkingConfig()
         self._strategy = None
         self._initialize_strategy()
-    
+
     def _initialize_strategy(self):
         """Initialize the chunking strategy"""
         self._strategy = get_chunking_strategy(
@@ -211,17 +212,17 @@ class TextChunker:
             max_chunk_size=self.config.max_chunk_size,
             preserve_sentences=self.config.preserve_sentences,
             preserve_paragraphs=self.config.preserve_paragraphs,
-            preserve_code_blocks=getattr(self.config, 'preserve_code_blocks', False),
-            preserve_tables=getattr(self.config, 'preserve_tables', False),
+            preserve_code_blocks=getattr(self.config, "preserve_code_blocks", False),
+            preserve_tables=getattr(self.config, "preserve_tables", False),
             add_context=self.config.add_context,
             context_size=self.config.context_size,
         )
-    
+
     def chunk_text(
         self,
         text: str,
         source_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> List[TextChunk]:
         """
         Chunk text using the configured strategy
@@ -242,43 +243,49 @@ class TextChunker:
             source_id = "doc"
 
         return self._strategy.chunk(text, source_id, metadata)
-    
+
     def add_context_to_chunks(
-        self,
-        chunks: List[TextChunk],
-        context_size: int = 50
+        self, chunks: List[TextChunk], context_size: int = 50
     ) -> List[TextChunk]:
         """
         Add context from surrounding chunks
-        
+
         Args:
             chunks: List of chunks to enhance
             context_size: Number of characters to include from adjacent chunks
-            
+
         Returns:
             Enhanced chunks with context metadata
         """
         if not chunks or len(chunks) <= 1:
             return chunks
-        
+
         enhanced_chunks = []
-        
+
         for i, chunk in enumerate(chunks):
             # Add context from previous chunk
             if i > 0:
-                prev_text = chunks[i-1].text
-                prev_context = prev_text[-context_size:] if len(prev_text) > context_size else prev_text
+                prev_text = chunks[i - 1].text
+                prev_context = (
+                    prev_text[-context_size:]
+                    if len(prev_text) > context_size
+                    else prev_text
+                )
                 chunk.metadata["prev_context"] = prev_context
-            
+
             # Add context from next chunk
             if i < len(chunks) - 1:
-                next_text = chunks[i+1].text
-                next_context = next_text[:context_size] if len(next_text) > context_size else next_text
+                next_text = chunks[i + 1].text
+                next_context = (
+                    next_text[:context_size]
+                    if len(next_text) > context_size
+                    else next_text
+                )
                 chunk.metadata["next_context"] = next_context
-            
+
             chunk.metadata["has_context"] = True
             enhanced_chunks.append(chunk)
-        
+
         return enhanced_chunks
 
 
@@ -290,15 +297,15 @@ def create_vector_records(
     model_id: Optional[str] = None,
     processing_config: Optional[Dict[str, Any]] = None,
     source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None
+    source_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[VectorRecord]:
     """
     Create VectorRecord objects from chunks and embeddings with ultra-efficient enum packing
-    
+
     This function combines the results of chunking and embedding into
     the format needed for ProximaDB storage, leveraging the new gRPC source content
     fields and 75% storage savings through enum packing.
-    
+
     Args:
         chunks: List of text chunks
         embeddings: List of embedding vectors (must match chunks length)
@@ -306,10 +313,10 @@ def create_vector_records(
         filterable_fields: List of metadata fields to mark as filterable
         model_id: Optional embedding model ID for tracking
         processing_config: Optional processing configuration
-        
+
     Returns:
         List of VectorRecord objects ready for insertion
-        
+
     Raises:
         ValueError: If chunks and embeddings lengths don't match
     """
@@ -318,25 +325,25 @@ def create_vector_records(
             f"Chunks ({len(chunks)}) and embeddings ({len(embeddings)}) "
             f"length mismatch"
         )
-    
+
     collection_metadata = collection_metadata or {}
     filterable_fields = set(filterable_fields or [])
-    
+
     # Default filterable fields
-    default_filterable = {
-        "source_id", "chunk_index", "chunk_type", "chunking_strategy"
-    }
+    default_filterable = {"source_id", "chunk_index", "chunk_type", "chunking_strategy"}
     filterable_fields.update(default_filterable)
-    
+
     records = []
-    
+
     for chunk, embedding in zip(chunks, embeddings):
         # Combine all metadata
         metadata = {
             **collection_metadata,
             **chunk.metadata,
             "source_id": chunk.metadata.get("source_id", chunk.chunk_id.split("_")[0]),
-            "text_preview": chunk.text[:100] + "..." if len(chunk.text) > 100 else chunk.text,
+            "text_preview": (
+                chunk.text[:100] + "..." if len(chunk.text) > 100 else chunk.text
+            ),
             "embedding_dimension": len(embedding),
         }
 
@@ -345,18 +352,18 @@ def create_vector_records(
             metadata["source_type"] = source_type
         if source_metadata:
             metadata.update(source_metadata)
-        
+
         # Separate filterable and non-filterable metadata
         filterable_metadata = {
-            k: v for k, v in metadata.items()
+            k: v
+            for k, v in metadata.items()
             if k in filterable_fields and isinstance(v, (str, int, float, bool))
         }
-        
+
         non_filterable_metadata = {
-            k: v for k, v in metadata.items()
-            if k not in filterable_fields
+            k: v for k, v in metadata.items() if k not in filterable_fields
         }
-        
+
         # Create vector record with optimized structure
         # Merge filterable and non-filterable metadata (no nesting allowed)
         all_metadata = {**filterable_metadata, **non_filterable_metadata}
@@ -365,11 +372,11 @@ def create_vector_records(
             id=chunk.chunk_id,
             vector=embedding,
             metadata=all_metadata,
-            source=chunk.text  # Store original chunk text in source field for RAG
+            source=chunk.text,  # Store original chunk text in source field for RAG
         )
-        
+
         records.append(record)
-    
+
     return records
 
 
@@ -381,15 +388,15 @@ def chunk_and_embed_text(
     metadata: Optional[Dict[str, Any]] = None,
     filterable_fields: Optional[List[str]] = None,
     model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None
+    processing_config: Optional[Dict[str, Any]] = None,
 ) -> List[VectorRecord]:
     """
     Convenience function that chunks text and generates embeddings with ultra-efficient storage
-    
+
     This is a helper that combines chunking and embedding in one call,
     but still maintains separation of concerns internally. Now leverages
     the new gRPC source content fields and enum packing for 75% storage savings.
-    
+
     Args:
         text: Text to process
         source_id: Source document identifier
@@ -399,7 +406,7 @@ def chunk_and_embed_text(
         filterable_fields: Fields to mark as filterable
         model_id: Optional embedding model ID for tracking
         processing_config: Optional processing configuration
-        
+
     Returns:
         List of VectorRecord objects with optimized source content storage
     """
@@ -407,11 +414,13 @@ def chunk_and_embed_text(
     config = chunking_config or ChunkingConfig()
     with PooledChunkerContext(config) as chunker:
         chunks = chunker.chunk_text(text, source_id, metadata)
-    
+
     # 2. Generate embeddings with processing metadata for ultra-efficient storage
     chunk_texts = [chunk.text for chunk in chunks]
-    if hasattr(embedding_provider, 'embed_texts_with_metadata'):
-        embeddings, embedding_metadata = embedding_provider.embed_texts_with_metadata(chunk_texts)
+    if hasattr(embedding_provider, "embed_texts_with_metadata"):
+        embeddings, embedding_metadata = embedding_provider.embed_texts_with_metadata(
+            chunk_texts
+        )
         # Merge with existing processing config
         if processing_config:
             processing_config.update(embedding_metadata)
@@ -420,28 +429,30 @@ def chunk_and_embed_text(
     else:
         # Fallback for providers that don't support metadata
         embeddings = embedding_provider.embed_texts(chunk_texts)
-    
+
     # 3. Create vector records with ultra-efficient enum packing
     records = create_vector_records(
         chunks,
-        embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings,
+        embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings,
         metadata,
         filterable_fields,
         model_id=model_id,
-        processing_config=processing_config
+        processing_config=processing_config,
     )
-    
+
     return records
 
 
 # Backward compatibility functions (legacy API from old chunking.py)
-def create_chunker(strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None, **kwargs) -> TextChunker:
+def create_chunker(
+    strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None, **kwargs
+) -> TextChunker:
     """Create a text chunker instance (backward compatibility)
-    
+
     Args:
         strategy: Strategy name, ChunkingStrategy enum, or ChunkingConfig object
         **kwargs: Additional configuration parameters if strategy is a string/enum
-    
+
     Returns:
         TextChunker instance
     """
@@ -459,7 +470,9 @@ def create_chunker(strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None
         return TextChunker(config)
 
 
-def create_enhanced_semantic_chunker(enable_caching: bool = True, **kwargs) -> TextChunker:
+def create_enhanced_semantic_chunker(
+    enable_caching: bool = True, **kwargs
+) -> TextChunker:
     """Create an enhanced semantic chunker (alias for create_chunker with semantic strategy)
 
     Args:
@@ -470,8 +483,8 @@ def create_enhanced_semantic_chunker(enable_caching: bool = True, **kwargs) -> T
         TextChunker instance configured for semantic chunking
     """
     # Add enable_caching to kwargs if not already present
-    if 'enable_caching' not in kwargs:
-        kwargs['enable_caching'] = enable_caching
+    if "enable_caching" not in kwargs:
+        kwargs["enable_caching"] = enable_caching
 
     # Create chunker with semantic strategy
     return create_chunker(ChunkingStrategy.SEMANTIC, **kwargs)
@@ -481,7 +494,7 @@ def chunk_by_sentences(
     text: str,
     chunk_size: int = 512,
     document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> List[TextChunk]:
     """
     Chunk text by sentences.
@@ -495,10 +508,7 @@ def chunk_by_sentences(
     Returns:
         List of TextChunk objects
     """
-    config = ChunkingConfig(
-        strategy=ChunkingStrategy.SENTENCE,
-        chunk_size=chunk_size
-    )
+    config = ChunkingConfig(strategy=ChunkingStrategy.SENTENCE, chunk_size=chunk_size)
     chunker = TextChunker(config)
     source_id = document_id or "doc"
     return chunker.chunk_text(text, source_id, metadata)
@@ -508,7 +518,7 @@ def chunk_by_paragraphs(
     text: str,
     max_size: int = 1000,
     document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> List[TextChunk]:
     """
     Chunk text by paragraphs.
@@ -522,10 +532,7 @@ def chunk_by_paragraphs(
     Returns:
         List of TextChunk objects
     """
-    config = ChunkingConfig(
-        strategy=ChunkingStrategy.PARAGRAPH,
-        chunk_size=max_size
-    )
+    config = ChunkingConfig(strategy=ChunkingStrategy.PARAGRAPH, chunk_size=max_size)
     chunker = TextChunker(config)
     source_id = document_id or "doc"
     return chunker.chunk_text(text, source_id, metadata)
@@ -536,7 +543,7 @@ def chunk_sliding_window(
     window_size: int = 512,
     overlap: int = 128,
     document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> List[TextChunk]:
     """
     Chunk text using sliding window.
@@ -554,7 +561,7 @@ def chunk_sliding_window(
     config = ChunkingConfig(
         strategy=ChunkingStrategy.SLIDING_WINDOW,
         chunk_size=window_size,
-        chunk_overlap=overlap
+        chunk_overlap=overlap,
     )
     chunker = TextChunker(config)
     source_id = document_id or "doc"
@@ -568,7 +575,7 @@ def prepare_vector_records(
     source_metadata: Optional[Dict[str, Any]] = None,
     filterable_fields: Optional[List[str]] = None,
     chunk_metadata_fn: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
-    preserve_embedding_metadata: bool = False
+    preserve_embedding_metadata: bool = False,
 ) -> List[VectorRecord]:
     """
     Prepare vector records from embedding service response with flexible metadata handling.
@@ -650,8 +657,15 @@ def prepare_vector_records(
 
     # Always filterable: common high-value fields
     always_filterable = {
-        "text", "chunk_index", "source_type",
-        "category", "author", "tags", "brand", "sku", "product_id"
+        "text",
+        "chunk_index",
+        "source_type",
+        "category",
+        "author",
+        "tags",
+        "brand",
+        "sku",
+        "product_id",
     }
     filterable_set.update(always_filterable)
 
@@ -695,7 +709,7 @@ def prepare_vector_records(
                             metadata[f"custom_{key}"] = value
             except Exception as e:
                 # Log warning but don't break processing
-                logger = __import__('logging').getLogger(__name__)
+                logger = __import__("logging").getLogger(__name__)
                 logger.warning(f"Custom metadata function failed for chunk {idx}: {e}")
 
         # 4. Embedding service metadata (if preserving)
@@ -728,11 +742,7 @@ def prepare_vector_records(
         metadata["indexed_at"] = datetime.now(timezone.utc).isoformat()
 
         # Create VectorRecord
-        record = VectorRecord(
-            id=chunk_id,
-            vector=embedding,
-            metadata=metadata
-        )
+        record = VectorRecord(id=chunk_id, vector=embedding, metadata=metadata)
 
         records.append(record)
 
@@ -752,27 +762,23 @@ def cleanup_chunker_pool():
 # Re-export key components
 __all__ = [
     # Core classes
-    'TextChunker',
-    'ChunkerPool',
-    'PooledChunkerContext',
-    
+    "TextChunker",
+    "ChunkerPool",
+    "PooledChunkerContext",
     # Strategy pattern imports
-    'ChunkingStrategy',
-    'ChunkingConfig', 
-    'TextChunk',
-    
+    "ChunkingStrategy",
+    "ChunkingConfig",
+    "TextChunk",
     # Main utility functions
-    'create_vector_records',
-    'chunk_and_embed_text',
-    
+    "create_vector_records",
+    "chunk_and_embed_text",
     # Backward compatibility functions
-    'create_chunker',
-    'chunk_by_sentences',
-    'chunk_by_paragraphs',
-    'chunk_sliding_window',
-    'prepare_vector_records',
-    
+    "create_chunker",
+    "chunk_by_sentences",
+    "chunk_by_paragraphs",
+    "chunk_sliding_window",
+    "prepare_vector_records",
     # Pool utilities
-    'get_chunker_pool_stats',
-    'cleanup_chunker_pool',
+    "get_chunker_pool_stats",
+    "cleanup_chunker_pool",
 ]

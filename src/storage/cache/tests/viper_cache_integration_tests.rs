@@ -5,10 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
-    use crate::storage::cache::specialized::{
-        MetadataStore,
-        metadata_store::{ColumnStatistics, ParquetFileMetadata, ParquetSchemaMapping},
+    use crate::storage::cache::specialized::metadata_store::{
+        ColumnStatistics, MetadataStore, ParquetFileMetadata, ParquetSchemaMapping,
     };
     use std::collections::HashMap;
     use std::sync::Arc;

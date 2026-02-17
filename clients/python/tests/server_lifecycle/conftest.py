@@ -11,7 +11,7 @@ def pytest_configure(config):
     """Register custom markers"""
     config.addinivalue_line(
         "markers",
-        "server_lifecycle: marks tests that manage server process (start/stop/restart)"
+        "server_lifecycle: marks tests that manage server process (start/stop/restart)",
     )
 
 

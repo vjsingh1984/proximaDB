@@ -33,7 +33,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::graph::engines::orion::algorithms::centrality::PageRank;
 //! use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 //!

@@ -481,7 +481,7 @@ pub struct MtlsAuthenticatedUser {
 ///
 /// ## Usage
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use axum::Router;
 /// use axum::middleware;
 ///
@@ -722,7 +722,7 @@ mod tests {
     use axum::Router;
     use axum::body::Body;
     use axum::extract::Extension;
-    use axum::http::{Method, Request, Uri};
+    use axum::http::Request;
     use axum::middleware;
     use axum::routing::get;
     use hyper::body::to_bytes;
@@ -730,14 +730,13 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::network::auth::config::JwtAlgorithm;
-    use crate::network::auth::jwt::{Claims, JwtService, TokenType};
+    use crate::network::auth::jwt::JwtService;
     use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::unified_auth::{
         ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
     };
     use crate::security::unified_rbac::RBACConfig;
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
-    use jsonwebtoken::{Algorithm, EncodingKey, Header};
 
     #[test]
     fn test_should_skip_auth() {

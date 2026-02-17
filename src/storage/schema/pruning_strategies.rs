@@ -418,7 +418,7 @@ impl CompositePruner {
         query_vector: Option<(&[f32], f32)>,
         predicates: Option<&[(&str, ScalarPredicate)]>,
         spatial_range: Option<&SpatialRange>,
-        id_filter: Option<&[&str]>,
+        _id_filter: Option<&[&str]>,
     ) -> PruningResult {
         let mut result = PruningResult::include_all(self.total_rowgroups);
 

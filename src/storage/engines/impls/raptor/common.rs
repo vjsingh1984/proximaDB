@@ -11,10 +11,6 @@ pub use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
-fn default_vector_count() -> usize {
-    0
-}
-
 /// Primary RowGroup structure used throughout RAPTOR
 /// Unified RowGroup structure consolidating all variants
 ///
@@ -802,7 +798,7 @@ impl RowGroupBloomFilter {
             hash_algorithm: HashAlgorithm::Murmur3,
         };
 
-        let filter = BloomFilterFactory::create(&config);
+        let _filter = BloomFilterFactory::create(&config);
 
         // TODO: Restore state from self.bits (optimization needed)
         // For now, this is a simplified implementation
@@ -1221,7 +1217,8 @@ impl InterCentroidMatrix {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let config = StorageQuantizationConfig::default();
 
-        let quant_engine = StorageQuantizationEngine::new(unified_engine, distance_compute, config);
+        let _quant_engine =
+            StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
         // Prepare quantized values
         let mut quantized_values = Vec::with_capacity(pairs.len());
@@ -1245,7 +1242,7 @@ impl InterCentroidMatrix {
 
         // Create quantized vector wrapper for unified engine processing
         use crate::compute::quantization::unified::QuantizationMetadata;
-        let quantized_vector = QuantizedVector {
+        let _quantized_vector = QuantizedVector {
             data: quantized_values
                 .iter()
                 .flat_map(|&v| v.to_le_bytes())
@@ -1896,7 +1893,7 @@ impl RowGroupBloomFilter {
     ) -> Vec<Vec<u16>> {
         let mut results = Vec::with_capacity(vector_ids.len());
 
-        for vector_id in vector_ids {
+        for _vector_id in vector_ids {
             let mut candidates = Vec::new();
 
             // Check each rowgroup's bloom filter offset (actual bloom filter needs to be loaded)
@@ -1936,7 +1933,7 @@ impl RowGroupBloomFilter {
 
         // Process in hardware-optimized batches
         for chunk in vector_ids.chunks(batch_size) {
-            for id in chunk {
+            for _id in chunk {
                 let mut candidates = Vec::new();
 
                 for rowgroup in &footer.file_metadata.row_groups {

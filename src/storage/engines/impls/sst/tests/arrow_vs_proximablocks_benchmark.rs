@@ -187,6 +187,8 @@ mod tests {
                     collection_id: collection_id.clone(),
                     ..Default::default()
                 },
+                user_context: None,
+                tenant_context: None,
             };
 
             let search_start = Instant::now();

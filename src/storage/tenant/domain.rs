@@ -38,17 +38,25 @@ pub struct DomainContext {
 
 /// Domain-specific entity store
 pub struct DomainEntityStore {
+    #[allow(dead_code)]
     domain_id: String,
+    #[allow(dead_code)]
     tenant_id: String,
+    #[allow(dead_code)]
     entities: Arc<DashMap<String, Entity>>,
+    #[allow(dead_code)]
     entity_headers: Arc<DashMap<String, EntityHeader>>,
+    #[allow(dead_code)]
     business_context: BusinessContext,
 }
 
 /// Business logic engine for domain-specific operations
 pub struct DomainLogicEngine {
+    #[allow(dead_code)]
     domain_id: String,
+    #[allow(dead_code)]
     business_rules: Vec<BusinessRule>,
+    #[allow(dead_code)]
     optimization_rules: Vec<OptimizationRule>,
 }
 
@@ -259,7 +267,7 @@ impl DomainEntityStore {
 }
 
 impl DomainLogicEngine {
-    fn new(domain_id: String, business_context: &BusinessContext) -> Self {
+    fn new(domain_id: String, _business_context: &BusinessContext) -> Self {
         Self {
             domain_id,
             business_rules: Vec::new(), // Will be populated based on business context
@@ -359,8 +367,8 @@ pub type OptimizationRule = String; // Will be enhanced in future phases
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::tenant::PerformanceRequirements;
     use crate::storage::tenant::context::DataSensitivityLevel;
-    use crate::storage::tenant::{Industry, PerformanceRequirements};
 
     #[tokio::test]
     async fn test_domain_creation() {

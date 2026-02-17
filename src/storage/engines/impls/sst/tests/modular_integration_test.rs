@@ -26,8 +26,7 @@
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -35,7 +34,6 @@ mod tests {
     use crate::storage::engines::impls::sst::{
         SstConfig,
         blocks::SstRecord,
-        collections::CollectionSizeInfo,
         core::SstEngine,
         flush::{FlushCoordinator, FlushOperations, FlushOptimizer},
         search::{SearchCoordinator, SearchOperations, SearchOptimizer},
@@ -242,6 +240,8 @@ mod tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let search_result = engine.search_vectors_unified(&ctx).await;

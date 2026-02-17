@@ -81,34 +81,52 @@ impl super::GraphOperationsService {
         // PULSAR and QUASAR are experimental and log warnings
         let engine_impl = match engine_type_str.to_ascii_uppercase().as_str() {
             "PULSAR" => {
-                // WARNING: PULSAR is experimental
-                tracing::warn!(
-                    "PULSAR engine requested for graph '{}' - PULSAR is EXPERIMENTAL. \
-                     Cross-shard queries may be incomplete. For production, use ORION.",
-                    graph_id
-                );
-                let cfg = crate::graph::engines::pulsar::PulsarConfig::default();
-                let pulsar = crate::graph::engines::pulsar::PulsarGraphEngine::new(cfg)?;
-                crate::graph::engines::GraphEngineImpl::Pulsar(pulsar)
+                #[cfg(feature = "distributed-graph")]
+                {
+                    // WARNING: PULSAR is experimental
+                    tracing::warn!(
+                        "PULSAR engine requested for graph '{}' - PULSAR is EXPERIMENTAL. \
+                         Cross-shard queries may be incomplete. For production, use ORION.",
+                        graph_id
+                    );
+                    let cfg = crate::graph::engines::pulsar::PulsarConfig::default();
+                    let pulsar = crate::graph::engines::pulsar::PulsarGraphEngine::new(cfg)?;
+                    crate::graph::engines::GraphEngineImpl::Pulsar(pulsar)
+                }
+                #[cfg(not(feature = "distributed-graph"))]
+                {
+                    return Err(crate::core::error::ProximaDBError::NotImplemented(
+                        "PULSAR engine requires 'distributed-graph' feature".to_string(),
+                    ));
+                }
             }
             "QUASAR" => {
-                // WARNING: QUASAR is experimental
-                tracing::warn!(
-                    "QUASAR engine requested for graph '{}' - QUASAR is EXPERIMENTAL. \
-                     No WAL persistence, data loss possible. For production, use ORION.",
-                    graph_id
-                );
-                // Derive a graph-scoped cold tier path under the configured storage root
-                let mut cfg = crate::graph::engines::quasar::QuasarConfig::default();
-                if storage_root_url.starts_with("file://") {
-                    let base_path = storage_root_url.trim_start_matches("file://");
-                    cfg.cold_tier_path = std::path::PathBuf::from(base_path)
-                        .join("graphs")
-                        .join(graph_id)
-                        .join("quasar_cold");
+                #[cfg(feature = "tiered-graph")]
+                {
+                    // WARNING: QUASAR is experimental
+                    tracing::warn!(
+                        "QUASAR engine requested for graph '{}' - QUASAR is EXPERIMENTAL. \
+                         No WAL persistence, data loss possible. For production, use ORION.",
+                        graph_id
+                    );
+                    // Derive a graph-scoped cold tier path under the configured storage root
+                    let mut cfg = crate::graph::engines::quasar::QuasarConfig::default();
+                    if storage_root_url.starts_with("file://") {
+                        let base_path = storage_root_url.trim_start_matches("file://");
+                        cfg.cold_tier_path = std::path::PathBuf::from(base_path)
+                            .join("graphs")
+                            .join(graph_id)
+                            .join("quasar_cold");
+                    }
+                    let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
+                    crate::graph::engines::GraphEngineImpl::Quasar(quasar)
                 }
-                let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
-                crate::graph::engines::GraphEngineImpl::Quasar(quasar)
+                #[cfg(not(feature = "tiered-graph"))]
+                {
+                    return Err(crate::core::error::ProximaDBError::NotImplemented(
+                        "QUASAR engine requires 'tiered-graph' feature".to_string(),
+                    ));
+                }
             }
             _ => {
                 let orion = crate::graph::OrionGraphEngine::with_persistence_for_graph(

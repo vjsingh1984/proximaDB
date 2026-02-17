@@ -4,22 +4,30 @@ Unit tests for embedding providers
 Tests the base classes, factory, and simulated provider without requiring
 external model dependencies.
 """
-import pytest
+
+from unittest.mock import MagicMock, Mock, patch
+
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
+import pytest
 
 from proximadb_sdk.embedding_providers.core import (
     BaseEmbeddingProvider as EmbeddingProvider,
-    ProviderConfig as EmbeddingConfig,
-    ProviderRegistry
 )
-from proximadb_sdk.embedding_providers.providers.testing.simulated import SimulatedEmbeddingProvider
+from proximadb_sdk.embedding_providers.core import ProviderConfig as EmbeddingConfig
+from proximadb_sdk.embedding_providers.core import (
+    ProviderRegistry,
+)
+from proximadb_sdk.embedding_providers.providers.testing.simulated import (
+    SimulatedEmbeddingProvider,
+)
+
 
 # For backward compatibility with old tests, alias get_provider as factory
 class EmbeddingProviderFactory:
     @staticmethod
     def create(provider_name, **kwargs):
         from proximadb_sdk.embedding_providers import get_provider
+
         return get_provider(provider_name, **kwargs)
 
 
@@ -30,10 +38,7 @@ class TestEmbeddingConfig:
         """Test basic configuration creation"""
         from proximadb_sdk.embedding_providers.core import ModelMetadata
 
-        model = ModelMetadata(
-            name="test-model",
-            dimension=384
-        )
+        model = ModelMetadata(name="test-model", dimension=384)
         config = EmbeddingConfig(model=model)
 
         assert config.model.name == "test-model"
@@ -48,18 +53,14 @@ class TestEmbeddingConfig:
         """Test configuration with custom values"""
         from proximadb_sdk.embedding_providers.core import ModelMetadata
 
-        model = ModelMetadata(
-            name="custom-model",
-            dimension=768,
-            max_length=1024
-        )
+        model = ModelMetadata(name="custom-model", dimension=768, max_length=1024)
         config = EmbeddingConfig(
             model=model,
             batch_size=64,
             normalize=False,
             device="cuda",
             cache_dir="/tmp/cache",
-            extra={"seed": 42}
+            extra={"seed": 42},
         )
 
         assert config.model.name == "custom-model"
@@ -155,10 +156,7 @@ class TestSimulatedEmbeddingProvider:
         from proximadb_sdk.embedding_providers.core import ModelMetadata
 
         model = ModelMetadata(name="test-simulated", dimension=128)
-        config = EmbeddingConfig(
-            model=model,
-            extra={'seed': 123, 'method': 'hash'}
-        )
+        config = EmbeddingConfig(model=model, extra={"seed": 123, "method": "hash"})
         provider = SimulatedEmbeddingProvider(config)
 
         assert provider.config.model.name == "test-simulated"
@@ -172,9 +170,7 @@ class TestSimulatedEmbeddingProvider:
 
         model = ModelMetadata(name="simulated", dimension=128)
         config = EmbeddingConfig(
-            model=model,
-            normalize=True,
-            extra={'seed': 42, 'method': 'hash'}
+            model=model, normalize=True, extra={"seed": 42, "method": "hash"}
         )
         provider = SimulatedEmbeddingProvider(config)
 
@@ -196,14 +192,13 @@ class TestSimulatedEmbeddingProvider:
     def test_embed_texts_different_seeds(self):
         """Test different seeds produce different results"""
         from proximadb_sdk.embedding_providers.core import ModelMetadata
+
         texts = ["test text"]
 
         # Seed 42
         model1 = ModelMetadata(name="sim", dimension=64)
         config1 = EmbeddingConfig(
-            model=model1,
-            normalize=False,
-            extra={'seed': 42, 'method': 'hash'}
+            model=model1, normalize=False, extra={"seed": 42, "method": "hash"}
         )
         provider1 = SimulatedEmbeddingProvider(config1)
         emb1 = provider1.embed(texts)
@@ -211,9 +206,7 @@ class TestSimulatedEmbeddingProvider:
         # Seed 123
         model2 = ModelMetadata(name="sim", dimension=64)
         config2 = EmbeddingConfig(
-            model=model2,
-            normalize=False,
-            extra={'seed': 123, 'method': 'hash'}
+            model=model2, normalize=False, extra={"seed": 123, "method": "hash"}
         )
         provider2 = SimulatedEmbeddingProvider(config2)
         emb2 = provider2.embed(texts)
@@ -230,6 +223,7 @@ class TestSimulatedEmbeddingProvider:
     def test_get_dimension(self):
         """Test dimension property"""
         from proximadb_sdk.embedding_providers.core import ModelMetadata
+
         model = ModelMetadata(name="sim", dimension=256)
         config = EmbeddingConfig(model=model)
         provider = SimulatedEmbeddingProvider(config)
@@ -238,11 +232,9 @@ class TestSimulatedEmbeddingProvider:
     def test_get_model_info(self):
         """Test configuration access"""
         from proximadb_sdk.embedding_providers.core import ModelMetadata
+
         model = ModelMetadata(name="test-simulated", dimension=64)
-        config = EmbeddingConfig(
-            model=model,
-            extra={'seed': 42, 'method': 'hash'}
-        )
+        config = EmbeddingConfig(model=model, extra={"seed": 42, "method": "hash"})
         provider = SimulatedEmbeddingProvider(config)
 
         assert provider.config.model.name == "test-simulated"
@@ -253,11 +245,10 @@ class TestSimulatedEmbeddingProvider:
     def test_similarity_calculation(self):
         """Test similarity between embeddings"""
         from proximadb_sdk.embedding_providers.core import ModelMetadata
+
         model = ModelMetadata(name="sim", dimension=64)
         config = EmbeddingConfig(
-            model=model,
-            normalize=True,
-            extra={'seed': 42, 'method': 'hash'}
+            model=model, normalize=True, extra={"seed": 42, "method": "hash"}
         )
         provider = SimulatedEmbeddingProvider(config)
 
@@ -280,9 +271,7 @@ class TestSimulatedEmbeddingProvider:
         # With normalization
         model1 = ModelMetadata(name="sim", dimension=64)
         config1 = EmbeddingConfig(
-            model=model1,
-            normalize=True,
-            extra={'seed': 42, 'method': 'hash'}
+            model=model1, normalize=True, extra={"seed": 42, "method": "hash"}
         )
         provider1 = SimulatedEmbeddingProvider(config1)
         emb1 = provider1.embed(["test"])[0]
@@ -291,9 +280,7 @@ class TestSimulatedEmbeddingProvider:
         # Without normalization
         model2 = ModelMetadata(name="sim", dimension=64)
         config2 = EmbeddingConfig(
-            model=model2,
-            normalize=False,
-            extra={'seed': 42, 'method': 'hash'}
+            model=model2, normalize=False, extra={"seed": 42, "method": "hash"}
         )
         provider2 = SimulatedEmbeddingProvider(config2)
         emb2 = provider2.embed(["test"])[0]
@@ -305,19 +292,13 @@ class TestSimulatedEmbeddingProvider:
 
         # Provider with seed 42
         model1 = ModelMetadata(name="sim", dimension=64)
-        config1 = EmbeddingConfig(
-            model=model1,
-            extra={'seed': 42, 'method': 'hash'}
-        )
+        config1 = EmbeddingConfig(model=model1, extra={"seed": 42, "method": "hash"})
         provider1 = SimulatedEmbeddingProvider(config1)
         emb1 = provider1.embed(["test"])[0]
 
         # Another provider with seed 42
         model2 = ModelMetadata(name="sim", dimension=64)
-        config2 = EmbeddingConfig(
-            model=model2,
-            extra={'seed': 42, 'method': 'hash'}
-        )
+        config2 = EmbeddingConfig(model=model2, extra={"seed": 42, "method": "hash"})
         provider2 = SimulatedEmbeddingProvider(config2)
         emb2 = provider2.embed(["test"])[0]
 
@@ -326,10 +307,7 @@ class TestSimulatedEmbeddingProvider:
 
         # Different seed should produce different embeddings
         model3 = ModelMetadata(name="sim", dimension=64)
-        config3 = EmbeddingConfig(
-            model=model3,
-            extra={'seed': 123, 'method': 'hash'}
-        )
+        config3 = EmbeddingConfig(model=model3, extra={"seed": 123, "method": "hash"})
         provider3 = SimulatedEmbeddingProvider(config3)
         emb3 = provider3.embed(["test"])[0]
 
@@ -356,10 +334,7 @@ class TestEmbeddingProviderFactory:
 
     def test_create_simulated_provider(self):
         """Test creating simulated provider through factory"""
-        provider = EmbeddingProviderFactory.create(
-            "simulated",
-            dimension=128
-        )
+        provider = EmbeddingProviderFactory.create("simulated", dimension=128)
 
         assert isinstance(provider, SimulatedEmbeddingProvider)
         assert provider.config.model.dimension == 128
@@ -377,7 +352,10 @@ class TestEmbeddingProviderFactory:
         with pytest.raises(ValueError) as exc_info:
             EmbeddingProviderFactory.create("unknown-provider")
 
-        assert "Unknown" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
+        assert (
+            "Unknown" in str(exc_info.value)
+            or "not found" in str(exc_info.value).lower()
+        )
 
     def test_dimension_override(self):
         """Test dimension can be overridden"""
@@ -392,17 +370,14 @@ class TestEmbeddingIntegration:
     def test_end_to_end_workflow(self):
         """Test complete workflow: create provider, embed, calculate similarity"""
         # Create provider
-        provider = EmbeddingProviderFactory.create(
-            "simulated",
-            dimension=128
-        )
+        provider = EmbeddingProviderFactory.create("simulated", dimension=128)
 
         # Embed some texts
         texts = [
             "machine learning is fascinating",
             "deep learning with neural networks",
             "python programming language",
-            "machine learning algorithms"
+            "machine learning algorithms",
         ]
 
         embeddings = provider.embed(texts)
@@ -417,10 +392,7 @@ class TestEmbeddingIntegration:
 
     def test_batch_processing(self):
         """Test batch processing of many texts"""
-        provider = EmbeddingProviderFactory.create(
-            "simulated",
-            dimension=64
-        )
+        provider = EmbeddingProviderFactory.create("simulated", dimension=64)
 
         # Create large batch
         texts = [f"Document number {i}" for i in range(1000)]

@@ -49,12 +49,14 @@ impl SyslogAdapter {
     }
 
     /// Parse a syslog message
+    #[allow(dead_code)]
     fn parse_message(&self, msg: &str) -> Option<LogEntry> {
         // Try RFC 5424 first, then RFC 3164
         self.parse_rfc5424(msg).or_else(|| self.parse_rfc3164(msg))
     }
 
     /// Parse RFC 5424 syslog
+    #[allow(dead_code)]
     fn parse_rfc5424(&self, msg: &str) -> Option<LogEntry> {
         if !msg.starts_with('<') {
             return None;
@@ -90,6 +92,7 @@ impl SyslogAdapter {
     }
 
     /// Parse RFC 3164 syslog
+    #[allow(dead_code)]
     fn parse_rfc3164(&self, msg: &str) -> Option<LogEntry> {
         if !msg.starts_with('<') {
             return None;
@@ -115,6 +118,7 @@ impl SyslogAdapter {
     }
 
     /// Convert syslog PRI to severity
+    #[allow(dead_code)]
     fn pri_to_severity(&self, pri: u8) -> Severity {
         match pri & 0x07 {
             0 | 1 | 2 => Severity::Fatal,

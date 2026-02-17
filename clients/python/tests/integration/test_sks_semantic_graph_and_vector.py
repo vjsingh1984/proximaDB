@@ -1,10 +1,9 @@
 import os
 import uuid
-import pytest
-
 from typing import List
 
 import numpy as np
+import pytest
 
 from proximadb_sdk import ProximaDBClient, VectorRecord
 
@@ -70,12 +69,18 @@ def test_semantic_knowledge_store_graph_and_vector():
             VectorRecord(
                 id="doc_graph",
                 vector=v_graph,
-                metadata={"title": "Knowledge Graphs", "category": "graphs", "type": "doc"},
+                metadata={
+                    "title": "Knowledge Graphs",
+                    "category": "graphs",
+                    "type": "doc",
+                },
             ),
         ]
 
         ins_res = client.insert_vectors(collection, records=records)
-        assert ins_res.success >= 3  # success field contains successful count, not boolean
+        assert (
+            ins_res.success >= 3
+        )  # success field contains successful count, not boolean
         assert ins_res.metrics.successful_count >= 3
 
         # 3) Create graph collection for storing nodes and edges
@@ -84,7 +89,7 @@ def test_semantic_knowledge_store_graph_and_vector():
             graph = client.create_graph(
                 graph_id="default",
                 name="Default Graph Collection",
-                description="Default graph for semantic knowledge store"
+                description="Default graph for semantic knowledge store",
             )
         except Exception:
             # Graph may already exist from previous test runs - this is fine
@@ -169,4 +174,3 @@ def test_semantic_knowledge_store_graph_and_vector():
             client.delete_collection(collection)
         except Exception:
             pass
-

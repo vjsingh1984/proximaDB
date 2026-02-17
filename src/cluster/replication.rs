@@ -271,6 +271,7 @@ impl EngineReplication {
     }
 
     /// Convert a ReplicationEntry to a ReplicateRequest for RPC
+    #[allow(dead_code)]
     fn to_replicate_request(
         &self,
         entry: &ReplicationEntry,
@@ -311,6 +312,7 @@ impl EngineReplication {
     }
 
     /// Convert a ReplicateResponse to a ReplicationAck
+    #[allow(dead_code)]
     fn from_replicate_response(response: ReplicateResponse) -> ReplicationAck {
         ReplicationAck {
             node_id: response.node_id,
@@ -325,6 +327,7 @@ impl EngineReplication {
     ///
     /// This method uses the configured ReplicationSink to make actual RPC calls.
     /// Falls back to simulated replication if RPC is not configured.
+    #[allow(dead_code)]
     async fn replicate_to_node_rpc(
         &self,
         node_id: &str,
@@ -374,6 +377,7 @@ impl EngineReplication {
     }
 
     /// Simulated local replication (for local-only mode or testing)
+    #[allow(dead_code)]
     async fn replicate_to_node_local(
         node_id: &str,
         entry: &ReplicationEntry,
@@ -396,6 +400,7 @@ impl EngineReplication {
     }
 
     /// Replicate to a single node with retries (instance method)
+    #[allow(dead_code)]
     async fn replicate_to_node_with_retry_rpc(
         &self,
         node_id: &str,

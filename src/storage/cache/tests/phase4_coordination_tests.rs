@@ -1,14 +1,9 @@
 //! Phase 4: Cross-Cache Synergies Tests
 
 use super::super::orchestrator::*;
-use super::super::specialized::{
-    bitmap_filter_cache::BitmapFilterCache, index_node_cache::IndexNodeCache,
-    metadata_store::MetadataStore, query_cache::QueryCache,
-};
-use super::super::*;
-use std::collections::HashMap;
+use super::super::specialized::*;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 /// Test access pattern tracker for predictive prefetching
 #[tokio::test]
@@ -393,7 +388,5 @@ async fn test_memory_pressure_handling() {
 
 // Using UsageStats from orchestrator module
 // Placeholder implementations for testing
-use crate::proto::proximadb_v1::VectorRecord;
-
 // Helper implementations moved to main module
 // Removed duplicate impl block - these methods are already in the main CacheMetrics impl

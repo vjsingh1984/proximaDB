@@ -82,8 +82,8 @@ impl ConstraintViolation {
     pub fn not_null(column: impl Into<String>) -> Self {
         let col = column.into();
         Self::new(
-            format!("NOT NULL ({})", col),
-            format!("Column '{}' cannot be null", col),
+            format!("NOT NULL ({col})"),
+            format!("Column '{col}' cannot be null"),
             vec![col],
             vec!["NULL".to_string()],
         )
@@ -131,7 +131,7 @@ impl ConstraintViolation {
     pub fn check(constraint_name: impl Into<String>, expression: &str) -> Self {
         Self::new(
             constraint_name,
-            format!("Check constraint failed: {}", expression),
+            format!("Check constraint failed: {expression}"),
             vec![],
             vec![],
         )
@@ -312,7 +312,7 @@ impl ConstraintEnforcer {
     pub async fn validate_update(
         &self,
         object: &CatalogObject,
-        old_row: &RowValue,
+        _old_row: &RowValue,
         new_row: &RowValue,
     ) -> EnforcementResult {
         let mut result = EnforcementResult::pass(object.enforcement_mode);
@@ -359,7 +359,7 @@ impl ConstraintEnforcer {
     pub async fn validate_delete(
         &self,
         object: &CatalogObject,
-        row: &RowValue,
+        _row: &RowValue,
         referencing_objects: &[&CatalogObject],
     ) -> EnforcementResult {
         let result = EnforcementResult::pass(object.enforcement_mode);
@@ -526,7 +526,7 @@ impl ConstraintEnforcer {
         columns: &[String],
         reference: &ForeignKeyReference,
         row: &RowValue,
-        result: &mut EnforcementResult,
+        _result: &mut EnforcementResult,
     ) {
         // Get values for the FK columns
         let values = row.get_tuple(columns);

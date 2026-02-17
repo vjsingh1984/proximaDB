@@ -225,6 +225,7 @@ pub struct ExecutionLogger {
     /// Buffer flush threshold
     flush_threshold: usize,
     /// File handle (lazy initialized)
+    #[allow(dead_code)]
     file: Option<tokio::fs::File>,
 }
 
@@ -549,7 +550,10 @@ impl RLDecisionLogger {
     pub fn log_decision(&mut self, context: RLDecisionContext) {
         // Update action stats
         let action_desc = context.selected_action.describe();
-        let entry = self.action_stats.entry(action_desc).or_insert((0.0, 0, 0.0, 0.0));
+        let entry = self
+            .action_stats
+            .entry(action_desc)
+            .or_insert((0.0, 0, 0.0, 0.0));
         entry.0 += context.confidence as f64;
         entry.1 += 1;
 
@@ -561,7 +565,12 @@ impl RLDecisionLogger {
     }
 
     /// Update stats after execution
-    pub fn update_execution_result(&mut self, action: &ExecutionAction, latency_ms: f64, recall: f32) {
+    pub fn update_execution_result(
+        &mut self,
+        action: &ExecutionAction,
+        latency_ms: f64,
+        recall: f32,
+    ) {
         let action_desc = action.describe();
         if let Some(entry) = self.action_stats.get_mut(&action_desc) {
             entry.2 += latency_ms;
@@ -572,14 +581,16 @@ impl RLDecisionLogger {
     /// Get action history for a specific action
     pub fn get_action_history(&self, action: &ExecutionAction) -> Option<ActionHistory> {
         let action_desc = action.describe();
-        self.action_stats.get(&action_desc).map(|(total_reward, count, total_latency, total_recall)| {
-            ActionHistory::from_stats(
-                *count,
-                (*total_reward / *count as f64) as f32,
-                *total_latency / *count as f64,
-                (*total_recall / *count as f64) as f32,
-            )
-        })
+        self.action_stats.get(&action_desc).map(
+            |(total_reward, count, total_latency, total_recall)| {
+                ActionHistory::from_stats(
+                    *count,
+                    (*total_reward / *count as f64) as f32,
+                    *total_latency / *count as f64,
+                    (*total_recall / *count as f64) as f32,
+                )
+            },
+        )
     }
 
     /// Get most recent decision
@@ -598,7 +609,11 @@ impl RLDecisionLogger {
             .action_stats
             .iter()
             .map(|(action, (total_reward, count, _, _))| {
-                (action.clone(), (*total_reward / *count as f64) as f32, *count)
+                (
+                    action.clone(),
+                    (*total_reward / *count as f64) as f32,
+                    *count,
+                )
             })
             .collect();
 
@@ -646,10 +661,11 @@ impl ExplainIntegration {
 
         // Add historical performance
         if let Some(history) = &context.action_history {
-            let hist_perf = HistoricalPerformance::new(history.execution_count, history.average_reward)
-                .with_latency(history.average_latency_ms)
-                .with_recall(history.average_recall)
-                .with_success_rate(history.success_rate);
+            let hist_perf =
+                HistoricalPerformance::new(history.execution_count, history.average_reward)
+                    .with_latency(history.average_latency_ms)
+                    .with_recall(history.average_recall)
+                    .with_success_rate(history.success_rate);
             explanation = explanation.with_history(hist_perf);
         }
 
@@ -705,9 +721,15 @@ impl ExplainIntegration {
             }
             "has_filter" => {
                 if value > 0.5 {
-                    format!("Presence of filters {} {} the selected action", strength, influence)
+                    format!(
+                        "Presence of filters {} {} the selected action",
+                        strength, influence
+                    )
                 } else {
-                    format!("Absence of filters {} {} the selected action", strength, influence)
+                    format!(
+                        "Absence of filters {} {} the selected action",
+                        strength, influence
+                    )
                 }
             }
             _ => {
@@ -764,7 +786,10 @@ impl ExplainIntegration {
         }
 
         if reasons.is_empty() {
-            format!("Selected '{}' based on current workload characteristics", action_desc)
+            format!(
+                "Selected '{}' based on current workload characteristics",
+                action_desc
+            )
         } else {
             format!("Selected '{}': {}", action_desc, reasons.join("; "))
         }
@@ -819,7 +844,11 @@ impl ExplainIntegration {
             let importance = (value - neutral).abs();
             if importance > 0.2 {
                 // Only include features with significant deviation
-                let weight = if value > neutral { importance } else { -importance };
+                let weight = if value > neutral {
+                    importance
+                } else {
+                    -importance
+                };
                 influential.push((name.to_string(), value as f64, weight as f64));
             }
         }
@@ -1058,19 +1087,13 @@ mod tests {
 
     #[test]
     fn test_exploration_mode_in_explanation() {
-        let context_explore = RLDecisionContext::new(
-            PlannerState::default(),
-            ExecutionAction::default(),
-            0.5,
-        )
-        .with_exploration(true);
+        let context_explore =
+            RLDecisionContext::new(PlannerState::default(), ExecutionAction::default(), 0.5)
+                .with_exploration(true);
 
-        let context_exploit = RLDecisionContext::new(
-            PlannerState::default(),
-            ExecutionAction::default(),
-            0.9,
-        )
-        .with_exploration(false);
+        let context_exploit =
+            RLDecisionContext::new(PlannerState::default(), ExecutionAction::default(), 0.9)
+                .with_exploration(false);
 
         let explain_explore = ExplainIntegration::to_rl_explanation(&context_explore);
         let explain_exploit = ExplainIntegration::to_rl_explanation(&context_exploit);
@@ -1085,9 +1108,11 @@ mod tests {
         );
 
         // Exploration should mention exploring in the reason
-        assert!(explain_explore
-            .selection_reason
-            .unwrap()
-            .contains("Exploring"));
+        assert!(
+            explain_explore
+                .selection_reason
+                .unwrap()
+                .contains("Exploring")
+        );
     }
 }

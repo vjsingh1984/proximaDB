@@ -13,18 +13,21 @@ Usage:
     PYTHONPATH=clients/python/src python3 clients/python/tests/validate_sst_recall.py
 """
 
-import numpy as np
-import time
-import sys
 import os
-import tempfile
 import shutil
+import sys
+import tempfile
+import time
+
+import numpy as np
 
 # Import the native Rust-backed ProximaDB
 import proximadb
 
 
-def generate_clustered_vectors(count: int, dimension: int, n_clusters: int = 10, seed: int = 42):
+def generate_clustered_vectors(
+    count: int, dimension: int, n_clusters: int = 10, seed: int = 42
+):
     """Generate clustered vectors for realistic testing."""
     np.random.seed(seed)
 
@@ -123,14 +126,16 @@ def main():
             ids = [f"vec_{i}" for i in range(VECTOR_COUNT)]
 
             # Check if insert_numpy is available
-            if hasattr(db, 'insert_numpy'):
+            if hasattr(db, "insert_numpy"):
                 db.insert_numpy(collection_name, ids, vectors)
             else:
                 vectors_list = [v.tolist() for v in vectors]
                 db.insert(collection_name, ids, vectors_list, None)
 
             insert_time = time.time() - start
-            print(f"  Insert completed: {insert_time:.2f}s ({VECTOR_COUNT/insert_time:.0f} vec/s)")
+            print(
+                f"  Insert completed: {insert_time:.2f}s ({VECTOR_COUNT/insert_time:.0f} vec/s)"
+            )
 
             # Flush to disk
             print("\nFlushing to disk...")
@@ -153,7 +158,7 @@ def main():
             for i, query in enumerate(query_vectors):
                 query_start = time.time()
 
-                if hasattr(db, 'search_numpy'):
+                if hasattr(db, "search_numpy"):
                     results = db.search_numpy(collection_name, query, TOP_K)
                 else:
                     results = db.search(collection_name, query.tolist(), TOP_K)
@@ -163,15 +168,15 @@ def main():
                 # Extract result IDs and convert to indices
                 result_indices = []
                 for r in results:
-                    if hasattr(r, 'id'):
-                        idx = int(r.id.split('_')[1])
+                    if hasattr(r, "id"):
+                        idx = int(r.id.split("_")[1])
                         result_indices.append(idx)
-                    elif isinstance(r, dict) and 'id' in r:
-                        idx = int(r['id'].split('_')[1])
+                    elif isinstance(r, dict) and "id" in r:
+                        idx = int(r["id"].split("_")[1])
                         result_indices.append(idx)
                     elif isinstance(r, tuple):
                         # (id, score, metadata) format
-                        idx = int(r[0].split('_')[1])
+                        idx = int(r[0].split("_")[1])
                         result_indices.append(idx)
 
                 recall = compute_recall(result_indices, ground_truths[i])

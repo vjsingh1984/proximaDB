@@ -4,10 +4,11 @@ Base classes for embedding providers
 Provides abstract base classes and protocols that all embedding providers must implement.
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any, Protocol, runtime_checkable
-import numpy as np
 import logging
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+
+import numpy as np
 
 from .config import ProviderConfig
 
@@ -128,13 +129,16 @@ class BaseEmbeddingProvider(ABC):
         if not self._initialized:
             # Thread-safe initialization
             import threading
+
             if self._init_lock is None:
                 self._init_lock = threading.Lock()
 
             with self._init_lock:
                 if not self._initialized:  # Double-check locking
-                    logger.info(f"Initializing {self.__class__.__name__} "
-                               f"with model: {self.config.model.name}")
+                    logger.info(
+                        f"Initializing {self.__class__.__name__} "
+                        f"with model: {self.config.model.name}"
+                    )
                     self._model = self._load_model()
                     self._initialized = True
                     logger.info(f"Initialization complete: {self.config.model.name}")

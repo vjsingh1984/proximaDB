@@ -10,11 +10,12 @@ Top SFR Models (Open Source):
 - Salesforce/SFR-Embedding-Mistral: Excellent quality (4096 dims) - Mistral-based
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
             "description": "Top MTEB performer, best accuracy, retrieval-optimized",
             "use_case": "Maximum accuracy, research, when quality is paramount",
             "mteb_score": 66.4,  # Average MTEB score as of 2024
-            "architecture": "Mistral-based"
+            "architecture": "Mistral-based",
         },
         "Salesforce/SFR-Embedding-Mistral": {
             "dimension": 4096,
@@ -63,8 +64,8 @@ class SFREmbeddingProvider(EmbeddingProvider):
             "description": "Excellent quality, Mistral-based architecture",
             "use_case": "High accuracy, production when quality > speed",
             "mteb_score": 64.8,
-            "architecture": "Mistral-7B"
-        }
+            "architecture": "Mistral-7B",
+        },
     }
 
     # Instruction prefix for queries (critical for performance)
@@ -89,8 +90,8 @@ class SFREmbeddingProvider(EmbeddingProvider):
             max_length=4096,
             extra_params={
                 "use_query_instruction": False,  # Set True for queries, False for passages
-                "trust_remote_code": True  # Required for SFR models
-            }
+                "trust_remote_code": True,  # Required for SFR models
+            },
         )
 
     def _initialize(self) -> None:
@@ -106,7 +107,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
             self.model = SentenceTransformer(
                 self.config.model_name,
                 device=self.config.device,
-                trust_remote_code=trust_remote_code
+                trust_remote_code=trust_remote_code,
             )
 
             # Update dimension if it's a known SFR model
@@ -120,13 +121,17 @@ class SFREmbeddingProvider(EmbeddingProvider):
                 self.config.dimension = dummy_embedding.shape[1]
 
             self._available = True
-            logger.info(f"Initialized SFR model: {self.config.model_name} "
-                       f"(dimension: {self.config.dimension}, max_length: {self.config.max_length})")
+            logger.info(
+                f"Initialized SFR model: {self.config.model_name} "
+                f"(dimension: {self.config.dimension}, max_length: {self.config.max_length})"
+            )
 
         except ImportError:
             self._available = False
-            logger.warning("sentence-transformers not installed. "
-                          "Install with: pip install sentence-transformers")
+            logger.warning(
+                "sentence-transformers not installed. "
+                "Install with: pip install sentence-transformers"
+            )
         except Exception as e:
             self._available = False
             logger.error(f"Failed to initialize SFR model: {e}")
@@ -146,7 +151,11 @@ class SFREmbeddingProvider(EmbeddingProvider):
             Texts with instruction prefix applied if appropriate
         """
         extra_params = self.config.extra_params or {}
-        use_instruction = is_query if is_query is not None else extra_params.get("use_query_instruction", False)
+        use_instruction = (
+            is_query
+            if is_query is not None
+            else extra_params.get("use_query_instruction", False)
+        )
 
         if use_instruction:
             return [self.QUERY_INSTRUCTION + text for text in texts]
@@ -177,8 +186,10 @@ class SFREmbeddingProvider(EmbeddingProvider):
             Array of embeddings with shape (len(texts), 4096)
         """
         if not self._available:
-            raise RuntimeError("SFR model not available. "
-                             "Install with: pip install sentence-transformers")
+            raise RuntimeError(
+                "SFR model not available. "
+                "Install with: pip install sentence-transformers"
+            )
 
         if not texts:
             return np.array([])
@@ -192,12 +203,14 @@ class SFREmbeddingProvider(EmbeddingProvider):
             batch_size=self.config.batch_size,
             show_progress_bar=False,
             normalize_embeddings=self.config.normalize,
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
 
         return embeddings
 
-    def embed_documents(self, documents: List[Dict[str, Any]], text_field: str = 'text') -> np.ndarray:
+    def embed_documents(
+        self, documents: List[Dict[str, Any]], text_field: str = "text"
+    ) -> np.ndarray:
         """
         Generate embeddings for documents (passages, NOT queries)
 
@@ -208,7 +221,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         Returns:
             Array of embedding vectors
         """
-        texts = [doc.get(text_field, '') for doc in documents]
+        texts = [doc.get(text_field, "") for doc in documents]
         # Documents are passages, not queries - don't use instruction
         return self.embed_texts(texts, is_query=False)
 
@@ -252,18 +265,20 @@ class SFREmbeddingProvider(EmbeddingProvider):
             "max_length": self.config.max_length,
             "provider": "sfr",
             "normalize": self.config.normalize,
-            "available": self._available
+            "available": self._available,
         }
 
         # Add model-specific info if it's a known SFR model
         if self.config.model_name in self.SFR_MODELS:
             model_spec = self.SFR_MODELS[self.config.model_name]
-            info.update({
-                "description": model_spec["description"],
-                "use_case": model_spec["use_case"],
-                "mteb_score": model_spec.get("mteb_score"),
-                "architecture": model_spec.get("architecture")
-            })
+            info.update(
+                {
+                    "description": model_spec["description"],
+                    "use_case": model_spec["use_case"],
+                    "mteb_score": model_spec.get("mteb_score"),
+                    "architecture": model_spec.get("architecture"),
+                }
+            )
 
         return info
 
@@ -292,7 +307,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         recommendations = {
             "best": "Salesforce/SFR-Embedding-2_R",
             "mistral_based": "Salesforce/SFR-Embedding-Mistral",
-            "top_accuracy": "Salesforce/SFR-Embedding-2_R"
+            "top_accuracy": "Salesforce/SFR-Embedding-2_R",
         }
 
         return recommendations.get(use_case, "Salesforce/SFR-Embedding-2_R")

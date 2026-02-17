@@ -141,12 +141,19 @@ struct ValidationResult {
 /// Collection migration status
 #[derive(Debug)]
 struct CollectionStatus {
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     is_legacy: bool,
+    #[allow(dead_code)]
     schema_version: u32,
+    #[allow(dead_code)]
     row_count: u64,
+    #[allow(dead_code)]
     file_count: usize,
+    #[allow(dead_code)]
     total_bytes: u64,
+    #[allow(dead_code)]
     needs_migration: bool,
 }
 

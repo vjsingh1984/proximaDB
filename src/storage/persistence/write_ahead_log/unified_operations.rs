@@ -577,7 +577,7 @@ impl UnifiedWALReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{Edge, Node};
+    use crate::graph::Node;
 
     #[tokio::test]
     async fn test_unified_wal_operations() {

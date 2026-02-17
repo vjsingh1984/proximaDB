@@ -45,6 +45,7 @@ pub struct TableInfo {
     pub name: String,
 
     /// Arrow schema describing the table structure
+    #[allow(dead_code)]
     pub schema: Arc<Schema>,
 
     /// Partition columns (for partitioned tables)
@@ -140,6 +141,7 @@ pub struct TableStatistics {
     pub size_bytes: u64,
 
     /// Per-column statistics
+    #[allow(dead_code)]
     pub column_stats: HashMap<String, ColumnStatistics>,
 
     /// Number of files comprising the table

@@ -320,7 +320,7 @@ impl VIPERColumnFilterEvaluator {
                 )?;
 
             // Get collection context to check if this is a filterable column
-            let collection_context = reader.get_collection_context().await;
+            let _collection_context = reader.get_collection_context().await;
             // CollectionContext doesn't have filterable_columns field
             let filterable_columns: Vec<String> = vec![];
 
@@ -573,7 +573,7 @@ impl VIPERSelectiveReader {
                 "viper".to_string(),
             ),
         );
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+        let _reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0, // Dimension will be read from Parquet schema
             self.filesystem_factory.clone(),

@@ -148,36 +148,39 @@ impl ProtocolHandler for GrpcHandler {
 
 /// Builder for creating gRPC handlers
 pub struct GrpcHandlerBuilder {
-    ready: bool,
-    grpc_port: u16,
+    _ready: bool,
+    _grpc_port: u16,
 }
 
 impl GrpcHandlerBuilder {
     /// Create a new builder
     pub fn new() -> Self {
         Self {
-            ready: false,
-            grpc_port: 5679,
+            _ready: false,
+            _grpc_port: 5679,
         }
     }
 
     /// Mark the handler as ready
+    #[allow(dead_code)]
     pub fn ready(mut self) -> Self {
-        self.ready = true;
+        self._ready = true;
         self
     }
 
     /// Set the gRPC port
+    #[allow(dead_code)]
     pub fn grpc_port(mut self, port: u16) -> Self {
-        self.grpc_port = port;
+        self._grpc_port = port;
         self
     }
 
     /// Build the gRPC handler
+    #[allow(dead_code)]
     pub fn build(self) -> GrpcHandler {
         GrpcHandler {
-            ready: self.ready,
-            grpc_port: self.grpc_port,
+            ready: self._ready,
+            grpc_port: self._grpc_port,
         }
     }
 }

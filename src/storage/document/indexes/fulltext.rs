@@ -21,6 +21,7 @@ use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as SqlVal
 /// Full-text search index for a collection
 pub struct FullTextIndex {
     /// Collection name
+    #[allow(dead_code)]
     collection: String,
     /// Tantivy index
     index: Index,
@@ -29,6 +30,7 @@ pub struct FullTextIndex {
     /// Index reader for searching
     reader: IndexReader,
     /// Schema
+    #[allow(dead_code)]
     schema: Schema,
     /// Document ID field
     id_field: Field,
@@ -75,7 +77,7 @@ impl FullTextIndex {
     pub fn add_field(&mut self, path: &str) -> Result<()> {
         // Rebuild schema with new field
         let mut schema_builder = Schema::builder();
-        let id_field = schema_builder.add_text_field("_id", STORED);
+        let _id_field = schema_builder.add_text_field("_id", STORED);
 
         // Copy existing fields
         let existing_fields = self.text_fields.read().unwrap();
@@ -110,7 +112,7 @@ impl FullTextIndex {
         }
 
         // Add to index
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         writer.add_document(tantivy_doc)?;
 
         Ok(())
@@ -120,7 +122,7 @@ impl FullTextIndex {
     pub fn remove_document(&self, doc_id: &str) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.id_field, doc_id);
 
-        let mut writer = self.writer.write().unwrap();
+        let writer = self.writer.write().unwrap();
         writer.delete_term(term);
 
         Ok(())

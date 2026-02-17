@@ -10,13 +10,14 @@ This module tests:
 - Integration scenarios
 """
 
-import pytest
-import sys
 import asyncio
+import sys
 import tempfile
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, AsyncMock
 from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, Mock
+
+import pytest
 
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -26,8 +27,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loader import RESOURCES_DIR  # noqa: F401 - triggers module setup
 
 # Now we can import from the modules that were loaded by the loader
-document_processor = sys.modules['proximadb.document_processor']
-document_pipeline = sys.modules['proximadb.document_pipeline']
+document_processor = sys.modules["proximadb.document_processor"]
+document_pipeline = sys.modules["proximadb.document_pipeline"]
 
 # Import types from document_processor
 DocumentType = document_processor.DocumentType
@@ -96,12 +97,16 @@ class TestDetectDocumentType:
     def test_detect_markdown(self):
         """Test detecting Markdown."""
         assert detect_document_type("", "README.md") == DocumentType.MARKDOWN
-        assert detect_document_type("# Header\n\nContent", None) == DocumentType.MARKDOWN
+        assert (
+            detect_document_type("# Header\n\nContent", None) == DocumentType.MARKDOWN
+        )
 
     def test_detect_text(self):
         """Test detecting plain text."""
         assert detect_document_type("", "notes.txt") == DocumentType.TEXT
-        assert detect_document_type("Just plain text content", None) == DocumentType.TEXT
+        assert (
+            detect_document_type("Just plain text content", None) == DocumentType.TEXT
+        )
 
     def test_detect_pdf(self):
         """Test detecting PDF."""
@@ -124,10 +129,7 @@ class TestProcessedChunk:
     def test_chunk_creation(self):
         """Test creating a processed chunk."""
         chunk = ProcessedChunk(
-            chunk_id="c1",
-            text="Hello, World!",
-            start_pos=0,
-            end_pos=13
+            chunk_id="c1", text="Hello, World!", start_pos=0, end_pos=13
         )
         assert chunk.chunk_id == "c1"
         assert chunk.text == "Hello, World!"
@@ -140,7 +142,7 @@ class TestProcessedChunk:
             text="def foo(): pass",
             start_pos=0,
             end_pos=15,
-            embedding_text="Function: foo\nCode: def foo(): pass"
+            embedding_text="Function: foo\nCode: def foo(): pass",
         )
         assert chunk.embedding_text != chunk.text
 
@@ -155,7 +157,7 @@ class TestVectorRecord:
             vector=[0.1, 0.2, 0.3],
             metadata={"type": "test"},
             text="Hello",
-            source_id="doc1"
+            source_id="doc1",
         )
         assert record.id == "r1"
         assert len(record.vector) == 3
@@ -167,7 +169,7 @@ class TestVectorRecord:
             vector=[0.1],
             metadata={"key": "value"},
             text="Hello",
-            source_id="doc1"
+            source_id="doc1",
         )
         d = record.to_dict()
         assert d["id"] == "r1"
@@ -190,9 +192,7 @@ class TestProcessorConfig:
     def test_custom_config(self):
         """Test custom configuration."""
         config = ProcessorConfig(
-            chunk_size=1024,
-            chunk_overlap=100,
-            extract_symbols=False
+            chunk_size=1024, chunk_overlap=100, extract_symbols=False
         )
         assert config.chunk_size == 1024
         assert config.extract_symbols is False
@@ -260,10 +260,7 @@ class TestEmbeddingProviderAdapter:
     def test_batch_processing(self):
         """Test batch processing."""
         mock_provider = Mock()
-        mock_provider.embed_texts = Mock(side_effect=[
-            [[0.1], [0.2]],
-            [[0.3]]
-        ])
+        mock_provider.embed_texts = Mock(side_effect=[[[0.1], [0.2]], [[0.3]]])
 
         adapter = EmbeddingProviderAdapter(mock_provider, batch_size=2)
         embeddings = adapter.embed_texts(["t1", "t2", "t3"])
@@ -276,7 +273,7 @@ class TestEmbeddingProviderAdapter:
         """Test async embedding with sync provider."""
         # Create a mock that only has embed_texts (no embed_texts_async)
         # Use spec to ensure only the attributes we define are available
-        mock_provider = Mock(spec=['embed_texts'])
+        mock_provider = Mock(spec=["embed_texts"])
         mock_provider.embed_texts = Mock(return_value=[[0.1]])
 
         adapter = EmbeddingProviderAdapter(mock_provider, batch_size=2)
@@ -287,15 +284,12 @@ class TestEmbeddingProviderAdapter:
     def test_retry_on_failure(self):
         """Test retry on failure."""
         mock_provider = Mock()
-        mock_provider.embed_texts = Mock(side_effect=[
-            Exception("Temporary error"),
-            [[0.1]]
-        ])
+        mock_provider.embed_texts = Mock(
+            side_effect=[Exception("Temporary error"), [[0.1]]]
+        )
 
         adapter = EmbeddingProviderAdapter(
-            mock_provider,
-            max_retries=3,
-            retry_delay=0.01
+            mock_provider, max_retries=3, retry_delay=0.01
         )
         embeddings = adapter.embed_texts(["text1"])
 
@@ -348,9 +342,7 @@ class TestTextDocumentProcessor:
 
         content = "This is test content. " * 20
         result = await processor.process(
-            content=content,
-            source_id="test.txt",
-            embedding_adapter=adapter
+            content=content, source_id="test.txt", embedding_adapter=adapter
         )
 
         assert result.success
@@ -411,9 +403,7 @@ class Calculator:
         return a + b
 '''
         result = await processor.process(
-            content=content,
-            source_id="calc.py",
-            embedding_adapter=adapter
+            content=content, source_id="calc.py", embedding_adapter=adapter
         )
 
         assert result.success
@@ -469,9 +459,7 @@ class TestPipelineConfig:
     def test_custom_config(self):
         """Test custom configuration."""
         config = PipelineConfig(
-            mode=PipelineMode.STORE,
-            max_concurrent=8,
-            use_placeholder_embeddings=True
+            mode=PipelineMode.STORE, max_concurrent=8, use_placeholder_embeddings=True
         )
         assert config.mode == PipelineMode.STORE
         assert config.max_concurrent == 8
@@ -489,9 +477,7 @@ class TestPipelineMetrics:
     def test_success_rate(self):
         """Test success rate calculation."""
         metrics = PipelineMetrics(
-            total_documents=10,
-            processed_documents=8,
-            failed_documents=2
+            total_documents=10, processed_documents=8, failed_documents=2
         )
         assert metrics.success_rate == 0.8
 
@@ -592,9 +578,7 @@ def hello():
         config = PipelineConfig(use_placeholder_embeddings=True)
         pipeline = DocumentPipeline(config=config)
 
-        with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.txt', delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("This is test file content. " * 20)
             f.flush()
 
@@ -659,9 +643,7 @@ class TestFactoryFunctions:
 
     def test_create_document_pipeline(self):
         """Test create_document_pipeline."""
-        pipeline = create_document_pipeline(
-            mode=PipelineMode.PROCESS_ONLY
-        )
+        pipeline = create_document_pipeline(mode=PipelineMode.PROCESS_ONLY)
         assert pipeline.config.mode == PipelineMode.PROCESS_ONLY
 
     def test_create_code_pipeline(self):
@@ -678,9 +660,7 @@ class TestFactoryFunctions:
     def test_create_embedding_adapter(self):
         """Test create_embedding_adapter."""
         adapter = create_embedding_adapter(
-            None,
-            use_placeholder=True,
-            placeholder_dimension=64
+            None, use_placeholder=True, placeholder_dimension=64
         )
         assert adapter.dimension == 64
 
@@ -699,10 +679,7 @@ class TestContextManagers:
         async with async_pipeline_context(use_placeholder_embeddings=True) as pipeline:
             assert isinstance(pipeline, DocumentPipeline)
 
-            result = await pipeline.process(
-                "Test content. " * 20,
-                "test.txt"
-            )
+            result = await pipeline.process("Test content. " * 20, "test.txt")
             assert result.success
 
 
@@ -713,8 +690,7 @@ class TestIntegrationScenarios:
     async def test_code_to_vectors_workflow(self):
         """Test complete code to vectors workflow."""
         config = PipelineConfig(
-            use_placeholder_embeddings=True,
-            mode=PipelineMode.EMBED
+            use_placeholder_embeddings=True, mode=PipelineMode.EMBED
         )
         pipeline = DocumentPipeline(config=config)
 
@@ -752,18 +728,12 @@ class DataProcessor:
         pipeline = DocumentPipeline(config=config)
 
         documents = [
-            {
-                "content": "def hello(): print('Hello!')",
-                "source_id": "hello.py"
-            },
+            {"content": "def hello(): print('Hello!')", "source_id": "hello.py"},
             {
                 "content": "# Documentation\n\nThis is a guide. " * 10,
-                "source_id": "guide.md"
+                "source_id": "guide.md",
             },
-            {
-                "content": "Plain text content here. " * 10,
-                "source_id": "notes.txt"
-            },
+            {"content": "Plain text content here. " * 10, "source_id": "notes.txt"},
         ]
 
         result = await pipeline.process_batch(documents)
@@ -783,13 +753,9 @@ class DataProcessor:
         mock_store.insert = AsyncMock(return_value=None)
 
         config = PipelineConfig(
-            use_placeholder_embeddings=True,
-            mode=PipelineMode.STORE
+            use_placeholder_embeddings=True, mode=PipelineMode.STORE
         )
-        pipeline = DocumentPipeline(
-            config=config,
-            vector_store=mock_store
-        )
+        pipeline = DocumentPipeline(config=config, vector_store=mock_store)
 
         content = "Store this content. " * 20
         result = await pipeline.process_and_store(content, "stored.txt")

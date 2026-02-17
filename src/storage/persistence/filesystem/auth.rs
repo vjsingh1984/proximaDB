@@ -313,8 +313,11 @@ impl CredentialProvider for EcsTaskMetadataProvider {
 
 /// STS Assume Role credential provider
 pub struct AssumeRoleProvider {
+    #[allow(dead_code)]
     role_arn: String,
+    #[allow(dead_code)]
     external_id: Option<String>,
+    #[allow(dead_code)]
     http_client: reqwest::Client,
 }
 
@@ -349,6 +352,7 @@ impl CredentialProvider for AssumeRoleProvider {
 
 /// AWS Profile credential provider
 pub struct ProfileCredentialProvider {
+    #[allow(dead_code)]
     profile_name: String,
 }
 

@@ -298,6 +298,7 @@ impl WebhookSink {
     }
 
     /// Build authentication headers
+    #[allow(dead_code)]
     fn build_auth_headers(&self) -> HashMap<String, String> {
         let mut headers = HashMap::new();
 
@@ -331,6 +332,7 @@ impl WebhookSink {
 }
 
 /// Simple base64 encoding (for basic auth)
+#[allow(dead_code)]
 fn base64_encode(input: &str) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

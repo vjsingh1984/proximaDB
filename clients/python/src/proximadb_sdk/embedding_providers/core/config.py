@@ -4,8 +4,8 @@ Configuration classes for embedding providers
 Provides immutable model metadata and flexible provider configuration.
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, Optional
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class ModelMetadata:
         description: Human-readable description
         use_case: Recommended use cases
     """
+
     name: str
     dimension: int
     max_length: int = 512
@@ -66,6 +67,7 @@ class ProviderConfig:
         trust_remote_code: Whether to allow custom model code execution
         extra: Provider-specific additional parameters
     """
+
     model: ModelMetadata
     batch_size: int = 32
     normalize: bool = True
@@ -74,7 +76,7 @@ class ProviderConfig:
     trust_remote_code: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
-    def merge(self, **kwargs) -> 'ProviderConfig':
+    def merge(self, **kwargs) -> "ProviderConfig":
         """
         Create new configuration with updated values
 
@@ -93,15 +95,15 @@ class ProviderConfig:
         data = asdict(self)
 
         # Handle extra params specially - merge instead of replace
-        if 'extra' in kwargs:
-            data['extra'].update(kwargs.pop('extra'))
+        if "extra" in kwargs:
+            data["extra"].update(kwargs.pop("extra"))
 
         # Update with remaining kwargs
         data.update(kwargs)
 
         # Reconstruct model metadata if needed
-        if 'model' in data and isinstance(data['model'], dict):
-            data['model'] = ModelMetadata(**data['model'])
+        if "model" in data and isinstance(data["model"], dict):
+            data["model"] = ModelMetadata(**data["model"])
 
         return ProviderConfig(**data)
 

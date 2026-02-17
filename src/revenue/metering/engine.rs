@@ -21,6 +21,7 @@ pub struct UsageMeteringEngine {
     /// Billing integration
     billing_integration: Option<Arc<dyn BillingProvider + Send + Sync>>,
     /// Configuration
+    #[allow(dead_code)]
     config: MeteringConfig,
 }
 
@@ -438,7 +439,7 @@ impl UsageMeteringEngine {
     }
 
     // Helper methods for usage calculations
-    async fn update_peak_qps(&self, aggregate: &mut UsageAggregate, event: &UsageEvent) {
+    async fn update_peak_qps(&self, aggregate: &mut UsageAggregate, _event: &UsageEvent) {
         // Simplified peak QPS calculation
         let current_qps = aggregate.total_searches as f64
             / (Utc::now() - aggregate.billing_period_start)

@@ -6,14 +6,14 @@ Tests for ID-based search, metadata filtering, and proximity/similarity search
 Tests run against embedded ProximaDB database for fast, reliable testing.
 """
 
-import pytest
-import time
-import numpy as np
 import logging
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
-from proximadb_sdk import CollectionConfig, DistanceMetric
-from proximadb_sdk import ProximaDBError
+import numpy as np
+import pytest
+
+from proximadb_sdk import CollectionConfig, DistanceMetric, ProximaDBError
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,8 @@ class TestSearchOperations:
         """Load BERT model for embeddings"""
         try:
             from sentence_transformers import SentenceTransformer
-            return SentenceTransformer('all-MiniLM-L6-v2')
+
+            return SentenceTransformer("all-MiniLM-L6-v2")
         except ImportError:
             pytest.skip("sentence-transformers not installed")
 
@@ -47,7 +48,7 @@ class TestSearchOperations:
             name=collection_name,
             dimension=384,  # all-MiniLM-L6-v2 dimension
             distance_metric="cosine",
-            description="Search operations test collection"
+            description="Search operations test collection",
         )
         collection = rest_client.create_collection(collection_name, config=config)
         yield collection
@@ -70,7 +71,7 @@ class TestSearchOperations:
                 "subcategory": "ai",
                 "importance": 9,
                 "author": "Dr. Sarah Chen",
-                "tags": ["AI", "ML", "software", "innovation"]
+                "tags": ["AI", "ML", "software", "innovation"],
             },
             {
                 "id": "tech_002",
@@ -79,7 +80,7 @@ class TestSearchOperations:
                 "subcategory": "cloud",
                 "importance": 8,
                 "author": "Mark Thompson",
-                "tags": ["cloud", "infrastructure", "scalability"]
+                "tags": ["cloud", "infrastructure", "scalability"],
             },
             {
                 "id": "tech_003",
@@ -88,9 +89,8 @@ class TestSearchOperations:
                 "subcategory": "blockchain",
                 "importance": 7,
                 "author": "Dr. Sarah Chen",
-                "tags": ["blockchain", "security", "decentralization"]
+                "tags": ["blockchain", "security", "decentralization"],
             },
-
             # Science category
             {
                 "id": "sci_001",
@@ -99,7 +99,7 @@ class TestSearchOperations:
                 "subcategory": "quantum",
                 "importance": 10,
                 "author": "Prof. Alan Turing",
-                "tags": ["quantum", "computing", "physics"]
+                "tags": ["quantum", "computing", "physics"],
             },
             {
                 "id": "sci_002",
@@ -108,9 +108,8 @@ class TestSearchOperations:
                 "subcategory": "biology",
                 "importance": 9,
                 "author": "Dr. Jennifer Wu",
-                "tags": ["CRISPR", "genetics", "medicine"]
+                "tags": ["CRISPR", "genetics", "medicine"],
             },
-
             # Healthcare category
             {
                 "id": "health_001",
@@ -119,9 +118,8 @@ class TestSearchOperations:
                 "subcategory": "telemedicine",
                 "importance": 10,
                 "author": "Dr. Jennifer Wu",
-                "tags": ["telemedicine", "healthcare", "accessibility"]
+                "tags": ["telemedicine", "healthcare", "accessibility"],
             },
-
             # Education category
             {
                 "id": "edu_001",
@@ -130,8 +128,8 @@ class TestSearchOperations:
                 "subcategory": "online",
                 "importance": 9,
                 "author": "Prof. Alan Turing",
-                "tags": ["education", "online", "accessibility"]
-            }
+                "tags": ["education", "online", "accessibility"],
+            },
         ]
 
         # Generate embeddings
@@ -158,14 +156,16 @@ class TestSearchOperations:
                     "subcategory": doc["subcategory"],
                     "importance": doc["importance"],
                     "author": doc["author"],
-                    "tags": str(doc["tags"])  # Store as string for embedded DB
-                }
+                    "tags": str(doc["tags"]),  # Store as string for embedded DB
+                },
             )
 
         # Allow time for indexing
         time.sleep(0.5)
 
-    def _wait_for_search_results(self, search_func, min_results=1, max_wait=10, retry_interval=0.5):
+    def _wait_for_search_results(
+        self, search_func, min_results=1, max_wait=10, retry_interval=0.5
+    ):
         """Helper method to wait for search results with retries"""
         start_time = time.time()
         while time.time() - start_time < max_wait:
@@ -173,7 +173,9 @@ class TestSearchOperations:
                 results = search_func()
                 if len(results) >= min_results:
                     return results
-                logger.debug(f"Waiting for indexing... got {len(results)} results, need {min_results}")
+                logger.debug(
+                    f"Waiting for indexing... got {len(results)} results, need {min_results}"
+                )
                 time.sleep(retry_interval)
             except Exception as e:
                 logger.debug(f"Search error: {e}, retrying...")
@@ -192,7 +194,7 @@ class TestSearchOperations:
                 collection_id=search_collection.name,
                 vector=query_embedding.tolist(),
                 top_k=5,
-                include_metadata=True
+                include_metadata=True,
             )
 
         results = self._wait_for_search_results(search_func, min_results=1, max_wait=5)
@@ -200,10 +202,12 @@ class TestSearchOperations:
         assert len(results) > 0, "Search should return at least one result"
         # Verify results have expected structure
         for result in results:
-            assert hasattr(result, 'id')
-            assert hasattr(result, 'score')
+            assert hasattr(result, "id")
+            assert hasattr(result, "score")
 
-    def test_search_by_metadata_filtering(self, rest_client, search_collection, bert_model):
+    def test_search_by_metadata_filtering(
+        self, rest_client, search_collection, bert_model
+    ):
         """Test metadata field search functionality"""
         query_text = "innovative software solutions"
         query_embedding = bert_model.encode([query_text])[0]
@@ -214,39 +218,45 @@ class TestSearchOperations:
                 collection_id=search_collection.name,
                 vector=query_embedding.tolist(),
                 top_k=10,
-                include_metadata=True
+                include_metadata=True,
             )
 
-        all_results = self._wait_for_search_results(search_func, min_results=1, max_wait=5)
+        all_results = self._wait_for_search_results(
+            search_func, min_results=1, max_wait=5
+        )
 
         if len(all_results) == 0:
             pytest.skip("Search returned no results - indexing may not be complete")
 
         # Client-side filtering by category
-        tech_results = [r for r in all_results if r.metadata.get('category') == 'technology']
+        tech_results = [
+            r for r in all_results if r.metadata.get("category") == "technology"
+        ]
 
         # Verify all filtered results are in technology category
         for result in tech_results:
-            assert result.metadata['category'] == 'technology'
+            assert result.metadata["category"] == "technology"
 
-    def test_proximity_similarity_search(self, rest_client, search_collection, bert_model):
+    def test_proximity_similarity_search(
+        self, rest_client, search_collection, bert_model
+    ):
         """Test proximity/similarity search functionality"""
         test_queries = [
             {
                 "text": "artificial intelligence machine learning deep learning",
                 "expected_top_category": "technology",
-                "expected_min_score": 0.15
+                "expected_min_score": 0.15,
             },
             {
                 "text": "healthcare medicine telemedicine remote patient care",
                 "expected_top_category": "healthcare",
-                "expected_min_score": 0.15
+                "expected_min_score": 0.15,
             },
             {
                 "text": "quantum computing physics exponential speedup algorithms",
                 "expected_top_category": "science",
-                "expected_min_score": 0.15
-            }
+                "expected_min_score": 0.15,
+            },
         ]
 
         for query_info in test_queries:
@@ -257,10 +267,12 @@ class TestSearchOperations:
                     collection_id=search_collection.name,
                     vector=query_embedding.tolist(),
                     top_k=3,
-                    include_metadata=True
+                    include_metadata=True,
                 )
 
-            results = self._wait_for_search_results(search_func, min_results=1, max_wait=5)
+            results = self._wait_for_search_results(
+                search_func, min_results=1, max_wait=5
+            )
 
             if len(results) == 0:
                 logger.debug(f"No results for query: {query_info['text']} - skipping")
@@ -268,20 +280,23 @@ class TestSearchOperations:
 
             # Verify top result has reasonable score
             top_result = results[0]
-            assert top_result.score >= query_info["expected_min_score"], \
-                f"Top score {top_result.score} below threshold"
+            assert (
+                top_result.score >= query_info["expected_min_score"]
+            ), f"Top score {top_result.score} below threshold"
 
-    def test_document_similarity_search(self, rest_client, search_collection, test_data):
+    def test_document_similarity_search(
+        self, rest_client, search_collection, test_data
+    ):
         """Test document-to-document similarity search"""
         # Find documents similar to tech_001
-        source_doc = next(d for d in test_data if d['id'] == 'tech_001')
+        source_doc = next(d for d in test_data if d["id"] == "tech_001")
 
         def search_func():
             return rest_client.search(
                 collection_id=search_collection.name,
-                vector=source_doc['embedding'],
+                vector=source_doc["embedding"],
                 top_k=5,
-                include_metadata=True
+                include_metadata=True,
             )
 
         results = self._wait_for_search_results(search_func, min_results=2, max_wait=5)
@@ -290,10 +305,12 @@ class TestSearchOperations:
             pytest.skip("Not enough similar documents found")
 
         # First result should be the document itself with high similarity
-        assert results[0].id == 'tech_001', "First result should be the source document"
+        assert results[0].id == "tech_001", "First result should be the source document"
         assert results[0].score > 0.99, "Self-similarity should be near 1.0"
 
-    def test_search_with_different_top_k(self, rest_client, search_collection, bert_model):
+    def test_search_with_different_top_k(
+        self, rest_client, search_collection, bert_model
+    ):
         """Test search with different top_k values"""
         query_embedding = bert_model.encode(["test query"])[0]
 
@@ -303,7 +320,7 @@ class TestSearchOperations:
                 collection_id=search_collection.name,
                 vector=query_embedding.tolist(),
                 top_k=top_k,
-                include_metadata=True
+                include_metadata=True,
             )
 
             # Results should not exceed top_k
@@ -318,7 +335,7 @@ class TestSearchOperations:
             collection_id=search_collection.name,
             vector=query_embedding.tolist(),
             top_k=100,  # Much larger than our 7 documents
-            include_metadata=True
+            include_metadata=True,
         )
 
         # Should return up to all documents in collection
@@ -334,7 +351,7 @@ class TestSearchOperations:
             rest_client.search(
                 collection_id=search_collection.name,
                 vector=query_embedding.tolist(),
-                top_k=0
+                top_k=0,
             )
 
         # Test search with negative k should raise error
@@ -342,7 +359,7 @@ class TestSearchOperations:
             rest_client.search(
                 collection_id=search_collection.name,
                 vector=query_embedding.tolist(),
-                top_k=-1
+                top_k=-1,
             )
 
     def test_empty_collection_search(self, rest_client, bert_model):
@@ -350,9 +367,7 @@ class TestSearchOperations:
         empty_collection = f"empty_search_{int(time.time() * 1000)}"
 
         config = CollectionConfig(
-            name=empty_collection,
-            dimension=384,
-            distance_metric="cosine"
+            name=empty_collection, dimension=384, distance_metric="cosine"
         )
         rest_client.create_collection(empty_collection, config=config)
 
@@ -363,7 +378,7 @@ class TestSearchOperations:
                 collection_id=empty_collection,
                 vector=query_embedding.tolist(),
                 top_k=5,
-                include_metadata=True
+                include_metadata=True,
             )
 
             assert len(results) == 0, "Empty collection should return no results"
@@ -384,7 +399,7 @@ class TestSearchWithDeterministicVectors:
             name=collection_name,
             dimension=128,
             distance_metric="cosine",
-            description="Deterministic search test collection"
+            description="Deterministic search test collection",
         )
         collection = rest_client.create_collection(collection_name, config=config)
 
@@ -398,8 +413,8 @@ class TestSearchWithDeterministicVectors:
                 metadata={
                     "index": i,
                     "category": f"cat_{i % 5}",
-                    "group": f"group_{i % 10}"
-                }
+                    "group": f"group_{i % 10}",
+                },
             )
 
         time.sleep(0.5)  # Allow indexing
@@ -419,7 +434,7 @@ class TestSearchWithDeterministicVectors:
             collection_id=deterministic_collection.name,
             vector=query_vector.tolist(),
             top_k=5,
-            include_metadata=True
+            include_metadata=True,
         )
 
         assert len(results) > 0, "Should return at least one result"
@@ -435,7 +450,7 @@ class TestSearchWithDeterministicVectors:
             collection_id=deterministic_collection.name,
             vector=query_vector.tolist(),
             top_k=10,
-            include_metadata=True
+            include_metadata=True,
         )
 
         assert len(results) > 0, "Should return results"
@@ -450,13 +465,14 @@ class TestSearchWithDeterministicVectors:
             collection_id=deterministic_collection.name,
             vector=query_vector.tolist(),
             top_k=20,
-            include_metadata=True
+            include_metadata=True,
         )
 
         # Verify descending score order
         for i in range(1, len(results)):
-            assert results[i-1].score >= results[i].score, \
-                f"Results not sorted: {results[i-1].score} < {results[i].score}"
+            assert (
+                results[i - 1].score >= results[i].score
+            ), f"Results not sorted: {results[i-1].score} < {results[i].score}"
 
     def test_metadata_present_in_results(self, rest_client, deterministic_collection):
         """Test that metadata is correctly returned in search results"""
@@ -466,13 +482,13 @@ class TestSearchWithDeterministicVectors:
             collection_id=deterministic_collection.name,
             vector=query_vector.tolist(),
             top_k=5,
-            include_metadata=True
+            include_metadata=True,
         )
 
         for result in results:
             assert result.metadata is not None
-            assert "index" in result.metadata or hasattr(result.metadata, 'index')
-            assert "category" in result.metadata or hasattr(result.metadata, 'category')
+            assert "index" in result.metadata or hasattr(result.metadata, "index")
+            assert "category" in result.metadata or hasattr(result.metadata, "category")
 
     def test_client_side_filtering(self, rest_client, deterministic_collection):
         """Test client-side metadata filtering"""
@@ -483,18 +499,18 @@ class TestSearchWithDeterministicVectors:
             collection_id=deterministic_collection.name,
             vector=query_vector.tolist(),
             top_k=50,
-            include_metadata=True
+            include_metadata=True,
         )
 
         # Client-side filter by category - handle both dict-like and attribute access
         cat_0_results = []
         for r in all_results:
             category = None
-            if hasattr(r.metadata, 'get'):
-                category = r.metadata.get('category')
-            elif hasattr(r.metadata, 'category'):
+            if hasattr(r.metadata, "get"):
+                category = r.metadata.get("category")
+            elif hasattr(r.metadata, "category"):
                 category = r.metadata.category
-            if category == 'cat_0':
+            if category == "cat_0":
                 cat_0_results.append(r)
 
         # Should have results in cat_0 (indices 0, 5, 10, 15, 20, 25, 30, 35, 40, 45)
@@ -503,8 +519,12 @@ class TestSearchWithDeterministicVectors:
 
         # Verify any filtered results have correct category
         for result in cat_0_results:
-            cat = result.metadata.get('category') if hasattr(result.metadata, 'get') else result.metadata.category
-            assert cat == 'cat_0'
+            cat = (
+                result.metadata.get("category")
+                if hasattr(result.metadata, "get")
+                else result.metadata.category
+            )
+            assert cat == "cat_0"
 
 
 if __name__ == "__main__":

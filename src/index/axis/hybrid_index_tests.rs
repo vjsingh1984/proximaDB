@@ -9,12 +9,11 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::compute::distance_computation::DistanceMetric;
     use crate::index::axis::management::manager::{
         FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
     };
-    use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification, ResultCombination};
-    use tracing::{debug, error, info};
+    use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
+    use tracing::debug;
 
     #[tokio::test]
     async fn test_hybrid_vector_metadata_search() {
@@ -37,7 +36,7 @@ mod tests {
         );
 
         // Create hybrid query
-        let hybrid_query = HybridQuery {
+        let _hybrid_query = HybridQuery {
             collection_id: "test_collection".to_string(),
             vector_query: Some(VectorQuery::Dense {
                 vector: vec![0.5; 768],

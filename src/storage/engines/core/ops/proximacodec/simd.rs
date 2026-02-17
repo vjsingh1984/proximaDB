@@ -183,6 +183,7 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
 ///
 /// Uses VectorMemoryPool to avoid allocations on hot path. The pooled buffer
 /// is automatically returned when the result Vec is no longer needed.
+#[allow(dead_code)]
 fn f32_to_i32_with_pool(values: &[f32]) -> Vec<i32> {
     // For small sizes, direct allocation is faster than pool overhead
     if values.len() < 100 {
@@ -628,6 +629,7 @@ pub fn simd_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
 // ONLY SIMD intrinsic code, not scalar implementations.
 
 /// Helper: Pack i64 values into bits (wrapper around existing bit-packing)
+#[allow(dead_code)]
 fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
     if values.is_empty() {
         return Ok(Vec::new());
@@ -659,7 +661,7 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
         result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
 
         if bits_in_first_byte < bits as usize {
-            let remaining_bits = bits as usize - bits_in_first_byte;
+            let _remaining_bits = bits as usize - bits_in_first_byte;
             let next_byte_value = (masked_value >> bits_in_first_byte) as u8;
             if byte_offset + 1 < result.len() {
                 result[byte_offset + 1] |= next_byte_value;
@@ -671,6 +673,7 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 }
 
 /// Helper: Unpack bytes into i32 values (delegates to baseline)
+#[allow(dead_code)]
 fn bitunpack_bytes_to_i32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
     use super::impls::baseline::functions::bitpack;
     // Unpack to u32 first, then reinterpret as i32
@@ -738,6 +741,8 @@ pub fn simd_frame_of_reference_encode_f32(
 fn compute_offsets_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     #[cfg(target_arch = "x86_64")]
     {
+        // AVX512 requires nightly Rust and is feature-gated
+        #[cfg(feature = "avx512")]
         if is_x86_feature_detected!("avx512f") {
             return unsafe { compute_offsets_avx512(values, base_i32) };
         }
@@ -767,7 +772,7 @@ fn compute_offsets_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn compute_offsets_avx512(values: &[f32], base_i32: i32) -> Vec<i32> {
     use std::arch::x86_64::*;
@@ -1169,6 +1174,8 @@ pub fn simd_pfor_delta_encode_f32(
 fn compute_deltas_pfor_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     #[cfg(target_arch = "x86_64")]
     {
+        // AVX512 requires nightly Rust and is feature-gated
+        #[cfg(feature = "avx512")]
         if is_x86_feature_detected!("avx512f") {
             return unsafe { compute_deltas_pfor_avx512(values, base_i32) };
         }
@@ -1198,7 +1205,7 @@ fn compute_deltas_pfor_simd(values: &[f32], base_i32: i32) -> Vec<i32> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn compute_deltas_pfor_avx512(values: &[f32], base_i32: i32) -> Vec<i32> {
     use std::arch::x86_64::*;

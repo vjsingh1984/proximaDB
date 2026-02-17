@@ -3,9 +3,8 @@
 use crate::core::config::StorageConfig;
 use crate::query::semantic_analysis::analyzer::Analyzer;
 use crate::query::semantic_analysis::scope::{DataType, Symbol};
-use crate::query::sql_frontend::parser::SqlFrontendParser;
+use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::collection::manager::CollectionService;
-use anyhow::Result;
 use std::sync::Arc;
 
 // Mock CollectionService for testing
@@ -169,38 +168,40 @@ impl MockCollectionService {
     async fn create_collection(
         &self,
         _config: &crate::proto::proximadb_v1::CollectionConfig,
-    ) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
+    ) -> anyhow::Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
     async fn get_collection(
         &self,
         id: &str,
-    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+    ) -> anyhow::Result<Option<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.get(id).cloned())
     }
     async fn delete_collection(
         &self,
         _id: &str,
-    ) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
+    ) -> anyhow::Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
-    async fn list_collections(&self) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
+    async fn list_collections(
+        &self,
+    ) -> anyhow::Result<Vec<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.values().cloned().collect())
     }
     async fn update_collection(
         &self,
         _id: &str,
         _config: Option<crate::proto::proximadb_v1::CollectionConfig>,
-    ) -> Result<crate::proto::proximadb_v1::CollectionResponse> {
+    ) -> anyhow::Result<crate::proto::proximadb_v1::CollectionResponse> {
         unimplemented!()
     }
-    async fn resolve_collection_id(&self, name_or_id: &str) -> Result<Option<String>> {
+    async fn resolve_collection_id(&self, name_or_id: &str) -> anyhow::Result<Option<String>> {
         Ok(self.collections.get(name_or_id).map(|c| c.id.clone()))
     }
     async fn get_collection_by_name(
         &self,
         name: &str,
-    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+    ) -> anyhow::Result<Option<crate::proto::proximadb_v1::Collection>> {
         Ok(self.collections.get(name).cloned())
     }
 }

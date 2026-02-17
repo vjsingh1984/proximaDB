@@ -15,6 +15,7 @@ use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::utils::StoragePath;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 // ============================================================================
 // Engine Creation Utilities
@@ -127,6 +128,10 @@ pub fn create_test_collection(collection_id: &str, base_path: &str) -> Collectio
             tags: vec![],
             owner: None,
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
@@ -514,8 +519,6 @@ pub async fn create_test_parquet_reader(
 /// debug_parquet_file("file:///tmp/test.parquet", "Test File").await?;
 /// ```
 pub async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
-    use arrow_array::Array;
-    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use tracing::debug;
 
     debug!("\n=\r DEBUG: {} - Reading {}", label, file_path);

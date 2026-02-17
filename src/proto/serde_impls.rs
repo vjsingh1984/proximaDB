@@ -528,6 +528,7 @@ impl<'de> Deserialize<'de> for PropertyValue {
             array_value: Option<crate::proto::proximadb_v1::PropertyArray>,
             object_value: Option<crate::proto::proximadb_v1::PropertyObject>,
             vector_value: Option<Vec<f32>>,
+            #[allow(dead_code)]
             null_value: Option<serde_json::Value>,
         }
 
@@ -757,6 +758,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataValue {
             int_value: Option<i64>,
             double_value: Option<f64>,
             bool_value: Option<bool>,
+            #[allow(dead_code)]
             null_value: Option<serde_json::Value>,
         }
 
@@ -794,6 +796,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::FilterClause {
             int_value: Option<i64>,
             double_value: Option<f64>,
             bool_value: Option<bool>,
+            #[allow(dead_code)]
             null_value: Option<serde_json::Value>,
         }
 

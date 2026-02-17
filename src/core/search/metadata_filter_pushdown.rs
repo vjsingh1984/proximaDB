@@ -26,6 +26,7 @@ pub struct MetadataFilterPushdown {
     column_indexes: HashMap<String, ColumnIndex>,
 
     /// Filter selectivity estimator
+    #[allow(dead_code)]
     selectivity_estimator: SelectivityEstimator,
 }
 
@@ -48,30 +49,37 @@ pub struct ColumnIndex {
     inverted_index: HashMap<Value, HashSet<String>>,
 
     /// Range index for numeric columns
+    #[allow(dead_code)]
     range_index: Option<RangeIndex>,
 
     /// Prefix tree for string columns
+    #[allow(dead_code)]
     trie_index: Option<TrieIndex>,
 }
 
 /// Range index for numeric columns
 struct RangeIndex {
+    #[allow(dead_code)]
     sorted_entries: Vec<(f64, String)>, // (value, vector_id)
 }
 
 /// Trie index for string prefix matching
 struct TrieIndex {
+    #[allow(dead_code)]
     root: TrieNode,
 }
 
 struct TrieNode {
+    #[allow(dead_code)]
     children: HashMap<char, Box<TrieNode>>,
+    #[allow(dead_code)]
     vector_ids: HashSet<String>,
 }
 
 /// Filter selectivity estimator
 struct SelectivityEstimator {
     /// Historical selectivity for different filter patterns
+    #[allow(dead_code)]
     selectivity_history: HashMap<String, f64>,
 }
 
@@ -472,7 +480,7 @@ impl MetadataFilterPushdown {
     /// Build column index
     fn build_column_index(
         &self,
-        column_name: &str,
+        _column_name: &str,
         values: &[Option<Value>],
         records: &[VectorRecord],
     ) -> ColumnIndex {
@@ -664,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
-        use crate::proto::proximadb_v1::{MetadataItem, VectorRecord, metadata_item::Value};
+        use crate::proto::proximadb_v1::VectorRecord;
 
         let mut builder = MetadataBloomBuilder::new(1000);
 

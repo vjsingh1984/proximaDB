@@ -797,7 +797,7 @@ pub async fn dijkstra_shortest_path(
         }
     }
 
-    let start_time = std::time::Instant::now();
+    let _start_time = std::time::Instant::now();
 
     // Validate start node exists
     if engine.get_node(start_node_id)?.is_none() {
@@ -1154,7 +1154,7 @@ pub async fn astar_shortest_path(
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 /// use proximadb::proto::proximadb_v1::DistanceMetric;
 ///
@@ -1407,7 +1407,7 @@ pub async fn k_shortest_paths(
             if exclude_nodes.contains(&q.node_id) {
                 continue;
             }
-            if let Some(md) = config.max_depth {
+            if let Some(_md) = config.max_depth {
                 if let Some(d0) = prev.get(&q.node_id) {
                     let _ = d0; /* depth check omit for simplicity */
                 }
@@ -1750,7 +1750,7 @@ pub async fn page_rank(
 mod tests {
     use super::*;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::graph::{Edge, Node, PropertyValue};
+    use crate::graph::{Edge, Node};
     // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]

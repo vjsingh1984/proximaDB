@@ -212,6 +212,7 @@ impl MetadataQueryEngine {
     }
 
     /// Compare values that support PartialEq (used for Equal and NotEqual)
+    #[allow(dead_code)]
     fn compare_values<F>(
         &self,
         field_value: Option<&JsonValue>,
@@ -563,13 +564,13 @@ mod tests {
         assert!(engine.evaluate(&query, &metadata).unwrap());
 
         // Array contains value
-        let query = MetadataQuery::Field(FieldQuery {
+        let _query = MetadataQuery::Field(FieldQuery {
             field: "laptop_info".to_string(),
             operator: ComparisonOperator::In,
             value: json!(["laptop_info", "gaming", "portable"]),
         });
         // Note: This checks if "laptop_info" exists in tags array
-        let modified_query = MetadataQuery::Field(FieldQuery {
+        let _modified_query = MetadataQuery::Field(FieldQuery {
             field: "tags".to_string(),
             operator: ComparisonOperator::In,
             value: json!(["laptop_info"]),

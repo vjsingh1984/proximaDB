@@ -30,10 +30,15 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 /// Information about a node stored on disk
+///
+/// Contains metadata about the physical storage location of a B+ tree node.
 #[derive(Debug, Clone)]
 pub struct DiskNodeInfo {
+    /// Path to the file containing the node
     pub file_path: String,
+    /// Offset within the file where the node starts
     pub offset: u64,
+    /// Size of the node in bytes
     pub size: u64,
 }
 
@@ -77,11 +82,13 @@ enum Node {
 
 impl Node {
     /// Check if node is a leaf
+    #[allow(dead_code)]
     fn is_leaf(&self) -> bool {
         matches!(self, Node::Leaf(_))
     }
 
     /// Get the number of keys in the node
+    #[allow(dead_code)]
     fn key_count(&self) -> usize {
         match self {
             Node::Internal(internal) => internal.keys.len(),
@@ -90,16 +97,19 @@ impl Node {
     }
 
     /// Check if node is full
+    #[allow(dead_code)]
     fn is_full(&self, max_keys: usize) -> bool {
         self.key_count() >= max_keys
     }
 
     /// Check if node is underflow (has too few keys)
+    #[allow(dead_code)]
     fn is_underflow(&self, min_keys: usize) -> bool {
         self.key_count() < min_keys
     }
 
     /// Get the first key in the node
+    #[allow(dead_code)]
     fn first_key(&self) -> Option<&Vec<u8>> {
         match self {
             Node::Internal(internal) => internal.keys.first(),
@@ -108,6 +118,7 @@ impl Node {
     }
 
     /// Get the last key in the node
+    #[allow(dead_code)]
     fn last_key(&self) -> Option<&Vec<u8>> {
         match self {
             Node::Internal(internal) => internal.keys.last(),
@@ -153,6 +164,7 @@ impl InternalNode {
     }
 
     /// Remove key and child at a specific position
+    #[allow(dead_code)]
     fn remove_at(&mut self, index: usize) -> (Vec<u8>, NodeRef) {
         let key = self.keys.remove(index);
         let child = self.children.remove(index + 1);
@@ -177,6 +189,7 @@ impl InternalNode {
     }
 
     /// Merge with another internal node
+    #[allow(dead_code)]
     fn merge(&mut self, key: Vec<u8>, other: InternalNode) {
         self.keys.push(key);
         self.keys.extend(other.keys);
@@ -262,16 +275,18 @@ impl LeafNode {
     }
 
     /// Merge with another leaf node
+    #[allow(dead_code)]
     fn merge(&mut self, other: LeafNode) {
         self.entries.extend(other.entries);
         self.next = other.next;
     }
 
     /// Get all entries in a key range
+    #[allow(dead_code)]
     fn range(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut result = Vec::new();
 
-        for (key, value) in &self.entries {
+        for (key, _value) in &self.entries {
             let key_slice = key.as_slice();
 
             if let Some(start_key) = start {
@@ -320,7 +335,7 @@ impl NodeRef {
             NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                let disk_info = DiskNodeInfo {
+                let _disk_info = DiskNodeInfo {
                     file_path: format!("btree_page_{}.node", page_id),
                     offset: 0,
                     size: 4096, // Default page size
@@ -339,7 +354,7 @@ impl NodeRef {
             NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                let disk_info = DiskNodeInfo {
+                let _disk_info = DiskNodeInfo {
                     file_path: format!("btree_page_{}.node", page_id),
                     offset: 0,
                     size: 4096, // Default page size
@@ -353,6 +368,7 @@ impl NodeRef {
     }
 
     /// Load a node from disk storage
+    #[allow(dead_code)]
     fn load_disk_node(
         &self,
         disk_info: &DiskNodeInfo,
@@ -394,14 +410,17 @@ pub struct BTreeStats {
 }
 
 /// Range query result iterator
+///
+/// Provides iteration over key-value pairs in a B+ tree within a specified range.
 pub struct BTreeIterator {
     /// Current leaf node being iterated
     current_leaf: Option<NodeRef>,
     /// Current position within the leaf
     current_index: usize,
-    /// End key for range queries
+    /// End key for range queries (exclusive)
     end_key: Option<Vec<u8>>,
     /// Direction of iteration
+    #[allow(dead_code)]
     forward: bool,
 }
 
@@ -487,6 +506,9 @@ impl Iterator for BTreeIterator {
 }
 
 /// High-performance B+ tree implementation
+///
+/// A disk-friendly B+ tree with configurable node size, optimized for
+/// vector database operations like vector ID indexing and range queries.
 pub struct BPlusTree {
     /// Root node of the tree
     root: Option<NodeRef>,

@@ -5,15 +5,15 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
 
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::core::search::results::OptimizedSearchRecord;
+    use crate::proto::proximadb_v1::MetadataItem;
     use crate::proto::proximadb_v1::VectorRecord;
-    use crate::proto::proximadb_v1::{Collection, MetadataItem};
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -24,7 +24,7 @@ mod tests {
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
-        UnifiedStorageEngine,
+        StorageQueryMetadata, UnifiedStorageEngine,
     };
 
     /// Mock storage engine for testing
@@ -59,7 +59,7 @@ mod tests {
             "mock_storage_engine"
         }
 
-        async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+        async fn do_flush(&self, params: &FlushParameters) -> anyhow::Result<FlushResult> {
             let collection_id = params.collection_id.as_ref().unwrap().clone();
 
             // Track that flush was called
@@ -81,7 +81,10 @@ mod tests {
             })
         }
 
-        async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
+        async fn do_compact(
+            &self,
+            params: &CompactionParameters,
+        ) -> anyhow::Result<CompactionResult> {
             let collection_id = params.collection_id.as_ref().unwrap().clone();
 
             // Track that compaction was called
@@ -116,7 +119,7 @@ mod tests {
 
         async fn collect_engine_metrics(
             &self,
-        ) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+        ) -> anyhow::Result<std::collections::HashMap<String, serde_json::Value>> {
             Ok(std::collections::HashMap::new())
         }
 
@@ -125,14 +128,14 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
             Ok(None)
         }
 
         async fn search_vectors_unified(
             &self,
             _ctx: &crate::storage::traits::StorageQueryContext,
-        ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(Vec::new())
         }
 

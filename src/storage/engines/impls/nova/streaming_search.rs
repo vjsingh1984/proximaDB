@@ -26,9 +26,11 @@ pub struct StreamingSearchEngine {
     progressive_search: ProgressiveColumnarSearch,
 
     /// Streaming processor
+    #[allow(dead_code)]
     streaming_processor: StreamingRowGroupProcessor,
 
     /// Cost-based optimizer
+    #[allow(dead_code)]
     cost_optimizer: Option<CostBasedOptimizer>,
 
     /// Configuration
@@ -121,6 +123,7 @@ pub struct ZoneMapMetrics {
 struct PerformanceTracker {
     query_history: Vec<QueryExecution>,
     workload_stats: WorkloadStats,
+    #[allow(dead_code)]
     performance_history: PerformanceHistory,
     adaptive_thresholds: HashMap<String, f32>,
 }
@@ -128,11 +131,17 @@ struct PerformanceTracker {
 /// Individual query execution record
 #[derive(Debug, Clone)]
 struct QueryExecution {
+    #[allow(dead_code)]
     query_id: String,
+    #[allow(dead_code)]
     start_time: Instant,
+    #[allow(dead_code)]
     end_time: Option<Instant>,
+    #[allow(dead_code)]
     query_characteristics: QueryCharacteristics,
+    #[allow(dead_code)]
     actual_performance: Option<ActualPerformance>,
+    #[allow(dead_code)]
     predicted_performance: Option<PredictedPerformance>,
 }
 
@@ -141,7 +150,9 @@ struct QueryExecution {
 struct QueryCharacteristics {
     dimension: usize,
     top_k: usize,
+    #[allow(dead_code)]
     distance_metric: DistanceMetric,
+    #[allow(dead_code)]
     query_norm: f32,
     query_sparsity: f32,
     estimated_selectivity: f32,
@@ -151,19 +162,24 @@ struct QueryCharacteristics {
 #[derive(Debug, Clone)]
 struct ActualPerformance {
     latency_ms: u64,
+    #[allow(dead_code)]
     memory_peak: usize,
+    #[allow(dead_code)]
     candidates_processed: usize,
+    #[allow(dead_code)]
     pruning_effectiveness: f32,
+    #[allow(dead_code)]
     recall: Option<f32>,
+    #[allow(dead_code)]
     precision: Option<f32>,
 }
 
 /// Predicted performance estimates
 #[derive(Debug, Clone)]
 struct PredictedPerformance {
-    estimated_latency_ms: u64,
-    estimated_memory: usize,
-    estimated_candidates: usize,
+    _estimated_latency_ms: u64,
+    _estimated_memory: usize,
+    _estimated_candidates: usize,
 }
 
 impl StreamingSearchEngine {
@@ -181,7 +197,7 @@ impl StreamingSearchEngine {
                 Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
             ),
         );
-        let quantization_engine = Arc::new(
+        let _quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                 unified_quantization_engine.clone(),
                 distance_compute.clone(),
@@ -222,7 +238,10 @@ impl StreamingSearchEngine {
         parquet_metadata: &parquet::file::metadata::ParquetMetaData,
     ) -> Result<StreamingSearchResult> {
         let overall_start = Instant::now();
-        let query_id = format!("query_{}", chrono::Utc::now().timestamp_nanos());
+        let query_id = format!(
+            "query_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
 
         info!(
             "Starting unified streaming search: query_id={}, dim={}, top_k={}, superblocks={}, row_groups={}",
@@ -244,7 +263,7 @@ impl StreamingSearchEngine {
         let (pruned_superblocks, zone_map_metrics) = self
             .apply_advanced_zone_map_pruning(query_vector, superblocks, &execution_plan)
             .await?;
-        let zone_map_duration = zone_map_start.elapsed();
+        let _zone_map_duration = zone_map_start.elapsed();
 
         // Phase 3: Progressive streaming search
         let progressive_start = Instant::now();
@@ -258,7 +277,7 @@ impl StreamingSearchEngine {
                 parquet_metadata,
             )
             .await?;
-        let progressive_duration = progressive_start.elapsed();
+        let _progressive_duration = progressive_start.elapsed();
 
         // Extract fields we need before moving results
         let row_groups_scanned = progressive_result.row_groups_scanned;
@@ -718,7 +737,7 @@ impl PerformanceTracker {
     fn update_workload_stats(
         &mut self,
         characteristics: &QueryCharacteristics,
-        performance: &ActualPerformance,
+        _performance: &ActualPerformance,
     ) {
         // Update moving averages
         let alpha = 0.1; // Learning rate

@@ -7,6 +7,7 @@ fn create_test_entries(count: usize) -> Vec<IndexEntry> {
     (0..count)
         .map(|i| IndexEntry {
             key: format!("key_{:05}", i),
+            last_key: None,
             offset: i as u64 * 1000,
             size: 1000,
             block_id: i as u32,

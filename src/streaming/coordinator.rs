@@ -620,7 +620,6 @@ impl StreamCoordinator {
         retry_config: FlushRetryConfig,
     ) -> StreamResult<FlushStats> {
         let start = Instant::now();
-        let mut last_error: Option<StreamError> = None;
         let mut delay = retry_config.initial_delay;
         let mut attempts = 0;
 
@@ -713,7 +712,7 @@ impl StreamCoordinator {
                         "Flush attempt failed"
                     );
 
-                    last_error = Some(StreamError::StorageError { message: error_msg });
+                    let _last_error = Some(StreamError::StorageError { message: error_msg });
 
                     // Check if we should retry
                     if attempts > retry_config.max_retries {

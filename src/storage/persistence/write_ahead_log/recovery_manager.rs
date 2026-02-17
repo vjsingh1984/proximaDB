@@ -84,11 +84,12 @@ impl Clone for RecoveryManager {
     }
 }
 
+#[allow(dead_code)]
 impl RecoveryManager {
     /// Create a new recovery manager with direct-to-storage recovery
     pub fn new(
         config: crate::storage::persistence::write_ahead_log::config::WALConfig,
-        wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
+        _wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Self {
@@ -887,8 +888,8 @@ pub struct ParallelRecoveryManager {
 impl ParallelRecoveryManager {
     /// Create a new parallel recovery manager
     pub fn new(
-        disk_manager: Arc<WriteAheadLogDiskManager>,
-        flush_coordinator: Arc<WALFlushCoordinator>,
+        _disk_manager: Arc<WriteAheadLogDiskManager>,
+        _flush_coordinator: Arc<WALFlushCoordinator>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         num_workers: Option<usize>,
     ) -> Self {
@@ -1126,7 +1127,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_manager_direct_to_storage() {
-        let (disk_manager, flush_coordinator, recovery_manager, temp_dir) =
+        let (disk_manager, _flush_coordinator, recovery_manager, temp_dir) =
             create_test_managers().await;
         let collection_id = "test_collection";
 
@@ -1209,7 +1210,6 @@ mod tests {
 
     // Mock storage engine for testing
     fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageEngine> {
-        use crate::services::collection::manager::CollectionService;
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use crate::storage::traits::{
             CompactionParameters, CompactionResult, FlushParameters, FlushResult,

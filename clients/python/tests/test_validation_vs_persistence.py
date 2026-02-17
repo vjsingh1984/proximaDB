@@ -14,10 +14,12 @@ This will show us:
 - What's the real bottleneck?
 """
 
-import proximadb
-import tempfile
 import shutil
+import tempfile
 import time
+
+import proximadb
+
 
 def test_configuration(async_validation: bool, persistence: bool, graph_size: dict):
     """Test a specific configuration"""
@@ -35,11 +37,11 @@ def test_configuration(async_validation: bool, persistence: bool, graph_size: di
         start = time.perf_counter()
 
         nodes = []
-        for i in range(graph_size['nodes']):
+        for i in range(graph_size["nodes"]):
             node = proximadb.GraphNode(
                 f"node_{i}",
                 labels=["Person"],
-                properties={"name": f"Node_{i}", "value": str(i)}
+                properties={"name": f"Node_{i}", "value": str(i)},
             )
             nodes.append(node)
 
@@ -53,18 +55,15 @@ def test_configuration(async_validation: bool, persistence: bool, graph_size: di
 
         edges = []
         edge_count = 0
-        for from_idx in range(graph_size['nodes']):
-            if edge_count >= graph_size['edges']:
+        for from_idx in range(graph_size["nodes"]):
+            if edge_count >= graph_size["edges"]:
                 break
             for offset in range(1, 6):  # Each node connects to up to 5 neighbors
-                if edge_count >= graph_size['edges']:
+                if edge_count >= graph_size["edges"]:
                     break
-                to_idx = (from_idx + offset) % graph_size['nodes']
+                to_idx = (from_idx + offset) % graph_size["nodes"]
                 edge = proximadb.GraphEdge(
-                    f"node_{from_idx}",
-                    f"node_{to_idx}",
-                    "LINKS",
-                    weight=1.0
+                    f"node_{from_idx}", f"node_{to_idx}", "LINKS", weight=1.0
                 )
                 edges.append(edge)
                 edge_count += 1
@@ -74,14 +73,14 @@ def test_configuration(async_validation: bool, persistence: bool, graph_size: di
         print(f" {edge_time:.1f}ms")
 
         total_time = node_time + edge_time
-        ops_per_sec = (graph_size['nodes'] + graph_size['edges']) * 1000 / total_time
+        ops_per_sec = (graph_size["nodes"] + graph_size["edges"]) * 1000 / total_time
 
         return {
-            'node_time_ms': node_time,
-            'edge_time_ms': edge_time,
-            'total_time_ms': total_time,
-            'ops_per_sec': ops_per_sec,
-            'edge_ops_per_sec': graph_size['edges'] * 1000 / edge_time
+            "node_time_ms": node_time,
+            "edge_time_ms": edge_time,
+            "total_time_ms": total_time,
+            "ops_per_sec": ops_per_sec,
+            "edge_ops_per_sec": graph_size["edges"] * 1000 / edge_time,
         }
 
     finally:
@@ -108,7 +107,9 @@ def main():
         # So we'll just measure the current behavior and note what we need to implement
 
         print("\nCurrent Implementation (parallel validation + sync WAL):")
-        result = test_configuration(async_validation=True, persistence=True, graph_size=size)
+        result = test_configuration(
+            async_validation=True, persistence=True, graph_size=size
+        )
 
         print(f"\n  Results:")
         print(f"    Node insert: {result['node_time_ms']:.1f}ms")

@@ -5,6 +5,7 @@ Provides async REST methods for graph operations with per-call prefetch override
 """
 
 from typing import Any, Dict, List, Optional
+
 import httpx
 
 
@@ -52,7 +53,9 @@ class ProximaDBAsyncClient:
         if prefetch_budget is not None:
             body["prefetch_budget"] = int(prefetch_budget)
 
-        resp = await self._client.post("/api/v1/graph/shortest_path", json=body, headers=headers)
+        resp = await self._client.post(
+            "/api/v1/graph/shortest_path", json=body, headers=headers
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -94,6 +97,8 @@ class ProximaDBAsyncClient:
         if prefetch_budget is not None:
             body["prefetch_budget"] = int(prefetch_budget)
 
-        resp = await self._client.post("/api/v1/graph/traverse", json=body, headers=headers)
+        resp = await self._client.post(
+            "/api/v1/graph/traverse", json=body, headers=headers
+        )
         resp.raise_for_status()
         return resp.json()

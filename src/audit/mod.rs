@@ -49,7 +49,7 @@ impl ComplianceReportingEngine {
 
     pub async fn generate_compliance_reports(
         &self,
-        audit_data: &AuditData,
+        _audit_data: &AuditData,
         frameworks: &[String],
         _executive_context: &crate::auth::sso::EnterpriseUserContext,
     ) -> Result<Vec<ComplianceReport>> {
@@ -169,13 +169,16 @@ impl EnterpriseAuditCoordinator {
 /// Compliance reporting engine
 #[derive(Debug, Clone)]
 pub struct ComplianceReportingEngine {
+    #[allow(dead_code)]
     frameworks: Vec<String>,
+    #[allow(dead_code)]
     config: ReportingConfig,
 }
 
 /// Audit analytics engine
 #[derive(Debug, Clone)]
 pub struct AuditAnalyticsEngine {
+    #[allow(dead_code)]
     analytics_config: AnalyticsConfig,
 }
 
@@ -240,7 +243,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_enterprise_audit_coordinator_creation() {
-        let coordinator = EnterpriseAuditCoordinator::new().await.unwrap();
+        let _coordinator = EnterpriseAuditCoordinator::new().await.unwrap();
         // Basic validation that coordinator was created
         assert!(true);
     }

@@ -257,20 +257,29 @@ pub struct AxisTieringManager {
 
 /// A tier operation in progress
 #[derive(Debug, Clone)]
-struct TierOperation {
-    collection_id: String,
-    from_tier: InfrastructureTier,
-    to_tier: InfrastructureTier,
-    start_time: Instant,
-    operation_type: TierOperationType,
+pub struct TierOperation {
+    /// Collection ID for this operation
+    pub collection_id: String,
+    /// Source tier
+    pub from_tier: InfrastructureTier,
+    /// Destination tier
+    pub to_tier: InfrastructureTier,
+    /// When the operation started
+    pub start_time: Instant,
+    /// Type of operation
+    pub operation_type: TierOperationType,
 }
 
 /// Type of tier operation
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TierOperationType {
+pub enum TierOperationType {
+    /// Move data to a faster tier
     Promotion,
+    /// Move data to a slower tier
     Demotion,
+    /// Move data between tiers
     Migration,
+    /// Pre-fetch data to a faster tier
     Prefetch,
 }
 
@@ -518,7 +527,7 @@ impl AxisTieringManager {
     /// Get workload metrics for a collection from existing infrastructure
     async fn get_collection_workload_metrics(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> anyhow::Result<WorkloadMetrics> {
         // Query the IndexBackend for workload characteristics
         let workload_metrics = self.index_backend.workload_metrics().await;
@@ -651,7 +660,7 @@ impl AxisTieringManager {
     /// Apply index type specific preferences
     async fn apply_index_type_preferences(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         global_recommendation: &InfrastructureTier,
         workload_metrics: &WorkloadMetrics,
     ) -> anyhow::Result<Option<InfrastructureTier>> {
@@ -1237,8 +1246,6 @@ impl AxisTieringManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::axis::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_axis_tiering_integration() {

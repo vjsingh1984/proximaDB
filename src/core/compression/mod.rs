@@ -214,7 +214,7 @@ mod parquet {
         }
 
         #[derive(Debug, Clone)]
-        pub struct GzipLevel(u32);
+        pub struct GzipLevel(#[allow(dead_code)] u32);
         impl GzipLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
                 Ok(Self(level))
@@ -227,7 +227,7 @@ mod parquet {
         }
 
         #[derive(Debug, Clone)]
-        pub struct ZstdLevel(i32);
+        pub struct ZstdLevel(#[allow(dead_code)] i32);
         impl ZstdLevel {
             pub fn try_new(level: i32) -> Result<Self, String> {
                 Ok(Self(level))
@@ -240,7 +240,7 @@ mod parquet {
         }
 
         #[derive(Debug, Clone)]
-        pub struct BrotliLevel(u32);
+        pub struct BrotliLevel(#[allow(dead_code)] u32);
         impl BrotliLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
                 Ok(Self(level))
@@ -1140,8 +1140,6 @@ mod tests {
 
     #[test]
     fn test_mixed_compression_strategy() {
-        use std::collections::HashMap;
-
         // Test column type detection
         let test_columns = vec![
             ("id".to_string(), ColumnData::Identifier),

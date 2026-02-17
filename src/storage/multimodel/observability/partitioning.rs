@@ -386,7 +386,7 @@ mod tests {
         let partitioner = TimePartitioner::new("metrics".to_string(), config);
 
         // Create partitions for 3 days
-        let day_ns = 86400_000_000_000i64;
+        let day_ns = 86_400_000_000_000_i64;
         let now_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -415,8 +415,8 @@ mod tests {
         let partitioner = TimePartitioner::new("test".to_string(), config);
 
         // Create more partitions than the limit
-        let day_ns = 86400_000_000_000i64;
-        let now_ns = 1704067200_000_000_000i64; // Fixed timestamp
+        let day_ns = 86_400_000_000_000_i64;
+        let now_ns = 1_704_067_200_000_000_000_i64; // Fixed timestamp
 
         for i in 0..5 {
             partitioner

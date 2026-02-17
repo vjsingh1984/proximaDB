@@ -4,7 +4,6 @@
 use crate::core::compression::StandardCompression;
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::utils::StoragePath;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
 use crate::storage::engines::core::ops::{
@@ -95,7 +94,7 @@ pub struct NovaEngine {
     /// - Memory-mapped file access for large scans
     ///
     /// Used for hot-path operations requiring maximum throughput
-    optimized_ops: Arc<OptimizedNovaOperations>,
+    _optimized_ops: Arc<OptimizedNovaOperations>,
 
     /// **Flush Operations Module**
     ///
@@ -175,7 +174,7 @@ pub struct NovaEngine {
     /// - Adaptive selection based on data characteristics
     ///
     /// Stateless provider, thread-safe for concurrent use
-    compression_provider: StandardCompression,
+    _compression_provider: StandardCompression,
 
     /// **Storage Quantization Engine** (Collection-Aware)
     ///
@@ -211,7 +210,7 @@ pub struct NovaEngine {
     /// - Progressive refinement (coarse → fine distances)
     ///
     /// Shared singleton across all distance operations
-    distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+    _distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 
     /// **Universal Performance Optimizer**
     ///
@@ -235,6 +234,7 @@ pub struct NovaEngine {
     /// None by default, set externally when AXIS indexes are enabled for collection
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
+#[allow(dead_code)]
 impl NovaEngine {
     /// Create new NOVA engine instance
     pub async fn new() -> Result<Self> {
@@ -322,7 +322,7 @@ impl NovaEngine {
 
         Ok(Self {
             filesystem,
-            optimized_ops,
+            _optimized_ops: optimized_ops,
             flush_ops,
             compaction_ops,
             search_ops,
@@ -340,10 +340,10 @@ impl NovaEngine {
             })),
             hardware,
             metrics_collector: None,
-            compression_provider,
+            _compression_provider: compression_provider,
             storage_quantization_engine,
             fallback_quantization_engine,
-            distance_engine: distance_compute,
+            _distance_engine: distance_compute,
             universal_optimizer,
             axis_manager: None, // AXIS manager will be set externally if available
         })
@@ -371,8 +371,6 @@ impl NovaEngine {
         collection_id: &str,
         storage_path: &str,
     ) -> Result<Vec<super::NovaFile>> {
-        use crate::storage::persistence::filesystem::FileSystem;
-
         // Get UnifiedCachingFilesystem for NOVA
         // This creates a collection-specific cache instance that:
         // - Downloads cloud files to local disk cache on first read
@@ -480,7 +478,7 @@ impl NovaEngine {
     }
 
     /// Update global statistics file for collection
-    async fn update_global_stats(&self, collection_id: &str, storage_path: &str) -> Result<()> {
+    async fn update_global_stats(&self, _collection_id: &str, _storage_path: &str) -> Result<()> {
         // Path: {storage_path}/{collection_id}/global.stats
         // This is updated after flush/compaction to maintain collection-wide metrics
         // File-level statistics are embedded in Parquet metadata properties
@@ -664,7 +662,7 @@ impl NovaEngine {
     async fn optimize_parquet_storage_tier(
         &self,
         file_path: &str,
-        row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats,
+        _row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats,
     ) -> Result<DataFreshnessTier> {
         // Use common utility for consistent vector size estimation
         // Default configuration since NovaEngine doesn't have config field
@@ -778,7 +776,7 @@ impl NovaEngine {
         nova_file: &NovaFile,
         file_path: &str,
         params: &FlushParameters,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<u64> {
         use super::nova_meta_collector::{NovaCollectorConfig, NovaMetadataCollector};
         use crate::storage::engines::core::formats::columnar::{
@@ -1236,6 +1234,8 @@ impl NovaEngine {
                 storage_path: base_location, // Use base_location, not full path
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let internal_results = self.search_vectors_unified(&ctx).await?;
@@ -1416,7 +1416,7 @@ impl UnifiedStorageEngine for NovaEngine {
         );
 
         // Construct data directory from base_path and collection_id
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let _data_dir = format!("{}/{}/data", base_path, collection_id);
 
         // TODO: Load actual Parquet files from data_dir
         // For now, return None as placeholder
@@ -1762,15 +1762,16 @@ impl NovaEngine {
 // Additional helper methods for NovaEngine
 impl NovaEngine {
     /// Fallback to direct search when orchestration fails
+    #[allow(dead_code)]
     async fn fallback_to_direct_search(
         &self,
-        ctx: &crate::storage::traits::StorageQueryContext,
+        _ctx: &crate::storage::traits::StorageQueryContext,
         collection_id: &str,
         storage_path: &str,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        _filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         tracing::warn!("🔄 NOVA: Falling back to direct search implementation");
 
@@ -1782,7 +1783,7 @@ impl NovaEngine {
         let mut all_results = Vec::new();
 
         // Search each NOVA file using columnar optimization
-        for nova_file in files.iter() {
+        for _nova_file in files.iter() {
             // Placeholder - would implement actual columnar search
             let results: Vec<(crate::proto::proximadb_v1::VectorRecord, f32)> = Vec::new();
 

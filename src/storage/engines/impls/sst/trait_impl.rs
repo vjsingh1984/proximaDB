@@ -62,7 +62,7 @@ impl UnifiedStorageEngine for SstEngine {
         info!("🔄 SST: Starting compaction operation");
 
         // Use the compaction manager if available
-        if let Some(compaction_manager) = self.compaction_manager() {
+        if let Some(_compaction_manager) = self.compaction_manager() {
             // Trigger compaction through the manager
             // This would be implemented in the compaction module
             Ok(CompactionResult {
@@ -153,7 +153,7 @@ impl UnifiedStorageEngine for SstEngine {
         );
 
         // Add SST-specific metrics
-        if let Some(compaction_manager) = self.compaction_manager() {
+        if let Some(_compaction_manager) = self.compaction_manager() {
             metrics.insert(
                 "compaction_enabled".to_string(),
                 serde_json::Value::Bool(true),

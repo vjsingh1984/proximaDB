@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
@@ -74,8 +74,10 @@ pub struct SwiftMetadata {
     /// Variable-size data (serialized filters, statistics, etc.)
     pub variable_data: Vec<u8>,
     /// Parsed global bloom filter (lazy-loaded)
+    #[allow(dead_code)]
     pub global_bloom: parking_lot::RwLock<Option<Arc<Vec<u8>>>>,
     /// Parsed segment bloom filters (lazy-loaded)
+    #[allow(dead_code)]
     pub segment_blooms: parking_lot::RwLock<HashMap<u32, Arc<Vec<u8>>>>,
 }
 
@@ -240,6 +242,7 @@ impl SwiftMetadata {
 /// SWIFT metadata serializer
 pub struct SwiftMetadataSerializer {
     /// Filesystem interface for reading files
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 }
 
@@ -292,8 +295,8 @@ impl SwiftMetadataSerializer {
             });
         }
 
-        debug!(
-            file_path,
+        trace!(
+            file_path = file_path,
             segments = segments.len(),
             total_records = global.total_records,
             "Extracted SWIFT metadata"
@@ -360,7 +363,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         serialized.extend_from_slice(&metadata.variable_data);
 
         trace!(
-            file_path,
+            file_path = file_path,
             serialized_size = serialized.len(),
             segments = metadata.segments.len(),
             "Serialized SWIFT metadata"
@@ -470,7 +473,8 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         trace!(
             segments = metadata.segments.len(),
-            variable_data_size, "Deserialized SWIFT metadata"
+            variable_data_size = variable_data_size,
+            "Deserialized SWIFT metadata"
         );
 
         Ok(Box::new(metadata))
@@ -552,12 +556,11 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_swift_metadata_serialization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
@@ -576,7 +579,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_id_lookup_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
@@ -597,13 +600,13 @@ mod tests {
 
         // Test with ID that might exist
         query_context.id_lookups = vec!["id_500000".to_string()]; // Hash likely in range
-        let can_skip = serializer.can_skip_file(metadata.as_ref(), &query_context);
+        let _can_skip = serializer.can_skip_file(metadata.as_ref(), &query_context);
         // Depending on hash, might not be able to skip
     }
 
     #[tokio::test]
     async fn test_swift_segment_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());

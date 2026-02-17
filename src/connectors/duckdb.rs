@@ -444,6 +444,7 @@ impl DuckDBTableScan {
 /// DuckDB vector search function
 pub struct DuckDBVectorSearch {
     /// Configuration
+    #[allow(dead_code)]
     config: DuckDBConnectorConfig,
 }
 
@@ -456,7 +457,7 @@ impl DuckDBVectorSearch {
     /// Execute vector search
     pub fn search(
         &self,
-        params: &DuckDBVectorSearchParams,
+        _params: &DuckDBVectorSearchParams,
     ) -> Result<Vec<RecordBatch>, DuckDBError> {
         // TODO: Implement actual vector search via ProximaDB
         Ok(Vec::new())
@@ -485,12 +486,16 @@ impl DuckDBVectorSearch {
 /// DuckDB insert function
 pub struct DuckDBInsert {
     /// Configuration
+    #[allow(dead_code)]
     config: DuckDBConnectorConfig,
     /// Target collection
+    #[allow(dead_code)]
     collection: String,
     /// Schema
+    #[allow(dead_code)]
     schema: Option<Arc<ArrowSchema>>,
     /// Rows inserted
+    #[allow(dead_code)]
     rows_inserted: usize,
 }
 
@@ -538,10 +543,13 @@ pub struct DuckDBInsertResult {
 /// DuckDB copy function for bulk writes
 pub struct DuckDBCopy {
     /// Configuration
+    #[allow(dead_code)]
     config: DuckDBConnectorConfig,
     /// Target collection
+    #[allow(dead_code)]
     collection: String,
     /// Write mode
+    #[allow(dead_code)]
     mode: DuckDBWriteMode,
 }
 

@@ -5,9 +5,9 @@ Provides thread-safe caching of loaded models to reduce memory usage
 and improve initialization performance.
 """
 
-from typing import Optional, Any, Callable, Dict
-import threading
 import logging
+import threading
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class ModelCache:
         # model1 is model2 -> True (same instance)
     """
 
-    _instance: Optional['ModelCache'] = None
+    _instance: Optional["ModelCache"] = None
     _lock = threading.Lock()
     _models: Dict[str, Any] = {}
     _stats: Dict[str, int] = {"hits": 0, "misses": 0, "loads": 0}
@@ -45,10 +45,7 @@ class ModelCache:
         return cls._instance
 
     def get_or_load(
-        self,
-        key: str,
-        loader: Callable[[], Any],
-        force_reload: bool = False
+        self, key: str, loader: Callable[[], Any], force_reload: bool = False
     ) -> Any:
         """
         Get cached model or load it

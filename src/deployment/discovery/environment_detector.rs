@@ -11,6 +11,7 @@ use tracing::{debug, info, warn};
 
 /// Enterprise environment detector for automated deployment
 pub struct EnvironmentDetector {
+    #[allow(dead_code)]
     detection_config: DetectionConfig,
     platform_analyzers: HashMap<PlatformType, Box<dyn PlatformAnalyzer + Send + Sync>>,
 }
@@ -547,7 +548,7 @@ impl EnvironmentDetector {
     /// Analyze resource availability for ProximaDB deployment
     async fn analyze_resource_availability(
         &self,
-        platform_analysis: &PlatformAnalysis,
+        _platform_analysis: &PlatformAnalysis,
     ) -> Result<ResourceAvailability> {
         debug!("📊 Analyzing resource availability...");
 
@@ -693,7 +694,7 @@ impl EnvironmentDetector {
         platform_type: &PlatformType,
         resources: &ResourceAvailability,
         security: &SecurityConstraints,
-        performance: &PerformanceProfile,
+        _performance: &PerformanceProfile,
     ) -> Result<DeploymentRecommendation> {
         // Determine deployment strategy based on resources and requirements
         let deployment_strategy = if resources.cpu_cores >= 16 && resources.memory_gb >= 32 {

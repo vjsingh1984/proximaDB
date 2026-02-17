@@ -186,6 +186,7 @@ pub struct HybridParquetWriter {
 struct InsertionEvent {
     timestamp: Instant,
     batch_size: usize,
+    #[allow(dead_code)]
     mode: WriterMode,
 }
 
@@ -673,6 +674,7 @@ impl HybridParquetWriter {
     }
 
     /// Start background flush task
+    #[allow(dead_code)]
     async fn start_background_flush_task(&mut self) {
         let buffer = self.buffer.clone();
         let last_flush_time = self.last_flush_time.clone();
@@ -729,6 +731,7 @@ impl HybridParquetWriter {
     }
 
     /// Clone for background tasks
+    #[allow(dead_code)]
     fn clone_for_task(&self) -> Arc<Self> {
         // This would need proper Arc wrapping in production
         // For now, return a placeholder
@@ -999,7 +1002,7 @@ mod tests {
         // Write small batches (streaming pattern)
         for i in 0..10 {
             let records = vec![VectorRecord {
-                id: format!("vec_{}", i),
+                id: format!("vec_{i}"),
                 vector: vec![0.1; 128],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(i as i64),
@@ -1036,7 +1039,7 @@ mod tests {
         // Write large batch (batch pattern)
         let records: Vec<_> = (0..1000)
             .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
+                id: format!("vec_{i}"),
                 vector: vec![0.1; 128],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(i as i64),

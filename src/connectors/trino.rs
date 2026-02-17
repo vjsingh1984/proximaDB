@@ -349,6 +349,7 @@ pub struct TrinoTableLayout {
 /// Trino split manager - generates splits for parallel execution
 pub struct TrinoSplitManager {
     /// Configuration
+    #[allow(dead_code)]
     config: TrinoConnectorConfig,
 }
 
@@ -386,14 +387,19 @@ impl TrinoSplitManager {
 /// Trino page source - provides data pages from a split
 pub struct TrinoPageSource {
     /// Split being read
+    #[allow(dead_code)]
     split: TrinoSplit,
     /// Schema for output
+    #[allow(dead_code)]
     schema: Arc<ArrowSchema>,
     /// Whether source is finished
+    #[allow(dead_code)]
     finished: bool,
     /// Bytes read so far
+    #[allow(dead_code)]
     bytes_read: usize,
     /// Rows read so far
+    #[allow(dead_code)]
     rows_read: usize,
 }
 
@@ -474,12 +480,16 @@ pub struct TrinoBlock {
 /// Trino page sink - writes data to ProximaDB
 pub struct TrinoPageSink {
     /// Target table
+    #[allow(dead_code)]
     table: TrinoTable,
     /// Rows written
+    #[allow(dead_code)]
     rows_written: usize,
     /// Bytes written
+    #[allow(dead_code)]
     bytes_written: usize,
     /// Committed
+    #[allow(dead_code)]
     committed: bool,
 }
 

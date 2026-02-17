@@ -12,11 +12,12 @@ Top E5 Models (Open Source):
 - intfloat/multilingual-e5-large: Multilingual (1024 dims) - 100+ languages
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,38 +53,38 @@ class E5EmbeddingProvider(EmbeddingProvider):
             "dimension": 1024,
             "max_length": 512,
             "description": "Best quality English embeddings, top MTEB performer",
-            "use_case": "Maximum accuracy, research, production when quality critical"
+            "use_case": "Maximum accuracy, research, production when quality critical",
         },
         "intfloat/e5-base-v2": {
             "dimension": 768,
             "max_length": 512,
             "description": "Balanced quality and speed for English",
-            "use_case": "Production use, good balance of quality and speed"
+            "use_case": "Production use, good balance of quality and speed",
         },
         "intfloat/e5-small-v2": {
             "dimension": 384,
             "max_length": 512,
             "description": "Fast and efficient for English",
-            "use_case": "High throughput, latency-sensitive applications"
+            "use_case": "High throughput, latency-sensitive applications",
         },
         "intfloat/multilingual-e5-large": {
             "dimension": 1024,
             "max_length": 512,
             "description": "Multilingual model supporting 100+ languages",
-            "use_case": "Cross-lingual retrieval, multilingual applications"
+            "use_case": "Cross-lingual retrieval, multilingual applications",
         },
         "intfloat/multilingual-e5-base": {
             "dimension": 768,
             "max_length": 512,
             "description": "Balanced multilingual model",
-            "use_case": "Multilingual production use"
+            "use_case": "Multilingual production use",
         },
         "intfloat/multilingual-e5-small": {
             "dimension": 384,
             "max_length": 512,
             "description": "Fast multilingual model",
-            "use_case": "Multilingual high-throughput applications"
-        }
+            "use_case": "Multilingual high-throughput applications",
+        },
     }
 
     # E5 instruction prefixes (critical for performance)
@@ -109,8 +110,8 @@ class E5EmbeddingProvider(EmbeddingProvider):
             max_length=512,
             extra_params={
                 "auto_prefix": True,  # Automatically add query/passage prefixes
-                "trust_remote_code": False  # E5 models don't need this
-            }
+                "trust_remote_code": False,  # E5 models don't need this
+            },
         )
 
     def _initialize(self) -> None:
@@ -120,8 +121,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
 
             # Initialize model
             self.model = SentenceTransformer(
-                self.config.model_name,
-                device=self.config.device
+                self.config.model_name, device=self.config.device
             )
 
             # Update dimension if it's a known E5 model
@@ -135,13 +135,17 @@ class E5EmbeddingProvider(EmbeddingProvider):
                 self.config.dimension = dummy_embedding.shape[1]
 
             self._available = True
-            logger.info(f"Initialized E5 model: {self.config.model_name} "
-                       f"(dimension: {self.config.dimension}, max_length: {self.config.max_length})")
+            logger.info(
+                f"Initialized E5 model: {self.config.model_name} "
+                f"(dimension: {self.config.dimension}, max_length: {self.config.max_length})"
+            )
 
         except ImportError:
             self._available = False
-            logger.warning("sentence-transformers not installed. "
-                          "Install with: pip install sentence-transformers")
+            logger.warning(
+                "sentence-transformers not installed. "
+                "Install with: pip install sentence-transformers"
+            )
         except Exception as e:
             self._available = False
             logger.error(f"Failed to initialize E5 model: {e}")
@@ -190,8 +194,10 @@ class E5EmbeddingProvider(EmbeddingProvider):
             Array of embeddings with shape (len(texts), dimension)
         """
         if not self._available:
-            raise RuntimeError("E5 model not available. "
-                             "Install with: pip install sentence-transformers")
+            raise RuntimeError(
+                "E5 model not available. "
+                "Install with: pip install sentence-transformers"
+            )
 
         if not texts:
             return np.array([])
@@ -210,12 +216,14 @@ class E5EmbeddingProvider(EmbeddingProvider):
             batch_size=self.config.batch_size,
             show_progress_bar=False,
             normalize_embeddings=self.config.normalize,
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
 
         return embeddings
 
-    def embed_documents(self, documents: List[Dict[str, Any]], text_field: str = 'text') -> np.ndarray:
+    def embed_documents(
+        self, documents: List[Dict[str, Any]], text_field: str = "text"
+    ) -> np.ndarray:
         """
         Generate embeddings for documents (passages)
 
@@ -228,7 +236,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         Returns:
             Array of embedding vectors
         """
-        texts = [doc.get(text_field, '') for doc in documents]
+        texts = [doc.get(text_field, "") for doc in documents]
         # Documents are passages - use passage prefix
         return self.embed_texts(texts, is_query=False)
 
@@ -288,16 +296,18 @@ class E5EmbeddingProvider(EmbeddingProvider):
             "normalize": self.config.normalize,
             "available": self._available,
             "query_prefix": self.QUERY_PREFIX,
-            "passage_prefix": self.PASSAGE_PREFIX
+            "passage_prefix": self.PASSAGE_PREFIX,
         }
 
         # Add model-specific info if it's a known E5 model
         if self.config.model_name in self.E5_MODELS:
             model_spec = self.E5_MODELS[self.config.model_name]
-            info.update({
-                "description": model_spec["description"],
-                "use_case": model_spec["use_case"]
-            })
+            info.update(
+                {
+                    "description": model_spec["description"],
+                    "use_case": model_spec["use_case"],
+                }
+            )
 
         return info
 
@@ -329,7 +339,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
             "fast": "intfloat/e5-small-v2",
             "multilingual": "intfloat/multilingual-e5-large",
             "multilingual_balanced": "intfloat/multilingual-e5-base",
-            "multilingual_fast": "intfloat/multilingual-e5-small"
+            "multilingual_fast": "intfloat/multilingual-e5-small",
         }
 
         return recommendations.get(use_case, "intfloat/e5-base-v2")

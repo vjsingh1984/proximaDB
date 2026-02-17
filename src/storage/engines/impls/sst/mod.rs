@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! # SST Storage Engine - Hybrid Columnar OLTP Optimized Storage
 //!
 //! ## ⚡ PRODUCTION-READY REAL-TIME ENGINE - COMPREHENSIVE IMPLEMENTATION
@@ -250,6 +252,7 @@ pub mod manifest;
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
+pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;
 pub mod utils; // Tiered storage integration (opt-in)
@@ -279,6 +282,13 @@ pub use utils::{MemoryEstimate, SortingStats, SstableFileInfo, SstableFileUtils}
 
 // Tiering integration exports (opt-in feature)
 pub use tiering_integration::{SstTieringConfig, SstTieringIntegration, TieringIntegrationStatus};
+
+// TEXT column support exports
+pub use text_column_support::{
+    SstTextColumnProcessor, SstTextColumnReader, SstTextFilterEvaluator, SstTextSupport,
+    SstTextSupportBuilder, TextColumnBatchResult, TextColumnDefinition, TextColumnStats,
+    TextProcessingError,
+};
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::search::results::OptimizedSearchRecord;
@@ -316,7 +326,7 @@ mod sst_filename_tests {
 
     #[test]
     fn test_generate_filename() {
-        let collection_id = "test_collection";
+        let _collection_id = "test_collection";
         let level = 2;
 
         let filename = FilenameCodec::new().generate(level as u32, "sst");
@@ -404,7 +414,7 @@ mod sst_filename_tests {
 
     #[test]
     fn test_filename_uniqueness() {
-        let collection_id = "test";
+        let _collection_id = "test";
         let level = 1;
 
         // Generate multiple filenames and ensure they're unique
@@ -491,7 +501,7 @@ impl SstEntry {
     pub fn tombstone(id: String, sequence_number: u64, level: u8) -> Self {
         Self {
             record: VectorRecord {
-                id: id,
+                id,
                 vector: vec![], // Empty vector for tombstone
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(chrono::Utc::now().timestamp()),
@@ -709,9 +719,14 @@ pub fn get_centroid_fp32(fp16_centroid: &Option<Vec<u16>>, fp32_centroid: &[f32]
 // ============================================================================
 
 /// Index entry for fast key lookups in SSTable with hierarchical bloom filters
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IndexEntry {
+    /// First (minimum) key in this block - used for range lookups
     pub key: String,
+    /// Last (maximum) key in this block - enables proper B+ tree range queries
+    /// When a block contains multiple records, this allows correct key containment checks
+    #[serde(default)]
+    pub last_key: Option<String>,
     pub offset: u64,
     pub size: u32,
     pub block_id: u32,
@@ -785,9 +800,10 @@ impl BPlusTreeIndex {
 
         for (i, chunk) in entries.chunks(fanout).enumerate() {
             let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
+            // Use last_key from the last entry in chunk if available, otherwise fall back to key
             let end_key = chunk
                 .last()
-                .map(|e| e.key.clone())
+                .map(|e| e.last_key.clone().unwrap_or_else(|| e.key.clone()))
                 .unwrap_or_else(|| start_key.clone());
             leaves.push(BPlusLeaf {
                 start_key,
@@ -1018,13 +1034,26 @@ impl IndexEntry {
         use std::io::Write;
         let mut buffer = Vec::new();
 
-        // Write magic header
-        buffer.write_all(b"IDX1")?;
+        // Write magic header (upgraded to IDX2 for last_key support)
+        buffer.write_all(b"IDX2")?;
 
         // Write key
         let key_bytes = self.key.as_bytes();
         buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(key_bytes)?;
+
+        // Write last_key (new in IDX2)
+        match &self.last_key {
+            Some(lk) => {
+                buffer.write_all(&1u8.to_le_bytes())?; // Has last_key
+                let lk_bytes = lk.as_bytes();
+                buffer.write_all(&(lk_bytes.len() as u32).to_le_bytes())?;
+                buffer.write_all(lk_bytes)?;
+            }
+            None => {
+                buffer.write_all(&0u8.to_le_bytes())?; // No last_key
+            }
+        }
 
         // Write primitive fields
         buffer.write_all(&self.offset.to_le_bytes())?;
@@ -1129,10 +1158,11 @@ impl IndexEntry {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
 
-        // Read and validate magic header
+        // Read and validate magic header (IDX1 = legacy, IDX2 = with last_key)
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
-        if &magic != b"IDX1" {
+        let is_v2 = &magic == b"IDX2";
+        if !is_v2 && &magic != b"IDX1" {
             return Err(anyhow::anyhow!("Invalid IndexEntry format"));
         }
 
@@ -1143,6 +1173,24 @@ impl IndexEntry {
         let mut key_bytes = vec![0u8; key_len];
         cursor.read_exact(&mut key_bytes)?;
         let key = String::from_utf8(key_bytes)?;
+
+        // Read last_key (new in IDX2, defaults to None for IDX1)
+        let last_key = if is_v2 {
+            let mut bool_buf = [0u8; 1];
+            cursor.read_exact(&mut bool_buf)?;
+            let has_last_key = bool_buf[0] != 0;
+            if has_last_key {
+                cursor.read_exact(&mut len_buf)?;
+                let lk_len = u32::from_le_bytes(len_buf) as usize;
+                let mut lk_bytes = vec![0u8; lk_len];
+                cursor.read_exact(&mut lk_bytes)?;
+                Some(String::from_utf8(lk_bytes)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Read primitive fields
         let mut u64_buf = [0u8; 8];
@@ -1280,6 +1328,7 @@ impl IndexEntry {
 
         Ok(Self {
             key,
+            last_key,
             offset,
             size,
             block_id,
@@ -1300,12 +1349,14 @@ impl IndexEntry {
 
 // Default function for serde when reading existing SSTable headers
 // This preserves backward compatibility with existing SSTable files
+#[allow(dead_code)]
 fn default_block_size() -> u32 {
     1024 * 1024 // 1MB default - balanced for random access and sequential scans
 }
 
 /// Hierarchical block metadata for serialization
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct HierarchicalBlockMetadata {
     pub block_id: u32,
     pub record_count: u32,
@@ -1319,6 +1370,7 @@ struct HierarchicalBlockMetadata {
 mod compression_helpers {
     use super::*;
     /// Create BlockCompressionConfig from SstConfig settings
+    #[allow(dead_code)]
     pub fn block_compression_from_sst_config(config: &SstConfig) -> BlockCompressionConfig {
         // Map string algorithm names to unified compression module algorithms
         // The unified compression module supports all 13 algorithms
@@ -1346,7 +1398,7 @@ mod compression_helpers {
         };
 
         // Create proto compression config to match the SST config (supports all algorithms)
-        let collection_compression = if config.compression.to_lowercase() != "none"
+        let _collection_compression = if config.compression.to_lowercase() != "none"
             && !config.compression.is_empty()
         {
             Some(crate::proto::proximadb_v1::CompressionConfig {
@@ -1546,6 +1598,7 @@ mod block_utils {
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     /// Create a new ProximaDataBlock for SST usage with automatic bloom filter generation
+    #[allow(dead_code)]
     pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> ProximaDataBlock {
         // Create bloom filter for record IDs using adaptive sizing
         let bloom_filter = if !records.is_empty() {
@@ -1756,6 +1809,7 @@ mod block_utils {
     }
 
     /// Compare JSON values for ordering
+    #[allow(dead_code)]
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         use serde_json::Value;
         match (a, b) {
@@ -1783,19 +1837,13 @@ mod block_utils {
 // Old deserialization helper functions removed - now handled by ProximaDataBlock internally
 // ProximaDataBlock handles all serialization/deserialization with compression support
 
-/// Delegates to ProximaDataBlock for proper deserialization
-/// This eliminates duplication and ensures consistent block handling
-fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<ProximaDataBlock> {
-    // FIXED: Delegate directly to ProximaDataBlock instead of duplicating logic
-    ProximaDataBlock::deserialize(data, None)
-}
-
 // Utility functions for ProximaDataBlock operations in SST
 mod block_operations {
     use super::*;
 
     /// Get compression statistics
     /// Returns (is_compressed, uncompressed_size)
+    #[allow(dead_code)]
     pub fn compression_stats(block: &ProximaDataBlock) -> (bool, usize) {
         (
             block.compression_algorithm != CompressionAlgorithm::None,
@@ -1804,6 +1852,7 @@ mod block_operations {
     }
 
     /// Generate or update quantized section for this block
+    #[allow(dead_code)]
     pub fn update_quantization(
         block: &mut ProximaDataBlock,
         codebook: Option<&crate::compute::quantization::Codebook>,
@@ -1832,13 +1881,14 @@ mod block_operations {
     }
 
     /// Filter candidates using binary sketches (Stage 1: 95% reduction)
+    #[allow(dead_code)]
     pub fn filter_by_sketch(
         block: &ProximaDataBlock,
-        query_sketch: &[u8], // Binary sketch is just a byte array
-        threshold: f32,
+        _query_sketch: &[u8], // Binary sketch is just a byte array
+        _threshold: f32,
     ) -> Vec<usize> {
         // Check if quantized vectors exist
-        if let Some(ref qv) = block.quantized_vectors {
+        if let Some(ref _qv) = block.quantized_vectors {
             // Need to implement filter_by_sketch logic here
             vec![]
         } else {
@@ -1847,14 +1897,15 @@ mod block_operations {
     }
 
     /// Rank candidates using PQ codes (Stage 2: Further refinement)
+    #[allow(dead_code)]
     pub fn rank_by_pq(
         block: &ProximaDataBlock,
-        query: &[f32],
-        codebook: &crate::compute::quantization::Codebook,
-        candidate_indices: &[usize],
+        _query: &[f32],
+        _codebook: &crate::compute::quantization::Codebook,
+        _candidate_indices: &[usize],
     ) -> Vec<(usize, f32)> {
         // Check if quantized vectors exist
-        if let Some(ref qv) = block.quantized_vectors {
+        if let Some(ref _qv) = block.quantized_vectors {
             // Need to implement rank_by_pq logic here
             vec![]
         } else {
@@ -1863,6 +1914,7 @@ mod block_operations {
     }
 
     /// Get full vectors for final reranking (Stage 3: 100% accuracy)
+    #[allow(dead_code)]
     pub fn vectors_by_indices(
         block: &ProximaDataBlock,
         indices: &[usize],
@@ -1874,6 +1926,7 @@ mod block_operations {
     }
 
     /// Check if block has valid quantization data
+    #[allow(dead_code)]
     pub fn has_quantization(block: &ProximaDataBlock) -> bool {
         // Check if quantized vectors exist and are not empty
         block
@@ -1883,6 +1936,7 @@ mod block_operations {
     }
 
     /// Get memory savings from quantization
+    #[allow(dead_code)]
     pub fn quantization_memory_savings(block: &ProximaDataBlock) -> f32 {
         // Calculate original memory usage
         let original_size = block
@@ -1908,6 +1962,7 @@ mod block_operations {
 
 /// Batch extraction statistics for performance monitoring
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct BatchExtractionStats {
     pub total_extracted: usize,
     pub total_skipped: usize,
@@ -1916,6 +1971,7 @@ struct BatchExtractionStats {
 }
 
 impl BatchExtractionStats {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self::default()
     }

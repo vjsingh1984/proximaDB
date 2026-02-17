@@ -1,0 +1,1391 @@
+# =============================================================================
+# ProximaDB Release Pipeline
+# =============================================================================
+#
+# OVERVIEW:
+#   This workflow creates and publishes ProximaDB releases across multiple
+#   platforms and package registries. It builds native binaries, Python wheels,
+#   and publishes to GitHub Releases, PyPI, and crates.io.
+#
+# TRIGGER MODES:
+#   1. Tag Push: Automatically triggered by pushing a version tag (v0.2.0, v0.2.0-beta.1)
+#   2. Manual (workflow_dispatch): Manually triggered with version input and options
+#
+# WORKFLOW STAGES:
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │  1. PREPARE          Extract version, validate Cargo.toml              │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │  2. BUILD (parallel)                                                   │
+#   │     ├── build-binaries    6 platform targets (Linux/macOS/Windows)     │
+#   │     ├── build-wheels      20+ Python wheel variants                    │
+#   │     ├── build-embedded    5 embedded wheel variants                    │
+#   │     └── build-sdist       Source distributions                         │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │  3. VALIDATE          Pre-release artifact validation (GATE)           │
+#   │     └── Verifies ALL expected artifacts exist before publishing        │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │  4. PUBLISH (sequential, gated)                                        │
+#   │     ├── create-release    GitHub Release with all artifacts            │
+#   │     ├── publish-pypi      PyPI (stable) or TestPyPI (pre-release)      │
+#   │     ├── publish-crates    crates.io (stable only)                      │
+#   │     └── update-homebrew   Homebrew formula artifact                    │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │  5. VERIFY             Post-release installation verification          │
+#   ├─────────────────────────────────────────────────────────────────────────┤
+#   │  6. CLEANUP            Remove workflow artifacts                       │
+#   └─────────────────────────────────────────────────────────────────────────┘
+#
+# EXPECTED ARTIFACTS:
+#   Binaries (6 targets):
+#     - proximadb-{version}-x86_64-unknown-linux-gnu.tar.gz
+#     - proximadb-{version}-x86_64-unknown-linux-musl.tar.gz
+#     - proximadb-{version}-aarch64-unknown-linux-gnu.tar.gz
+#     - proximadb-{version}-x86_64-apple-darwin.tar.gz
+#     - proximadb-{version}-aarch64-apple-darwin.tar.gz
+#     - proximadb-{version}-x86_64-pc-windows-msvc.zip
+#
+#   Python Wheels (per platform/Python version):
+#     - Linux x86_64: Python 3.8, 3.9, 3.10, 3.11, 3.12
+#     - Linux aarch64: Python 3.9, 3.10, 3.11, 3.12
+#     - macOS x86_64: Python 3.9, 3.10, 3.11, 3.12
+#     - macOS aarch64: Python 3.9, 3.10, 3.11, 3.12
+#     - Windows x64: Python 3.9, 3.10, 3.11, 3.12
+#
+#   Embedded Wheels (5 targets):
+#     - Linux x86_64, Linux aarch64, macOS x86_64, macOS aarch64, Windows x64
+#
+# SAFEGUARDS:
+#   - dry_run: Builds all artifacts but skips publishing (test the pipeline)
+#   - Artifact validation gate: Blocks publishing if any artifact is missing
+#   - Environment protection: pypi/crates-io/testpypi require approval
+#   - Pre-release detection: Auto-routes to TestPyPI for pre-releases
+#   - Checksum verification: SHA256 checksums for all artifacts
+#
+# MANUAL RELEASE PROCESS:
+#   1. Ensure Cargo.toml version matches intended release version
+#   2. Run workflow manually with:
+#      - version: "0.2.0" (without 'v' prefix)
+#      - prerelease: true/false
+#      - dry_run: true (recommended first)
+#   3. Review dry_run output, verify all artifacts built successfully
+#   4. Re-run with dry_run: false to publish
+#
+# TAG-BASED RELEASE PROCESS:
+#   1. Ensure Cargo.toml version matches tag version
+#   2. Create and push tag: git tag v0.2.0 && git push origin v0.2.0
+#   3. Workflow triggers automatically
+#   4. Pre-releases (v0.2.0-beta.1) go to TestPyPI
+#   5. Stable releases go to PyPI and crates.io
+#
+# TROUBLESHOOTING:
+#   - Build failures: Check platform-specific build logs
+#   - Missing artifacts: Validate job shows which artifacts are missing
+#   - PyPI failures: Check trusted publishing configuration
+#   - crates.io failures: Verify CARGO_REGISTRY_TOKEN secret
+#
+# MAINTENANCE:
+#   - Update EXPECTED_BINARY_TARGETS when adding new platforms
+#   - Update EXPECTED_WHEEL_MATRIX when changing Python version support
+#   - Review retention-days settings periodically
+#
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'  # Pre-releases like v0.2.0-beta.1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Is this a pre-release?'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (skip publishing)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write  # For PyPI trusted publishing
+
+jobs:
+  # ============================================================================
+  # PREPARATION - Extract version, validate, and prepare release
+  # ============================================================================
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            PRERELEASE="${{ inputs.prerelease }}"
+            DRY_RUN="${{ inputs.dry_run }}"
+          else
+            # Extract version from tag (remove 'v' prefix)
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            # Check if it's a pre-release (contains hyphen)
+            if [[ "$VERSION" == *"-"* ]]; then
+              PRERELEASE="true"
+            else
+              PRERELEASE="false"
+            fi
+            DRY_RUN="false"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+          echo "dry_run=$DRY_RUN" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION (prerelease: $PRERELEASE, dry_run: $DRY_RUN)"
+
+      - name: Validate Cargo.toml Version
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          EXPECTED="${{ steps.version.outputs.version }}"
+          # Remove pre-release suffix for comparison
+          EXPECTED_BASE="${EXPECTED%%-*}"
+          if [ "$CARGO_VERSION" != "$EXPECTED_BASE" ]; then
+            echo "::warning::Cargo.toml version ($CARGO_VERSION) differs from release version ($EXPECTED_BASE)"
+          fi
+
+  # ============================================================================
+  # BUILD RUST BINARIES - Cross-platform binary builds
+  # ============================================================================
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (glibc)
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            archive: tar.gz
+            features: ""
+
+          # Linux x86_64 (musl - static)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+            archive: tar.gz
+            features: ""
+
+          # Linux aarch64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            archive: tar.gz
+            features: ""
+            cross: true
+
+          # macOS x86_64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: tar.gz
+            features: ""
+
+          # macOS aarch64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: tar.gz
+            features: "metal"
+
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            archive: zip
+            features: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Cross (for cross-compilation)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            sudo apt-get install -y musl-tools
+          fi
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-${{ matrix.target }}"
+          shared-key: "release"
+
+      - name: Build Binaries
+        run: |
+          FEATURES="${{ matrix.features }}"
+          if [ -n "$FEATURES" ]; then
+            FEATURES_FLAG="--features $FEATURES"
+          else
+            FEATURES_FLAG=""
+          fi
+
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} $FEATURES_FLAG \
+              --bin proximadb-server \
+              --bin proximadb-bench \
+              --bin proximadb-migrate
+          else
+            cargo build --release --target ${{ matrix.target }} $FEATURES_FLAG \
+              --bin proximadb-server \
+              --bin proximadb-bench \
+              --bin proximadb-migrate
+          fi
+        shell: bash
+
+      - name: Create Archive (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE_NAME="proximadb-${VERSION}-${TARGET}"
+
+          mkdir -p "${ARCHIVE_NAME}"
+          cp target/${TARGET}/release/proximadb-server "${ARCHIVE_NAME}/"
+          cp target/${TARGET}/release/proximadb-bench "${ARCHIVE_NAME}/"
+          cp target/${TARGET}/release/proximadb-migrate "${ARCHIVE_NAME}/"
+          cp README.adoc LICENSE "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp -r config "${ARCHIVE_NAME}/" 2>/dev/null || true
+
+          tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+
+          # Generate checksums
+          shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Create Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.prepare.outputs.version }}"
+          $TARGET = "${{ matrix.target }}"
+          $ARCHIVE_NAME = "proximadb-${VERSION}-${TARGET}"
+
+          New-Item -ItemType Directory -Path $ARCHIVE_NAME -Force
+          Copy-Item "target/${TARGET}/release/proximadb-server.exe" "${ARCHIVE_NAME}/"
+          Copy-Item "target/${TARGET}/release/proximadb-bench.exe" "${ARCHIVE_NAME}/"
+          Copy-Item "target/${TARGET}/release/proximadb-migrate.exe" "${ARCHIVE_NAME}/"
+          Copy-Item "README.adoc" "${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE" "${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse "config" "${ARCHIVE_NAME}/" -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path $ARCHIVE_NAME -DestinationPath "${ARCHIVE_NAME}.zip"
+
+          # Generate checksum
+          $hash = Get-FileHash "${ARCHIVE_NAME}.zip" -Algorithm SHA256
+          "$($hash.Hash.ToLower())  ${ARCHIVE_NAME}.zip" | Out-File -Encoding ascii "${ARCHIVE_NAME}.zip.sha256"
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}.zip" >> $env:GITHUB_ENV
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            proximadb-*.${{ matrix.archive }}
+            proximadb-*.${{ matrix.archive }}.sha256
+          retention-days: 7
+
+  # ============================================================================
+  # BUILD PYTHON WHEELS - Cross-platform wheel builds
+  # ============================================================================
+  build-wheels:
+    name: Build Wheels (${{ matrix.os }}, ${{ matrix.python }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.8"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.9"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.10"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.11"
+          - os: ubuntu-22.04
+            target: x86_64
+            python: "3.12"
+
+          # Linux aarch64
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.9"
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.10"
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.11"
+          - os: ubuntu-22.04
+            target: aarch64
+            python: "3.12"
+
+          # macOS x86_64
+          - os: macos-13
+            target: x86_64
+            python: "3.9"
+          - os: macos-13
+            target: x86_64
+            python: "3.10"
+          - os: macos-13
+            target: x86_64
+            python: "3.11"
+          - os: macos-13
+            target: x86_64
+            python: "3.12"
+
+          # macOS aarch64 (Apple Silicon)
+          - os: macos-14
+            target: aarch64
+            python: "3.9"
+          - os: macos-14
+            target: aarch64
+            python: "3.10"
+          - os: macos-14
+            target: aarch64
+            python: "3.11"
+          - os: macos-14
+            target: aarch64
+            python: "3.12"
+
+          # Windows x86_64
+          - os: windows-2022
+            target: x64
+            python: "3.9"
+          - os: windows-2022
+            target: x64
+            python: "3.10"
+          - os: windows-2022
+            target: x64
+            python: "3.11"
+          - os: windows-2022
+            target: x64
+            python: "3.12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-wheel-${{ matrix.os }}-${{ matrix.target }}"
+          shared-key: "wheel"
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Build Wheel (Linux x86_64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist --features python
+          before-script-linux: |
+            yum install -y openssl-devel || apt-get install -y libssl-dev
+
+      - name: Build Wheel (Linux aarch64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          manylinux: auto
+          args: --release --out dist --features python
+
+      - name: Build Wheel (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            maturin build --release --out dist --features python --target aarch64-apple-darwin
+          else
+            maturin build --release --out dist --features python --target x86_64-apple-darwin
+          fi
+
+      - name: Build Wheel (Windows)
+        if: runner.os == 'Windows'
+        run: maturin build --release --out dist --features python
+
+      - name: Upload Wheel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # ============================================================================
+  # BUILD PYTHON EMBEDDED WHEELS - Lightweight embedded package
+  # ============================================================================
+  build-embedded-wheels:
+    name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64
+          - os: ubuntu-22.04
+            target: aarch64
+          - os: macos-13
+            target: x86_64
+          - os: macos-14
+            target: aarch64
+          - os: windows-2022
+            target: x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Build Embedded Wheels (Linux x86_64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: clients/python-embedded
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist --features python
+
+      - name: Build Embedded Wheels (Linux aarch64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: clients/python-embedded
+          target: aarch64
+          manylinux: auto
+          args: --release --out dist --features python
+
+      - name: Build Embedded Wheels (macOS/Windows)
+        if: runner.os != 'Linux'
+        working-directory: clients/python-embedded
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            if [ "${{ matrix.target }}" = "aarch64" ]; then
+              maturin build --release --out dist --features python --target aarch64-apple-darwin
+            else
+              maturin build --release --out dist --features python --target x86_64-apple-darwin
+            fi
+          else
+            maturin build --release --out dist --features python
+          fi
+        shell: bash
+
+      - name: Upload Embedded Wheel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: clients/python-embedded/dist/*.whl
+          retention-days: 7
+
+  # ============================================================================
+  # BUILD SOURCE DISTRIBUTION - Python sdist
+  # ============================================================================
+  build-sdist:
+    name: Build Source Distribution
+    needs: prepare
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Maturin
+        run: pip install maturin
+
+      - name: Build sdist (main package)
+        run: maturin sdist --out dist
+
+      - name: Build sdist (embedded package)
+        working-directory: clients/python-embedded
+        run: maturin sdist --out dist
+
+      - name: Upload sdist Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: |
+            dist/*.tar.gz
+            clients/python-embedded/dist/*.tar.gz
+          retention-days: 7
+
+  # ============================================================================
+  # VALIDATE ARTIFACTS - Pre-release validation gate
+  # ============================================================================
+  # This job acts as a gate before publishing. It verifies that ALL expected
+  # artifacts were successfully built across all platforms before proceeding
+  # to create the release. This prevents partial/broken releases.
+  # ============================================================================
+  validate-artifacts:
+    name: Validate Release Artifacts
+    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    outputs:
+      validation_passed: ${{ steps.validate.outputs.passed }}
+      artifact_report: ${{ steps.validate.outputs.report }}
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Validate Artifact Manifest
+        id: validate
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          VALIDATION_PASSED=true
+          MISSING_ARTIFACTS=""
+          FOUND_ARTIFACTS=""
+
+          echo "=============================================="
+          echo "ProximaDB Release Artifact Validation"
+          echo "Version: $VERSION"
+          echo "=============================================="
+          echo ""
+
+          # ----------------------------------------
+          # Expected Binary Targets (6 platforms)
+          # ----------------------------------------
+          echo "## Binary Artifacts"
+          echo ""
+
+          EXPECTED_BINARIES=(
+            "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+            "proximadb-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
+            "proximadb-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
+            "proximadb-${VERSION}-x86_64-apple-darwin.tar.gz"
+            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
+            "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
+          )
+
+          BINARY_COUNT=0
+          BINARY_MISSING=0
+          for binary in "${EXPECTED_BINARIES[@]}"; do
+            if find artifacts -name "$binary" -type f | grep -q .; then
+              echo "  [OK] $binary"
+              FOUND_ARTIFACTS="$FOUND_ARTIFACTS\n  - $binary"
+              ((BINARY_COUNT++))
+            else
+              echo "  [MISSING] $binary"
+              MISSING_ARTIFACTS="$MISSING_ARTIFACTS\n  - $binary"
+              ((BINARY_MISSING++))
+              VALIDATION_PASSED=false
+            fi
+          done
+          echo ""
+          echo "  Binary Summary: $BINARY_COUNT/${#EXPECTED_BINARIES[@]} found"
+          echo ""
+
+          # Verify SHA256 checksums exist for binaries
+          echo "## Binary Checksums"
+          echo ""
+          CHECKSUM_COUNT=0
+          for binary in "${EXPECTED_BINARIES[@]}"; do
+            CHECKSUM="${binary}.sha256"
+            if find artifacts -name "$CHECKSUM" -type f | grep -q .; then
+              echo "  [OK] $CHECKSUM"
+              ((CHECKSUM_COUNT++))
+            else
+              echo "  [MISSING] $CHECKSUM"
+              # Checksums are important but not blocking
+            fi
+          done
+          echo ""
+
+          # ----------------------------------------
+          # Expected Python Wheels
+          # ----------------------------------------
+          echo "## Python Wheel Artifacts"
+          echo ""
+
+          # Count wheels by platform pattern
+          LINUX_X64_WHEELS=$(find artifacts -name "*manylinux*x86_64*.whl" -type f 2>/dev/null | wc -l)
+          LINUX_ARM64_WHEELS=$(find artifacts -name "*manylinux*aarch64*.whl" -type f 2>/dev/null | wc -l)
+          MACOS_X64_WHEELS=$(find artifacts -name "*macosx*x86_64*.whl" -type f 2>/dev/null | wc -l)
+          MACOS_ARM64_WHEELS=$(find artifacts -name "*macosx*arm64*.whl" -type f 2>/dev/null | wc -l)
+          WINDOWS_WHEELS=$(find artifacts -name "*win_amd64*.whl" -type f 2>/dev/null | wc -l)
+
+          # Expected minimums (main wheels, not embedded)
+          # Linux x86_64: 5 Python versions (3.8-3.12)
+          # Others: 4 Python versions (3.9-3.12)
+          echo "  Linux x86_64 wheels: $LINUX_X64_WHEELS (expected >= 5)"
+          echo "  Linux aarch64 wheels: $LINUX_ARM64_WHEELS (expected >= 4)"
+          echo "  macOS x86_64 wheels: $MACOS_X64_WHEELS (expected >= 4)"
+          echo "  macOS arm64 wheels: $MACOS_ARM64_WHEELS (expected >= 4)"
+          echo "  Windows x64 wheels: $WINDOWS_WHEELS (expected >= 4)"
+          echo ""
+
+          # Check minimum wheel counts (combined main + embedded)
+          if [ "$LINUX_X64_WHEELS" -lt 5 ]; then
+            echo "  [WARNING] Fewer than expected Linux x86_64 wheels"
+            VALIDATION_PASSED=false
+          fi
+          if [ "$LINUX_ARM64_WHEELS" -lt 4 ]; then
+            echo "  [WARNING] Fewer than expected Linux aarch64 wheels"
+            VALIDATION_PASSED=false
+          fi
+          if [ "$MACOS_X64_WHEELS" -lt 4 ]; then
+            echo "  [WARNING] Fewer than expected macOS x86_64 wheels"
+            VALIDATION_PASSED=false
+          fi
+          if [ "$MACOS_ARM64_WHEELS" -lt 4 ]; then
+            echo "  [WARNING] Fewer than expected macOS arm64 wheels"
+            VALIDATION_PASSED=false
+          fi
+          if [ "$WINDOWS_WHEELS" -lt 4 ]; then
+            echo "  [WARNING] Fewer than expected Windows x64 wheels"
+            VALIDATION_PASSED=false
+          fi
+
+          TOTAL_WHEELS=$((LINUX_X64_WHEELS + LINUX_ARM64_WHEELS + MACOS_X64_WHEELS + MACOS_ARM64_WHEELS + WINDOWS_WHEELS))
+          echo ""
+          echo "  Total wheels found: $TOTAL_WHEELS"
+          echo ""
+
+          # ----------------------------------------
+          # Expected Embedded Wheels (5 platforms)
+          # ----------------------------------------
+          echo "## Embedded Wheel Artifacts"
+          echo ""
+
+          EMBEDDED_LINUX_X64=$(find artifacts -name "embedded-wheel-ubuntu*x86_64*" -type d 2>/dev/null | wc -l)
+          EMBEDDED_LINUX_ARM=$(find artifacts -name "embedded-wheel-ubuntu*aarch64*" -type d 2>/dev/null | wc -l)
+          EMBEDDED_MACOS_X64=$(find artifacts -name "embedded-wheel-macos*x86_64*" -type d 2>/dev/null | wc -l)
+          EMBEDDED_MACOS_ARM=$(find artifacts -name "embedded-wheel-macos*aarch64*" -type d 2>/dev/null | wc -l)
+          EMBEDDED_WINDOWS=$(find artifacts -name "embedded-wheel-windows*" -type d 2>/dev/null | wc -l)
+
+          echo "  Embedded Linux x86_64: $EMBEDDED_LINUX_X64"
+          echo "  Embedded Linux aarch64: $EMBEDDED_LINUX_ARM"
+          echo "  Embedded macOS x86_64: $EMBEDDED_MACOS_X64"
+          echo "  Embedded macOS aarch64: $EMBEDDED_MACOS_ARM"
+          echo "  Embedded Windows: $EMBEDDED_WINDOWS"
+          echo ""
+
+          # ----------------------------------------
+          # Source Distributions
+          # ----------------------------------------
+          echo "## Source Distributions"
+          echo ""
+
+          SDIST_COUNT=$(find artifacts -path "*/sdist/*.tar.gz" -type f 2>/dev/null | wc -l)
+          echo "  Source distributions found: $SDIST_COUNT (expected >= 1)"
+          if [ "$SDIST_COUNT" -lt 1 ]; then
+            echo "  [MISSING] No source distribution found"
+            VALIDATION_PASSED=false
+          fi
+          echo ""
+
+          # ----------------------------------------
+          # Final Summary
+          # ----------------------------------------
+          echo "=============================================="
+          echo "VALIDATION SUMMARY"
+          echo "=============================================="
+
+          if [ "$VALIDATION_PASSED" = "true" ]; then
+            echo ""
+            echo "  STATUS: PASSED"
+            echo ""
+            echo "  All expected artifacts are present."
+            echo "  Release can proceed safely."
+            echo ""
+            echo "passed=true" >> $GITHUB_OUTPUT
+          else
+            echo ""
+            echo "  STATUS: FAILED"
+            echo ""
+            echo "  Some expected artifacts are missing!"
+            echo "  Review the output above and fix build issues."
+            echo ""
+            if [ -n "$MISSING_ARTIFACTS" ]; then
+              echo "  Missing artifacts:"
+              echo -e "$MISSING_ARTIFACTS"
+            fi
+            echo ""
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Generate artifact report for downstream jobs
+          ARTIFACT_LIST=$(find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.whl" \) | sort)
+          echo ""
+          echo "## Complete Artifact List"
+          echo ""
+          echo "$ARTIFACT_LIST" | head -50
+          ARTIFACT_COUNT=$(echo "$ARTIFACT_LIST" | wc -l)
+          if [ "$ARTIFACT_COUNT" -gt 50 ]; then
+            echo "  ... and $((ARTIFACT_COUNT - 50)) more"
+          fi
+          echo ""
+          echo "  Total artifact files: $ARTIFACT_COUNT"
+
+          # Save report
+          echo "report<<EOF" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION" >> $GITHUB_OUTPUT
+          echo "Binaries: $BINARY_COUNT/${#EXPECTED_BINARIES[@]}" >> $GITHUB_OUTPUT
+          echo "Wheels: $TOTAL_WHEELS" >> $GITHUB_OUTPUT
+          echo "SDists: $SDIST_COUNT" >> $GITHUB_OUTPUT
+          echo "Status: $VALIDATION_PASSED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate Validation Summary
+        run: |
+          echo "## Release Artifact Validation Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dry Run:** ${{ needs.prepare.outputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Pre-release:** ${{ needs.prepare.outputs.prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.validate.outputs.passed }}" = "true" ]; then
+            echo ":white_check_mark: **All artifact validations passed**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo ":x: **Artifact validation failed - release blocked**" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifact Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.validate.outputs.report }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if Validation Failed
+        if: steps.validate.outputs.passed != 'true'
+        run: |
+          echo "::error::Artifact validation failed. Some expected artifacts are missing."
+          echo "::error::Review the validation output above and fix build issues before releasing."
+          exit 1
+
+  # ============================================================================
+  # CREATE GITHUB RELEASE - Consolidate all artifacts
+  # ============================================================================
+  create-release:
+    name: Create GitHub Release
+    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Organize Release Assets
+        run: |
+          mkdir -p release-assets
+
+          # Collect binary archives
+          find artifacts -name "proximadb-*.tar.gz" -exec cp {} release-assets/ \;
+          find artifacts -name "proximadb-*.zip" -exec cp {} release-assets/ \;
+          find artifacts -name "*.sha256" -exec cp {} release-assets/ \;
+
+          # Collect wheels
+          find artifacts -name "*.whl" -exec cp {} release-assets/ \;
+
+          # Collect sdists
+          find artifacts -name "*.tar.gz" ! -name "proximadb-*" -exec cp {} release-assets/ \;
+
+          # Create combined checksums file
+          cd release-assets
+          shasum -a 256 *.tar.gz *.zip *.whl 2>/dev/null | sort > SHA256SUMS.txt || true
+
+          ls -la
+
+      - name: Generate Release Notes
+        id: release-notes
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          cat << 'EOF' > release-notes.md
+          ## ProximaDB ${{ needs.prepare.outputs.version }}
+
+          ### Installation
+
+          #### Binary Installation
+
+          Download the appropriate binary for your platform:
+
+          | Platform | Architecture | Archive |
+          |----------|--------------|---------|
+          | Linux | x86_64 (glibc) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz` |
+          | Linux | x86_64 (musl/static) | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.tar.gz` |
+          | Linux | aarch64 | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz` |
+          | macOS | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-apple-darwin.tar.gz` |
+          | macOS | Apple Silicon | `proximadb-${{ needs.prepare.outputs.version }}-aarch64-apple-darwin.tar.gz` |
+          | Windows | x86_64 | `proximadb-${{ needs.prepare.outputs.version }}-x86_64-pc-windows-msvc.zip` |
+
+          #### Python Installation
+
+          ```bash
+          # Install from PyPI (main package - full features)
+          pip install proximadb
+
+          # Install embedded package (lightweight)
+          pip install proximadb-embedded
+          ```
+
+          #### Cargo Installation
+
+          ```bash
+          cargo install proximadb
+          ```
+
+          ### Included Binaries
+
+          - **proximadb-server**: Main database server (REST + gRPC)
+          - **proximadb-bench**: Performance benchmarking suite
+          - **proximadb-migrate**: Schema migration utility
+
+          ### Verification
+
+          All release artifacts include SHA256 checksums. Verify with:
+
+          ```bash
+          sha256sum -c SHA256SUMS.txt
+          ```
+
+          ### Changelog
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: ProximaDB v${{ needs.prepare.outputs.version }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          files: release-assets/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================================
+  # PUBLISH TO PYPI - Python package registry
+  # ============================================================================
+  # SAFEGUARDS:
+  # - Requires successful artifact validation
+  # - Uses GitHub Environment protection rules (configure in repo settings)
+  # - Only runs for stable releases (not pre-releases)
+  # - Pre-publish verification step with manual confirmation prompt
+  # ============================================================================
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [prepare, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts, create-release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    environment:
+      name: pypi
+      url: https://pypi.org/project/proximadb/
+    steps:
+      - name: Pre-Publish Verification
+        run: |
+          echo "=============================================="
+          echo "PyPI PUBLISH VERIFICATION"
+          echo "=============================================="
+          echo ""
+          echo "Version: ${{ needs.prepare.outputs.version }}"
+          echo "Pre-release: ${{ needs.prepare.outputs.prerelease }}"
+          echo "Artifact Validation: ${{ needs.validate-artifacts.outputs.validation_passed }}"
+          echo ""
+          echo "Artifact Summary:"
+          echo "${{ needs.validate-artifacts.outputs.artifact_report }}"
+          echo ""
+          echo "This step will publish to PyPI (production)."
+          echo "Ensure all artifacts are correct before proceeding."
+          echo ""
+          echo "=============================================="
+
+      - name: Download Wheel Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download Embedded Wheel Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: embedded-wheel-*
+          path: embedded-dist
+          merge-multiple: true
+
+      - name: Download sdist Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: sdist
+
+      - name: Consolidate Packages
+        run: |
+          mkdir -p publish
+          cp dist/*.whl publish/ 2>/dev/null || true
+          cp sdist/*.tar.gz publish/ 2>/dev/null || true
+
+          mkdir -p publish-embedded
+          cp embedded-dist/*.whl publish-embedded/ 2>/dev/null || true
+          cp sdist/clients/python-embedded/dist/*.tar.gz publish-embedded/ 2>/dev/null || true
+
+          echo "Main package contents:"
+          ls -la publish/
+          echo "Embedded package contents:"
+          ls -la publish-embedded/
+
+      - name: Publish Main Package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish/
+          skip-existing: true
+          verbose: true
+
+      - name: Publish Embedded Package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publish-embedded/
+          skip-existing: true
+          verbose: true
+
+  # ============================================================================
+  # PUBLISH TO TEST PYPI - For pre-releases
+  # ============================================================================
+  # Pre-releases are published to TestPyPI for validation before stable release.
+  # Still requires artifact validation to ensure a complete package.
+  # ============================================================================
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [prepare, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease == 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/proximadb/
+    steps:
+      - name: Pre-Publish Verification
+        run: |
+          echo "=============================================="
+          echo "TestPyPI PUBLISH VERIFICATION"
+          echo "=============================================="
+          echo ""
+          echo "Version: ${{ needs.prepare.outputs.version }}"
+          echo "Pre-release: ${{ needs.prepare.outputs.prerelease }}"
+          echo ""
+          echo "This is a PRE-RELEASE publishing to TestPyPI."
+          echo "Install with: pip install -i https://test.pypi.org/simple/ proximadb==${{ needs.prepare.outputs.version }}"
+          echo ""
+          echo "=============================================="
+
+      - name: Download Wheel Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download sdist Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: sdist
+
+      - name: Consolidate Packages
+        run: |
+          mkdir -p publish
+          cp dist/*.whl publish/ 2>/dev/null || true
+          cp sdist/*.tar.gz publish/ 2>/dev/null || true
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: publish/
+          skip-existing: true
+          verbose: true
+
+  # ============================================================================
+  # PUBLISH TO CRATES.IO - Rust package registry
+  # ============================================================================
+  # SAFEGUARDS:
+  # - Requires successful artifact validation
+  # - Uses GitHub Environment protection rules (configure in repo settings)
+  # - Only runs for stable releases (not pre-releases)
+  # - Pre-publish verification step
+  # ============================================================================
+  publish-crates:
+    name: Publish to crates.io
+    needs: [prepare, build-binaries, validate-artifacts, create-release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/proximadb
+    steps:
+      - name: Pre-Publish Verification
+        run: |
+          echo "=============================================="
+          echo "crates.io PUBLISH VERIFICATION"
+          echo "=============================================="
+          echo ""
+          echo "Version: ${{ needs.prepare.outputs.version }}"
+          echo "Pre-release: ${{ needs.prepare.outputs.prerelease }}"
+          echo "Artifact Validation: ${{ needs.validate-artifacts.outputs.validation_passed }}"
+          echo ""
+          echo "This step will publish to crates.io (production)."
+          echo "Install with: cargo install proximadb --version ${{ needs.prepare.outputs.version }}"
+          echo ""
+          echo "=============================================="
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Install cargo-workspaces
+        run: cargo install cargo-workspaces
+
+      - name: Verify Package
+        run: |
+          cargo package --list
+          cargo package --no-verify
+
+      - name: Publish to crates.io
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish Rust SDK (if workspace member)
+        continue-on-error: true
+        working-directory: clients/rust
+        run: |
+          if [ -f "Cargo.toml" ]; then
+            cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ============================================================================
+  # UPDATE HOMEBREW FORMULA - macOS package manager
+  # ============================================================================
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: [prepare, create-release]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Homebrew Formula
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          cat << EOF > proximadb.rb
+          class Proximadb < Formula
+            desc "Multi-model vector database for AI applications"
+            homepage "https://github.com/${{ github.repository }}"
+            version "$VERSION"
+            license "Apache-2.0"
+
+            on_macos do
+              on_intel do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-x86_64-apple-darwin.tar.gz"
+                # sha256 will be updated after release
+              end
+              on_arm do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-aarch64-apple-darwin.tar.gz"
+                # sha256 will be updated after release
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-x86_64-unknown-linux-gnu.tar.gz"
+                # sha256 will be updated after release
+              end
+              on_arm do
+                url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/proximadb-$VERSION-aarch64-unknown-linux-gnu.tar.gz"
+                # sha256 will be updated after release
+              end
+            end
+
+            def install
+              bin.install "proximadb-server"
+              bin.install "proximadb-bench"
+              bin.install "proximadb-migrate"
+              etc.install "config" => "proximadb"
+            end
+
+            service do
+              run [opt_bin/"proximadb-server", "--config", etc/"proximadb/config.toml"]
+              keep_alive true
+              working_dir var/"proximadb"
+              log_path var/"log/proximadb.log"
+              error_log_path var/"log/proximadb.error.log"
+            end
+
+            test do
+              system bin/"proximadb-server", "--version"
+            end
+          end
+          EOF
+
+      - name: Upload Homebrew Formula
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: proximadb.rb
+          retention-days: 30
+
+  # ============================================================================
+  # DRY RUN SUMMARY - Report when running in dry-run mode
+  # ============================================================================
+  # This job provides a comprehensive summary when running in dry-run mode.
+  # It shows what WOULD happen during a real release without actually publishing.
+  # ============================================================================
+  dry-run-summary:
+    name: Dry Run Summary
+    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run == 'true'
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate Dry Run Report
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          PRERELEASE="${{ needs.prepare.outputs.prerelease }}"
+          VALIDATION="${{ needs.validate-artifacts.outputs.validation_passed }}"
+
+          echo ""
+          echo "============================================================"
+          echo "          DRY RUN COMPLETE - NO PUBLISHING OCCURRED         "
+          echo "============================================================"
+          echo ""
+          echo "  Version:           $VERSION"
+          echo "  Pre-release:       $PRERELEASE"
+          echo "  Validation Passed: $VALIDATION"
+          echo ""
+          echo "============================================================"
+          echo "                      ARTIFACT SUMMARY                       "
+          echo "============================================================"
+          echo ""
+
+          # Count artifacts
+          BINARY_COUNT=$(find artifacts -name "proximadb-*.tar.gz" -o -name "proximadb-*.zip" | grep -v sha256 | wc -l)
+          CHECKSUM_COUNT=$(find artifacts -name "*.sha256" | wc -l)
+          WHEEL_COUNT=$(find artifacts -name "*.whl" | wc -l)
+          SDIST_COUNT=$(find artifacts -path "*/sdist/*.tar.gz" | wc -l)
+
+          echo "  Binary archives:     $BINARY_COUNT"
+          echo "  Checksum files:      $CHECKSUM_COUNT"
+          echo "  Python wheels:       $WHEEL_COUNT"
+          echo "  Source distributions: $SDIST_COUNT"
+          echo ""
+
+          # Calculate total size
+          TOTAL_SIZE=$(find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.whl" \) -exec du -ch {} + | tail -1 | cut -f1)
+          echo "  Total artifact size: $TOTAL_SIZE"
+          echo ""
+
+          echo "============================================================"
+          echo "                  WHAT WOULD HAVE HAPPENED                  "
+          echo "============================================================"
+          echo ""
+
+          if [ "$VALIDATION" = "true" ]; then
+            echo "  [OK] Artifact validation passed"
+            echo ""
+
+            if [ "$PRERELEASE" = "true" ]; then
+              echo "  WOULD PUBLISH TO:"
+              echo "    - GitHub Releases (pre-release: true)"
+              echo "    - TestPyPI (https://test.pypi.org/project/proximadb/)"
+              echo ""
+              echo "  WOULD NOT PUBLISH TO:"
+              echo "    - PyPI (stable releases only)"
+              echo "    - crates.io (stable releases only)"
+            else
+              echo "  WOULD PUBLISH TO:"
+              echo "    - GitHub Releases (pre-release: false)"
+              echo "    - PyPI (https://pypi.org/project/proximadb/)"
+              echo "    - crates.io (https://crates.io/crates/proximadb)"
+              echo ""
+              echo "  WOULD ALSO:"
+              echo "    - Generate Homebrew formula"
+              echo "    - Verify package installations"
+            fi
+          else
+            echo "  [FAIL] Artifact validation failed"
+            echo ""
+            echo "  WOULD NOT PUBLISH:"
+            echo "    - Publishing blocked due to validation failure"
+            echo "    - Review validation output above to identify missing artifacts"
+          fi
+
+          echo ""
+          echo "============================================================"
+          echo "                      NEXT STEPS                            "
+          echo "============================================================"
+          echo ""
+          echo "  To perform an actual release:"
+          echo ""
+          echo "  1. Review artifacts above to confirm everything is correct"
+          echo "  2. Re-run workflow with dry_run: false"
+          echo "     OR push a version tag: git tag v$VERSION && git push origin v$VERSION"
+          echo ""
+          echo "============================================================"
+
+      - name: Generate Summary
+        run: |
+          echo "## Dry Run Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Pre-release:** ${{ needs.prepare.outputs.prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Validation:** ${{ needs.validate-artifacts.outputs.validation_passed }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### No Publishing Occurred" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This was a **dry run**. All artifacts were built and validated, but nothing was published." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To perform an actual release, re-run this workflow with \`dry_run: false\` or push a version tag." >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if Validation Failed
+        if: needs.validate-artifacts.outputs.validation_passed != 'true'
+        run: |
+          echo "::warning::Dry run completed but validation failed. Fix issues before real release."
+          exit 1
+
+  # ============================================================================
+  # POST-RELEASE VERIFICATION
+  # ============================================================================
+  verify-release:
+    name: Verify Release
+    needs: [prepare, publish-pypi, publish-crates, validate-artifacts]
+    runs-on: ubuntu-latest
+    if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    steps:
+      - name: Wait for Package Propagation
+        run: sleep 60
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify PyPI Installation
+        run: |
+          pip install proximadb==${{ needs.prepare.outputs.version }} || echo "PyPI package not yet available"
+          python -c "import proximadb; print(f'ProximaDB version: {proximadb.__version__}')" || true
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-action@stable
+
+      - name: Verify crates.io Installation
+        run: |
+          cargo install proximadb --version ${{ needs.prepare.outputs.version }} || echo "crates.io package not yet available"
+          proximadb-server --version || true
+
+  # ============================================================================
+  # CLEANUP - Remove old artifacts
+  # ============================================================================
+  # Cleanup runs after all publishing jobs complete (success or failure).
+  # Artifacts are retained for 7 days anyway, but this helps clean up early.
+  # In dry-run mode, artifacts are still cleaned up after the summary.
+  # ============================================================================
+  cleanup:
+    name: Cleanup Old Artifacts
+    needs: [prepare, validate-artifacts, create-release, publish-pypi, publish-crates, dry-run-summary]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Cleanup Summary
+        run: |
+          echo "Cleanup triggered"
+          echo "  Dry run: ${{ needs.prepare.outputs.dry_run }}"
+          echo "  Validation: ${{ needs.validate-artifacts.outputs.validation_passed }}"
+
+      - name: Delete Workflow Artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            binaries-*
+            wheel-*
+            embedded-wheel-*
+            sdist
+          failOnError: false

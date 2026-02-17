@@ -142,14 +142,14 @@ impl InMemoryProvenanceRegistry {
     /// Load provenance data from storage on startup
     pub async fn load_from_storage(&self) -> Result<()> {
         // Load provenance data from persistent storage using storage engine
-        let storage_engine = &self.storage_engine;
+        let _storage_engine = &self.storage_engine;
         {
             // Scan for provenance records across all collections
             // TODO: Implement scan_provenance_records when available
             match Result::Ok(Vec::new()) as Result<Vec<Provenance>> {
                 Ok(provenance_records) => {
                     let source_map = &self.source_index;
-                    let chunk_map = &self.chunk_index;
+                    let _chunk_map = &self.chunk_index;
 
                     // Rebuild indices from stored provenance data
                     for prov in provenance_records {
@@ -161,7 +161,7 @@ impl InMemoryProvenanceRegistry {
                             .or_insert_with(HashSet::new)
                             .insert(entity_id.clone());
 
-                        chunk_map
+                        self.chunk_index
                             .entry(prov.chunk_id.clone())
                             .or_insert_with(HashSet::new)
                             .insert(entity_id);
@@ -182,8 +182,8 @@ impl InMemoryProvenanceRegistry {
     }
 
     /// Persist provenance to storage
-    async fn persist_provenance(&self, entity_id: &str, provenance: &Provenance) -> Result<()> {
-        let key = Self::provenance_key(entity_id);
+    async fn persist_provenance(&self, entity_id: &str, _provenance: &Provenance) -> Result<()> {
+        let _key = Self::provenance_key(entity_id);
         // TODO: Serialize and store provenance
         // self.storage_engine.put(&key, serialize(provenance)?).await?;
         Ok(())

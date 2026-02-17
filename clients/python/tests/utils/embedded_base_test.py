@@ -8,14 +8,15 @@ Note: The SDK is now named `proximadb_sdk` to avoid conflict with the
 native `proximadb` module (PyO3/maturin-based embedded database).
 """
 
-import pytest
+import shutil
+import tempfile
 import time
 import uuid
-import tempfile
-import shutil
-from typing import Optional, List, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 import numpy as np
+import pytest
 
 # Import native ProximaDB module directly
 # SDK is now proximadb_sdk, so no namespace conflict
@@ -89,10 +90,7 @@ class EmbeddedProximaDBTest:
                 pass
 
     def create_collection(
-        self,
-        name: Optional[str] = None,
-        dimension: int = 384,
-        engine: str = "sst"
+        self, name: Optional[str] = None, dimension: int = 384, engine: str = "sst"
     ) -> str:
         """
         Create a test collection
@@ -115,7 +113,7 @@ class EmbeddedProximaDBTest:
         collection_name: str,
         count: int = 10,
         dimension: int = 384,
-        metadata_template: Optional[Dict[str, Any]] = None
+        metadata_template: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Insert test vectors into collection
@@ -141,12 +139,14 @@ class EmbeddedProximaDBTest:
         metadata_list = []
         for i in range(count):
             metadata = metadata_template.copy() if metadata_template else {}
-            metadata.update({
-                "index": i,
-                "test": True,
-                "category": f"cat_{i % 3}",
-                "value": float(i)
-            })
+            metadata.update(
+                {
+                    "index": i,
+                    "test": True,
+                    "category": f"cat_{i % 3}",
+                    "value": float(i),
+                }
+            )
             metadata_list.append(metadata)
 
         # Insert vectors
@@ -162,7 +162,7 @@ class EmbeddedProximaDBTest:
         collection_name: str,
         query_vector: np.ndarray,
         top_k: int = 10,
-        filter_expr: Optional[str] = None
+        filter_expr: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search for similar vectors
@@ -177,15 +177,16 @@ class EmbeddedProximaDBTest:
             Search results
         """
         results = self.db.search(
-            collection_name,
-            query_vector,
-            top_k=top_k,
-            filter=filter_expr
+            collection_name, query_vector, top_k=top_k, filter=filter_expr
         )
 
         # Convert to list of dicts for compatibility
         return [
-            {"id": r.id, "score": r.score, "metadata": r.metadata if hasattr(r, 'metadata') else {}}
+            {
+                "id": r.id,
+                "score": r.score,
+                "metadata": r.metadata if hasattr(r, "metadata") else {},
+            }
             for r in results
         ]
 
@@ -193,7 +194,7 @@ class EmbeddedProximaDBTest:
         self,
         results: List[Dict[str, Any]],
         expected_count: int,
-        check_scores: bool = True
+        check_scores: bool = True,
     ):
         """
         Verify search results are valid
@@ -203,18 +204,24 @@ class EmbeddedProximaDBTest:
             expected_count: Expected number of results
             check_scores: Whether to verify scores are descending
         """
-        assert len(results) == expected_count, f"Expected {expected_count} results, got {len(results)}"
+        assert (
+            len(results) == expected_count
+        ), f"Expected {expected_count} results, got {len(results)}"
 
         if check_scores and len(results) > 1:
             # Verify scores are in descending order (higher similarity = higher score)
             scores = [r["score"] for r in results]
-            assert scores == sorted(scores, reverse=True), f"Scores not in descending order: {scores}"
+            assert scores == sorted(
+                scores, reverse=True
+            ), f"Scores not in descending order: {scores}"
 
         # Verify each result has required fields
         for result in results:
             assert "id" in result, "Result missing 'id'"
             assert "score" in result, "Result missing 'score'"
-            assert isinstance(result["score"], (int, float)), f"Score is not numeric: {result['score']}"
+            assert isinstance(
+                result["score"], (int, float)
+            ), f"Score is not numeric: {result['score']}"
 
     def wait_for_indexing(self, duration: float = 0.1):
         """Wait for vectors to be indexed (shorter for embedded)"""

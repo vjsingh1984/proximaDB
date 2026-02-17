@@ -205,7 +205,6 @@ impl CompositeBloomFilterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::bloom::BloomStrategy;
 
     #[test]
     fn test_composite_filter() {

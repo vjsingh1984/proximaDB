@@ -55,16 +55,33 @@ pub enum MetadataFilterStrategy {
 }
 
 /// Analyzer for determining optimal filter strategy
+///
+/// Analyzes metadata filters and determines whether they can be pushed down
+/// to the Parquet layer (fast path) or require full table scan (slow path).
 pub struct MetadataFilterAnalyzer {
     /// Set of columns that are filterable (have dedicated columns)
+    ///
+    /// Columns in this set have dedicated Parquet columns and support
+    /// efficient predicate pushdown for filtering.
     filterable_columns: HashSet<String>,
     /// Whether to allow slow queries for non-filterable columns
+    ///
+    /// When false, queries on non-filterable columns will return an error
+    /// rather than performing a full table scan.
     allow_slow_queries: bool,
     /// Performance warning threshold (ms)
+    ///
+    /// Queries exceeding this threshold will log performance warnings.
+    #[allow(dead_code)]
     slow_query_threshold_ms: u64,
 }
 
 impl MetadataFilterAnalyzer {
+    /// Create a new metadata filter analyzer
+    ///
+    /// # Arguments
+    /// * `filterable_columns` - List of columns that support predicate pushdown
+    /// * `allow_slow_queries` - Whether to allow full table scans for non-filterable columns
     pub fn new(filterable_columns: Vec<String>, allow_slow_queries: bool) -> Self {
         Self {
             filterable_columns: filterable_columns.into_iter().collect(),

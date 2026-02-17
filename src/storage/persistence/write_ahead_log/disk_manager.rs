@@ -388,7 +388,6 @@ impl WriteAheadLogDiskManager {
 
     /// Get the file path for a batch
     // get_batch_file_path removed in favor of URL builders
-
     /// Parse a WAL filename to extract metadata
     fn parse_wal_filename(&self, path: &str, collection_id: &str) -> Option<WalFileInfo> {
         // Use last path segment as filename regardless of scheme

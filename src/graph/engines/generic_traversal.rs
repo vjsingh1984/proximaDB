@@ -11,16 +11,34 @@ use crate::graph::{Edge, Node, NodeId};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
+/// Result of a generic graph traversal operation
 #[derive(Debug, Clone, Default)]
 pub struct GenericTraversalResult {
+    /// Nodes visited during traversal
     pub nodes: Vec<Arc<Node>>,
+    /// Edges traversed during traversal
     pub edges: Vec<Arc<Edge>>,
-    pub paths: Vec<Vec<NodeId>>, // path of node ids from start
+    /// Paths from start node to each visited node (node IDs)
+    pub paths: Vec<Vec<NodeId>>,
+    /// Total number of unique nodes visited
     pub nodes_visited: usize,
+    /// Total number of edges traversed
     pub edges_traversed: usize,
+    /// Maximum depth reached from start node
     pub max_depth_reached: u32,
 }
 
+/// Perform breadth-first search (BFS) traversal on a graph
+///
+/// # Arguments
+/// * `engine` - Graph engine implementation
+/// * `start` - Starting node ID
+/// * `edge_types` - Optional filter for edge types to traverse
+/// * `max_depth` - Optional maximum traversal depth
+/// * `limit` - Optional limit on number of nodes to visit
+///
+/// # Returns
+/// Traversal result containing visited nodes, edges, and paths
 pub fn bfs_generic(
     engine: &GraphEngineImpl,
     start: &NodeId,
@@ -30,8 +48,7 @@ pub fn bfs_generic(
 ) -> Result<GenericTraversalResult> {
     if engine.get_node(start)?.is_none() {
         return Err(ProximaDBError::InvalidInput(format!(
-            "Start node {} not found",
-            start
+            "Start node {start} not found"
         )));
     }
     let mut visited: HashSet<NodeId> = HashSet::new();
@@ -108,6 +125,16 @@ pub fn bfs_generic(
     })
 }
 
+/// Find shortest path using Dijkstra's algorithm
+///
+/// # Arguments
+/// * `engine` - Graph engine implementation
+/// * `start` - Starting node ID
+/// * `target` - Target node ID
+/// * `edge_types` - Optional filter for edge types to traverse
+///
+/// # Returns
+/// Optional tuple of (path as node IDs, total distance)
 pub fn dijkstra_generic(
     engine: &GraphEngineImpl,
     start: &NodeId,
@@ -117,6 +144,7 @@ pub fn dijkstra_generic(
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
 
+    /// Queue node for Dijkstra's priority queue (min-heap via reverse ordering)
     #[derive(Debug, PartialEq)]
     struct QN {
         node_id: NodeId,
@@ -130,7 +158,15 @@ pub fn dijkstra_generic(
     }
     impl Ord for QN {
         fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+            // Reverse ordering for min-heap behavior
+            self.partial_cmp(other).unwrap_or_else(|| {
+                // Fallback when distances are NaN (compare node IDs)
+                match self.node_id.cmp(&other.node_id) {
+                    Ordering::Less => Ordering::Greater,
+                    Ordering::Greater => Ordering::Less,
+                    Ordering::Equal => Ordering::Equal,
+                }
+            })
         }
     }
 
@@ -189,6 +225,13 @@ pub fn dijkstra_generic(
     Ok(None)
 }
 
+/// Find all connected components in an undirected graph
+///
+/// # Arguments
+/// * `engine` - Graph engine implementation
+///
+/// # Returns
+/// Vector of connected components, each component is a vector of node IDs
 pub fn connected_components_generic(engine: &GraphEngineImpl) -> Result<Vec<Vec<NodeId>>> {
     let all_nodes = engine.get_all_nodes()?;
     let mut comps: Vec<Vec<NodeId>> = Vec::new();
@@ -220,11 +263,22 @@ pub fn connected_components_generic(engine: &GraphEngineImpl) -> Result<Vec<Vec<
     Ok(comps)
 }
 
+/// Detect if a graph contains a cycle
+///
+/// # Arguments
+/// * `engine` - Graph engine implementation
+///
+/// # Returns
+/// true if a cycle exists, false otherwise
 pub fn has_cycle_generic(engine: &GraphEngineImpl) -> Result<bool> {
+    /// Node color for cycle detection using DFS
     #[derive(Copy, Clone, PartialEq, Eq)]
     enum Color {
+        /// Unvisited node
         White,
+        /// Node currently being visited (in recursion stack)
         Gray,
+        /// Node completely visited
         Black,
     }
     let mut color: HashMap<NodeId, Color> = HashMap::new();

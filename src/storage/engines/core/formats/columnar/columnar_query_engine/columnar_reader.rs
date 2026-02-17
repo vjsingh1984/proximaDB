@@ -24,6 +24,7 @@ use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation
 pub struct ParquetReader {
+    #[allow(dead_code)]
     config: QueryConfig,
     stats: QueryStatistics,
 }
@@ -521,7 +522,7 @@ impl ParquetReader {
                             } else {
                                 "null".to_string()
                             };
-                            format!("{}={}", k, val_str)
+                            format!("{k}={val_str}")
                         })
                         .collect::<Vec<_>>()
                 );

@@ -423,11 +423,13 @@ impl QueryPreprocessor {
 
     /// Fallback for non-x86_64 architectures
     #[cfg(not(target_arch = "x86_64"))]
+    #[allow(dead_code)]
     fn normalize_avx2(&self, vector: &[f32]) -> Vec<f32> {
         self.normalize_scalar(vector)
     }
 
     #[cfg(not(target_arch = "x86_64"))]
+    #[allow(dead_code)]
     fn normalize_sse(&self, vector: &[f32]) -> Vec<f32> {
         self.normalize_scalar(vector)
     }

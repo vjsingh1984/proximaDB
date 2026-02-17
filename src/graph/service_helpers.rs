@@ -42,11 +42,13 @@ pub(super) fn index_key_for_value(value: &crate::graph::PropertyValue) -> String
 }
 
 // Simple f64 parser for ordered-key comparisons
+#[allow(dead_code)]
 pub(super) fn parse_f64_key(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
 }
 
 // Internal helpers to compare keys (string-ordered or numeric)
+#[allow(dead_code)]
 fn cmp_key_gt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
     if let Some(t) = num_target {
         key.parse::<f64>().map(|v| v > *t).unwrap_or(false)
@@ -56,6 +58,7 @@ fn cmp_key_gt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> 
         false
     }
 }
+#[allow(dead_code)]
 fn cmp_key_ge(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
     if let Some(t) = num_target {
         key.parse::<f64>().map(|v| v >= *t).unwrap_or(false)
@@ -65,6 +68,7 @@ fn cmp_key_ge(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> 
         false
     }
 }
+#[allow(dead_code)]
 fn cmp_key_lt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
     if let Some(t) = num_target {
         key.parse::<f64>().map(|v| v < *t).unwrap_or(false)
@@ -74,6 +78,7 @@ fn cmp_key_lt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> 
         false
     }
 }
+#[allow(dead_code)]
 fn cmp_key_le(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
     if let Some(t) = num_target {
         key.parse::<f64>().map(|v| v <= *t).unwrap_or(false)

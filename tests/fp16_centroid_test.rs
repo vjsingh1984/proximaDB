@@ -9,7 +9,6 @@
 //! - Storage savings verification
 //! - Backward compatibility (FP32 fallback)
 
-use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::storage::engines::impls::sst::{fp16_to_fp32, fp32_to_fp16};
 
 #[test]
@@ -213,7 +212,6 @@ fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod sst_integration {
-    use super::*;
 
     #[test]
     fn test_sst_index_entry_fp16_serialization() {
@@ -228,7 +226,6 @@ mod sst_integration {
 
 #[cfg(test)]
 mod swift_integration {
-    use super::*;
 
     #[test]
     fn test_swift_superblock_fp16() {

@@ -556,7 +556,7 @@ impl UnifiedUserContext {
 fn create_auth_audit_event(
     auth_data: &AuthenticationData,
     result: &AuthenticationResult,
-    start_time: DateTime<Utc>,
+    _start_time: DateTime<Utc>,
 ) -> AuditEvent {
     let auth_method_name = match auth_data {
         AuthenticationData::SSOToken(_) => "sso",

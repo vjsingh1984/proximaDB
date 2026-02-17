@@ -13,7 +13,9 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct PredictiveAnalyticsEngine {
     config: PredictiveAnalyticsConfig,
+    #[allow(dead_code)]
     data_processor: Arc<DataProcessor>,
+    #[allow(dead_code)]
     model_manager: Arc<ModelManager>,
 }
 
@@ -29,7 +31,9 @@ pub struct PredictiveAnalyticsConfig {
 #[derive(Debug, Clone)]
 pub struct ConversationalAnalyticsEngine {
     config: ConversationalAnalyticsConfig,
+    #[allow(dead_code)]
     query_processor: Arc<QueryProcessor>,
+    #[allow(dead_code)]
     response_generator: Arc<ResponseGenerator>,
 }
 
@@ -45,13 +49,16 @@ pub struct ConversationalAnalyticsConfig {
 #[derive(Debug, Clone)]
 pub struct GovernanceAnalyticsEngine {
     config: GovernanceAnalyticsConfig,
+    #[allow(dead_code)]
     compliance_tracker: Arc<ComplianceTracker>,
+    #[allow(dead_code)]
     audit_analyzer: Arc<AuditAnalyzer>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GovernanceAnalyticsConfig {
     pub enabled: bool,
+    #[allow(dead_code)]
     pub compliance_frameworks: Vec<String>,
     pub audit_retention_days: u32,
     pub alert_thresholds: HashMap<String, f64>,
@@ -60,6 +67,7 @@ pub struct GovernanceAnalyticsConfig {
 /// Data processor for analytics computations
 #[derive(Debug, Clone)]
 pub struct DataProcessor {
+    #[allow(dead_code)]
     config: DataProcessorConfig,
 }
 
@@ -73,6 +81,7 @@ pub struct DataProcessorConfig {
 /// Model manager for predictive analytics models
 #[derive(Debug, Clone)]
 pub struct ModelManager {
+    #[allow(dead_code)]
     models: HashMap<String, AnalyticsModel>,
 }
 
@@ -95,6 +104,7 @@ pub enum ModelType {
 /// Query processor for conversational analytics
 #[derive(Debug, Clone)]
 pub struct QueryProcessor {
+    #[allow(dead_code)]
     config: QueryProcessorConfig,
 }
 
@@ -108,6 +118,7 @@ pub struct QueryProcessorConfig {
 /// Response generator for analytics results
 #[derive(Debug, Clone)]
 pub struct ResponseGenerator {
+    #[allow(dead_code)]
     config: ResponseGeneratorConfig,
 }
 
@@ -128,6 +139,7 @@ pub enum ResponseFormat {
 /// Compliance tracker for governance analytics
 #[derive(Debug, Clone)]
 pub struct ComplianceTracker {
+    #[allow(dead_code)]
     frameworks: Vec<ComplianceFramework>,
 }
 
@@ -165,6 +177,7 @@ pub enum RequirementStatus {
 /// Audit analyzer for governance insights
 #[derive(Debug, Clone)]
 pub struct AuditAnalyzer {
+    #[allow(dead_code)]
     config: AuditAnalyzerConfig,
 }
 

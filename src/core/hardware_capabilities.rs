@@ -317,12 +317,12 @@ impl HardwareBackend {
             if hw.has_gpu() {
                 let preferred = hw.preferred_backend();
 
-                #[cfg(all(target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 if matches!(preferred, Self::CUDA) {
                     return Self::CUDA;
                 }
 
-                #[cfg(all(target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 if matches!(preferred, Self::ROCm) {
                     return Self::ROCm;
                 }
@@ -999,29 +999,28 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn detect_arm_cache_sizes() -> CacheSizes {
         use std::fs;
 
         // Generic ARM64 detection for non-Linux platforms (e.g., Windows ARM64)
-        let mut cache_sizes = CacheSizes::default();
-
         // Try to read ARM system registers via platform-specific methods
         #[cfg(target_os = "windows")]
-        {
+        let cache_sizes = {
             // Windows ARM64 would need WinAPI calls to get cache info
             // For now, use enhanced defaults based on common ARM architectures
-            cache_sizes = Self::get_arm_defaults();
-        }
+            Self::get_arm_defaults()
+        };
 
         #[cfg(not(target_os = "windows"))]
-        {
+        let cache_sizes = {
             // For other ARM64 platforms, try Linux-style detection first
             if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
-                cache_sizes = Self::parse_arm_cpuinfo(&cpuinfo);
+                Self::parse_arm_cpuinfo(&cpuinfo)
             } else {
-                cache_sizes = Self::get_arm_defaults();
+                Self::get_arm_defaults()
             }
-        }
+        };
 
         tracing::info!(
             "Detected ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
@@ -1035,6 +1034,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn get_arm_defaults() -> CacheSizes {
         // Enhanced defaults for ARM64 based on common architectures
         // Apple M1/M2: L1=128KB, L2=4MB, L3=8-24MB (shared)
@@ -1049,6 +1049,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_arm_cpuinfo(cpuinfo: &str) -> CacheSizes {
         let mut cache_sizes = Self::get_arm_defaults();
 
@@ -1094,9 +1095,10 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_arm_cache_size(line: &str) -> Option<usize> {
         // ARM cache size parsing - more flexible than Linux KB/MB parsing
-        let line_lower = line.to_lowercase();
+        let _line_lower = line.to_lowercase();
 
         // Look for size patterns: "32KB", "1MB", "8192 KB", etc.
         for word in line.split_whitespace() {
@@ -1131,6 +1133,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_apple_silicon_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Apple Silicon has known cache configurations
         // M1: L1=128KB, L2=4MB, L3=8MB (efficiency cores share L3)
@@ -1155,6 +1158,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_qualcomm_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Qualcomm Snapdragon typical configurations
         // Snapdragon 8 Gen 2: L1=64KB, L2=512KB, L3=8MB
@@ -1251,10 +1255,15 @@ impl HardwareCapabilities {
         let available_memory = sys.available_memory(); // Already in bytes
 
         // Recommend cache size as 10% of available memory, capped at 8GB
-        let recommended_cache_size = std::cmp::min(
-            available_memory / 10,
-            8 * 1024 * 1024 * 1024, // 8GB max
-        );
+        // Ensure minimum of 1GB if detection returns 0 (environment-specific issue)
+        let recommended_cache_size = if available_memory > 0 {
+            std::cmp::min(
+                available_memory / 10,
+                8 * 1024 * 1024 * 1024, // 8GB max
+            )
+        } else {
+            1024 * 1024 * 1024 // 1GB fallback when detection fails
+        };
 
         Ok(MemoryInfo {
             total_memory,

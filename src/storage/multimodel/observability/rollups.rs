@@ -209,7 +209,7 @@ pub struct RollupManager {
     /// Pending rollups (metric -> interval -> views)
     pending_rollups: RwLock<HashMap<String, HashMap<RollupInterval, Vec<RollupView>>>>,
     /// Last rollup timestamp per interval
-    last_rollup_time: RwLock<HashMap<RollupInterval, i64>>,
+    _last_rollup_time: RwLock<HashMap<RollupInterval, i64>>,
     /// Total rollups computed
     total_rollups: std::sync::atomic::AtomicU64,
 }
@@ -221,7 +221,7 @@ impl RollupManager {
             namespace,
             config,
             pending_rollups: RwLock::new(HashMap::new()),
-            last_rollup_time: RwLock::new(HashMap::new()),
+            _last_rollup_time: RwLock::new(HashMap::new()),
             total_rollups: std::sync::atomic::AtomicU64::new(0),
         }
     }

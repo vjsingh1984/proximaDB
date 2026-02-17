@@ -262,6 +262,8 @@ async fn test_nova_search_basic() {
             storage_path: base_location.clone(),
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     // Check what files exist before searching (using filesystem API for cloud compatibility)

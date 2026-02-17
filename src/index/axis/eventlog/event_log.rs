@@ -177,6 +177,7 @@ impl EventLogQueue {
     }
 
     /// Get event log directory path
+    #[allow(dead_code)]
     fn event_log_dir(&self) -> String {
         format!("{}/queue/{}/events/", self.base_url, self.collection_id)
     }

@@ -231,6 +231,8 @@ async fn test_search_vectors() -> Result<()> {
         search_params,
         collection: collection_arc,
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
     println!("Calling search_vectors_unified...");
     let results = engine.search_vectors_unified(&query_context).await?;
@@ -451,19 +453,19 @@ async fn test_clustering_integration() -> Result<()> {
 async fn test_cloud_io_optimization() -> Result<()> {
     use crate::storage::engines::impls::raptor::config::RaptorConfig;
 
-    let engine = create_test_engine().await?;
+    let _engine = create_test_engine().await?;
 
     // Test that cloud storage detection works
     // Note: is_cloud_storage() is private - removed assertion
 
     // Test with cloud path
-    let cloud_config = RaptorConfig::default();
-    let cache = Arc::new(
+    let _cloud_config = RaptorConfig::default();
+    let _cache = Arc::new(
         crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(
             1024 * 1024 * 10, // 10MB cache
         ),
     );
-    let cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new().await?;
+    let _cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new().await?;
 
     // Note: is_cloud_storage() is private - removed assertion
 
@@ -472,7 +474,7 @@ async fn test_cloud_io_optimization() -> Result<()> {
 
 #[tokio::test]
 async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
-    use crate::storage::engines::impls::raptor::common::{ColumnarCentroids, ProximaMetadata};
+    use crate::storage::engines::impls::raptor::common::ColumnarCentroids;
     use crate::storage::engines::impls::raptor::writer::RaptorWriter;
     use tempfile::TempDir;
 
@@ -546,7 +548,7 @@ async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
 
         let columnar = ColumnarCentroids {
             count: num_centroids as u32,
-            dimension: dimension,
+            dimension,
             rowgroup_ids,
             transposed_data,
             encoding_metadata: vec![],
@@ -617,8 +619,6 @@ fn test_memory_savings_with_centralized_footer() {
 
 #[test]
 fn test_centroid_distance_matrix_performance() {
-    use std::time::Instant;
-
     println!("\n=== Centroid Distance Matrix Performance Impact ===\n");
 
     // Test various collection sizes
@@ -629,7 +629,7 @@ fn test_centroid_distance_matrix_performance() {
         ("XLarge", 5000, 384), // 12,497,500 distance calculations
     ];
 
-    for (name, k, dim) in test_cases {
+    for (name, k, _dim) in test_cases {
         // Calculate number of distance computations
         let (num_distances, estimated_ms) = estimate_matrix_compute_time(k);
 
@@ -781,6 +781,8 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
         search_params: search_params.clone(),
         collection: collection_arc.clone(),
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await?;

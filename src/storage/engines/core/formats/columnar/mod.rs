@@ -114,6 +114,11 @@ pub mod schema;
 pub mod serialization;
 // NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
 
+// TEXT column storage, filtering, and full-text search (Phase 3)
+pub mod fulltext_index;
+pub mod text_filter;
+pub mod text_storage;
+
 // Examples demonstrating optimization benefits (moved to tests)
 #[cfg(test)]
 mod examples_test;
@@ -230,6 +235,63 @@ pub use common::{
     CommonColumnarConfig, CommonColumnarOperations, DistanceComputationConfig, OptimalBatchSizes,
     PerformanceMonitor, RowGroupSizeOptimization, SchemaGenerationConfig,
     SerializationOptimizationConfig, ViperOptimizations,
+};
+
+// TEXT column storage and filtering re-exports
+pub use text_filter::{
+    TextColumnFilterEvaluator, TextComparisonOp, TextFilterBuilder, TextFilterError,
+    TextFilterStats,
+};
+pub use text_storage::{
+    // Constants
+    CHUNKED_THRESHOLD,
+    ChunkPosition,
+    // RAG Chunking
+    ChunkingConfig,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_OVERLAP_SIZE,
+    INLINE_THRESHOLD,
+    MAX_BOUNDARY_SEARCH,
+    MIN_CHUNK_SIZE,
+    // Storage types
+    SidecarCompression,
+    SidecarRef,
+    StorageType,
+    TextChunk,
+    TextChunker,
+    TextColumnReader,
+    TextColumnWriter,
+    TextStorageConfig,
+    TextStorageError,
+    TextStorageStats,
+    // Functions
+    determine_storage_strategy,
+};
+
+// Full-text search index re-exports
+pub use fulltext_index::{
+    // Core index types
+    BM25Config,
+    BM25Scorer,
+    ChunkIndexing,
+    ChunkSearchResult,
+    DocumentMetadata,
+    FullTextIndex,
+    FullTextIndexBuilder,
+    FullTextIndexError,
+    // Posting types
+    Posting,
+    PostingList,
+    // Search types
+    SearchOptions,
+    SearchResult as FullTextSearchResult,
+    // Statistics
+    TextStatistics,
+    // Tokenization
+    Token,
+    Tokenizer,
+    TokenizerConfig,
+    TokenizerType,
 };
 
 use anyhow::Result;
@@ -712,9 +774,9 @@ impl ColumnarFactory {
     /// Create optimized Parquet reader for VIPER/NOVA engines
     /// Note: enable_id_less is optimization only, ID column is always kept
     pub async fn create_optimized_reader(
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         config: ColumnarConfig,
-        enable_id_less_optimization: bool,
+        _enable_id_less_optimization: bool,
     ) -> Result<UnifiedParquetReader> {
         // Note: UnifiedParquetReader now takes file_paths and dimension
         // This factory method needs to be updated based on actual usage

@@ -14,7 +14,7 @@ use tracing::{debug, error};
 #[derive(Debug, Clone)]
 pub struct SQLValidator {
     config: SQLValidatorConfig,
-    allowed_functions: HashSet<String>,
+    _allowed_functions: HashSet<String>,
     forbidden_patterns: Vec<String>,
 }
 
@@ -131,7 +131,7 @@ impl SQLValidator {
 
         Ok(Self {
             config,
-            allowed_functions,
+            _allowed_functions: allowed_functions,
             forbidden_patterns,
         })
     }
@@ -434,7 +434,7 @@ mod tests {
     async fn test_sql_validator_creation() {
         let validator = SQLValidator::new().await.unwrap();
         assert!(validator.config.enable_strict_validation);
-        assert!(!validator.allowed_functions.is_empty());
+        assert!(!validator._allowed_functions.is_empty());
     }
 
     #[tokio::test]
@@ -488,7 +488,7 @@ mod tests {
     fn test_tenant_isolation_verification() {
         let validator = SQLValidator {
             config: SQLValidatorConfig::default(),
-            allowed_functions: HashSet::new(),
+            _allowed_functions: HashSet::new(),
             forbidden_patterns: vec![],
         };
 
@@ -516,7 +516,7 @@ mod tests {
                 max_result_limit: 1000,
                 ..Default::default()
             },
-            allowed_functions: HashSet::new(),
+            _allowed_functions: HashSet::new(),
             forbidden_patterns: vec![],
         };
 

@@ -8,14 +8,15 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-import time
 
 
 class WorkloadType(str, Enum):
     """Types of database workloads"""
+
     READ_HEAVY = "read_heavy"
     WRITE_HEAVY = "write_heavy"
     MIXED = "mixed"
@@ -26,6 +27,7 @@ class WorkloadType(str, Enum):
 
 class OptimizationGoal(str, Enum):
     """Optimization goals for engine selection"""
+
     LATENCY = "latency"
     THROUGHPUT = "throughput"
     MEMORY = "memory"
@@ -37,6 +39,7 @@ class OptimizationGoal(str, Enum):
 @dataclass
 class WorkloadCharacteristics:
     """Characteristics of a workload"""
+
     # Query patterns
     read_ratio: float = 0.5  # 0-1, ratio of reads to total ops
     write_ratio: float = 0.5  # 0-1, ratio of writes to total ops
@@ -77,6 +80,7 @@ class WorkloadCharacteristics:
 @dataclass
 class EngineRecommendation:
     """Recommendation for a storage engine"""
+
     engine: str
     confidence: float
     reasoning: str
@@ -100,6 +104,7 @@ class EngineRecommendation:
 @dataclass
 class HyperparameterConfig:
     """Hyperparameter configuration for optimization"""
+
     name: str
     current_value: Any
     min_value: Optional[Any] = None
@@ -111,6 +116,7 @@ class HyperparameterConfig:
 @dataclass
 class OptimizationResult:
     """Result of hyperparameter optimization"""
+
     best_config: Dict[str, Any]
     best_score: float
     iterations: int
@@ -150,13 +156,15 @@ class WorkloadPredictor:
             vector_count: Number of vectors involved
             metadata: Additional operation metadata
         """
-        self._operations.append({
-            "operation": operation,
-            "latency_ms": latency_ms,
-            "vector_count": vector_count,
-            "timestamp": time.time(),
-            "metadata": metadata or {},
-        })
+        self._operations.append(
+            {
+                "operation": operation,
+                "latency_ms": latency_ms,
+                "vector_count": vector_count,
+                "timestamp": time.time(),
+                "metadata": metadata or {},
+            }
+        )
 
         # Keep window size
         if len(self._operations) > self._window_size:
@@ -176,8 +184,12 @@ class WorkloadPredictor:
             return WorkloadCharacteristics()
 
         total_ops = sum(self._operation_counts.values())
-        read_ops = self._operation_counts.get("search", 0) + self._operation_counts.get("get", 0)
-        write_ops = self._operation_counts.get("insert", 0) + self._operation_counts.get("update", 0)
+        read_ops = self._operation_counts.get("search", 0) + self._operation_counts.get(
+            "get", 0
+        )
+        write_ops = self._operation_counts.get(
+            "insert", 0
+        ) + self._operation_counts.get("update", 0)
 
         # Calculate ratios
         read_ratio = read_ops / total_ops if total_ops > 0 else 0.5
@@ -191,7 +203,9 @@ class WorkloadPredictor:
         # Estimate temporal locality from timestamps
         if len(self._operations) > 1:
             timestamps = [op["timestamp"] for op in self._operations]
-            intervals = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
+            intervals = [
+                timestamps[i + 1] - timestamps[i] for i in range(len(timestamps) - 1)
+            ]
             avg_interval = sum(intervals) / len(intervals) if intervals else 1
             temporal_locality = max(0, 1 - min(1, avg_interval / 10))
         else:
@@ -336,7 +350,9 @@ class EngineSelector:
 
         for engine, profile in self.ENGINE_PROFILES.items():
             # Skip SWIFT for large datasets
-            if engine == "swift" and characteristics.vector_count > profile.get("max_vectors", float("inf")):
+            if engine == "swift" and characteristics.vector_count > profile.get(
+                "max_vectors", float("inf")
+            ):
                 continue
 
             score = self._calculate_score(engine, profile, characteristics, goal)
@@ -350,9 +366,15 @@ class EngineSelector:
 
         # Calculate estimates
         vector_count_k = characteristics.vector_count / 1000
-        estimated_latency = profile["latency_base"] + profile["latency_scale"] * vector_count_k
-        estimated_throughput = int(profile["throughput_base"] * (1 - 0.1 * vector_count_k / 100))
-        estimated_memory = int(profile["memory_base"] * (characteristics.vector_count / 10000))
+        estimated_latency = (
+            profile["latency_base"] + profile["latency_scale"] * vector_count_k
+        )
+        estimated_throughput = int(
+            profile["throughput_base"] * (1 - 0.1 * vector_count_k / 100)
+        )
+        estimated_memory = int(
+            profile["memory_base"] * (characteristics.vector_count / 10000)
+        )
 
         # Generate reasoning
         reasoning = self._generate_reasoning(best_engine, characteristics, goal)
@@ -445,16 +467,25 @@ class EngineSelector:
         elif engine == "helix":
             # Tune HELIX for dimensions and clustering
             if characteristics.vector_dimension > 512:
-                config["pca_dimensions"] = min(128, characteristics.vector_dimension // 4)
-            config["hilbert_bits"] = 16 if characteristics.spatial_locality > 0.7 else 12
+                config["pca_dimensions"] = min(
+                    128, characteristics.vector_dimension // 4
+                )
+            config["hilbert_bits"] = (
+                16 if characteristics.spatial_locality > 0.7 else 12
+            )
 
         elif engine == "viper":
-            config["row_group_size"] = 100000 if characteristics.vector_count > 100000 else 10000
+            config["row_group_size"] = (
+                100000 if characteristics.vector_count > 100000 else 10000
+            )
             config["enable_statistics"] = True
 
         elif engine == "swift":
             config["in_memory"] = True
-            config["exact_search"] = characteristics.target_latency_ms is None or characteristics.target_latency_ms > 5
+            config["exact_search"] = (
+                characteristics.target_latency_ms is None
+                or characteristics.target_latency_ms > 5
+            )
 
         elif engine == "raptor":
             config["adaptive_pruning"] = True
@@ -539,21 +570,33 @@ class EngineSelector:
             return None
 
         # Check constraints
-        if engine == "swift" and characteristics.vector_count > profile.get("max_vectors", float("inf")):
+        if engine == "swift" and characteristics.vector_count > profile.get(
+            "max_vectors", float("inf")
+        ):
             return None
 
-        score = self._calculate_score(engine, profile, characteristics, OptimizationGoal.BALANCED)
+        score = self._calculate_score(
+            engine, profile, characteristics, OptimizationGoal.BALANCED
+        )
         config = self._generate_config(engine, profile, characteristics)
 
         vector_count_k = characteristics.vector_count / 1000
-        estimated_latency = profile["latency_base"] + profile["latency_scale"] * vector_count_k
-        estimated_throughput = int(profile["throughput_base"] * (1 - 0.1 * vector_count_k / 100))
-        estimated_memory = int(profile["memory_base"] * (characteristics.vector_count / 10000))
+        estimated_latency = (
+            profile["latency_base"] + profile["latency_scale"] * vector_count_k
+        )
+        estimated_throughput = int(
+            profile["throughput_base"] * (1 - 0.1 * vector_count_k / 100)
+        )
+        estimated_memory = int(
+            profile["memory_base"] * (characteristics.vector_count / 10000)
+        )
 
         return EngineRecommendation(
             engine=engine,
             confidence=score,
-            reasoning=self._generate_reasoning(engine, characteristics, OptimizationGoal.BALANCED),
+            reasoning=self._generate_reasoning(
+                engine, characteristics, OptimizationGoal.BALANCED
+            ),
             estimated_latency_ms=estimated_latency,
             estimated_throughput=max(1000, estimated_throughput),
             estimated_memory_mb=max(10, estimated_memory),
@@ -617,18 +660,24 @@ class HyperparameterOptimizer:
             # Evaluate candidate
             score = self._evaluate_config(collection, candidate, goal, test_queries)
 
-            history.append({
-                "iteration": i,
-                "config": candidate.copy(),
-                "score": score,
-            })
+            history.append(
+                {
+                    "iteration": i,
+                    "config": candidate.copy(),
+                    "score": score,
+                }
+            )
 
             if score > best_score:
                 best_score = score
                 best_config = candidate.copy()
 
         initial_score = history[0]["score"] if history else 0
-        improvement = (best_score - initial_score) / abs(initial_score) if initial_score != 0 else 0
+        improvement = (
+            (best_score - initial_score) / abs(initial_score)
+            if initial_score != 0
+            else 0
+        )
 
         return OptimizationResult(
             best_config=best_config,
@@ -695,9 +744,13 @@ class HyperparameterOptimizer:
                 elif param.min_value is not None and param.max_value is not None:
                     if param.step:
                         steps = int((param.max_value - param.min_value) / param.step)
-                        config[param.name] = param.min_value + random.randint(0, steps) * param.step
+                        config[param.name] = (
+                            param.min_value + random.randint(0, steps) * param.step
+                        )
                     else:
-                        config[param.name] = random.uniform(param.min_value, param.max_value)
+                        config[param.name] = random.uniform(
+                            param.min_value, param.max_value
+                        )
                 else:
                     config[param.name] = param.current_value
             else:
@@ -900,13 +953,11 @@ __all__ = [
     "WorkloadPredictor",
     "EngineSelector",
     "HyperparameterOptimizer",
-
     # Data classes
     "WorkloadCharacteristics",
     "EngineRecommendation",
     "HyperparameterConfig",
     "OptimizationResult",
-
     # Enums
     "WorkloadType",
     "OptimizationGoal",

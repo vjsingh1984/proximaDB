@@ -458,7 +458,7 @@ impl AxisVectorIndex for AxisHnswIndex {
         validation::validate_vector_id(&id)?;
 
         // Check if this ID already exists
-        if let Some(existing_node_id) = self.id_mapping.internal(&id) {
+        if let Some(_existing_node_id) = self.id_mapping.internal(&id) {
             // Update existing vector
             {
                 let mut vectors = self.vectors.write().unwrap();
@@ -660,7 +660,7 @@ impl AxisHnswIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        _filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
     ) -> Result<Vec<(String, f32)>> {
         let start = std::time::Instant::now();
 
@@ -867,6 +867,7 @@ impl AxisHnswIndex {
 
     /// NEW: Dequantize vector for HNSW graph construction
     /// TODO: Integrate with actual quantization module from storage engines
+    #[allow(dead_code)]
     fn dequantize_vector(
         &self,
         _quantized: &[u8],
@@ -1357,7 +1358,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_serialization_roundtrip() {
-        use crate::index::axis::storage::serialization::{IndexSerializer, SerializableIndex};
+        use crate::index::axis::storage::serialization::IndexSerializer;
 
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 

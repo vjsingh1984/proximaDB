@@ -150,6 +150,8 @@ fn run_benchmark(engine: &str, search_mode: &str, vector_count: usize) -> Benchm
         cache_size_mb: 256,
         default_engine: engine.to_string(),
         enable_wal: false, // Disable WAL for benchmark speed
+        access_mode: proximadb::embedded::AccessMode::Exclusive,
+        node_id: Some("benchmark-node".to_string()),
         wal_sync_mode: "batch".to_string(),
         block_prune_mode: "sqrt".to_string(),
         block_prune_ratio: 0.2,
@@ -157,6 +159,7 @@ fn run_benchmark(engine: &str, search_mode: &str, vector_count: usize) -> Benchm
         block_prune_max_keep: 0,
         enable_rl_planner: true, // Enable RL planner for optimization benchmarks
         rl_policy_path: None,    // Use default path
+        ..Default::default()
     };
 
     let db = EmbeddedProximaDB::new(config).unwrap();

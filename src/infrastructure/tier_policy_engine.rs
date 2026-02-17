@@ -429,12 +429,15 @@ impl CollectionStorageConfig {
 #[derive(Debug, Clone)]
 pub struct SmartTierPolicy {
     /// Workload type determines default behavior
+    #[allow(dead_code)]
     workload_type: WorkloadType,
 
     /// Collection storage configuration (determines baseline and constraints)
+    #[allow(dead_code)]
     collection_config: CollectionStorageConfig,
 
     /// Available storage tiers filtered by collection constraints
+    #[allow(dead_code)]
     available_tiers: Vec<InfrastructureTier>,
 
     /// Tier configuration with capacity limits and costs
@@ -444,9 +447,11 @@ pub struct SmartTierPolicy {
     placement_rules: Vec<PlacementRule>,
 
     /// Memory pressure thresholds
+    #[allow(dead_code)]
     memory_thresholds: MemoryThresholds,
 
     /// Cost optimization settings
+    #[allow(dead_code)]
     cost_optimization: CostOptimization,
 }
 
@@ -495,6 +500,7 @@ pub enum DurabilityPreference {
 #[derive(Debug, Clone)]
 pub struct TierConfig {
     /// Maximum capacity for this tier (bytes)
+    #[allow(dead_code)]
     max_capacity_bytes: Option<usize>,
 
     /// Cost per GB per month (USD)
@@ -504,9 +510,11 @@ pub struct TierConfig {
     access_latency: Duration,
 
     /// Retrieval latency (for archived tiers)
+    #[allow(dead_code)]
     retrieval_latency: Option<Duration>,
 
     /// Minimum storage duration (for cost optimization)
+    #[allow(dead_code)]
     min_storage_duration: Option<Duration>,
 }
 
@@ -563,27 +571,34 @@ pub enum PlacementCondition {
 #[derive(Debug, Clone)]
 pub struct MemoryThresholds {
     /// Start promoting data to next tier (0.0-1.0)
+    #[allow(dead_code)]
     promotion_threshold: f64,
 
     /// Urgent promotion/eviction threshold (0.0-1.0)
+    #[allow(dead_code)]
     critical_threshold: f64,
 
     /// Target utilization after cleanup (0.0-1.0)
+    #[allow(dead_code)]
     target_utilization: f64,
 }
 
 #[derive(Debug, Clone)]
 pub struct CostOptimization {
     /// Maximum total monthly cost (USD)
+    #[allow(dead_code)]
     max_monthly_cost: Option<f64>,
 
     /// Cost per operation budget (USD)
+    #[allow(dead_code)]
     cost_per_operation_budget: Option<f64>,
 
     /// Enable automatic cost optimization
+    #[allow(dead_code)]
     auto_optimize: bool,
 
     /// Cost tracking window for optimization decisions
+    #[allow(dead_code)]
     cost_tracking_window_days: u32,
 }
 
@@ -592,18 +607,23 @@ pub struct CostOptimization {
 #[derive(Debug, Clone)]
 pub struct RuleBasedTierPolicy {
     /// Default disk partition path (configurable via server config)
+    #[allow(dead_code)]
     default_disk_path: String,
 
     /// Maximum tier level for local storage (Memory=1, NVMe=2, HDD=3)
+    #[allow(dead_code)]
     max_local_tier_level: u8,
 
     /// Default rules for data placement
+    #[allow(dead_code)]
     default_rules: Vec<DefaultPlacementRule>,
 
     /// Memory pressure thresholds
+    #[allow(dead_code)]
     memory_thresholds: MemoryPressureThresholds,
 
     /// Age-based rules for automatic demotion
+    #[allow(dead_code)]
     aging_rules: AgingRules,
 }
 
@@ -611,9 +631,11 @@ pub struct RuleBasedTierPolicy {
 #[derive(Debug, Clone)]
 pub struct DefaultPlacementRule {
     /// Rule name for debugging
+    #[allow(dead_code)]
     name: String,
 
     /// Target workload pattern
+    #[allow(dead_code)]
     workload_pattern: WorkloadPattern,
 
     /// Placement condition
@@ -623,6 +645,7 @@ pub struct DefaultPlacementRule {
     target_tier_level: u8,
 
     /// Rule priority (higher = more important)
+    #[allow(dead_code)]
     priority: u32,
 }
 
@@ -630,12 +653,15 @@ pub struct DefaultPlacementRule {
 #[derive(Debug, Clone)]
 pub struct MemoryPressureThresholds {
     /// Promote to faster tier threshold (0.0-1.0)
+    #[allow(dead_code)]
     promote_threshold: f64,
 
     /// Demote to slower tier threshold (0.0-1.0)
+    #[allow(dead_code)]
     demote_threshold: f64,
 
     /// Emergency eviction threshold (0.0-1.0)
+    #[allow(dead_code)]
     emergency_threshold: f64,
 }
 
@@ -643,12 +669,15 @@ pub struct MemoryPressureThresholds {
 #[derive(Debug, Clone)]
 pub struct AgingRules {
     /// Demote to HDD after this many days of no access
+    #[allow(dead_code)]
     hdd_demotion_days: u32,
 
     /// Demote from memory after this many hours of no access
+    #[allow(dead_code)]
     memory_demotion_hours: u32,
 
     /// Enable automatic aging (can be disabled)
+    #[allow(dead_code)]
     enable_automatic_aging: bool,
 }
 
@@ -656,18 +685,23 @@ pub struct AgingRules {
 #[derive(Debug, Clone)]
 pub struct ServerTierConfig {
     /// Base path for disk storage (/tmp by default, configurable via server config.toml)
+    #[allow(dead_code)]
     base_disk_path: String,
 
     /// Base path for NVMe storage (if available)
+    #[allow(dead_code)]
     base_nvme_path: Option<String>,
 
     /// Maximum memory allocation for tier management (bytes)
+    #[allow(dead_code)]
     max_memory_bytes: usize,
 
     /// Enable cloud storage (requires cloud provider configuration)
+    #[allow(dead_code)]
     enable_cloud_storage: bool,
 
     /// Default cloud provider (if enabled)
+    #[allow(dead_code)]
     default_cloud_provider: Option<CloudProvider>,
 }
 
@@ -861,18 +895,22 @@ pub struct GlobalMemory {
     total_memory_budget: usize,
 
     /// Current memory usage by collection
+    #[allow(dead_code)]
     collection_usage: HashMap<String, usize>,
 
     /// Memory allocation priorities
+    #[allow(dead_code)]
     collection_priorities: HashMap<String, u8>,
 }
 
 #[derive(Debug)]
 pub struct GlobalMetricsCollector {
     /// Cross-collection tier usage metrics
+    #[allow(dead_code)]
     tier_usage_stats: HashMap<InfrastructureTier, TierUsageStats>,
 
     /// Collection performance metrics
+    #[allow(dead_code)]
     collection_metrics: HashMap<String, CollectionTierMetrics>,
 }
 

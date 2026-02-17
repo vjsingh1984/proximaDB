@@ -197,6 +197,8 @@ async fn search_with_filter(
         search_params,
         collection,
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
 
     engine.search_vectors_unified(&ctx).await

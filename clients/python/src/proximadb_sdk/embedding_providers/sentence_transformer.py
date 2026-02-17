@@ -5,11 +5,12 @@ Uses the sentence-transformers library (Apache 2.0 license) to provide
 access to hundreds of free embedding models including BERT variants.
 """
 
-import numpy as np
-from typing import List, Optional, Dict, Any
 import logging
+from typing import Any, Dict, List, Optional
 
-from .base import EmbeddingProvider, EmbeddingConfig
+import numpy as np
+
+from .base import EmbeddingConfig, EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +59,17 @@ class SentenceTransformerProvider(EmbeddingProvider):
             cache_embeddings=True,
             device=None,  # Auto-detect
         )
-    
+
     def _initialize(self) -> None:
         """Initialize the sentence transformer model"""
         try:
             from sentence_transformers import SentenceTransformer
-            
+
             # Initialize model
             self.model = SentenceTransformer(
-                self.config.model_name,
-                device=self.config.device
+                self.config.model_name, device=self.config.device
             )
-            
+
             # Update dimension if it's a known model
             if self.config.model_name in self.MODEL_DIMENSIONS:
                 self.config.dimension = self.MODEL_DIMENSIONS[self.config.model_name]
@@ -77,19 +77,23 @@ class SentenceTransformerProvider(EmbeddingProvider):
                 # Get dimension from model
                 dummy_embedding = self.model.encode(["test"], show_progress_bar=False)
                 self.config.dimension = dummy_embedding.shape[1]
-            
+
             self._available = True
-            logger.info(f"Initialized SentenceTransformer with model: {self.config.model_name} "
-                       f"(dimension: {self.config.dimension})")
-            
+            logger.info(
+                f"Initialized SentenceTransformer with model: {self.config.model_name} "
+                f"(dimension: {self.config.dimension})"
+            )
+
         except ImportError:
             self._available = False
-            logger.warning("sentence-transformers not installed. "
-                          "Install with: pip install sentence-transformers")
+            logger.warning(
+                "sentence-transformers not installed. "
+                "Install with: pip install sentence-transformers"
+            )
         except Exception as e:
             self._available = False
             logger.error(f"Failed to initialize SentenceTransformer: {e}")
-    
+
     def embed_text(self, text: str) -> np.ndarray:
         """
         Generate embedding for a single text
@@ -113,8 +117,10 @@ class SentenceTransformerProvider(EmbeddingProvider):
             Array of embeddings with shape (len(texts), dimension)
         """
         if not self._available:
-            raise RuntimeError("SentenceTransformer not available. "
-                             "Install with: pip install sentence-transformers")
+            raise RuntimeError(
+                "SentenceTransformer not available. "
+                "Install with: pip install sentence-transformers"
+            )
 
         if not texts:
             return np.array([])
@@ -125,12 +131,14 @@ class SentenceTransformerProvider(EmbeddingProvider):
             batch_size=self.config.batch_size,
             show_progress_bar=False,
             normalize_embeddings=self.config.normalize,
-            convert_to_numpy=True
+            convert_to_numpy=True,
         )
 
         return embeddings
 
-    def embed_documents(self, documents: List[Dict[str, Any]], text_field: str = 'text') -> np.ndarray:
+    def embed_documents(
+        self, documents: List[Dict[str, Any]], text_field: str = "text"
+    ) -> np.ndarray:
         """
         Generate embeddings for documents
 
@@ -141,7 +149,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         Returns:
             Array of embedding vectors
         """
-        texts = [doc.get(text_field, '') for doc in documents]
+        texts = [doc.get(text_field, "") for doc in documents]
         return self.embed_texts(texts)
 
     def get_dimension(self) -> int:
@@ -155,7 +163,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
             "dimension": self.config.dimension,
             "provider": "sentence-transformers",
             "normalize": self.config.normalize,
-            "available": self._available
+            "available": self._available,
         }
 
     def is_available(self) -> bool:
@@ -163,7 +171,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         if self._available is None:
             self._initialize()
         return self._available
-    
+
     @classmethod
     def list_recommended_models(cls) -> Dict[str, Dict[str, Any]]:
         """List recommended models with their properties"""
@@ -172,24 +180,24 @@ class SentenceTransformerProvider(EmbeddingProvider):
                 "dimension": 384,
                 "description": "Fast and good quality, recommended for most use cases",
                 "speed": "fast",
-                "quality": "good"
+                "quality": "good",
             },
             "all-mpnet-base-v2": {
                 "dimension": 768,
                 "description": "Best quality, slower than MiniLM",
                 "speed": "medium",
-                "quality": "excellent"
+                "quality": "excellent",
             },
             "paraphrase-MiniLM-L6-v2": {
                 "dimension": 384,
                 "description": "Optimized for paraphrase detection",
                 "speed": "fast",
-                "quality": "good"
+                "quality": "good",
             },
             "multi-qa-MiniLM-L6-cos-v1": {
                 "dimension": 384,
                 "description": "Optimized for question-answering tasks",
                 "speed": "fast",
-                "quality": "good"
-            }
+                "quality": "good",
+            },
         }

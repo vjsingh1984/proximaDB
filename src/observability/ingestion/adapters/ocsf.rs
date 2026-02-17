@@ -247,6 +247,7 @@ impl OcsfAdapter {
     }
 
     /// Get OCSF category name from UID
+    #[allow(dead_code)]
     fn category_name(&self, uid: i32) -> &'static str {
         match uid {
             1 => "System Activity",
@@ -260,6 +261,7 @@ impl OcsfAdapter {
     }
 
     /// Get OCSF class name from UID
+    #[allow(dead_code)]
     fn class_name(&self, uid: i32) -> &'static str {
         match uid {
             // System Activity

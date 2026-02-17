@@ -55,28 +55,29 @@ Unified vector + graph with:
 """
 
 import gc
+import gzip
 import os
-import sys
-import time
-import tempfile
-import shutil
 import random
+import shutil
+import struct
+import sys
+import tempfile
 import threading
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+import time
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import struct
-import gzip
-import urllib.request
-from io import BytesIO
 
 try:
     from rich.console import Console
-    from rich.table import Table
     from rich.panel import Panel
+    from rich.table import Table
+
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
@@ -87,6 +88,7 @@ except ImportError:
 # =============================================================================
 # Logging and Timing Utilities
 # =============================================================================
+
 
 class BenchmarkLogger:
     """Utility for logging benchmark progress with timestamps and inline stats.
@@ -147,6 +149,7 @@ class BenchmarkLogger:
 # Standard Benchmark Dataset Loaders
 # =============================================================================
 
+
 class StandardDatasets:
     """
     Standard benchmark dataset loaders for reproducible benchmarks.
@@ -177,8 +180,8 @@ class StandardDatasets:
             dim_bytes = fp.read(4)
             if not dim_bytes:
                 break
-            dim = struct.unpack('<i', dim_bytes)[0]
-            vec = struct.unpack('<' + 'f' * dim, fp.read(4 * dim))
+            dim = struct.unpack("<i", dim_bytes)[0]
+            vec = struct.unpack("<" + "f" * dim, fp.read(4 * dim))
             vectors.append(vec)
         return np.array(vectors, dtype=np.float32)
 
@@ -190,13 +193,15 @@ class StandardDatasets:
             dim_bytes = fp.read(4)
             if not dim_bytes:
                 break
-            dim = struct.unpack('<i', dim_bytes)[0]
-            vec = struct.unpack('<' + 'i' * dim, fp.read(4 * dim))
+            dim = struct.unpack("<i", dim_bytes)[0]
+            vec = struct.unpack("<" + "i" * dim, fp.read(4 * dim))
             vectors.append(vec)
         return np.array(vectors, dtype=np.int32)
 
     @staticmethod
-    def load_sift_1m(max_vectors: int = None, cache_dir: str = None, dimension: int = 768) -> dict:
+    def load_sift_1m(
+        max_vectors: int = None, cache_dir: str = None, dimension: int = 768
+    ) -> dict:
         """
         Load SIFT-1M dataset (or generate synthetic equivalent).
 
@@ -224,28 +229,34 @@ class StandardDatasets:
             if cache_path.exists():
                 print(f"  Loading SIFT-1M from cache: {cache_path}")
                 data = np.load(cache_path)
-                base = data['base']
-                queries = data['queries']
+                base = data["base"]
+                queries = data["queries"]
                 if max_vectors:
                     base = base[:max_vectors]
                 return {
-                    'base': base,
-                    'queries': queries,
-                    'ground_truth': data.get('ground_truth'),
-                    'metadata': {
-                        'dataset': 'sift-1m',
-                        'dimension': 128,
-                        'num_base': len(base),
-                        'num_queries': len(queries),
-                        'distance': 'euclidean',
-                    }
+                    "base": base,
+                    "queries": queries,
+                    "ground_truth": data.get("ground_truth"),
+                    "metadata": {
+                        "dataset": "sift-1m",
+                        "dimension": 128,
+                        "num_base": len(base),
+                        "num_queries": len(queries),
+                        "distance": "euclidean",
+                    },
                 }
 
         # Generate synthetic SIFT-like vectors (similar statistical properties)
         # Real SIFT: 128D with values in [0, 255], often sparse
         # Support configurable dimensions for real-world embedding models
-        dim_names = {128: 'SIFT', 768: 'BGE-base', 960: 'GIST', 1024: 'BGE-large', 1536: 'OpenAI'}
-        dim_name = dim_names.get(dimension, f'custom-{dimension}D')
+        dim_names = {
+            128: "SIFT",
+            768: "BGE-base",
+            960: "GIST",
+            1024: "BGE-large",
+            1536: "OpenAI",
+        }
+        dim_name = dim_names.get(dimension, f"custom-{dimension}D")
         print(f"  Generating synthetic {dim_name} vectors ({dimension}D)...")
 
         num_base = min(max_vectors or 1_000_000, 1_000_000)
@@ -282,16 +293,16 @@ class StandardDatasets:
             print(f"  Cached to: {cache_path}")
 
         return {
-            'base': base,
-            'queries': queries,
-            'ground_truth': None,  # Would compute via brute force if needed
-            'metadata': {
-                'dataset': 'sift-1m-synthetic',
-                'dimension': dimension,
-                'num_base': num_base,
-                'num_queries': num_queries,
-                'distance': 'euclidean',
-            }
+            "base": base,
+            "queries": queries,
+            "ground_truth": None,  # Would compute via brute force if needed
+            "metadata": {
+                "dataset": "sift-1m-synthetic",
+                "dimension": dimension,
+                "num_base": num_base,
+                "num_queries": num_queries,
+                "distance": "euclidean",
+            },
         }
 
     @staticmethod
@@ -331,16 +342,16 @@ class StandardDatasets:
         queries = queries / np.maximum(norms, 1e-8)
 
         return {
-            'base': base,
-            'queries': queries,
-            'ground_truth': None,
-            'metadata': {
-                'dataset': 'gist-960-synthetic',
-                'dimension': dimension,
-                'num_base': num_base,
-                'num_queries': num_queries,
-                'distance': 'euclidean',
-            }
+            "base": base,
+            "queries": queries,
+            "ground_truth": None,
+            "metadata": {
+                "dataset": "gist-960-synthetic",
+                "dimension": dimension,
+                "num_base": num_base,
+                "num_queries": num_queries,
+                "distance": "euclidean",
+            },
         }
 
     @staticmethod
@@ -392,18 +403,20 @@ class StandardDatasets:
         for i in range(num_persons):
             node_id = f"person_{i}"
             person_ids.append(node_id)
-            nodes.append({
-                "id": node_id,
-                "labels": ["Person"],
-                "properties": {
-                    "firstName": f"Person_{i}",
-                    "lastName": f"Last_{i % 1000}",
-                    "gender": rng.choice(["male", "female"]),
-                    "birthday": f"199{rng.integers(0, 10)}-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
-                    "locationIP": f"192.168.{rng.integers(0, 256)}.{rng.integers(0, 256)}",
-                    "creationDate": f"2010-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+            nodes.append(
+                {
+                    "id": node_id,
+                    "labels": ["Person"],
+                    "properties": {
+                        "firstName": f"Person_{i}",
+                        "lastName": f"Last_{i % 1000}",
+                        "gender": rng.choice(["male", "female"]),
+                        "birthday": f"199{rng.integers(0, 10)}-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+                        "locationIP": f"192.168.{rng.integers(0, 256)}.{rng.integers(0, 256)}",
+                        "creationDate": f"2010-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+                    },
                 }
-            })
+            )
 
         # Generate KNOWS relationships (power-law distribution)
         # Average ~50 friends per person
@@ -415,19 +428,21 @@ class StandardDatasets:
             friend_indices = rng.choice(
                 [j for j in range(len(person_ids)) if j != i],
                 size=min(num_friends, len(person_ids) - 1),
-                replace=False
+                replace=False,
             )
 
             for friend_idx in friend_indices:
-                edges.append({
-                    "from_node_id": person_id,
-                    "to_node_id": person_ids[friend_idx],
-                    "edge_type": "KNOWS",
-                    "weight": rng.random(),
-                    "properties": {
-                        "creationDate": f"2011-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}"
+                edges.append(
+                    {
+                        "from_node_id": person_id,
+                        "to_node_id": person_ids[friend_idx],
+                        "edge_type": "KNOWS",
+                        "weight": rng.random(),
+                        "properties": {
+                            "creationDate": f"2011-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}"
+                        },
                     }
-                })
+                )
 
         # Generate Posts
         num_posts = min(base_posts, max_nodes // 3)
@@ -437,33 +452,39 @@ class StandardDatasets:
             node_id = f"post_{i}"
             post_ids.append(node_id)
             author = rng.choice(person_ids)
-            nodes.append({
-                "id": node_id,
-                "labels": ["Post", "Message"],
-                "properties": {
-                    "content": f"Post content {i}",
-                    "length": str(rng.integers(10, 2000)),
-                    "creationDate": f"2012-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+            nodes.append(
+                {
+                    "id": node_id,
+                    "labels": ["Post", "Message"],
+                    "properties": {
+                        "content": f"Post content {i}",
+                        "length": str(rng.integers(10, 2000)),
+                        "creationDate": f"2012-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+                    },
                 }
-            })
+            )
             # HAS_CREATOR edge
-            edges.append({
-                "from_node_id": node_id,
-                "to_node_id": author,
-                "edge_type": "HAS_CREATOR",
-                "weight": 1.0,
-            })
+            edges.append(
+                {
+                    "from_node_id": node_id,
+                    "to_node_id": author,
+                    "edge_type": "HAS_CREATOR",
+                    "weight": 1.0,
+                }
+            )
             # Some people LIKES posts
             num_likes = int(rng.pareto(1.0) * 5)
             for _ in range(min(num_likes, 50)):
                 liker = rng.choice(person_ids)
                 if liker != author:
-                    edges.append({
-                        "from_node_id": liker,
-                        "to_node_id": node_id,
-                        "edge_type": "LIKES",
-                        "weight": 1.0,
-                    })
+                    edges.append(
+                        {
+                            "from_node_id": liker,
+                            "to_node_id": node_id,
+                            "edge_type": "LIKES",
+                            "weight": 1.0,
+                        }
+                    )
 
         # Generate Comments (replies to posts)
         num_comments = min(base_comments, max_nodes // 3)
@@ -471,46 +492,56 @@ class StandardDatasets:
         for i in range(num_comments):
             node_id = f"comment_{i}"
             author = rng.choice(person_ids)
-            parent = rng.choice(post_ids) if rng.random() > 0.3 else rng.choice(post_ids)
+            parent = (
+                rng.choice(post_ids) if rng.random() > 0.3 else rng.choice(post_ids)
+            )
 
-            nodes.append({
-                "id": node_id,
-                "labels": ["Comment", "Message"],
-                "properties": {
-                    "content": f"Comment content {i}",
-                    "length": str(rng.integers(5, 500)),
-                    "creationDate": f"2012-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+            nodes.append(
+                {
+                    "id": node_id,
+                    "labels": ["Comment", "Message"],
+                    "properties": {
+                        "content": f"Comment content {i}",
+                        "length": str(rng.integers(5, 500)),
+                        "creationDate": f"2012-{rng.integers(1, 13):02d}-{rng.integers(1, 29):02d}",
+                    },
                 }
-            })
-            edges.append({
-                "from_node_id": node_id,
-                "to_node_id": author,
-                "edge_type": "HAS_CREATOR",
-                "weight": 1.0,
-            })
-            edges.append({
-                "from_node_id": node_id,
-                "to_node_id": parent,
-                "edge_type": "REPLY_OF",
-                "weight": 1.0,
-            })
+            )
+            edges.append(
+                {
+                    "from_node_id": node_id,
+                    "to_node_id": author,
+                    "edge_type": "HAS_CREATOR",
+                    "weight": 1.0,
+                }
+            )
+            edges.append(
+                {
+                    "from_node_id": node_id,
+                    "to_node_id": parent,
+                    "edge_type": "REPLY_OF",
+                    "weight": 1.0,
+                }
+            )
 
         return {
-            'nodes': nodes,
-            'edges': edges,
-            'metadata': {
-                'dataset': f'ldbc-snb-sf{scale_factor}-synthetic',
-                'num_nodes': len(nodes),
-                'num_edges': len(edges),
-                'num_persons': num_persons,
-                'num_posts': num_posts,
-                'num_comments': num_comments,
-                'scale_factor': scale_factor,
-            }
+            "nodes": nodes,
+            "edges": edges,
+            "metadata": {
+                "dataset": f"ldbc-snb-sf{scale_factor}-synthetic",
+                "num_nodes": len(nodes),
+                "num_edges": len(edges),
+                "num_persons": num_persons,
+                "num_posts": num_posts,
+                "num_comments": num_comments,
+                "scale_factor": scale_factor,
+            },
         }
 
     @staticmethod
-    def load_hybrid_rag_dataset(num_documents: int = 10_000, cache_dir: str = None) -> dict:
+    def load_hybrid_rag_dataset(
+        num_documents: int = 10_000, cache_dir: str = None
+    ) -> dict:
         """
         Generate a HybridRAG-style dataset for SKS benchmarking.
 
@@ -543,7 +574,13 @@ class StandardDatasets:
 
         # Entity types for knowledge graph
         entity_types = ["Person", "Organization", "Location", "Concept", "Product"]
-        relation_types = ["MENTIONS", "RELATED_TO", "LOCATED_IN", "WORKS_FOR", "CREATED_BY"]
+        relation_types = [
+            "MENTIONS",
+            "RELATED_TO",
+            "LOCATED_IN",
+            "WORKS_FOR",
+            "CREATED_BY",
+        ]
 
         # Generate documents
         for doc_id in range(num_documents):
@@ -564,13 +601,15 @@ class StandardDatasets:
                 embedding[:10] += category_offset * 0.5  # Category signal
                 embedding = embedding / np.linalg.norm(embedding)
 
-                chunks.append({
-                    "id": f"chunk_{doc_id}_{chunk_id}",
-                    "document_id": f"doc_{doc_id}",
-                    "text": f"Chunk {chunk_id} of document {doc_id}",
-                    "embedding": embedding,
-                    "position": chunk_id,
-                })
+                chunks.append(
+                    {
+                        "id": f"chunk_{doc_id}_{chunk_id}",
+                        "document_id": f"doc_{doc_id}",
+                        "text": f"Chunk {chunk_id} of document {doc_id}",
+                        "embedding": embedding,
+                        "position": chunk_id,
+                    }
+                )
 
             # Generate entities extracted from document
             doc_entities = []
@@ -585,22 +624,26 @@ class StandardDatasets:
                 doc_entities.append(entity)
 
                 # Relation: Document MENTIONS Entity
-                relations.append({
-                    "from_id": f"doc_{doc_id}",
-                    "to_id": entity["id"],
-                    "type": "MENTIONS",
-                    "weight": rng.random(),
-                })
+                relations.append(
+                    {
+                        "from_id": f"doc_{doc_id}",
+                        "to_id": entity["id"],
+                        "type": "MENTIONS",
+                        "weight": rng.random(),
+                    }
+                )
 
             # Generate inter-entity relations
             for i, ent in enumerate(doc_entities):
                 if i < len(doc_entities) - 1:
-                    relations.append({
-                        "from_id": ent["id"],
-                        "to_id": doc_entities[i + 1]["id"],
-                        "type": rng.choice(relation_types),
-                        "weight": rng.random(),
-                    })
+                    relations.append(
+                        {
+                            "from_id": ent["id"],
+                            "to_id": doc_entities[i + 1]["id"],
+                            "type": rng.choice(relation_types),
+                            "weight": rng.random(),
+                        }
+                    )
 
         # Cross-document entity relations (entities with same name are related)
         entity_by_name = {}
@@ -612,28 +655,31 @@ class StandardDatasets:
         for name, ents in entity_by_name.items():
             if len(ents) > 1:
                 for i in range(min(len(ents) - 1, 5)):
-                    relations.append({
-                        "from_id": ents[i]["id"],
-                        "to_id": ents[i + 1]["id"],
-                        "type": "SAME_AS",
-                        "weight": 0.9,
-                    })
+                    relations.append(
+                        {
+                            "from_id": ents[i]["id"],
+                            "to_id": ents[i + 1]["id"],
+                            "type": "SAME_AS",
+                            "weight": 0.9,
+                        }
+                    )
 
         return {
-            'documents': documents,
-            'chunks': chunks,
-            'entities': entities,
-            'relations': relations,
-            'embeddings': np.array([c["embedding"] for c in chunks], dtype=np.float32),
-            'metadata': {
-                'dataset': 'hybrid-rag-synthetic',
-                'num_documents': num_documents,
-                'num_chunks': len(chunks),
-                'num_entities': len(entities),
-                'num_relations': len(relations),
-                'embedding_dimension': dimension,
-            }
+            "documents": documents,
+            "chunks": chunks,
+            "entities": entities,
+            "relations": relations,
+            "embeddings": np.array([c["embedding"] for c in chunks], dtype=np.float32),
+            "metadata": {
+                "dataset": "hybrid-rag-synthetic",
+                "num_documents": num_documents,
+                "num_chunks": len(chunks),
+                "num_entities": len(entities),
+                "num_relations": len(relations),
+                "embedding_dimension": dimension,
+            },
         }
+
 
 # =============================================================================
 # Database Imports
@@ -642,6 +688,7 @@ class StandardDatasets:
 # ProximaDB (native Rust via PyO3)
 try:
     import proximadb
+
     PROXIMADB_AVAILABLE = True
     print(f"ProximaDB v{proximadb.__version__} loaded (embedded mode)")
 except ImportError as e:
@@ -651,25 +698,29 @@ except ImportError as e:
 # Vector DB Competitors
 try:
     import chromadb
+
     CHROMADB_AVAILABLE = True
 except ImportError:
     CHROMADB_AVAILABLE = False
 
 try:
     import lancedb
+
     LANCEDB_AVAILABLE = True
 except ImportError:
     LANCEDB_AVAILABLE = False
 
 try:
     import faiss
+
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
 
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams, PointStruct
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+
     QDRANT_AVAILABLE = True
 except ImportError:
     QDRANT_AVAILABLE = False
@@ -677,18 +728,21 @@ except ImportError:
 # Additional Vector DB Competitors
 try:
     from usearch.index import Index as USearchIndex
+
     USEARCH_AVAILABLE = True
 except ImportError:
     USEARCH_AVAILABLE = False
 
 try:
     from annoy import AnnoyIndex
+
     ANNOY_AVAILABLE = True
 except ImportError:
     ANNOY_AVAILABLE = False
 
 try:
     from pymilvus import MilvusClient
+
     MILVUS_AVAILABLE = True
 except ImportError:
     MILVUS_AVAILABLE = False
@@ -696,12 +750,14 @@ except ImportError:
 # Graph DB Competitors
 try:
     import networkx as nx
+
     NETWORKX_AVAILABLE = True
 except ImportError:
     NETWORKX_AVAILABLE = False
 
 try:
     import igraph
+
     IGRAPH_AVAILABLE = True
 except ImportError:
     IGRAPH_AVAILABLE = False
@@ -711,9 +767,11 @@ except ImportError:
 # Benchmark Configuration
 # =============================================================================
 
+
 @dataclass
 class BenchmarkConfig:
     """Configuration for the consolidated benchmark."""
+
     # Vector benchmark settings
     vector_sizes: List[int] = field(default_factory=lambda: [1000, 5000, 10000])
     vector_dimension: int = 384
@@ -730,6 +788,7 @@ class BenchmarkConfig:
 @dataclass
 class BenchmarkResult:
     """Result from a benchmark operation."""
+
     operation: str
     engine: str
     time_ms: float
@@ -746,7 +805,10 @@ class BenchmarkResult:
 # Recall@K Accuracy Functions
 # =============================================================================
 
-def compute_ground_truth(base_vectors: np.ndarray, query_vectors: np.ndarray, k: int) -> List[List[int]]:
+
+def compute_ground_truth(
+    base_vectors: np.ndarray, query_vectors: np.ndarray, k: int
+) -> List[List[int]]:
     """
     Compute ground truth top-k neighbors using brute-force L2 distance.
 
@@ -775,7 +837,7 @@ def compute_ground_truth_cached(
     num_base: int,
     dimension: int,
     num_queries: int,
-    seed: int = 42
+    seed: int = 42,
 ) -> Tuple[List[List[int]], bool, float]:
     """
     Compute ground truth with caching to avoid recomputation on subsequent runs.
@@ -826,7 +888,9 @@ def compute_ground_truth_cached(
     return ground_truth, False, compute_time_ms
 
 
-def compute_recall_at_k(ground_truth_indices: List[int], result_ids: List[str], k: int) -> float:
+def compute_recall_at_k(
+    ground_truth_indices: List[int], result_ids: List[str], k: int
+) -> float:
     """
     Compute recall@k: fraction of ground truth neighbors found in results.
 
@@ -863,6 +927,7 @@ def compute_recall_at_k(ground_truth_indices: List[int], result_ids: List[str], 
 # Data Generators
 # =============================================================================
 
+
 def generate_vectors(num_vectors: int, dimension: int = 384) -> np.ndarray:
     """Generate normalized random vectors."""
     vectors = np.random.randn(num_vectors, dimension).astype(np.float32)
@@ -870,22 +935,26 @@ def generate_vectors(num_vectors: int, dimension: int = 384) -> np.ndarray:
     return vectors / norms
 
 
-def generate_graph_data(num_nodes: int, edge_density: float) -> Tuple[List[Dict], List[Dict]]:
+def generate_graph_data(
+    num_nodes: int, edge_density: float
+) -> Tuple[List[Dict], List[Dict]]:
     """Generate graph nodes and edges."""
     labels = ["Entity", "Document", "Concept", "Person", "Organization"]
     edge_types = ["RELATED_TO", "REFERENCES", "CONTAINS", "AUTHORED_BY", "BELONGS_TO"]
 
     nodes = []
     for i in range(num_nodes):
-        nodes.append({
-            "id": f"entity_{i}",
-            "labels": [random.choice(labels)],
-            "properties": {
-                "name": f"Entity_{i}",
-                "category": random.choice(["A", "B", "C", "D"]),
-                "score": str(random.randint(1, 100)),
+        nodes.append(
+            {
+                "id": f"entity_{i}",
+                "labels": [random.choice(labels)],
+                "properties": {
+                    "name": f"Entity_{i}",
+                    "category": random.choice(["A", "B", "C", "D"]),
+                    "score": str(random.randint(1, 100)),
+                },
             }
-        })
+        )
 
     num_edges = int(num_nodes * edge_density)
     edges = []
@@ -900,32 +969,38 @@ def generate_graph_data(num_nodes: int, edge_density: float) -> Tuple[List[Dict]
             continue
         edge_set.add((from_idx, to_idx))
 
-        edges.append({
-            "from_node_id": f"entity_{from_idx}",
-            "to_node_id": f"entity_{to_idx}",
-            "edge_type": random.choice(edge_types),
-            "weight": random.random(),
-        })
+        edges.append(
+            {
+                "from_node_id": f"entity_{from_idx}",
+                "to_node_id": f"entity_{to_idx}",
+                "edge_type": random.choice(edge_types),
+                "weight": random.random(),
+            }
+        )
 
     return nodes, edges
 
 
-def generate_sks_data(num_entities: int, relations_per_entity: float, dimension: int = 128):
+def generate_sks_data(
+    num_entities: int, relations_per_entity: float, dimension: int = 128
+):
     """Generate semantic knowledge store data (entities with embeddings + relations)."""
     # Generate entities with embeddings
     vectors = generate_vectors(num_entities, dimension)
 
     entities = []
     for i in range(num_entities):
-        entities.append({
-            "id": f"sks_entity_{i}",
-            "labels": ["SKSEntity"],
-            "properties": {
-                "name": f"SKS_Entity_{i}",
-                "domain": random.choice(["science", "tech", "art", "business"]),
-            },
-            "embedding": vectors[i].tolist(),
-        })
+        entities.append(
+            {
+                "id": f"sks_entity_{i}",
+                "labels": ["SKSEntity"],
+                "properties": {
+                    "name": f"SKS_Entity_{i}",
+                    "domain": random.choice(["science", "tech", "art", "business"]),
+                },
+                "embedding": vectors[i].tolist(),
+            }
+        )
 
     # Generate relations
     num_relations = int(num_entities * relations_per_entity)
@@ -940,11 +1015,13 @@ def generate_sks_data(num_entities: int, relations_per_entity: float, dimension:
         if key in seen_pairs:
             continue
         seen_pairs.add(key)
-        relations.append({
-            "from_entity_id": f"sks_entity_{from_idx}",
-            "to_entity_id": f"sks_entity_{to_idx}",
-            "relation_type": random.choice(["SIMILAR_TO", "DERIVED_FROM", "CITES"]),
-        })
+        relations.append(
+            {
+                "from_entity_id": f"sks_entity_{from_idx}",
+                "to_entity_id": f"sks_entity_{to_idx}",
+                "relation_type": random.choice(["SIMILAR_TO", "DERIVED_FROM", "CITES"]),
+            }
+        )
 
     return entities, relations, vectors
 
@@ -953,13 +1030,16 @@ def generate_sks_data(num_entities: int, relations_per_entity: float, dimension:
 # Vector Store Benchmarks
 # =============================================================================
 
-def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[BenchmarkResult]:
+
+def benchmark_vector_store(
+    config: BenchmarkConfig, temp_dir: str
+) -> List[BenchmarkResult]:
     """Benchmark vector storage operations across all engines."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "all", 0, error="ProximaDB not available")]
 
     results = []
-    
+
     # Define engine configurations
     # Exact mode: Supported by all engines
     engines_exact = ["sst", "helix", "viper", "nova", "swift", "raptor"]
@@ -973,10 +1053,16 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
         for engine in engines_exact:
             mode = "exact"
             engine_label = f"{engine}"
-            print(f"    Vector benchmark: {engine.upper()} ({mode}) ({num_vectors:,} vectors)...", end="", flush=True)
+            print(
+                f"    Vector benchmark: {engine.upper()} ({mode}) ({num_vectors:,} vectors)...",
+                end="",
+                flush=True,
+            )
 
             try:
-                data_dir = os.path.join(temp_dir, f"vector_{engine}_{mode}_{num_vectors}")
+                data_dir = os.path.join(
+                    temp_dir, f"vector_{engine}_{mode}_{num_vectors}"
+                )
                 os.makedirs(data_dir, exist_ok=True)
 
                 # Use context manager for proper cleanup
@@ -985,17 +1071,19 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
                     metadata_dir=os.path.join(data_dir, "metadata"),
                     cache_size_mb=128,
                     enable_wal=False,
-                    prune_mode=mode
+                    prune_mode=mode,
                 ) as db:
 
                     collection_name = f"bench_{engine}_{mode}"
-                    db.create_collection(collection_name, config.vector_dimension, engine)
+                    db.create_collection(
+                        collection_name, config.vector_dimension, engine
+                    )
 
                     # Insert benchmark - use zero-copy insert_numpy if available
                     ids = [f"vec_{i}" for i in range(num_vectors)]
 
                     start = time.perf_counter()
-                    if hasattr(db, 'insert_numpy'):
+                    if hasattr(db, "insert_numpy"):
                         # Zero-copy numpy insert (faster)
                         db.insert_numpy(collection_name, ids, vectors)
                     else:
@@ -1004,44 +1092,52 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
                         db.insert(collection_name, ids, vectors_list, None)
                     insert_time = (time.perf_counter() - start) * 1000
 
-                    results.append(BenchmarkResult(
-                        "vector_insert",
-                        engine_label,
-                        insert_time,
-                        throughput=num_vectors / (insert_time / 1000),
-                        metadata={"num_vectors": num_vectors, "mode": mode}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "vector_insert",
+                            engine_label,
+                            insert_time,
+                            throughput=num_vectors / (insert_time / 1000),
+                            metadata={"num_vectors": num_vectors, "mode": mode},
+                        )
+                    )
 
                     # Search benchmark - use zero-copy search_numpy if available
                     search_times = []
                     for _ in range(10):
                         start = time.perf_counter()
-                        if hasattr(db, 'search_numpy'):
+                        if hasattr(db, "search_numpy"):
                             _ = db.search_numpy(collection_name, vectors[0], 10)
                         else:
                             _ = db.search(collection_name, vectors[0].tolist(), 10)
                         search_times.append((time.perf_counter() - start) * 1000)
 
-                    results.append(BenchmarkResult(
-                        "vector_search",
-                        engine_label,
-                        float(np.mean(search_times)),
-                        p50_ms=float(np.percentile(search_times, 50)),
-                        p95_ms=float(np.percentile(search_times, 95)),
-                        p99_ms=float(np.percentile(search_times, 99)),
-                        metadata={"num_vectors": num_vectors, "mode": mode}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "vector_search",
+                            engine_label,
+                            float(np.mean(search_times)),
+                            p50_ms=float(np.percentile(search_times, 50)),
+                            p95_ms=float(np.percentile(search_times, 95)),
+                            p99_ms=float(np.percentile(search_times, 99)),
+                            metadata={"num_vectors": num_vectors, "mode": mode},
+                        )
+                    )
 
-                    print(f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search")
+                    print(
+                        f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search"
+                    )
 
             except Exception as e:
-                results.append(BenchmarkResult(
-                    "vector_ops",
-                    engine_label,
-                    0,
-                    error=str(e),
-                    metadata={"num_vectors": num_vectors, "mode": mode}
-                ))
+                results.append(
+                    BenchmarkResult(
+                        "vector_ops",
+                        engine_label,
+                        0,
+                        error=str(e),
+                        metadata={"num_vectors": num_vectors, "mode": mode},
+                    )
+                )
                 print(f" ERROR: {str(e)[:50]}")
 
             gc.collect()
@@ -1050,10 +1146,16 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
         for engine in engines_approx:
             mode = "sqrt"
             engine_label = f"{engine} (approx)"
-            print(f"    Vector benchmark: {engine.upper()} ({mode}) ({num_vectors:,} vectors)...", end="", flush=True)
+            print(
+                f"    Vector benchmark: {engine.upper()} ({mode}) ({num_vectors:,} vectors)...",
+                end="",
+                flush=True,
+            )
 
             try:
-                data_dir = os.path.join(temp_dir, f"vector_{engine}_{mode}_{num_vectors}")
+                data_dir = os.path.join(
+                    temp_dir, f"vector_{engine}_{mode}_{num_vectors}"
+                )
                 os.makedirs(data_dir, exist_ok=True)
 
                 # Use context manager for proper cleanup
@@ -1062,61 +1164,71 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
                     metadata_dir=os.path.join(data_dir, "metadata"),
                     cache_size_mb=128,
                     enable_wal=False,
-                    prune_mode=mode
+                    prune_mode=mode,
                 ) as db:
 
                     collection_name = f"bench_{engine}_{mode}"
-                    db.create_collection(collection_name, config.vector_dimension, engine)
+                    db.create_collection(
+                        collection_name, config.vector_dimension, engine
+                    )
 
                     # Insert benchmark
                     ids = [f"vec_{i}" for i in range(num_vectors)]
 
                     start = time.perf_counter()
-                    if hasattr(db, 'insert_numpy'):
+                    if hasattr(db, "insert_numpy"):
                         db.insert_numpy(collection_name, ids, vectors)
                     else:
                         vectors_list = [v.tolist() for v in vectors]
                         db.insert(collection_name, ids, vectors_list, None)
                     insert_time = (time.perf_counter() - start) * 1000
 
-                    results.append(BenchmarkResult(
-                        "vector_insert",
-                        engine_label,
-                        insert_time,
-                        throughput=num_vectors / (insert_time / 1000),
-                        metadata={"num_vectors": num_vectors, "mode": mode}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "vector_insert",
+                            engine_label,
+                            insert_time,
+                            throughput=num_vectors / (insert_time / 1000),
+                            metadata={"num_vectors": num_vectors, "mode": mode},
+                        )
+                    )
 
                     # Search benchmark
                     search_times = []
                     for _ in range(10):
                         start = time.perf_counter()
-                        if hasattr(db, 'search_numpy'):
+                        if hasattr(db, "search_numpy"):
                             _ = db.search_numpy(collection_name, vectors[0], 10)
                         else:
                             _ = db.search(collection_name, vectors[0].tolist(), 10)
                         search_times.append((time.perf_counter() - start) * 1000)
 
-                    results.append(BenchmarkResult(
-                        "vector_search",
-                        engine_label,
-                        float(np.mean(search_times)),
-                        p50_ms=float(np.percentile(search_times, 50)),
-                        p95_ms=float(np.percentile(search_times, 95)),
-                        p99_ms=float(np.percentile(search_times, 99)),
-                        metadata={"num_vectors": num_vectors, "mode": mode}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "vector_search",
+                            engine_label,
+                            float(np.mean(search_times)),
+                            p50_ms=float(np.percentile(search_times, 50)),
+                            p95_ms=float(np.percentile(search_times, 95)),
+                            p99_ms=float(np.percentile(search_times, 99)),
+                            metadata={"num_vectors": num_vectors, "mode": mode},
+                        )
+                    )
 
-                    print(f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search")
+                    print(
+                        f" {insert_time:.2f}ms insert, {np.mean(search_times):.3f}ms search"
+                    )
 
             except Exception as e:
-                results.append(BenchmarkResult(
-                    "vector_ops",
-                    engine_label,
-                    0,
-                    error=str(e),
-                    metadata={"num_vectors": num_vectors, "mode": mode}
-                ))
+                results.append(
+                    BenchmarkResult(
+                        "vector_ops",
+                        engine_label,
+                        0,
+                        error=str(e),
+                        metadata={"num_vectors": num_vectors, "mode": mode},
+                    )
+                )
                 print(f" ERROR: {str(e)[:50]}")
 
             gc.collect()
@@ -1128,6 +1240,7 @@ def benchmark_vector_store(config: BenchmarkConfig, temp_dir: str) -> List[Bench
 # Competitive Vector Store Benchmarks
 # =============================================================================
 
+
 def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
     """Benchmark ChromaDB embedded mode."""
     if not CHROMADB_AVAILABLE:
@@ -1136,7 +1249,9 @@ def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
     try:
         data_dir = os.path.join(temp_dir, "chroma_data")
         client = chromadb.PersistentClient(path=data_dir)
-        collection = client.create_collection("benchmark", metadata={"hnsw:space": "cosine"})
+        collection = client.create_collection(
+            "benchmark", metadata={"hnsw:space": "cosine"}
+        )
 
         ids = [f"vec_{i}" for i in range(len(vectors))]
 
@@ -1169,7 +1284,10 @@ def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
     try:
         data_dir = os.path.join(temp_dir, "lance_data")
         db = lancedb.connect(data_dir)
-        data = [{"id": f"vec_{i}", "vector": vectors[i].tolist()} for i in range(len(vectors))]
+        data = [
+            {"id": f"vec_{i}", "vector": vectors[i].tolist()}
+            for i in range(len(vectors))
+        ]
 
         start = time.perf_counter()
         table = db.create_table("benchmark", data)
@@ -1233,10 +1351,12 @@ def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         dimension = vectors.shape[1]
         client.create_collection(
             collection_name="benchmark",
-            vectors_config=VectorParams(size=dimension, distance=Distance.COSINE)
+            vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
         )
 
-        points = [PointStruct(id=i, vector=vectors[i].tolist()) for i in range(len(vectors))]
+        points = [
+            PointStruct(id=i, vector=vectors[i].tolist()) for i in range(len(vectors))
+        ]
 
         start = time.perf_counter()
         client.upsert(collection_name="benchmark", points=points)
@@ -1259,7 +1379,9 @@ def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_vector_competitors(config: BenchmarkConfig, temp_dir: str) -> List[BenchmarkResult]:
+def benchmark_vector_competitors(
+    config: BenchmarkConfig, temp_dir: str
+) -> List[BenchmarkResult]:
     """Benchmark competitive vector databases."""
     results = []
 
@@ -1268,7 +1390,12 @@ def benchmark_vector_competitors(config: BenchmarkConfig, temp_dir: str) -> List
         ("lancedb", benchmark_lancedb, LANCEDB_AVAILABLE, "LanceDB not available"),
         ("faiss", benchmark_faiss, FAISS_AVAILABLE, "FAISS not available"),
         ("qdrant", benchmark_qdrant, QDRANT_AVAILABLE, "Qdrant not available"),
-        ("usearch", benchmark_usearch_quick, USEARCH_AVAILABLE, "USearch not available"),
+        (
+            "usearch",
+            benchmark_usearch_quick,
+            USEARCH_AVAILABLE,
+            "USearch not available",
+        ),
         ("annoy", benchmark_annoy_quick, ANNOY_AVAILABLE, "Annoy not available"),
         ("milvus", benchmark_milvus_quick, MILVUS_AVAILABLE, "Milvus not available"),
     ]
@@ -1277,7 +1404,11 @@ def benchmark_vector_competitors(config: BenchmarkConfig, temp_dir: str) -> List
         vectors = generate_vectors(num_vectors, config.vector_dimension)
 
         for name, bench_fn, available, reason in competitor_defs:
-            print(f"    Vector competitor: {name.upper()} ({num_vectors:,} vectors)...", end="", flush=True)
+            print(
+                f"    Vector competitor: {name.upper()} ({num_vectors:,} vectors)...",
+                end="",
+                flush=True,
+            )
 
             if not available:
                 results.append(BenchmarkResult("vector_insert", name, 0, error=reason))
@@ -1289,18 +1420,32 @@ def benchmark_vector_competitors(config: BenchmarkConfig, temp_dir: str) -> List
                 result = bench_fn(vectors, comp_temp)
 
             if "error" in result:
-                results.append(BenchmarkResult("vector_insert", name, 0, error=result["error"]))
+                results.append(
+                    BenchmarkResult("vector_insert", name, 0, error=result["error"])
+                )
                 print(f" SKIP: {result['error'][:60]}")
             else:
-                results.append(BenchmarkResult(
-                    "vector_insert", name, result["insert_time_ms"],
-                    throughput=result["throughput"], metadata={"num_vectors": num_vectors}
-                ))
-                results.append(BenchmarkResult(
-                    "vector_search", name, result["search_time_ms"],
-                    p95_ms=result["p95_ms"], metadata={"num_vectors": num_vectors}
-                ))
-                print(f" {result['insert_time_ms']:.2f}ms insert, {result['search_time_ms']:.3f}ms search")
+                results.append(
+                    BenchmarkResult(
+                        "vector_insert",
+                        name,
+                        result["insert_time_ms"],
+                        throughput=result["throughput"],
+                        metadata={"num_vectors": num_vectors},
+                    )
+                )
+                results.append(
+                    BenchmarkResult(
+                        "vector_search",
+                        name,
+                        result["search_time_ms"],
+                        p95_ms=result["p95_ms"],
+                        metadata={"num_vectors": num_vectors},
+                    )
+                )
+                print(
+                    f" {result['insert_time_ms']:.2f}ms insert, {result['search_time_ms']:.3f}ms search"
+                )
 
             gc.collect()
 
@@ -1313,7 +1458,9 @@ def benchmark_usearch_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any
         return {"error": "USearch not available"}
 
     try:
-        from usearch.index import Index as USearchIndex  # Local import to avoid NameError when unavailable
+        from usearch.index import (
+            Index as USearchIndex,  # Local import to avoid NameError when unavailable
+        )
 
         dim = vectors.shape[1]
         index = USearchIndex(ndim=dim, metric="l2sq")
@@ -1363,7 +1510,9 @@ def benchmark_annoy_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         num_queries = min(100, len(vectors))
         for i in range(num_queries):
             start = time.perf_counter()
-            _ = index.get_nns_by_vector(vectors[i].tolist(), 10, include_distances=False)
+            _ = index.get_nns_by_vector(
+                vectors[i].tolist(), 10, include_distances=False
+            )
             search_times.append((time.perf_counter() - start) * 1000)
 
         avg_search = float(np.mean(search_times))
@@ -1385,7 +1534,9 @@ def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]
         return {"error": "Milvus not available"}
 
     try:
-        from pymilvus import MilvusClient  # Local import to avoid NameError when unavailable
+        from pymilvus import (  # Local import to avoid NameError when unavailable
+            MilvusClient,
+        )
 
         milvus_file = os.path.join(temp_dir, "milvus_quick.db")
         client = MilvusClient(milvus_file)
@@ -1430,7 +1581,10 @@ def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]
 # Competitive Graph Store Benchmarks
 # =============================================================================
 
-def benchmark_networkx(nodes_data: List[Dict], edges_data: List[Dict]) -> Dict[str, Any]:
+
+def benchmark_networkx(
+    nodes_data: List[Dict], edges_data: List[Dict]
+) -> Dict[str, Any]:
     """Benchmark NetworkX."""
     if not NETWORKX_AVAILABLE:
         return {"error": "NetworkX not available"}
@@ -1447,7 +1601,9 @@ def benchmark_networkx(nodes_data: List[Dict], edges_data: List[Dict]) -> Dict[s
         # Edge insert
         start = time.perf_counter()
         for edge in edges_data:
-            G.add_edge(edge["from_node_id"], edge["to_node_id"], weight=edge.get("weight", 1.0))
+            G.add_edge(
+                edge["from_node_id"], edge["to_node_id"], weight=edge.get("weight", 1.0)
+            )
         edge_time = (time.perf_counter() - start) * 1000
 
         # 1-hop traversal
@@ -1522,7 +1678,9 @@ def benchmark_igraph(nodes_data: List[Dict], edges_data: List[Dict]) -> Dict[str
         return {"error": str(e)}
 
 
-def benchmark_graph_competitors(config: BenchmarkConfig, temp_dir: str) -> List[BenchmarkResult]:
+def benchmark_graph_competitors(
+    config: BenchmarkConfig, temp_dir: str
+) -> List[BenchmarkResult]:
     """Benchmark competitive graph databases."""
     results = []
 
@@ -1535,27 +1693,52 @@ def benchmark_graph_competitors(config: BenchmarkConfig, temp_dir: str) -> List[
         ]
 
         for name, bench_fn in competitors:
-            print(f"    Graph competitor: {name.upper()} ({num_nodes:,} nodes)...", end="", flush=True)
+            print(
+                f"    Graph competitor: {name.upper()} ({num_nodes:,} nodes)...",
+                end="",
+                flush=True,
+            )
 
             result = bench_fn(nodes_data, edges_data)
 
             if "error" in result:
-                results.append(BenchmarkResult("graph_insert_nodes", name, 0, error=result["error"]))
+                results.append(
+                    BenchmarkResult(
+                        "graph_insert_nodes", name, 0, error=result["error"]
+                    )
+                )
                 print(f" SKIP: {result['error'][:30]}")
             else:
-                results.append(BenchmarkResult(
-                    "graph_insert_nodes", name, result["node_insert_ms"],
-                    throughput=result["node_throughput"], metadata={"num_nodes": num_nodes}
-                ))
-                results.append(BenchmarkResult(
-                    "graph_insert_edges", name, result["edge_insert_ms"],
-                    throughput=result["edge_throughput"], metadata={"num_edges": len(edges_data)}
-                ))
-                results.append(BenchmarkResult(
-                    "graph_1hop_traversal", name, result["traversal_ms"],
-                    p95_ms=result["p95_traversal"], metadata={"num_nodes": num_nodes}
-                ))
-                print(f" {result['node_insert_ms']:.2f}ms nodes, {result['traversal_ms']:.3f}ms traversal")
+                results.append(
+                    BenchmarkResult(
+                        "graph_insert_nodes",
+                        name,
+                        result["node_insert_ms"],
+                        throughput=result["node_throughput"],
+                        metadata={"num_nodes": num_nodes},
+                    )
+                )
+                results.append(
+                    BenchmarkResult(
+                        "graph_insert_edges",
+                        name,
+                        result["edge_insert_ms"],
+                        throughput=result["edge_throughput"],
+                        metadata={"num_edges": len(edges_data)},
+                    )
+                )
+                results.append(
+                    BenchmarkResult(
+                        "graph_1hop_traversal",
+                        name,
+                        result["traversal_ms"],
+                        p95_ms=result["p95_traversal"],
+                        metadata={"num_nodes": num_nodes},
+                    )
+                )
+                print(
+                    f" {result['node_insert_ms']:.2f}ms nodes, {result['traversal_ms']:.3f}ms traversal"
+                )
 
             gc.collect()
 
@@ -1566,13 +1749,16 @@ def benchmark_graph_competitors(config: BenchmarkConfig, temp_dir: str) -> List[
 # Graph Store Benchmarks
 # =============================================================================
 
-def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines: List[str] = None) -> List[BenchmarkResult]:
+
+def benchmark_graph_store(
+    config: BenchmarkConfig, temp_dir: str, graph_engines: List[str] = None
+) -> List[BenchmarkResult]:
     """Benchmark graph database operations."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "orion", 0, error="ProximaDB not available")]
 
     if graph_engines is None:
-        graph_engines = ["orion"] # Default to Orion if not specified
+        graph_engines = ["orion"]  # Default to Orion if not specified
 
     results = []
 
@@ -1582,7 +1768,11 @@ def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines:
 
         for engine in graph_engines:
             engine_label = engine.upper()
-            print(f"    Graph benchmark: {engine_label} ({num_nodes:,} nodes, {num_edges:,} edges)...", end="", flush=True)
+            print(
+                f"    Graph benchmark: {engine_label} ({num_nodes:,} nodes, {num_edges:,} edges)...",
+                end="",
+                flush=True,
+            )
 
             def run_engine():
                 data_dir = os.path.join(temp_dir, f"graph_{engine}_{num_nodes}")
@@ -1592,44 +1782,57 @@ def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines:
                     data_dirs=data_dir,
                     metadata_dir=os.path.join(data_dir, "metadata"),
                     cache_size_mb=128,
-                    enable_wal=False
+                    enable_wal=False,
                 ) as db:
 
-                    db.create_graph("benchmark_graph", engine=engine) # Pass engine here
+                    db.create_graph(
+                        "benchmark_graph", engine=engine
+                    )  # Pass engine here
 
                     # Node insert
                     nodes = [
-                        proximadb.GraphNode(n["id"], labels=n["labels"], properties=n["properties"])
+                        proximadb.GraphNode(
+                            n["id"], labels=n["labels"], properties=n["properties"]
+                        )
                         for n in nodes_data
                     ]
                     start = time.perf_counter()
                     db.create_nodes("benchmark_graph", nodes)
                     insert_nodes_time = (time.perf_counter() - start) * 1000
 
-                    results.append(BenchmarkResult(
-                        "graph_insert_nodes",
-                        engine_label,
-                        insert_nodes_time,
-                        throughput=num_nodes / (insert_nodes_time / 1000),
-                        metadata={"num_nodes": num_nodes, "engine": engine}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "graph_insert_nodes",
+                            engine_label,
+                            insert_nodes_time,
+                            throughput=num_nodes / (insert_nodes_time / 1000),
+                            metadata={"num_nodes": num_nodes, "engine": engine},
+                        )
+                    )
 
                     # Edge insert
                     edges = [
-                        proximadb.GraphEdge(e["from_node_id"], e["to_node_id"], e["edge_type"], weight=e.get("weight"))
+                        proximadb.GraphEdge(
+                            e["from_node_id"],
+                            e["to_node_id"],
+                            e["edge_type"],
+                            weight=e.get("weight"),
+                        )
                         for e in edges_data
                     ]
                     start = time.perf_counter()
                     db.create_edges("benchmark_graph", edges)
                     insert_edges_time = (time.perf_counter() - start) * 1000
 
-                    results.append(BenchmarkResult(
-                        "graph_insert_edges",
-                        engine_label,
-                        insert_edges_time,
-                        throughput=len(edges_data) / (insert_edges_time / 1000),
-                        metadata={"num_edges": len(edges_data), "engine": engine}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "graph_insert_edges",
+                            engine_label,
+                            insert_edges_time,
+                            throughput=len(edges_data) / (insert_edges_time / 1000),
+                            metadata={"num_edges": len(edges_data), "engine": engine},
+                        )
+                    )
 
                     # 1-hop traversal
                     traversal_times = []
@@ -1639,18 +1842,22 @@ def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines:
                         _ = db.get_outgoing_edges("benchmark_graph", node_id)
                         traversal_times.append((time.perf_counter() - start) * 1000)
 
-                    results.append(BenchmarkResult(
-                        "graph_1hop_traversal",
-                        engine_label,
-                        float(np.mean(traversal_times)),
-                        throughput=1000 / np.mean(traversal_times),
-                        p50_ms=float(np.percentile(traversal_times, 50)),
-                        p95_ms=float(np.percentile(traversal_times, 95)),
-                        p99_ms=float(np.percentile(traversal_times, 99)),
-                        metadata={"num_nodes": num_nodes, "engine": engine}
-                    ))
+                    results.append(
+                        BenchmarkResult(
+                            "graph_1hop_traversal",
+                            engine_label,
+                            float(np.mean(traversal_times)),
+                            throughput=1000 / np.mean(traversal_times),
+                            p50_ms=float(np.percentile(traversal_times, 50)),
+                            p95_ms=float(np.percentile(traversal_times, 95)),
+                            p99_ms=float(np.percentile(traversal_times, 99)),
+                            metadata={"num_nodes": num_nodes, "engine": engine},
+                        )
+                    )
 
-                    print(f" {insert_nodes_time:.2f}ms nodes, {insert_edges_time:.2f}ms edges, {np.mean(traversal_times):.3f}ms traversal")
+                    print(
+                        f" {insert_nodes_time:.2f}ms nodes, {insert_edges_time:.2f}ms edges, {np.mean(traversal_times):.3f}ms traversal"
+                    )
 
                     db.delete_graph("benchmark_graph")
 
@@ -1674,13 +1881,15 @@ def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines:
                     raise exc_holder["err"]
 
             except Exception as e:
-                results.append(BenchmarkResult(
-                    "graph_ops",
-                    engine_label,
-                    0,
-                    error=str(e),
-                    metadata={"num_nodes": num_nodes, "engine": engine}
-                ))
+                results.append(
+                    BenchmarkResult(
+                        "graph_ops",
+                        engine_label,
+                        0,
+                        error=str(e),
+                        metadata={"num_nodes": num_nodes, "engine": engine},
+                    )
+                )
                 print(f" ERROR: {str(e)[:80]}")
 
             gc.collect()
@@ -1692,7 +1901,10 @@ def benchmark_graph_store(config: BenchmarkConfig, temp_dir: str, graph_engines:
 # Semantic Knowledge Store Benchmarks
 # =============================================================================
 
-def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[BenchmarkResult]:
+
+def benchmark_sks_workload(
+    config: BenchmarkConfig, temp_dir: str
+) -> List[BenchmarkResult]:
     """Benchmark semantic knowledge store (unified vector + graph) workloads."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "sks", 0, error="ProximaDB not available")]
@@ -1701,12 +1913,14 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
 
     for num_entities in config.sks_entities:
         entities, relations, vectors = generate_sks_data(
-            num_entities,
-            config.sks_relations_per_entity,
-            dimension=128
+            num_entities, config.sks_relations_per_entity, dimension=128
         )
 
-        print(f"    SKS benchmark: ({num_entities:,} entities, {len(relations):,} relations)...", end="", flush=True)
+        print(
+            f"    SKS benchmark: ({num_entities:,} entities, {len(relations):,} relations)...",
+            end="",
+            flush=True,
+        )
 
         try:
             data_dir = os.path.join(temp_dir, f"sks_{num_entities}")
@@ -1716,7 +1930,7 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
                 data_dirs=data_dir,
                 metadata_dir=os.path.join(data_dir, "metadata"),
                 cache_size_mb=128,
-                enable_wal=False
+                enable_wal=False,
             ) as db:
 
                 # Create both vector collection and graph
@@ -1726,9 +1940,11 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
                 # Insert vectors - use zero-copy if available
                 ids = [e["id"] for e in entities]
                 start = time.perf_counter()
-                if hasattr(db, 'insert_numpy'):
+                if hasattr(db, "insert_numpy"):
                     # Zero-copy numpy insert (faster)
-                    vectors_array = np.array([e["embedding"] for e in entities], dtype=np.float32)
+                    vectors_array = np.array(
+                        [e["embedding"] for e in entities], dtype=np.float32
+                    )
                     db.insert_numpy("sks_vectors", ids, vectors_array)
                 else:
                     vectors_list = [e["embedding"] for e in entities]
@@ -1737,7 +1953,9 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
 
                 # Insert graph nodes
                 nodes = [
-                    proximadb.GraphNode(e["id"], labels=e["labels"], properties=e["properties"])
+                    proximadb.GraphNode(
+                        e["id"], labels=e["labels"], properties=e["properties"]
+                    )
                     for e in entities
                 ]
                 start = time.perf_counter()
@@ -1746,20 +1964,31 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
 
                 # Insert graph edges
                 edges = [
-                    proximadb.GraphEdge(r["from_entity_id"], r["to_entity_id"], r["relation_type"])
+                    proximadb.GraphEdge(
+                        r["from_entity_id"], r["to_entity_id"], r["relation_type"]
+                    )
                     for r in relations
                 ]
                 start = time.perf_counter()
                 db.create_edges("sks_graph", edges)
                 edge_insert_time = (time.perf_counter() - start) * 1000
 
-                results.append(BenchmarkResult(
-                    "sks_ingest",
-                    "sks",
-                    vector_insert_time + node_insert_time + edge_insert_time,
-                    throughput=num_entities / ((vector_insert_time + node_insert_time + edge_insert_time) / 1000),
-                    metadata={"num_entities": num_entities, "num_relations": len(relations)}
-                ))
+                results.append(
+                    BenchmarkResult(
+                        "sks_ingest",
+                        "sks",
+                        vector_insert_time + node_insert_time + edge_insert_time,
+                        throughput=num_entities
+                        / (
+                            (vector_insert_time + node_insert_time + edge_insert_time)
+                            / 1000
+                        ),
+                        metadata={
+                            "num_entities": num_entities,
+                            "num_relations": len(relations),
+                        },
+                    )
+                )
 
                 # Hybrid query simulation: vector search + graph expansion
                 hybrid_times = []
@@ -1776,28 +2005,34 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
 
                     hybrid_times.append((time.perf_counter() - start) * 1000)
 
-                results.append(BenchmarkResult(
-                    "sks_hybrid_query",
-                    "sks",
-                    float(np.mean(hybrid_times)),
-                    p50_ms=float(np.percentile(hybrid_times, 50)),
-                    p95_ms=float(np.percentile(hybrid_times, 95)),
-                    p99_ms=float(np.percentile(hybrid_times, 99)),
-                    metadata={"num_entities": num_entities}
-                ))
+                results.append(
+                    BenchmarkResult(
+                        "sks_hybrid_query",
+                        "sks",
+                        float(np.mean(hybrid_times)),
+                        p50_ms=float(np.percentile(hybrid_times, 50)),
+                        p95_ms=float(np.percentile(hybrid_times, 95)),
+                        p99_ms=float(np.percentile(hybrid_times, 99)),
+                        metadata={"num_entities": num_entities},
+                    )
+                )
 
-                print(f" {vector_insert_time + node_insert_time + edge_insert_time:.2f}ms ingest, {np.mean(hybrid_times):.3f}ms hybrid query")
+                print(
+                    f" {vector_insert_time + node_insert_time + edge_insert_time:.2f}ms ingest, {np.mean(hybrid_times):.3f}ms hybrid query"
+                )
 
                 db.delete_graph("sks_graph")
 
         except Exception as e:
-            results.append(BenchmarkResult(
-                "sks_ops",
-                "sks",
-                0,
-                error=str(e),
-                metadata={"num_entities": num_entities}
-            ))
+            results.append(
+                BenchmarkResult(
+                    "sks_ops",
+                    "sks",
+                    0,
+                    error=str(e),
+                    metadata={"num_entities": num_entities},
+                )
+            )
             print(f" ERROR: {str(e)[:50]}")
 
         gc.collect()
@@ -1808,6 +2043,7 @@ def benchmark_sks_workload(config: BenchmarkConfig, temp_dir: str) -> List[Bench
 # =============================================================================
 # Reporting
 # =============================================================================
+
 
 def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
     """Render engine comparison table."""
@@ -1831,8 +2067,22 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
 
             engines = ["sst", "helix", "viper", "nova", "swift", "raptor"]
             for engine in engines:
-                insert_result = next((r for r in vector_results if r.engine == engine and r.operation == "vector_insert"), None)
-                search_result = next((r for r in vector_results if r.engine == engine and r.operation == "vector_search"), None)
+                insert_result = next(
+                    (
+                        r
+                        for r in vector_results
+                        if r.engine == engine and r.operation == "vector_insert"
+                    ),
+                    None,
+                )
+                search_result = next(
+                    (
+                        r
+                        for r in vector_results
+                        if r.engine == engine and r.operation == "vector_search"
+                    ),
+                    None,
+                )
 
                 if insert_result and search_result and not insert_result.error:
                     table.add_row(
@@ -1840,7 +2090,7 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
                         f"{insert_result.time_ms:.2f}",
                         f"{insert_result.throughput:,.0f}",
                         f"{search_result.time_ms:.3f}",
-                        f"{search_result.p95_ms:.3f}" if search_result.p95_ms else "-"
+                        f"{search_result.p95_ms:.3f}" if search_result.p95_ms else "-",
                     )
                 else:
                     error_msg = insert_result.error if insert_result else "N/A"
@@ -1848,7 +2098,9 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
 
             console.print(table)
         else:
-            print(f"{'Engine':<10} {'Insert (ms)':<15} {'Throughput':<15} {'Search (ms)':<15}")
+            print(
+                f"{'Engine':<10} {'Insert (ms)':<15} {'Throughput':<15} {'Search (ms)':<15}"
+            )
             print("-" * 55)
 
     # Graph engine table
@@ -1858,43 +2110,81 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
 
         if RICH_AVAILABLE:
             console = Console()
-            
+
             # Group results by engine
             graph_engines = sorted(list(set(r.engine for r in graph_results)))
             for engine_name in graph_engines:
-                table = Table(title=f"Graph Engine Performance: {engine_name}", expand=True)
+                table = Table(
+                    title=f"Graph Engine Performance: {engine_name}", expand=True
+                )
                 table.add_column("Operation", style="cyan")
                 table.add_column("Time (ms)", justify="right")
                 table.add_column("Throughput (/s)", justify="right")
                 table.add_column("p95 (ms)", justify="right")
 
-                ops = ["graph_insert_nodes", "graph_insert_edges", "graph_1hop_traversal"]
+                ops = [
+                    "graph_insert_nodes",
+                    "graph_insert_edges",
+                    "graph_1hop_traversal",
+                ]
                 for op in ops:
-                    result = next((r for r in graph_results if r.engine == engine_name and r.operation == op and not r.error), None)
+                    result = next(
+                        (
+                            r
+                            for r in graph_results
+                            if r.engine == engine_name
+                            and r.operation == op
+                            and not r.error
+                        ),
+                        None,
+                    )
                     if result:
                         table.add_row(
                             op.replace("graph_", ""),
                             f"{result.time_ms:.2f}",
                             f"{result.throughput:,.0f}" if result.throughput else "-",
-                            f"{result.p95_ms:.3f}" if result.p95_ms else "-"
+                            f"{result.p95_ms:.3f}" if result.p95_ms else "-",
                         )
                     else:
-                        table.add_row(op.replace("graph_", ""), "[red]ERROR[/red]", "N/A", "N/A")
+                        table.add_row(
+                            op.replace("graph_", ""), "[red]ERROR[/red]", "N/A", "N/A"
+                        )
                 console.print(table)
         else:
             # Simple print fallback for graph engines
-            print(f"{'Engine':<10} {'Operation':<20} {'Time (ms)':<15} {'Throughput':<15}")
+            print(
+                f"{'Engine':<10} {'Operation':<20} {'Time (ms)':<15} {'Throughput':<15}"
+            )
             print("-" * 60)
             graph_engines = sorted(list(set(r.engine for r in graph_results)))
             for engine_name in graph_engines:
-                ops = ["graph_insert_nodes", "graph_insert_edges", "graph_1hop_traversal"]
+                ops = [
+                    "graph_insert_nodes",
+                    "graph_insert_edges",
+                    "graph_1hop_traversal",
+                ]
                 for op in ops:
-                    result = next((r for r in graph_results if r.engine == engine_name and r.operation == op and not r.error), None)
+                    result = next(
+                        (
+                            r
+                            for r in graph_results
+                            if r.engine == engine_name
+                            and r.operation == op
+                            and not r.error
+                        ),
+                        None,
+                    )
                     if result:
-                        tput_str = f"{result.throughput:,.0f}" if result.throughput else "-"
-                        print(f"{engine_name:<10} {op.replace('graph_', ''):<20} {result.time_ms:<15.2f} {tput_str:<15}")
+                        tput_str = (
+                            f"{result.throughput:,.0f}" if result.throughput else "-"
+                        )
+                        print(
+                            f"{engine_name:<10} {op.replace('graph_', ''):<20} {result.time_ms:<15.2f} {tput_str:<15}"
+                        )
                     else:
-                        print(f"{engine_name:<10} {op.replace('graph_', ''):<20} {'ERROR':<15} {'N/A':<15}")
+                        print(
+                            f"{engine_name:<10} {op.replace('graph_', ''):<20} {'ERROR':<15} {'N/A':<15}"
+                        )
 
             console.print(table)
 
@@ -1917,7 +2207,7 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
                         result.operation.replace("sks_", ""),
                         f"{result.time_ms:.2f}",
                         f"{result.throughput:,.0f}" if result.throughput else "-",
-                        f"{result.p95_ms:.3f}" if result.p95_ms else "-"
+                        f"{result.p95_ms:.3f}" if result.p95_ms else "-",
                     )
 
             console.print(table)
@@ -1933,13 +2223,29 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
     lines.append("")
     lines.append("## Vector Storage Engines")
     lines.append("")
-    lines.append("| Engine | Insert (ms) | Throughput (/s) | Search (ms) | p95 Search |")
+    lines.append(
+        "| Engine | Insert (ms) | Throughput (/s) | Search (ms) | p95 Search |"
+    )
     lines.append("| --- | ---: | ---: | ---: | ---: |")
 
     engines = ["sst", "helix", "viper", "nova", "swift", "raptor"]
     for engine in engines:
-        insert_result = next((r for r in results if r.engine == engine and r.operation == "vector_insert"), None)
-        search_result = next((r for r in results if r.engine == engine and r.operation == "vector_search"), None)
+        insert_result = next(
+            (
+                r
+                for r in results
+                if r.engine == engine and r.operation == "vector_insert"
+            ),
+            None,
+        )
+        search_result = next(
+            (
+                r
+                for r in results
+                if r.engine == engine and r.operation == "vector_search"
+            ),
+            None,
+        )
 
         if insert_result and search_result and not insert_result.error:
             p95_str = f"{search_result.p95_ms:.3f}" if search_result.p95_ms else "-"
@@ -1954,7 +2260,9 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
     lines.append("| Operation | Time (ms) | Throughput (/s) | p95 (ms) |")
     lines.append("| --- | ---: | ---: | ---: |")
 
-    graph_results = [r for r in results if r.operation.startswith("graph_") and not r.error]
+    graph_results = [
+        r for r in results if r.operation.startswith("graph_") and not r.error
+    ]
     for result in graph_results:
         tput_str = f"{result.throughput:,.0f}" if result.throughput else "-"
         p95_str = f"{result.p95_ms:.3f}" if result.p95_ms else "-"
@@ -1995,13 +2303,20 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
     # Collect QPS values for search operations
     qps_values = []
     for engine in ["sst", "helix", "viper", "nova", "swift", "raptor"]:
-        search_result = next((r for r in results if r.engine == engine and r.operation == "vector_search"), None)
+        search_result = next(
+            (
+                r
+                for r in results
+                if r.engine == engine and r.operation == "vector_search"
+            ),
+            None,
+        )
         if search_result and search_result.throughput:
             qps_values.append(int(search_result.throughput))
         else:
             qps_values.append(0)
 
-    lines.append(f"    y-axis \"QPS\" 0 --> {max(qps_values) * 1.2:.0f}")
+    lines.append(f'    y-axis "QPS" 0 --> {max(qps_values) * 1.2:.0f}')
     lines.append(f"    bar [{', '.join(str(v) for v in qps_values)}]")
     lines.append("```")
     lines.append("")
@@ -2018,13 +2333,20 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
     # Collect ingestion throughput values
     ingest_values = []
     for engine in ["sst", "helix", "viper", "nova", "swift", "raptor"]:
-        insert_result = next((r for r in results if r.engine == engine and r.operation == "vector_insert"), None)
+        insert_result = next(
+            (
+                r
+                for r in results
+                if r.engine == engine and r.operation == "vector_insert"
+            ),
+            None,
+        )
         if insert_result and insert_result.throughput:
             ingest_values.append(int(insert_result.throughput))
         else:
             ingest_values.append(0)
 
-    lines.append(f"    y-axis \"vectors/sec\" 0 --> {max(ingest_values) * 1.2:.0f}")
+    lines.append(f'    y-axis "vectors/sec" 0 --> {max(ingest_values) * 1.2:.0f}')
     lines.append(f"    bar [{', '.join(str(v) for v in ingest_values)}]")
     lines.append("```")
     lines.append("")
@@ -2032,8 +2354,15 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
     # Recall Chart (if recall data available)
     recall_values = []
     for engine in ["sst", "helix", "viper", "nova", "swift", "raptor"]:
-        search_result = next((r for r in results if r.engine == engine and
-                            (r.operation == "vector_search" or r.operation == "sift_search")), None)
+        search_result = next(
+            (
+                r
+                for r in results
+                if r.engine == engine
+                and (r.operation == "vector_search" or r.operation == "sift_search")
+            ),
+            None,
+        )
         if search_result and search_result.recall_at_k is not None:
             recall_values.append(search_result.recall_at_k)
         else:
@@ -2047,8 +2376,10 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
         lines.append("xychart-beta")
         lines.append('    title "Recall@10 by Engine"')
         lines.append("    x-axis [SST, HELIX, VIPER, NOVA, SWIFT, RAPTOR]")
-        lines.append("    y-axis \"Recall %\" 0 --> 105")
-        formatted_recalls = [f"{v:.1f}" if v is not None else "0" for v in recall_values]
+        lines.append('    y-axis "Recall %" 0 --> 105')
+        formatted_recalls = [
+            f"{v:.1f}" if v is not None else "0" for v in recall_values
+        ]
         lines.append(f"    bar [{', '.join(formatted_recalls)}]")
         lines.append("```")
         lines.append("")
@@ -2062,7 +2393,10 @@ def write_consolidated_report(results: List[BenchmarkResult]) -> None:
 # Main Runner
 # =============================================================================
 
-def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competitors: bool = True):
+
+def run_consolidated_benchmark(
+    config: BenchmarkConfig = None, include_competitors: bool = True
+):
     """Run the consolidated benchmark suite.
 
     Args:
@@ -2077,9 +2411,13 @@ def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competito
     print("=" * 100)
     print()
     if include_competitors:
-        print("Components: Vector Store (6 engines + 4 competitors) | Graph Store (ORION + 2 competitors) | SKS")
+        print(
+            "Components: Vector Store (6 engines + 4 competitors) | Graph Store (ORION + 2 competitors) | SKS"
+        )
     else:
-        print("Components: Vector Store (6 engines) | Graph Store (ORION) | Semantic Knowledge Store")
+        print(
+            "Components: Vector Store (6 engines) | Graph Store (ORION) | Semantic Knowledge Store"
+        )
     print()
 
     # Show available databases
@@ -2122,7 +2460,9 @@ def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competito
         print("-" * 50)
         graph_engines_to_test = ["orion", "pulsar", "quasar"]
 
-        graph_results = benchmark_graph_store(config, temp_dir, graph_engines=graph_engines_to_test)
+        graph_results = benchmark_graph_store(
+            config, temp_dir, graph_engines=graph_engines_to_test
+        )
         all_results.extend(graph_results)
         gc.collect()
 
@@ -2139,7 +2479,9 @@ def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competito
         # SKS benchmarks (unique to ProximaDB - no competitors)
         print("\n[5/5] SEMANTIC KNOWLEDGE STORE BENCHMARKS (ProximaDB only)")
         print("-" * 50)
-        print("    Note: SKS (unified vector + graph) is UNIQUE to ProximaDB - no competitors")
+        print(
+            "    Note: SKS (unified vector + graph) is UNIQUE to ProximaDB - no competitors"
+        )
         sks_results = benchmark_sks_workload(config, temp_dir)
         all_results.extend(sks_results)
 
@@ -2154,8 +2496,15 @@ def run_consolidated_benchmark(config: BenchmarkConfig = None, include_competito
 # Standard Dataset Benchmarks
 # =============================================================================
 
-def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: int = 768, engines: str = "all",
-                      approximate_only: bool = False, exact_only: bool = False) -> List[BenchmarkResult]:
+
+def benchmark_sift_1m(
+    max_vectors: int = None,
+    temp_dir: str = None,
+    dimension: int = 768,
+    engines: str = "all",
+    approximate_only: bool = False,
+    exact_only: bool = False,
+) -> List[BenchmarkResult]:
     """
     Benchmark ProximaDB against SIFT-1M dataset.
 
@@ -2186,10 +2535,12 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     print("=" * 80)
 
     # Load SIFT dataset
-    sift_data = StandardDatasets.load_sift_1m(max_vectors=max_vectors, dimension=dimension)
-    base_vectors = sift_data['base']
-    query_vectors = sift_data['queries']
-    metadata = sift_data['metadata']
+    sift_data = StandardDatasets.load_sift_1m(
+        max_vectors=max_vectors, dimension=dimension
+    )
+    base_vectors = sift_data["base"]
+    query_vectors = sift_data["queries"]
+    metadata = sift_data["metadata"]
 
     print(f"  Dataset: {metadata['dataset']}")
     print(f"  Base vectors: {metadata['num_base']:,} x {metadata['dimension']}D")
@@ -2198,16 +2549,22 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
 
     # Compute ground truth for recall@k calculation (with caching for large datasets)
     k = 10
-    num_queries_for_gt = min(len(query_vectors), 1000)  # Limit for reasonable compute time
-    print(f"  Ground truth (k={k}) for {num_queries_for_gt} queries...", end="", flush=True)
+    num_queries_for_gt = min(
+        len(query_vectors), 1000
+    )  # Limit for reasonable compute time
+    print(
+        f"  Ground truth (k={k}) for {num_queries_for_gt} queries...",
+        end="",
+        flush=True,
+    )
     ground_truth, from_cache, gt_time = compute_ground_truth_cached(
         base_vectors,
         query_vectors[:num_queries_for_gt],
         k,
-        num_base=metadata['num_base'],
-        dimension=metadata['dimension'],
+        num_base=metadata["num_base"],
+        dimension=metadata["dimension"],
         num_queries=num_queries_for_gt,
-        seed=42  # Fixed seed used in data generation
+        seed=42,  # Fixed seed used in data generation
     )
     if from_cache:
         print(f" loaded from cache")
@@ -2219,8 +2576,24 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     # Available engines: chromadb, faiss, lancedb, qdrant, usearch, annoy, milvus (competitors)
     #                    sst_approx, sst, helix, viper, nova, swift, raptor (ProximaDB)
     # Special values: "all" = everything, "proximadb" = all ProximaDB engines only
-    COMPETITOR_ENGINES = {"chromadb", "faiss", "lancedb", "qdrant", "usearch", "annoy", "milvus"}
-    PROXIMADB_ENGINES = {"sst_approx", "sst", "helix", "viper", "nova", "swift", "raptor"}
+    COMPETITOR_ENGINES = {
+        "chromadb",
+        "faiss",
+        "lancedb",
+        "qdrant",
+        "usearch",
+        "annoy",
+        "milvus",
+    }
+    PROXIMADB_ENGINES = {
+        "sst_approx",
+        "sst",
+        "helix",
+        "viper",
+        "nova",
+        "swift",
+        "raptor",
+    }
 
     if engines.lower() == "all":
         selected_engines = COMPETITOR_ENGINES | PROXIMADB_ENGINES
@@ -2232,7 +2605,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     run_competitors = bool(selected_engines & COMPETITOR_ENGINES)
     run_sst_approx = "sst_approx" in selected_engines
     run_raptor = "raptor" in selected_engines
-    proximadb_engines_to_run = [e for e in ["sst", "helix", "viper", "nova", "swift"] if e in selected_engines]
+    proximadb_engines_to_run = [
+        e for e in ["sst", "helix", "viper", "nova", "swift"] if e in selected_engines
+    ]
 
     # =========================================================================
     # PHASE 1: In-memory competitors (marked with * in output)
@@ -2252,7 +2627,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
 
                 chroma_dir = tempfile.mkdtemp()
                 client = chromadb.PersistentClient(path=chroma_dir)
-                collection = client.create_collection("sift", metadata={"hnsw:space": "l2"})
+                collection = client.create_collection(
+                    "sift", metadata={"hnsw:space": "l2"}
+                )
 
                 # Insert
                 ids = [f"sift_{i}" for i in range(len(base_vectors))]
@@ -2266,11 +2643,15 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 num_queries = min(len(query_vectors), 1000)
                 for i in range(num_queries):
                     start = time.perf_counter()
-                    search_results = collection.query(query_embeddings=[query_vectors[i].tolist()], n_results=k)
+                    search_results = collection.query(
+                        query_embeddings=[query_vectors[i].tolist()], n_results=k
+                    )
                     search_times.append((time.perf_counter() - start) * 1000)
 
                     # Compute recall
-                    result_ids = search_results['ids'][0] if search_results['ids'] else []
+                    result_ids = (
+                        search_results["ids"][0] if search_results["ids"] else []
+                    )
                     recalls.append(compute_recall_at_k(ground_truth[i], result_ids, k))
 
                 avg_search = float(np.mean(search_times))
@@ -2285,14 +2666,28 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                         "insert_ms": insert_time,
                         "search_ms": avg_search,
                         "qps": qps,
-                        "recall": f"{avg_recall:.1f}%"
-                    }
+                        "recall": f"{avg_recall:.1f}%",
+                    },
                 )
 
-                results.append(BenchmarkResult("sift_insert", "chromadb", insert_time,
-                    throughput=len(base_vectors) / (insert_time / 1000)))
-                results.append(BenchmarkResult("sift_search", "chromadb", avg_search,
-                    throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall))
+                results.append(
+                    BenchmarkResult(
+                        "sift_insert",
+                        "chromadb",
+                        insert_time,
+                        throughput=len(base_vectors) / (insert_time / 1000),
+                    )
+                )
+                results.append(
+                    BenchmarkResult(
+                        "sift_search",
+                        "chromadb",
+                        avg_search,
+                        throughput=qps,
+                        p99_ms=p99_search,
+                        recall_at_k=avg_recall,
+                    )
+                )
 
                 del client
                 shutil.rmtree(chroma_dir, ignore_errors=True)
@@ -2314,7 +2709,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             phase_start = BenchmarkLogger.log_start("FAISS*", "Insert + Search")
 
             # Create flat index for exact search (fair comparison)
-            index = faiss.IndexFlatL2(metadata['dimension'])
+            index = faiss.IndexFlatL2(metadata["dimension"])
             start = time.perf_counter()
             index.add(base_vectors.astype(np.float32))
             insert_time = (time.perf_counter() - start) * 1000
@@ -2324,7 +2719,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             num_queries = min(len(query_vectors), 1000)
             for i in range(num_queries):
                 start = time.perf_counter()
-                _, indices = index.search(query_vectors[i:i+1].astype(np.float32), k)
+                _, indices = index.search(
+                    query_vectors[i : i + 1].astype(np.float32), k
+                )
                 search_times.append((time.perf_counter() - start) * 1000)
                 # Compute recall@k (FAISS returns indices directly)
                 result_ids = [f"sift_{idx}" for idx in indices[0]]
@@ -2342,16 +2739,30 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                     "insert_ms": insert_time,
                     "search_ms": avg_search,
                     "qps": qps,
-                    "recall": f"{avg_recall:.1f}%"
-                }
+                    "recall": f"{avg_recall:.1f}%",
+                },
             )
 
-            results.append(BenchmarkResult("sift_insert", "faiss*", insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"in_memory": True}))
-            results.append(BenchmarkResult("sift_search", "faiss*", avg_search,
-                throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
-                metadata={"in_memory": True}))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    "faiss*",
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={"in_memory": True},
+                )
+            )
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    "faiss*",
+                    avg_search,
+                    throughput=qps,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={"in_memory": True},
+                )
+            )
 
             del index
 
@@ -2369,15 +2780,20 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             import lancedb
 
             BenchmarkLogger.log_engine_start("LanceDB")
-            phase_start = BenchmarkLogger.log_start("LanceDB", "Insert + Flush + Search")
+            phase_start = BenchmarkLogger.log_start(
+                "LanceDB", "Insert + Flush + Search"
+            )
 
             lance_dir = tempfile.mkdtemp()
             db = lancedb.connect(lance_dir)
 
             # LanceDB uses Arrow format
             import pyarrow as pa
-            data = [{"id": f"sift_{i}", "vector": base_vectors[i].tolist()}
-                    for i in range(len(base_vectors))]
+
+            data = [
+                {"id": f"sift_{i}", "vector": base_vectors[i].tolist()}
+                for i in range(len(base_vectors))
+            ]
 
             start = time.perf_counter()
             table = db.create_table("sift", data)
@@ -2394,7 +2810,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             for root, dirs, files in os.walk(lance_dir):
                 for f in files:
                     disk_size_mb += os.path.getsize(os.path.join(root, f))
-            disk_size_mb /= (1024 * 1024)
+            disk_size_mb /= 1024 * 1024
 
             # Reopen for search
             db = lancedb.connect(lance_dir)
@@ -2405,7 +2821,9 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             num_queries = min(len(query_vectors), 1000)
             for i in range(num_queries):
                 start = time.perf_counter()
-                results_list = table.search(query_vectors[i].tolist()).limit(k).to_list()
+                results_list = (
+                    table.search(query_vectors[i].tolist()).limit(k).to_list()
+                )
                 search_times.append((time.perf_counter() - start) * 1000)
                 # Compute recall@k
                 result_ids = [r.get("id", "") for r in results_list]
@@ -2424,16 +2842,30 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                     "search_ms": avg_search,
                     "qps": qps,
                     "disk_mb": disk_size_mb,
-                    "recall": f"{avg_recall:.1f}%"
-                }
+                    "recall": f"{avg_recall:.1f}%",
+                },
             )
 
-            results.append(BenchmarkResult("sift_insert", "lancedb", insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"disk_based": True}))
-            results.append(BenchmarkResult("sift_search", "lancedb", avg_search,
-                throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
-                metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    "lancedb",
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={"disk_based": True},
+                )
+            )
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    "lancedb",
+                    avg_search,
+                    throughput=qps,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={"disk_based": True, "disk_size_mb": disk_size_mb},
+                )
+            )
 
             shutil.rmtree(lance_dir, ignore_errors=True)
 
@@ -2449,26 +2881,29 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
     if "qdrant" in selected_engines:
         try:
             from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, VectorParams, PointStruct
+            from qdrant_client.models import Distance, PointStruct, VectorParams
 
             BenchmarkLogger.log_engine_start("Qdrant")
             phase_start = BenchmarkLogger.log_start("Qdrant", "Insert + Flush + Search")
 
             qdrant_dir = tempfile.mkdtemp()
             client = QdrantClient(path=qdrant_dir)
-            dimension = metadata['dimension']
+            dimension = metadata["dimension"]
             client.create_collection(
                 collection_name="sift",
-                vectors_config=VectorParams(size=dimension, distance=Distance.EUCLID)
+                vectors_config=VectorParams(size=dimension, distance=Distance.EUCLID),
             )
 
-            points = [PointStruct(id=i, vector=base_vectors[i].tolist()) for i in range(len(base_vectors))]
+            points = [
+                PointStruct(id=i, vector=base_vectors[i].tolist())
+                for i in range(len(base_vectors))
+            ]
 
             start = time.perf_counter()
             # Qdrant batches automatically, but for large datasets use smaller batches
             batch_size = 5000
             for i in range(0, len(points), batch_size):
-                client.upsert(collection_name="sift", points=points[i:i+batch_size])
+                client.upsert(collection_name="sift", points=points[i : i + batch_size])
             insert_time = (time.perf_counter() - start) * 1000
 
             # Close and reopen (like ProximaDB disk-based test)
@@ -2481,7 +2916,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             for root, dirs, files in os.walk(qdrant_dir):
                 for f in files:
                     disk_size_mb += os.path.getsize(os.path.join(root, f))
-            disk_size_mb /= (1024 * 1024)
+            disk_size_mb /= 1024 * 1024
 
             # Reopen for search
             client = QdrantClient(path=qdrant_dir)
@@ -2494,17 +2929,16 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                 # Use query_points for newer qdrant-client versions (1.7+)
                 try:
                     from qdrant_client.models import QueryRequest
+
                     search_result = client.query_points(
-                        collection_name="sift",
-                        query=query_vectors[i].tolist(),
-                        limit=k
+                        collection_name="sift", query=query_vectors[i].tolist(), limit=k
                     ).points
                 except (ImportError, AttributeError):
                     # Fall back to search for older versions
                     search_result = client.search(
                         collection_name="sift",
                         query_vector=query_vectors[i].tolist(),
-                        limit=k
+                        limit=k,
                     )
                 search_times.append((time.perf_counter() - start) * 1000)
                 # Compute recall@k
@@ -2524,16 +2958,30 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                     "search_ms": avg_search,
                     "qps": qps,
                     "disk_mb": disk_size_mb,
-                    "recall": f"{avg_recall:.1f}%"
-                }
+                    "recall": f"{avg_recall:.1f}%",
+                },
             )
 
-            results.append(BenchmarkResult("sift_insert", "qdrant", insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"disk_based": True}))
-            results.append(BenchmarkResult("sift_search", "qdrant", avg_search,
-                throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
-                metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    "qdrant",
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={"disk_based": True},
+                )
+            )
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    "qdrant",
+                    avg_search,
+                    throughput=qps,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={"disk_based": True, "disk_size_mb": disk_size_mb},
+                )
+            )
 
             del client
             shutil.rmtree(qdrant_dir, ignore_errors=True)
@@ -2556,8 +3004,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
 
             usearch_dir = tempfile.mkdtemp()
             usearch_file = os.path.join(usearch_dir, "usearch.index")
-            dimension = metadata['dimension']
-            index = USearchIndex(ndim=dimension, metric='l2sq')
+            dimension = metadata["dimension"]
+            index = USearchIndex(ndim=dimension, metric="l2sq")
 
             start = time.perf_counter()
             # USearch uses numpy arrays directly
@@ -2573,7 +3021,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             # Reload index with mmap (disk-backed search like ProximaDB)
             del index
             gc.collect()
-            index = USearchIndex(ndim=dimension, metric='l2sq')
+            index = USearchIndex(ndim=dimension, metric="l2sq")
             index.view(usearch_file)  # Use mmap for disk-backed access
 
             search_times = []
@@ -2600,16 +3048,30 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                     "search_ms": avg_search,
                     "qps": qps,
                     "disk_mb": disk_size_mb,
-                    "recall": f"{avg_recall:.1f}%"
-                }
+                    "recall": f"{avg_recall:.1f}%",
+                },
             )
 
-            results.append(BenchmarkResult("sift_insert", "usearch", insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"disk_based": True}))
-            results.append(BenchmarkResult("sift_search", "usearch", avg_search,
-                throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
-                metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    "usearch",
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={"disk_based": True},
+                )
+            )
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    "usearch",
+                    avg_search,
+                    throughput=qps,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={"disk_based": True, "disk_size_mb": disk_size_mb},
+                )
+            )
 
             del index
             shutil.rmtree(usearch_dir, ignore_errors=True)
@@ -2632,8 +3094,8 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
 
             annoy_dir = tempfile.mkdtemp()
             annoy_file = os.path.join(annoy_dir, "annoy.index")
-            dimension = metadata['dimension']
-            index = AnnoyIndex(dimension, 'euclidean')
+            dimension = metadata["dimension"]
+            index = AnnoyIndex(dimension, "euclidean")
 
             start = time.perf_counter()
             for i in range(len(base_vectors)):
@@ -2649,7 +3111,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             # Reload from disk (like ProximaDB disk-based test)
             del index
             gc.collect()
-            index = AnnoyIndex(dimension, 'euclidean')
+            index = AnnoyIndex(dimension, "euclidean")
             index.load(annoy_file)  # Load from disk (uses mmap)
 
             search_times = []
@@ -2676,16 +3138,34 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                     "search_ms": avg_search,
                     "qps": qps,
                     "disk_mb": disk_size_mb,
-                    "recall": f"{avg_recall:.1f}%"
-                }
+                    "recall": f"{avg_recall:.1f}%",
+                },
             )
 
-            results.append(BenchmarkResult("sift_insert", "annoy", insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"disk_based": True, "approximate": True}))
-            results.append(BenchmarkResult("sift_search", "annoy", avg_search,
-                throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
-                metadata={"disk_based": True, "approximate": True, "disk_size_mb": disk_size_mb}))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    "annoy",
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={"disk_based": True, "approximate": True},
+                )
+            )
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    "annoy",
+                    avg_search,
+                    throughput=qps,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={
+                        "disk_based": True,
+                        "approximate": True,
+                        "disk_size_mb": disk_size_mb,
+                    },
+                )
+            )
 
             del index
             shutil.rmtree(annoy_dir, ignore_errors=True)
@@ -2709,23 +3189,24 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             milvus_dir = tempfile.mkdtemp()
             milvus_file = os.path.join(milvus_dir, "milvus.db")
             client = MilvusClient(milvus_file)
-            dimension = metadata['dimension']
+            dimension = metadata["dimension"]
 
             # Create collection
             client.create_collection(
-                collection_name="sift",
-                dimension=dimension,
-                metric_type="L2"
+                collection_name="sift", dimension=dimension, metric_type="L2"
             )
 
             # Prepare data
-            data = [{"id": i, "vector": base_vectors[i].tolist()} for i in range(len(base_vectors))]
+            data = [
+                {"id": i, "vector": base_vectors[i].tolist()}
+                for i in range(len(base_vectors))
+            ]
 
             start = time.perf_counter()
             # Milvus batches automatically
             batch_size = 1000
             for i in range(0, len(data), batch_size):
-                client.insert(collection_name="sift", data=data[i:i+batch_size])
+                client.insert(collection_name="sift", data=data[i : i + batch_size])
             insert_time = (time.perf_counter() - start) * 1000
 
             # Calculate disk space used
@@ -2733,7 +3214,7 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             for root, dirs, files in os.walk(milvus_dir):
                 for f in files:
                     disk_size_mb += os.path.getsize(os.path.join(root, f))
-            disk_size_mb /= (1024 * 1024)
+            disk_size_mb /= 1024 * 1024
 
             search_times = []
             recalls = []
@@ -2741,13 +3222,15 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
             for i in range(num_queries):
                 start = time.perf_counter()
                 search_result = client.search(
-                    collection_name="sift",
-                    data=[query_vectors[i].tolist()],
-                    limit=k
+                    collection_name="sift", data=[query_vectors[i].tolist()], limit=k
                 )
                 search_times.append((time.perf_counter() - start) * 1000)
                 # Compute recall@k
-                result_ids = [f"sift_{hit['id']}" for hit in search_result[0]] if search_result else []
+                result_ids = (
+                    [f"sift_{hit['id']}" for hit in search_result[0]]
+                    if search_result
+                    else []
+                )
                 recalls.append(compute_recall_at_k(ground_truth[i], result_ids, k))
 
             avg_search = float(np.mean(search_times))
@@ -2763,16 +3246,30 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
                     "search_ms": avg_search,
                     "qps": qps,
                     "disk_mb": disk_size_mb,
-                    "recall": f"{avg_recall:.1f}%"
-                }
+                    "recall": f"{avg_recall:.1f}%",
+                },
             )
 
-            results.append(BenchmarkResult("sift_insert", "milvus", insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"disk_based": True}))
-            results.append(BenchmarkResult("sift_search", "milvus", avg_search,
-                throughput=qps, p99_ms=p99_search, recall_at_k=avg_recall,
-                metadata={"disk_based": True, "disk_size_mb": disk_size_mb}))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    "milvus",
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={"disk_based": True},
+                )
+            )
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    "milvus",
+                    avg_search,
+                    throughput=qps,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={"disk_based": True, "disk_size_mb": disk_size_mb},
+                )
+            )
 
             client.close()
             shutil.rmtree(milvus_dir, ignore_errors=True)
@@ -2814,30 +3311,48 @@ def benchmark_sift_1m(max_vectors: int = None, temp_dir: str = None, dimension: 
         for engine in selected_engines_exact:
             # Use "exact" search_mode which maps to prune_mode="exact" in ProximaDB init
             result = _benchmark_proximadb_engine(
-                engine, base_vectors, query_vectors, metadata, temp_dir,
-                ground_truth=ground_truth, k=k, search_mode="exact",
-                display_name=f"{engine.upper()}"
+                engine,
+                base_vectors,
+                query_vectors,
+                metadata,
+                temp_dir,
+                ground_truth=ground_truth,
+                k=k,
+                search_mode="exact",
+                display_name=f"{engine.upper()}",
             )
             results.extend(result)
             gc.collect()
 
     # 2. Benchmark Approximate Mode (Sqrt) - Only for supported engines
     if selected_engines_approx and run_approximate:
-        print("\n  --- PROXIMADB ENGINES (Approximate mode with sqrt block pruning) ---")
+        print(
+            "\n  --- PROXIMADB ENGINES (Approximate mode with sqrt block pruning) ---"
+        )
         print("  ")
         print("  Block pruning: ENABLED for SST, SWIFT, HELIX (centroid-based blocks)")
         print("  ")
-        print("  SST:   256KB blocks → ~6,000 blocks → sqrt(6000)=77 scanned (98.7% pruned)")
-        print("  HELIX: 64 vec/block, 32D PCA, 20-bit Hilbert → ~625 blocks → sqrt(625)=25 scanned (96% pruned)")
+        print(
+            "  SST:   256KB blocks → ~6,000 blocks → sqrt(6000)=77 scanned (98.7% pruned)"
+        )
+        print(
+            "  HELIX: 64 vec/block, 32D PCA, 20-bit Hilbert → ~625 blocks → sqrt(625)=25 scanned (96% pruned)"
+        )
         print("  SWIFT: 512KB blocks → centroid-based pruning")
         print("  ")
 
         for engine in selected_engines_approx:
             # Use "sqrt" search_mode which maps to prune_mode="sqrt" in ProximaDB init
             result = _benchmark_proximadb_engine(
-                engine, base_vectors, query_vectors, metadata, temp_dir,
-                ground_truth=ground_truth, k=k, search_mode="sqrt",
-                display_name=f"{engine.upper()} (approx)"
+                engine,
+                base_vectors,
+                query_vectors,
+                metadata,
+                temp_dir,
+                ground_truth=ground_truth,
+                k=k,
+                search_mode="sqrt",
+                display_name=f"{engine.upper()} (approx)",
             )
             results.extend(result)
             gc.collect()
@@ -2855,7 +3370,7 @@ def _benchmark_proximadb_engine(
     ground_truth: List[List[int]] = None,
     k: int = 10,
     search_mode: str = "exact",
-    display_name: str = None
+    display_name: str = None,
 ) -> List[BenchmarkResult]:
     """Benchmark a single ProximaDB engine with disk persistence."""
     results = []
@@ -2880,7 +3395,9 @@ def _benchmark_proximadb_engine(
         if temp_dir is None:
             temp_dir = tempfile.mkdtemp()
 
-        data_dir = os.path.join(temp_dir, f"sift_{engine}_{search_mode}")  # Keep unique dir per alias
+        data_dir = os.path.join(
+            temp_dir, f"sift_{engine}_{search_mode}"
+        )  # Keep unique dir per alias
         os.makedirs(data_dir, exist_ok=True)
 
         # Use context manager for proper cleanup
@@ -2889,18 +3406,20 @@ def _benchmark_proximadb_engine(
             metadata_dir=os.path.join(data_dir, "metadata"),
             cache_size_mb=512,
             enable_wal=True,  # Enable WAL for proper disk persistence
-            prune_mode=prune_mode
+            prune_mode=prune_mode,
         ) as db:
 
-            collection_name = f"sift_{engine}_{search_mode}"  # Keep unique collection name per alias
+            collection_name = (
+                f"sift_{engine}_{search_mode}"  # Keep unique collection name per alias
+            )
 
             # Create collection (uses engine defaults)
-            db.create_collection(collection_name, metadata['dimension'], actual_engine)
+            db.create_collection(collection_name, metadata["dimension"], actual_engine)
 
             # Insert all data at once
             ids = [f"sift_{i}" for i in range(len(base_vectors))]
             start = time.perf_counter()
-            if hasattr(db, 'insert_numpy'):
+            if hasattr(db, "insert_numpy"):
                 db.insert_numpy(collection_name, ids, base_vectors)
             else:
                 vectors_list = [v.tolist() for v in base_vectors]
@@ -2913,15 +3432,23 @@ def _benchmark_proximadb_engine(
                 {
                     "vectors": len(base_vectors),
                     "throughput_v/s": len(base_vectors) / (insert_time / 1000),
-                    "time_ms": insert_time
-                }
+                    "time_ms": insert_time,
+                },
             )
 
-            results.append(BenchmarkResult(
-                "sift_insert", name, insert_time,
-                throughput=len(base_vectors) / (insert_time / 1000),
-                metadata={"num_vectors": len(base_vectors), "dimension": metadata['dimension'], "mode": search_mode}
-            ))
+            results.append(
+                BenchmarkResult(
+                    "sift_insert",
+                    name,
+                    insert_time,
+                    throughput=len(base_vectors) / (insert_time / 1000),
+                    metadata={
+                        "num_vectors": len(base_vectors),
+                        "dimension": metadata["dimension"],
+                        "mode": search_mode,
+                    },
+                )
+            )
 
             # Phase 1.5: WARM CACHE SEARCH (DB still open, file handles valid)
             # This measures true algorithm performance without cold I/O penalty
@@ -2933,22 +3460,36 @@ def _benchmark_proximadb_engine(
 
             for i in range(num_queries):
                 start = time.perf_counter()
-                if hasattr(db, 'search_numpy'):
-                    search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
+                if hasattr(db, "search_numpy"):
+                    search_results = db.search_numpy(
+                        collection_name, query_vectors[i], k, search_mode=search_mode
+                    )
                 else:
-                    search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
+                    search_results = db.search(
+                        collection_name,
+                        query_vectors[i].tolist(),
+                        k,
+                        search_mode=search_mode,
+                    )
                 search_times_warm.append((time.perf_counter() - start) * 1000)
 
                 # Compute recall@k
                 if ground_truth and i < len(ground_truth):
-                    result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
-                    recalls_warm.append(compute_recall_at_k(ground_truth[i], result_ids, k))
+                    result_ids = [
+                        r.id if hasattr(r, "id") else r.get("id", "")
+                        for r in search_results
+                    ]
+                    recalls_warm.append(
+                        compute_recall_at_k(ground_truth[i], result_ids, k)
+                    )
 
             avg_search_warm = float(np.mean(search_times_warm))
             p50_search_warm = float(np.percentile(search_times_warm, 50))
             p95_search_warm = float(np.percentile(search_times_warm, 95))
             qps_warm = 1000 / avg_search_warm
-            avg_recall_warm = float(np.mean(recalls_warm)) * 100 if recalls_warm else None
+            avg_recall_warm = (
+                float(np.mean(recalls_warm)) * 100 if recalls_warm else None
+            )
 
             BenchmarkLogger.log_end(
                 f"{name} (Warm {num_queries}q)",
@@ -2958,18 +3499,30 @@ def _benchmark_proximadb_engine(
                     "p50_ms": p50_search_warm,
                     "p95_ms": p95_search_warm,
                     "qps": qps_warm,
-                    "recall": f"{avg_recall_warm:.1f}%"
-                    if avg_recall_warm is not None
-                    else "N/A"
-                }
+                    "recall": (
+                        f"{avg_recall_warm:.1f}%"
+                        if avg_recall_warm is not None
+                        else "N/A"
+                    ),
+                },
             )
 
-            results.append(BenchmarkResult(
-                "sift_search_warm", name, avg_search_warm,
-                throughput=qps_warm, p50_ms=p50_search_warm, p95_ms=p95_search_warm,
-                recall_at_k=avg_recall_warm,
-                metadata={"cache_state": "warm", "num_queries": num_queries, "mode": search_mode}
-            ))
+            results.append(
+                BenchmarkResult(
+                    "sift_search_warm",
+                    name,
+                    avg_search_warm,
+                    throughput=qps_warm,
+                    p50_ms=p50_search_warm,
+                    p95_ms=p95_search_warm,
+                    recall_at_k=avg_recall_warm,
+                    metadata={
+                        "cache_state": "warm",
+                        "num_queries": num_queries,
+                        "mode": search_mode,
+                    },
+                )
+            )
 
             # Phase 2: Force flush memtable to SST files before close
             phase2_start = BenchmarkLogger.log_start(name, "Flush + Close")
@@ -3006,7 +3559,7 @@ def _benchmark_proximadb_engine(
         BenchmarkLogger.log_end(
             f"{name} (Disk Analysis)",
             phase_disk_start,
-            {"files": file_count, "disk_mb": disk_size_mb}
+            {"files": file_count, "disk_mb": disk_size_mb},
         )
 
         # Phase 3: Reopen DB for search (loads indexes from disk)
@@ -3017,7 +3570,7 @@ def _benchmark_proximadb_engine(
             metadata_dir=os.path.join(data_dir, "metadata"),
             cache_size_mb=512,
             enable_wal=True,
-            prune_mode=prune_mode
+            prune_mode=prune_mode,
         ) as db:
 
             # Search benchmark with optional timeout
@@ -3028,20 +3581,33 @@ def _benchmark_proximadb_engine(
 
             for i in range(num_queries):
                 # Check timeout
-                if timeout_ms and (time.perf_counter() - start_total) * 1000 > timeout_ms:
+                if (
+                    timeout_ms
+                    and (time.perf_counter() - start_total) * 1000 > timeout_ms
+                ):
                     raise TimeoutError(f"RAPTOR timeout after {i} queries")
 
                 start = time.perf_counter()
-                if hasattr(db, 'search_numpy'):
+                if hasattr(db, "search_numpy"):
                     # Use the specified search mode (exact for 100% recall, approximate for speed)
-                    search_results = db.search_numpy(collection_name, query_vectors[i], k, search_mode=search_mode)
+                    search_results = db.search_numpy(
+                        collection_name, query_vectors[i], k, search_mode=search_mode
+                    )
                 else:
-                    search_results = db.search(collection_name, query_vectors[i].tolist(), k, search_mode=search_mode)
+                    search_results = db.search(
+                        collection_name,
+                        query_vectors[i].tolist(),
+                        k,
+                        search_mode=search_mode,
+                    )
                 search_times.append((time.perf_counter() - start) * 1000)
 
                 # Compute recall@k if ground truth is available
                 if ground_truth and i < len(ground_truth):
-                    result_ids = [r.id if hasattr(r, 'id') else r.get('id', '') for r in search_results]
+                    result_ids = [
+                        r.id if hasattr(r, "id") else r.get("id", "")
+                        for r in search_results
+                    ]
                     recalls.append(compute_recall_at_k(ground_truth[i], result_ids, k))
 
             avg_search = float(np.mean(search_times))
@@ -3059,18 +3625,28 @@ def _benchmark_proximadb_engine(
                     "p50_ms": p50_search,
                     "p95_ms": p95_search,
                     "qps": qps,
-                    "recall": f"{avg_recall:.1f}%"
-                    if avg_recall is not None
-                    else "N/A"
-                }
+                    "recall": f"{avg_recall:.1f}%" if avg_recall is not None else "N/A",
+                },
             )
 
-            results.append(BenchmarkResult(
-                "sift_search", name, avg_search,
-                throughput=qps, p50_ms=p50_search, p95_ms=p95_search, p99_ms=p99_search,
-                recall_at_k=avg_recall,
-                metadata={"num_queries": num_queries, "top_k": k, "disk_size_mb": disk_size_mb, "mode": search_mode}
-            ))
+            results.append(
+                BenchmarkResult(
+                    "sift_search",
+                    name,
+                    avg_search,
+                    throughput=qps,
+                    p50_ms=p50_search,
+                    p95_ms=p95_search,
+                    p99_ms=p99_search,
+                    recall_at_k=avg_recall,
+                    metadata={
+                        "num_queries": num_queries,
+                        "top_k": k,
+                        "disk_size_mb": disk_size_mb,
+                        "mode": search_mode,
+                    },
+                )
+            )
 
     except TimeoutError as e:
         BenchmarkLogger.log_error(name, e)
@@ -3104,6 +3680,7 @@ def _investigate_raptor_performance():
     # Check if RAPTOR has proper disk-based search
     try:
         from pathlib import Path
+
         raptor_path = Path("src/storage/engines/impls/raptor")
         if raptor_path.exists():
             search_impl = raptor_path / "search.rs"
@@ -3128,7 +3705,9 @@ def _investigate_raptor_performance():
     """)
 
 
-def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[BenchmarkResult]:
+def benchmark_ldbc_snb(
+    scale_factor: int = 1, temp_dir: str = None
+) -> List[BenchmarkResult]:
     """
     Benchmark ProximaDB graph engine against LDBC SNB dataset.
 
@@ -3143,7 +3722,9 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
         List of benchmark results
     """
     if not PROXIMADB_AVAILABLE:
-        return [BenchmarkResult("ldbc_init", "orion", 0, error="ProximaDB not available")]
+        return [
+            BenchmarkResult("ldbc_init", "orion", 0, error="ProximaDB not available")
+        ]
 
     results = []
 
@@ -3153,13 +3734,15 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
 
     # Load LDBC dataset
     ldbc_data = StandardDatasets.load_ldbc_snb(scale_factor=scale_factor)
-    nodes = ldbc_data['nodes']
-    edges = ldbc_data['edges']
-    metadata = ldbc_data['metadata']
+    nodes = ldbc_data["nodes"]
+    edges = ldbc_data["edges"]
+    metadata = ldbc_data["metadata"]
 
     print(f"  Dataset: {metadata['dataset']}")
-    print(f"  Nodes: {metadata['num_nodes']:,} (Persons: {metadata['num_persons']:,}, "
-          f"Posts: {metadata['num_posts']:,}, Comments: {metadata['num_comments']:,})")
+    print(
+        f"  Nodes: {metadata['num_nodes']:,} (Persons: {metadata['num_persons']:,}, "
+        f"Posts: {metadata['num_posts']:,}, Comments: {metadata['num_comments']:,})"
+    )
     print(f"  Edges: {metadata['num_edges']:,}")
     print()
 
@@ -3174,7 +3757,7 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
             data_dirs=data_dir,
             metadata_dir=os.path.join(data_dir, "metadata"),
             cache_size_mb=512,
-            enable_wal=False
+            enable_wal=False,
         )
 
         db.create_graph("ldbc_snb")
@@ -3188,34 +3771,47 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
         start = time.perf_counter()
         db.create_nodes("ldbc_snb", graph_nodes)
         node_insert_time = (time.perf_counter() - start) * 1000
-        print(f" {node_insert_time:.0f}ms ({len(nodes)/(node_insert_time/1000):,.0f}/s)")
+        print(
+            f" {node_insert_time:.0f}ms ({len(nodes)/(node_insert_time/1000):,.0f}/s)"
+        )
 
-        results.append(BenchmarkResult(
-            "ldbc_insert_nodes",
-            "orion",
-            node_insert_time,
-            throughput=len(nodes) / (node_insert_time / 1000),
-            metadata={"num_nodes": len(nodes)}
-        ))
+        results.append(
+            BenchmarkResult(
+                "ldbc_insert_nodes",
+                "orion",
+                node_insert_time,
+                throughput=len(nodes) / (node_insert_time / 1000),
+                metadata={"num_nodes": len(nodes)},
+            )
+        )
 
         # Edge insert benchmark
         print("  Inserting edges...", end="", flush=True)
         graph_edges = [
-            proximadb.GraphEdge(e["from_node_id"], e["to_node_id"], e["edge_type"], weight=e.get("weight"))
+            proximadb.GraphEdge(
+                e["from_node_id"],
+                e["to_node_id"],
+                e["edge_type"],
+                weight=e.get("weight"),
+            )
             for e in edges
         ]
         start = time.perf_counter()
         db.create_edges("ldbc_snb", graph_edges)
         edge_insert_time = (time.perf_counter() - start) * 1000
-        print(f" {edge_insert_time:.0f}ms ({len(edges)/(edge_insert_time/1000):,.0f}/s)")
+        print(
+            f" {edge_insert_time:.0f}ms ({len(edges)/(edge_insert_time/1000):,.0f}/s)"
+        )
 
-        results.append(BenchmarkResult(
-            "ldbc_insert_edges",
-            "orion",
-            edge_insert_time,
-            throughput=len(edges) / (edge_insert_time / 1000),
-            metadata={"num_edges": len(edges)}
-        ))
+        results.append(
+            BenchmarkResult(
+                "ldbc_insert_edges",
+                "orion",
+                edge_insert_time,
+                throughput=len(edges) / (edge_insert_time / 1000),
+                metadata={"num_edges": len(edges)},
+            )
+        )
 
         # LDBC Interactive Short Queries (IS1-IS7 style)
         print("  Running LDBC-style queries...")
@@ -3229,16 +3825,20 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
             _ = db.get_node("ldbc_snb", pid)
             is1_times.append((time.perf_counter() - start) * 1000)
 
-        results.append(BenchmarkResult(
-            "ldbc_is1_profile",
-            "orion",
-            float(np.mean(is1_times)),
-            p50_ms=float(np.percentile(is1_times, 50)),
-            p95_ms=float(np.percentile(is1_times, 95)),
-            p99_ms=float(np.percentile(is1_times, 99)),
-            metadata={"query_type": "IS1 - Profile"}
-        ))
-        print(f"    IS1 Profile: {np.mean(is1_times):.3f}ms avg, {np.percentile(is1_times, 99):.3f}ms p99")
+        results.append(
+            BenchmarkResult(
+                "ldbc_is1_profile",
+                "orion",
+                float(np.mean(is1_times)),
+                p50_ms=float(np.percentile(is1_times, 50)),
+                p95_ms=float(np.percentile(is1_times, 95)),
+                p99_ms=float(np.percentile(is1_times, 99)),
+                metadata={"query_type": "IS1 - Profile"},
+            )
+        )
+        print(
+            f"    IS1 Profile: {np.mean(is1_times):.3f}ms avg, {np.percentile(is1_times, 99):.3f}ms p99"
+        )
 
         # IS2: Friends query (1-hop traversal)
         is2_times = []
@@ -3248,16 +3848,20 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
             _ = db.get_outgoing_edges("ldbc_snb", pid)
             is2_times.append((time.perf_counter() - start) * 1000)
 
-        results.append(BenchmarkResult(
-            "ldbc_is2_friends",
-            "orion",
-            float(np.mean(is2_times)),
-            p50_ms=float(np.percentile(is2_times, 50)),
-            p95_ms=float(np.percentile(is2_times, 95)),
-            p99_ms=float(np.percentile(is2_times, 99)),
-            metadata={"query_type": "IS2 - Friends"}
-        ))
-        print(f"    IS2 Friends: {np.mean(is2_times):.3f}ms avg, {np.percentile(is2_times, 99):.3f}ms p99")
+        results.append(
+            BenchmarkResult(
+                "ldbc_is2_friends",
+                "orion",
+                float(np.mean(is2_times)),
+                p50_ms=float(np.percentile(is2_times, 50)),
+                p95_ms=float(np.percentile(is2_times, 95)),
+                p99_ms=float(np.percentile(is2_times, 99)),
+                metadata={"query_type": "IS2 - Friends"},
+            )
+        )
+        print(
+            f"    IS2 Friends: {np.mean(is2_times):.3f}ms avg, {np.percentile(is2_times, 99):.3f}ms p99"
+        )
 
         # IS5: Posts by person (filter by edge type)
         is5_times = []
@@ -3267,30 +3871,34 @@ def benchmark_ldbc_snb(scale_factor: int = 1, temp_dir: str = None) -> List[Benc
             _ = db.get_outgoing_edges("ldbc_snb", pid)  # Gets HAS_CREATOR edges
             is5_times.append((time.perf_counter() - start) * 1000)
 
-        results.append(BenchmarkResult(
-            "ldbc_is5_posts",
-            "orion",
-            float(np.mean(is5_times)),
-            p50_ms=float(np.percentile(is5_times, 50)),
-            p95_ms=float(np.percentile(is5_times, 95)),
-            p99_ms=float(np.percentile(is5_times, 99)),
-            metadata={"query_type": "IS5 - Posts"}
-        ))
-        print(f"    IS5 Posts: {np.mean(is5_times):.3f}ms avg, {np.percentile(is5_times, 99):.3f}ms p99")
+        results.append(
+            BenchmarkResult(
+                "ldbc_is5_posts",
+                "orion",
+                float(np.mean(is5_times)),
+                p50_ms=float(np.percentile(is5_times, 50)),
+                p95_ms=float(np.percentile(is5_times, 95)),
+                p99_ms=float(np.percentile(is5_times, 99)),
+                metadata={"query_type": "IS5 - Posts"},
+            )
+        )
+        print(
+            f"    IS5 Posts: {np.mean(is5_times):.3f}ms avg, {np.percentile(is5_times, 99):.3f}ms p99"
+        )
 
         db.delete_graph("ldbc_snb")
 
     except Exception as e:
-        results.append(BenchmarkResult(
-            "ldbc_ops", "orion", 0, error=str(e)
-        ))
+        results.append(BenchmarkResult("ldbc_ops", "orion", 0, error=str(e)))
         print(f" ERROR: {str(e)[:50]}")
 
     gc.collect()
     return results
 
 
-def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> List[BenchmarkResult]:
+def benchmark_hybrid_rag(
+    num_documents: int = 10_000, temp_dir: str = None
+) -> List[BenchmarkResult]:
     """
     Benchmark ProximaDB SKS (Semantic Knowledge Store) for HybridRAG workloads.
 
@@ -3317,11 +3925,11 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
 
     # Load HybridRAG dataset
     rag_data = StandardDatasets.load_hybrid_rag_dataset(num_documents=num_documents)
-    chunks = rag_data['chunks']
-    entities = rag_data['entities']
-    relations = rag_data['relations']
-    embeddings = rag_data['embeddings']
-    metadata = rag_data['metadata']
+    chunks = rag_data["chunks"]
+    entities = rag_data["entities"]
+    relations = rag_data["relations"]
+    embeddings = rag_data["embeddings"]
+    metadata = rag_data["metadata"]
 
     print(f"  Dataset: {metadata['dataset']}")
     print(f"  Documents: {metadata['num_documents']:,}")
@@ -3341,11 +3949,11 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
             data_dirs=data_dir,
             metadata_dir=os.path.join(data_dir, "metadata"),
             cache_size_mb=512,
-            enable_wal=False
+            enable_wal=False,
         )
 
         # Create vector collection for chunks
-        db.create_collection("rag_chunks", metadata['embedding_dimension'], "sst")
+        db.create_collection("rag_chunks", metadata["embedding_dimension"], "sst")
 
         # Create graph for entities and relations
         db.create_graph("rag_knowledge")
@@ -3354,26 +3962,32 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
         print("  Inserting chunk embeddings...", end="", flush=True)
         chunk_ids = [c["id"] for c in chunks]
         start = time.perf_counter()
-        if hasattr(db, 'insert_numpy'):
+        if hasattr(db, "insert_numpy"):
             db.insert_numpy("rag_chunks", chunk_ids, embeddings)
         else:
             vectors_list = [c["embedding"].tolist() for c in chunks]
             db.insert("rag_chunks", chunk_ids, vectors_list, None)
         chunk_insert_time = (time.perf_counter() - start) * 1000
-        print(f" {chunk_insert_time:.0f}ms ({len(chunks)/(chunk_insert_time/1000):,.0f}/s)")
+        print(
+            f" {chunk_insert_time:.0f}ms ({len(chunks)/(chunk_insert_time/1000):,.0f}/s)"
+        )
 
-        results.append(BenchmarkResult(
-            "rag_insert_chunks",
-            "sks",
-            chunk_insert_time,
-            throughput=len(chunks) / (chunk_insert_time / 1000),
-            metadata={"num_chunks": len(chunks)}
-        ))
+        results.append(
+            BenchmarkResult(
+                "rag_insert_chunks",
+                "sks",
+                chunk_insert_time,
+                throughput=len(chunks) / (chunk_insert_time / 1000),
+                metadata={"num_chunks": len(chunks)},
+            )
+        )
 
         # Insert entities as graph nodes
         print("  Inserting entity nodes...", end="", flush=True)
         entity_nodes = [
-            proximadb.GraphNode(e["id"], labels=[e["type"]], properties={"name": e["name"]})
+            proximadb.GraphNode(
+                e["id"], labels=[e["type"]], properties={"name": e["name"]}
+            )
             for e in entities
         ]
         # Also add documents as nodes
@@ -3389,21 +4003,31 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
         # Insert relations as graph edges
         print("  Inserting relations...", end="", flush=True)
         graph_edges = [
-            proximadb.GraphEdge(r["from_id"], r["to_id"], r["type"], weight=r.get("weight", 1.0))
+            proximadb.GraphEdge(
+                r["from_id"], r["to_id"], r["type"], weight=r.get("weight", 1.0)
+            )
             for r in relations
         ]
         start = time.perf_counter()
         db.create_edges("rag_knowledge", graph_edges)
         relation_insert_time = (time.perf_counter() - start) * 1000
-        print(f" {relation_insert_time:.0f}ms ({len(relations)/(relation_insert_time/1000):,.0f}/s)")
+        print(
+            f" {relation_insert_time:.0f}ms ({len(relations)/(relation_insert_time/1000):,.0f}/s)"
+        )
 
-        results.append(BenchmarkResult(
-            "rag_insert_graph",
-            "sks",
-            entity_insert_time + relation_insert_time,
-            throughput=len(relations) / ((entity_insert_time + relation_insert_time) / 1000),
-            metadata={"num_entities": len(entities), "num_relations": len(relations)}
-        ))
+        results.append(
+            BenchmarkResult(
+                "rag_insert_graph",
+                "sks",
+                entity_insert_time + relation_insert_time,
+                throughput=len(relations)
+                / ((entity_insert_time + relation_insert_time) / 1000),
+                metadata={
+                    "num_entities": len(entities),
+                    "num_relations": len(relations),
+                },
+            )
+        )
 
         # HybridRAG Query Pattern: Vector Search → Graph Expansion → Context Assembly
         print("  Running HybridRAG queries...")
@@ -3422,7 +4046,7 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
             start = time.perf_counter()
 
             # Step 1: Vector search for similar chunks
-            if hasattr(db, 'search_numpy'):
+            if hasattr(db, "search_numpy"):
                 similar_chunks = db.search_numpy("rag_chunks", query_vec, 5)
             else:
                 similar_chunks = db.search("rag_chunks", query_vec.tolist(), 5)
@@ -3459,17 +4083,21 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
         p95_query = float(np.percentile(hybrid_query_times, 95))
         p99_query = float(np.percentile(hybrid_query_times, 99))
 
-        results.append(BenchmarkResult(
-            "rag_hybrid_query",
-            "sks",
-            avg_query,
-            throughput=1000 / avg_query,  # QPS
-            p50_ms=p50_query,
-            p95_ms=p95_query,
-            p99_ms=p99_query,
-            metadata={"query_type": "Vector Search + Graph Expansion"}
-        ))
-        print(f"    HybridRAG Query: {avg_query:.3f}ms avg, {p99_query:.3f}ms p99, {1000/avg_query:.0f} QPS")
+        results.append(
+            BenchmarkResult(
+                "rag_hybrid_query",
+                "sks",
+                avg_query,
+                throughput=1000 / avg_query,  # QPS
+                p50_ms=p50_query,
+                p95_ms=p95_query,
+                p99_ms=p99_query,
+                metadata={"query_type": "Vector Search + Graph Expansion"},
+            )
+        )
+        print(
+            f"    HybridRAG Query: {avg_query:.3f}ms avg, {p99_query:.3f}ms p99, {1000/avg_query:.0f} QPS"
+        )
 
         # Pure vector search for comparison
         pure_vector_times = []
@@ -3480,23 +4108,27 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
             query_vec = query_vec / np.linalg.norm(query_vec)
 
             start = time.perf_counter()
-            if hasattr(db, 'search_numpy'):
+            if hasattr(db, "search_numpy"):
                 _ = db.search_numpy("rag_chunks", query_vec, 10)
             else:
                 _ = db.search("rag_chunks", query_vec.tolist(), 10)
             pure_vector_times.append((time.perf_counter() - start) * 1000)
 
-        results.append(BenchmarkResult(
-            "rag_pure_vector",
-            "sks",
-            float(np.mean(pure_vector_times)),
-            throughput=1000 / np.mean(pure_vector_times),
-            p50_ms=float(np.percentile(pure_vector_times, 50)),
-            p95_ms=float(np.percentile(pure_vector_times, 95)),
-            p99_ms=float(np.percentile(pure_vector_times, 99)),
-            metadata={"query_type": "Pure Vector Search"}
-        ))
-        print(f"    Pure Vector: {np.mean(pure_vector_times):.3f}ms avg, {1000/np.mean(pure_vector_times):.0f} QPS")
+        results.append(
+            BenchmarkResult(
+                "rag_pure_vector",
+                "sks",
+                float(np.mean(pure_vector_times)),
+                throughput=1000 / np.mean(pure_vector_times),
+                p50_ms=float(np.percentile(pure_vector_times, 50)),
+                p95_ms=float(np.percentile(pure_vector_times, 95)),
+                p99_ms=float(np.percentile(pure_vector_times, 99)),
+                metadata={"query_type": "Pure Vector Search"},
+            )
+        )
+        print(
+            f"    Pure Vector: {np.mean(pure_vector_times):.3f}ms avg, {1000/np.mean(pure_vector_times):.0f} QPS"
+        )
 
         # Pure graph traversal for comparison
         pure_graph_times = []
@@ -3507,25 +4139,28 @@ def benchmark_hybrid_rag(num_documents: int = 10_000, temp_dir: str = None) -> L
             _ = db.get_outgoing_edges("rag_knowledge", eid)
             pure_graph_times.append((time.perf_counter() - start) * 1000)
 
-        results.append(BenchmarkResult(
-            "rag_pure_graph",
-            "sks",
-            float(np.mean(pure_graph_times)),
-            throughput=1000 / np.mean(pure_graph_times),
-            p50_ms=float(np.percentile(pure_graph_times, 50)),
-            p95_ms=float(np.percentile(pure_graph_times, 95)),
-            p99_ms=float(np.percentile(pure_graph_times, 99)),
-            metadata={"query_type": "Pure Graph Traversal"}
-        ))
-        print(f"    Pure Graph: {np.mean(pure_graph_times):.3f}ms avg, {1000/np.mean(pure_graph_times):.0f} QPS")
+        results.append(
+            BenchmarkResult(
+                "rag_pure_graph",
+                "sks",
+                float(np.mean(pure_graph_times)),
+                throughput=1000 / np.mean(pure_graph_times),
+                p50_ms=float(np.percentile(pure_graph_times, 50)),
+                p95_ms=float(np.percentile(pure_graph_times, 95)),
+                p99_ms=float(np.percentile(pure_graph_times, 99)),
+                metadata={"query_type": "Pure Graph Traversal"},
+            )
+        )
+        print(
+            f"    Pure Graph: {np.mean(pure_graph_times):.3f}ms avg, {1000/np.mean(pure_graph_times):.0f} QPS"
+        )
 
         db.delete_graph("rag_knowledge")
 
     except Exception as e:
         import traceback
-        results.append(BenchmarkResult(
-            "rag_ops", "sks", 0, error=str(e)
-        ))
+
+        results.append(BenchmarkResult("rag_ops", "sks", 0, error=str(e)))
         print(f" ERROR: {str(e)[:50]}")
         traceback.print_exc()
 
@@ -3538,17 +4173,32 @@ def _print_sift_summary_table(results: List[BenchmarkResult]):
     if not RICH_AVAILABLE:
         print("\nRich library not installed. Cannot print summary table.")
         # Fallback to simple print
-        print(f"{'Engine':<15} {'Operation':<15} {'Time (ms)':<12} {'Throughput (/s)':<15} {'Recall@10':<10} {'Disk (MB)':<10}")
+        print(
+            f"{'Engine':<15} {'Operation':<15} {'Time (ms)':<12} {'Throughput (/s)':<15} {'Recall@10':<10} {'Disk (MB)':<10}"
+        )
         print("-" * 80)
         for r in results:
             recall_str = f"{r.recall_at_k:.1f}%" if r.recall_at_k is not None else "N/A"
-            disk_str = f"{r.metadata.get('disk_size_mb', 0.0):.1f}" if r.metadata.get('disk_size_mb') is not None else "N/A"
-            throughput_str = f"{r.throughput:,.0f}" if r.throughput is not None else "N/A"
-            print(f"{r.engine:<15} {r.operation:<15} {r.time_ms:<12.3f} {throughput_str:<15} {recall_str:<10} {disk_str:<10}")
+            disk_str = (
+                f"{r.metadata.get('disk_size_mb', 0.0):.1f}"
+                if r.metadata.get("disk_size_mb") is not None
+                else "N/A"
+            )
+            throughput_str = (
+                f"{r.throughput:,.0f}" if r.throughput is not None else "N/A"
+            )
+            print(
+                f"{r.engine:<15} {r.operation:<15} {r.time_ms:<12.3f} {throughput_str:<15} {recall_str:<10} {disk_str:<10}"
+            )
         return
 
     console = Console()
-    table = Table(title="Consolidated SIFT Benchmark Results", expand=True, show_header=True, header_style="bold magenta")
+    table = Table(
+        title="Consolidated SIFT Benchmark Results",
+        expand=True,
+        show_header=True,
+        header_style="bold magenta",
+    )
     table.add_column("Engine", style="cyan", width=15)
     table.add_column("Insert (ms)", justify="right")
     table.add_column("Insert Throughput (/s)", justify="right")
@@ -3559,16 +4209,48 @@ def _print_sift_summary_table(results: List[BenchmarkResult]):
     table.add_column("Disk (MB)", justify="right", style="green")
 
     # Get a unique list of all engines that ran, preserving a reasonable order
-    engine_order = ["chromadb", "faiss", "lancedb", "qdrant", "usearch", "annoy", "milvus", "sst_approx", "sst", "helix", "viper", "nova", "swift", "raptor"]
-    engines_in_results = sorted(list(set(r.engine for r in results)), key=lambda x: engine_order.index(x) if x in engine_order else 99)
+    engine_order = [
+        "chromadb",
+        "faiss",
+        "lancedb",
+        "qdrant",
+        "usearch",
+        "annoy",
+        "milvus",
+        "sst_approx",
+        "sst",
+        "helix",
+        "viper",
+        "nova",
+        "swift",
+        "raptor",
+    ]
+    engines_in_results = sorted(
+        list(set(r.engine for r in results)),
+        key=lambda x: engine_order.index(x) if x in engine_order else 99,
+    )
 
     for engine_name in engines_in_results:
-        insert_res = next((r for r in results if r.engine == engine_name and r.operation == "sift_insert"), None)
-        search_res = next((r for r in results if r.engine == engine_name and r.operation == "sift_search"), None)
+        insert_res = next(
+            (
+                r
+                for r in results
+                if r.engine == engine_name and r.operation == "sift_insert"
+            ),
+            None,
+        )
+        search_res = next(
+            (
+                r
+                for r in results
+                if r.engine == engine_name and r.operation == "sift_search"
+            ),
+            None,
+        )
 
         if not insert_res and not search_res:
             continue
-        
+
         display_name = engine_name
 
         # Insert stats
@@ -3581,8 +4263,16 @@ def _print_sift_summary_table(results: List[BenchmarkResult]):
 
         # Search stats
         if search_res and not search_res.error:
-            recall_str = f"{search_res.recall_at_k:.1f}" if search_res.recall_at_k is not None else "N/A"
-            disk_str = f"{search_res.metadata.get('disk_size_mb', 0.0):.1f}" if search_res.metadata.get('disk_size_mb') is not None else "N/A"
+            recall_str = (
+                f"{search_res.recall_at_k:.1f}"
+                if search_res.recall_at_k is not None
+                else "N/A"
+            )
+            disk_str = (
+                f"{search_res.metadata.get('disk_size_mb', 0.0):.1f}"
+                if search_res.metadata.get("disk_size_mb") is not None
+                else "N/A"
+            )
             if search_res.metadata.get("in_memory"):
                 disk_str = "[dim][IN-MEMORY*][/dim]"
                 display_name = f"{engine_name}*"
@@ -3597,9 +4287,9 @@ def _print_sift_summary_table(results: List[BenchmarkResult]):
             recall_str = "N/A"
             disk_str = "N/A"
             if search_res and search_res.error:
-                 # If there was a search error, still try to get disk size from insert metadata
-                 if insert_res and insert_res.metadata.get('disk_size_mb'):
-                     disk_str = f"{insert_res.metadata.get('disk_size_mb', 0.0):.1f}"
+                # If there was a search error, still try to get disk size from insert metadata
+                if insert_res and insert_res.metadata.get("disk_size_mb"):
+                    disk_str = f"{insert_res.metadata.get('disk_size_mb', 0.0):.1f}"
 
         table.add_row(
             display_name,
@@ -3609,7 +4299,7 @@ def _print_sift_summary_table(results: List[BenchmarkResult]):
             qps_str,
             p99_str,
             recall_str,
-            disk_str
+            disk_str,
         )
 
     console.print(table)
@@ -3622,7 +4312,7 @@ def run_standard_dataset_benchmarks(
     dimension: int = 768,
     engines: str = "all",
     approximate_only: bool = False,
-    exact_only: bool = False
+    exact_only: bool = False,
 ) -> List[BenchmarkResult]:
     """
     Run benchmarks using standard datasets.
@@ -3639,8 +4329,14 @@ def run_standard_dataset_benchmarks(
     all_results = []
 
     # Get dimension name for display
-    dim_names = {128: 'SIFT', 768: 'BGE-base', 960: 'GIST', 1024: 'BGE-large', 1536: 'OpenAI'}
-    dim_name = dim_names.get(dimension, f'custom')
+    dim_names = {
+        128: "SIFT",
+        768: "BGE-base",
+        960: "GIST",
+        1024: "BGE-large",
+        1536: "OpenAI",
+    }
+    dim_name = dim_names.get(dimension, f"custom")
 
     print("\n" + "=" * 100)
     print("PROXIMADB STANDARD DATASET BENCHMARKS")
@@ -3653,8 +4349,14 @@ def run_standard_dataset_benchmarks(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # SIFT-1M benchmark
-        sift_results = benchmark_sift_1m(max_vectors=sift_vectors, temp_dir=temp_dir, dimension=dimension, engines=engines,
-                                          approximate_only=approximate_only, exact_only=exact_only)
+        sift_results = benchmark_sift_1m(
+            max_vectors=sift_vectors,
+            temp_dir=temp_dir,
+            dimension=dimension,
+            engines=engines,
+            approximate_only=approximate_only,
+            exact_only=exact_only,
+        )
         all_results.extend(sift_results)
         gc.collect()
 
@@ -3672,7 +4374,7 @@ def run_standard_dataset_benchmarks(
     print("\n" + "=" * 100)
     print("STANDARD DATASET BENCHMARK SUMMARY")
     print("=" * 100)
-    
+
     sift_summary_results = [r for r in all_results if r.operation.startswith("sift_")]
     _print_sift_summary_table(sift_summary_results)
 
@@ -3685,27 +4387,58 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="ProximaDB Consolidated Benchmark")
-    parser.add_argument("--quick", action="store_true", help="Run quick benchmark with smaller sizes")
-    parser.add_argument("--no-competitors", action="store_true", help="Skip competitor benchmarks")
-    parser.add_argument("--standard-datasets", action="store_true",
-                        help="Run benchmarks with standard datasets (SIFT, LDBC, HybridRAG)")
-    parser.add_argument("--sift-vectors", type=int, default=100_000,
-                        help="Number of SIFT vectors (default: 100K, max: 1M)")
-    parser.add_argument("--ldbc-scale", type=int, default=1,
-                        help="LDBC SNB scale factor (default: 1)")
-    parser.add_argument("--rag-documents", type=int, default=5_000,
-                        help="Number of HybridRAG documents (default: 5K)")
-    parser.add_argument("--dimension", type=int, default=768, choices=[128, 768, 960, 1024, 1536],
-                        help="Vector dimension: 128=SIFT, 768=BGE-base, 960=GIST, 1024=BGE-large, 1536=OpenAI (default: 768)")
-    parser.add_argument("--engines", type=str, default="all",
-                        help="Comma-separated list of engines to benchmark (e.g., raptor,sst) or 'all' for everything. "
-                             "Available: sst,sst_approx,helix,viper,nova,swift,raptor. Use 'proximadb' for all ProximaDB engines only.")
+    parser.add_argument(
+        "--quick", action="store_true", help="Run quick benchmark with smaller sizes"
+    )
+    parser.add_argument(
+        "--no-competitors", action="store_true", help="Skip competitor benchmarks"
+    )
+    parser.add_argument(
+        "--standard-datasets",
+        action="store_true",
+        help="Run benchmarks with standard datasets (SIFT, LDBC, HybridRAG)",
+    )
+    parser.add_argument(
+        "--sift-vectors",
+        type=int,
+        default=100_000,
+        help="Number of SIFT vectors (default: 100K, max: 1M)",
+    )
+    parser.add_argument(
+        "--ldbc-scale", type=int, default=1, help="LDBC SNB scale factor (default: 1)"
+    )
+    parser.add_argument(
+        "--rag-documents",
+        type=int,
+        default=5_000,
+        help="Number of HybridRAG documents (default: 5K)",
+    )
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=768,
+        choices=[128, 768, 960, 1024, 1536],
+        help="Vector dimension: 128=SIFT, 768=BGE-base, 960=GIST, 1024=BGE-large, 1536=OpenAI (default: 768)",
+    )
+    parser.add_argument(
+        "--engines",
+        type=str,
+        default="all",
+        help="Comma-separated list of engines to benchmark (e.g., raptor,sst) or 'all' for everything. "
+        "Available: sst,sst_approx,helix,viper,nova,swift,raptor. Use 'proximadb' for all ProximaDB engines only.",
+    )
 
     # Search mode control (NEW)
-    parser.add_argument("--approximate-only", action="store_true",
-                        help="Run ONLY approximate mode (block pruning with sqrt mode, ~8-15ms queries, 90-95%% recall)")
-    parser.add_argument("--exact-only", action="store_true",
-                        help="Run ONLY exact mode (100%% recall, ~45ms queries)")
+    parser.add_argument(
+        "--approximate-only",
+        action="store_true",
+        help="Run ONLY approximate mode (block pruning with sqrt mode, ~8-15ms queries, 90-95%% recall)",
+    )
+    parser.add_argument(
+        "--exact-only",
+        action="store_true",
+        help="Run ONLY exact mode (100%% recall, ~45ms queries)",
+    )
 
     args = parser.parse_args()
 
@@ -3718,15 +4451,13 @@ if __name__ == "__main__":
             dimension=args.dimension,
             engines=args.engines,
             approximate_only=args.approximate_only,
-            exact_only=args.exact_only
+            exact_only=args.exact_only,
         )
     else:
         # Run consolidated benchmark
         if args.quick:
             config = BenchmarkConfig(
-                vector_sizes=[1000],
-                graph_nodes=[1000],
-                sks_entities=[1000]
+                vector_sizes=[1000], graph_nodes=[1000], sks_entities=[1000]
             )
         else:
             config = BenchmarkConfig()

@@ -8,8 +8,6 @@
 //! Example usage of the Semantic Knowledge Store (SKS) feature
 
 use proximadb::proto::proximadb_v1::VectorRecord;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

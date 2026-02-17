@@ -30,6 +30,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
 
 /// Helper function to convert proto metadata Value to TypedMetadata value
+#[allow(dead_code)]
 fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
     match value {
         crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {

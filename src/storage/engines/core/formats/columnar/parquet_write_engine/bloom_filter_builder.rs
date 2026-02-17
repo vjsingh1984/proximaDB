@@ -215,7 +215,7 @@ impl BloomFilterBuilder {
         let total_memory: usize = self
             .bloom_filters
             .values()
-            .map(|f| {
+            .map(|_f| {
                 // BloomFilterStrategy doesn't have stats() method
                 // Return estimated size based on configuration
                 let bits = (self.config.ndv as f64 * 10.0) as usize;

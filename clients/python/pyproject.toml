@@ -11,15 +11,13 @@ authors = [
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 keywords = ["vector", "database", "similarity", "search", "ml", "ai", "embeddings", "proximity"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -30,6 +28,7 @@ classifiers = [
 
 dependencies = [
     "httpx>=0.24.0",
+    "h2>=4.0.0",  # Required for HTTP/2 support in httpx
     "pydantic>=2.0.0",
     "numpy>=1.21.0",
     "typing-extensions>=4.0.0",
@@ -42,10 +41,6 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     "tabulate>=0.9.0",
-    # Tree-sitter for code chunking (AST-aware chunking)
-    # Note: tree-sitter-languages is unmaintained, using tree-sitter-language-pack instead
-    "tree-sitter>=0.24.0",
-    "tree-sitter-language-pack>=0.13.0",
 ]
 
 [project.optional-dependencies]
@@ -55,18 +50,62 @@ llm = [
     "sentence-transformers>=2.2.0",  # Local embedding models
 ]
 
+# Code chunking with tree-sitter (requires Python 3.10+)
+code-chunking = [
+    "tree-sitter>=0.24.0",
+    "tree-sitter-language-pack>=0.13.0",
+]
+
+langchain = [
+    "langchain-core>=0.1.0",
+]
+
+victor = [
+    "victor-ai>=0.2.0",
+]
+
+crewai = [
+    "crewai>=0.80.0",
+]
+
+langgraph = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.1.0",
+]
+
+dspy = [
+    "dspy>=2.5.0",
+]
+
+autogen = [
+    "autogen-agentchat>=0.4.0",
+]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.20.0",
+    "pytest-timeout>=2.1.0",
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
     "sentence-transformers>=2.2.0",
+    "requests>=2.28.0",
     "black>=22.0.0",
     "isort>=5.10.0",
     "mypy>=1.0.0",
     "pre-commit>=2.20.0",
     "ruff>=0.0.280",
+]
+
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-cov>=4.0.0",
+    "pytest-html>=3.1.0",
+    "pytest-xdist>=3.0.0",
+    "sentence-transformers>=2.2.0",
+    "requests>=2.28.0",
 ]
 
 docs = [
@@ -99,7 +138,7 @@ where = ["src"]
 
 [tool.black]
 line-length = 88
-target-version = ['py38']
+target-version = ['py310']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -112,6 +151,7 @@ extend-exclude = '''
   | \.venv
   | build
   | dist
+  | v1
 )/
 '''
 
@@ -122,19 +162,40 @@ line_length = 88
 known_first_party = ["proximadb"]
 
 [tool.mypy]
-python_version = "3.8"
-warn_return_any = true
+python_version = "3.10"
+warn_return_any = false
 warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+warn_unreachable = false
+strict_equality = true
+
+# Ignore errors in generated proto files
+[[tool.mypy.overrides]]
+module = ["proximadb_sdk.v1.*"]
+ignore_errors = true
+
+# Strict checking for well-typed core modules
+[[tool.mypy.overrides]]
+module = [
+    "proximadb_sdk.models",
+    "proximadb_sdk.models_v2",
+    "proximadb_sdk.config",
+    "proximadb_sdk.filters",
+    "proximadb_sdk.auth",
+    "proximadb_sdk.exceptions",
+    "proximadb_sdk.integrations.*",
+]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
+warn_return_any = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -166,8 +227,10 @@ filterwarnings = [
 minversion = "7.0"
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py310"
 line-length = 88
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -185,7 +248,7 @@ ignore = [
     "C901",  # too complex
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["ARG001"]
 

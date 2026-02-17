@@ -2215,8 +2215,6 @@ fn test_flush_retry_config_custom() {
 // Coordinator Stats Tests
 // =============================================================================
 
-use proximadb::streaming::CoordinatorStats;
-
 #[tokio::test]
 async fn test_coordinator_stats_basic() {
     let coordinator = StreamCoordinator::new(create_small_config());
@@ -2387,9 +2385,7 @@ fn test_stream_metrics_flush_with_retries() {
 // Integrated Service Tests
 // =============================================================================
 
-use proximadb::streaming::{
-    IntegratedServiceConfig, IntegratedStreamingService, PushAndNotifyResult,
-};
+use proximadb::streaming::{IntegratedServiceConfig, IntegratedStreamingService};
 
 #[tokio::test]
 async fn test_integrated_service_creation() {

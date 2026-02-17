@@ -32,6 +32,7 @@ pub struct ColumnarOptimizer {
     zero_copy_fs: Arc<FilesystemFactory>,
 
     /// Filesystem factory for writes (selects based on URL scheme)
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Cached bloom filters per file
@@ -50,6 +51,7 @@ pub struct FileBloomFilters {
 /// Bloom filters for a single row group
 #[derive(Debug)]
 pub struct RowGroupBloomFilters {
+    #[allow(dead_code)]
     pub row_group_id: usize,
     pub column_filters: HashMap<String, BloomFilterInfo>,
 }
@@ -64,10 +66,12 @@ pub struct BloomFilterInfo {
 /// Streaming row group iterator
 pub struct StreamingRowGroupIterator {
     file_path: String,
+    #[allow(dead_code)]
     metadata: Arc<ParquetMetaData>,
     selected_row_groups: Vec<usize>,
     current_index: usize,
     column_projection: Option<Vec<String>>,
+    #[allow(dead_code)]
     batch_size: usize,
 }
 /// Progressive search configuration
@@ -122,8 +126,8 @@ impl ColumnarOptimizer {
         distance_compute: Arc<UnifiedDistanceCompute>,
         config: ColumnarConfig,
         filesystem_factory: Arc<FilesystemFactory>,
-        collection_id: String,
-        engine_type: String, // "viper" or "nova"
+        _collection_id: String,
+        _engine_type: String, // "viper" or "nova"
     ) -> Result<Self> {
         // Create zero-copy filesystem with caching for efficient reads
         // Get a filesystem instance for the collection
@@ -164,9 +168,9 @@ impl ColumnarOptimizer {
 
             // Check each column for bloom filters
             for (col_idx, column) in row_group.columns().iter().enumerate() {
-                if let Some(bloom_filter) = self.extract_bloom_filter(column)? {
+                if self.extract_bloom_filter(column)?.is_some() {
                     let filter_info = BloomFilterInfo {
-                        field: format!("col_{}", col_idx),
+                        field: format!("col_{col_idx}"),
                         size_bytes: 1024,  // Default size estimate for bloom filter
                         hash_functions: 3, // Default value
                         num_items: 1000,   // Default value
@@ -179,7 +183,7 @@ impl ColumnarOptimizer {
 
             if !column_filters.is_empty() {
                 file_filters.insert(
-                    format!("rg_{}", rg_idx),
+                    format!("rg_{rg_idx}"),
                     RowGroupBloomFilters {
                         row_group_id: rg_idx,
                         column_filters,
@@ -409,7 +413,7 @@ impl ColumnarOptimizer {
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
         config: &ProgressiveSearchConfig,
-        stats: &mut OptimizationStats,
+        _stats: &mut OptimizationStats,
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Progressive search in file: {}", file_path);
         // Create streaming iterator
@@ -464,18 +468,15 @@ impl ColumnarOptimizer {
     async fn binary_filter_stage(
         &self,
         iterator: &mut StreamingRowGroupIterator,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         config: &ProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::new();
-        // Create binary query vector
-        let binary_query: Vec<bool> = query_vector.iter().map(|&x| x > 0.0).collect();
         while let Some(batch) = iterator.next().await? {
             // Find binary vector column
-            if let Some(binary_col) = batch.column_by_name("vector_binary") {
+            if let Some(_binary_col) = batch.column_by_name("vector_binary") {
                 let binary_candidates = self.process_binary_batch(
                     &batch,
-                    &binary_query,
                     iterator.current_row_group(),
                     config.binary_threshold,
                 )?;
@@ -490,7 +491,6 @@ impl ColumnarOptimizer {
     fn process_binary_batch(
         &self,
         batch: &RecordBatch,
-        binary_query: &[bool],
         row_group_id: usize,
         threshold: f32,
     ) -> Result<Vec<SearchCandidate>> {
@@ -562,7 +562,7 @@ impl ColumnarOptimizer {
     /// Load vector at specific candidate location
     async fn load_vector_at_candidate(
         &self,
-        candidate: &SearchCandidate,
+        _candidate: &SearchCandidate,
     ) -> Result<Option<Vec<f32>>> {
         // This is a placeholder implementation
         // In production, would load the actual vector from the row group
@@ -737,11 +737,9 @@ impl BloomFilterProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities::HardwareCapabilities;
-    #[tokio::test]
     async fn test_columnar_optimizer_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let _hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             crate::proto::proximadb_v1::DistanceMetric::Cosine,
         ));

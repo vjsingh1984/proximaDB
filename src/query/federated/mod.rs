@@ -275,8 +275,9 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
-    use super::super::cache::QueryResultCacheConfig;
-    use super::*;
+    use crate::query::federated::{FederatedQueryContext, QueryResultCache};
+    use crate::storage::MultiModelStorageFacade;
+    use std::sync::Arc;
 
     #[test]
     fn test_federated_context_creation() {

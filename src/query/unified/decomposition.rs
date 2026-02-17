@@ -21,6 +21,7 @@ pub struct QueryDecomposer {
 struct QueryPatterns {
     vector_similar: Regex,
     vector_distance: Regex,
+    #[allow(dead_code)]
     json_path: Regex,
     graph_traverse: Regex,
     graph_connected: Regex,
@@ -90,7 +91,7 @@ impl QueryDecomposer {
         if let Some(graph_component) = self.extract_graph_component(query, component_index)? {
             debug!("Found graph traversal component");
             multi_query.components.push(graph_component);
-            component_index += 1;
+            let _component_index = component_index + 1;
         }
 
         // Detect and extract observability components
@@ -128,7 +129,7 @@ impl QueryDecomposer {
     fn extract_vector_component(&self, query: &str) -> Result<Option<QueryComponent>> {
         // Check for VECTOR_SIMILAR
         if let Some(caps) = self.patterns.vector_similar.captures(query) {
-            let field = caps
+            let _field = caps
                 .get(1)
                 .map(|m| m.as_str().trim())
                 .unwrap_or("embedding");
@@ -302,7 +303,7 @@ impl QueryDecomposer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos() as i64;
-            let hour_ago = now - 3600_000_000_000; // 1 hour in nanoseconds
+            let hour_ago = now - 3_600_000_000_000; // 1 hour in nanoseconds
 
             return Ok(Some(QueryComponent {
                 model: DataModel::Observability,
@@ -339,7 +340,7 @@ impl QueryDecomposer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos() as i64;
-            let hour_ago = now - 3600_000_000_000;
+            let hour_ago = now - 3_600_000_000_000;
 
             let aggregation = match agg_type.as_str() {
                 "SUM" => MetricAggregation::Sum,

@@ -29,6 +29,7 @@ pub struct AdaptiveIndexEngine {
     strategy_selector: Arc<IndexStrategySelector>,
 
     /// Performance predictor using ML models
+    #[allow(dead_code)]
     performance_predictor: Arc<PerformancePredictor>,
 
     /// Decision history for learning
@@ -181,6 +182,7 @@ pub enum QueryPatternType {
 /// Performance predictor using ML models
 pub struct PerformancePredictor {
     /// Prediction models
+    #[allow(dead_code)]
     models: Arc<RwLock<PredictionModels>>,
 }
 

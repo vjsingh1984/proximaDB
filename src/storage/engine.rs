@@ -24,6 +24,7 @@ use tracing::{debug, error, info, warn};
 pub struct StorageEngine {
     config: StorageConfig,
     sst_storages: Arc<DashMap<String, Arc<SstEngine>>>,
+    #[allow(dead_code)]
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
     axis_index_manager: Arc<AxisManager>,
@@ -153,7 +154,7 @@ impl StorageEngine {
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
 
         // Create singleton SST storage instance
-        let sst_config_for_storage = config
+        let _sst_config_for_storage = config
             .sst_config
             .clone()
             .unwrap_or_else(|| SstConfig::default());
@@ -301,7 +302,7 @@ impl StorageEngine {
         }
 
         // Set collection service if available for metadata lookup
-        if let Some(ref provider) = *self.metadata_provider.read().await {
+        if let Some(ref _provider) = *self.metadata_provider.read().await {
             // Note: FlushCoordinator expects CollectionService, but we have InternalCollectionProvider
             // The flush_all_collections() method will use None for flush_context and let
             // execute_coordinated_flush() handle engine determination
@@ -784,7 +785,7 @@ impl StorageEngine {
         // No need to rebuild assignments - they're stored with collections
 
         for collection in &collections {
-            let collection_id = &collection.id;
+            let _collection_id = &collection.id;
             let collection_name = collection
                 .config
                 .as_ref()
@@ -1009,6 +1010,7 @@ impl StorageEngine {
     }
 
     /// Calculate distance/similarity based on collection's configured metric
+    #[allow(dead_code)]
     fn calculate_distance_metric(
         &self,
         query: &[f32],
@@ -1122,7 +1124,7 @@ impl StorageEngine {
         // Get list of all collections from metadata provider
         let collections: Vec<CollectionMetadata> =
             match self.metadata_provider.read().await.as_ref() {
-                Some(provider) => {
+                Some(_provider) => {
                     // TODO: Add list_collections method to InternalCollectionProvider trait
                     // For now, return empty list to allow compilation
                     warn!("Collection listing not yet implemented for test cleanup");
@@ -1172,7 +1174,7 @@ impl StorageEngine {
         // Clear metadata store by deleting all collections
         for collection in collections {
             // Use metadata provider for collection deletion
-            if let Some(provider) = self.metadata_provider.read().await.as_ref() {
+            if let Some(_provider) = self.metadata_provider.read().await.as_ref() {
                 // TODO: Add delete_collection method to InternalCollectionProvider trait
                 tracing::debug!(
                     "Collection deletion would happen through metadata provider for {}",

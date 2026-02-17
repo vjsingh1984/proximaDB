@@ -117,6 +117,7 @@ impl Default for SwiftReaderConfig {
 pub struct UnifiedSwiftReader {
     /// CORE READER: Delegates low-level file operations to shared SST infrastructure
     /// (SWIFT extends SST format with hierarchical SuperBlocks)
+    #[allow(dead_code)]
     shared_reader: Arc<SharedSstFormatReader>,
 
     /// File path for this reader instance
@@ -130,31 +131,42 @@ pub struct UnifiedSwiftReader {
     cached_superblock_metadata: Arc<RwLock<HashMap<u32, SuperBlockMetadata>>>,
 
     /// Unified caching filesystem for cache-first metadata access
+    #[allow(dead_code)]
     unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for cache key generation
     collection_id: String,
 
     /// Cached ID index for fast lookups
+    #[allow(dead_code)]
     cached_id_index: Option<Arc<super::id_index::IdIndex>>,
 
     /// Cached header
     cached_header: Option<super::SwiftHeader>,
 
     /// Filesystem reference for direct operations
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 }
 
 /// Lightweight superblock metadata for caching
 #[derive(Debug, Clone)]
-struct SuperBlockMetadata {
+pub struct SuperBlockMetadata {
+    /// Superblock identifier
     pub id: u32,
+    /// Offset in file
     pub offset: u64,
+    /// Size in bytes
     pub size: u64,
+    /// Number of records
     pub record_count: u32,
+    /// ID range (min, max)
     pub id_range: (String, String),
+    /// Whether deleted records exist
     pub has_deletes: bool,
+    /// Bloom filter offset in file
     pub bloom_filter_offset: u64,
+    /// Bloom filter size in bytes
     pub bloom_filter_size: u32,
 }
 
@@ -167,15 +179,19 @@ struct RangeReadRequest {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ReadPurpose {
     Header,
+    #[allow(dead_code)]
     SuperBlockMetadata(u32),
+    #[allow(dead_code)]
     DataBlock(u32),
     BloomFilter(u32),
     IdIndex,
     QuantizedData(u32),
 }
 
+#[allow(dead_code)]
 impl UnifiedSwiftReader {
     /// Create new SWIFT reader with unified caching filesystem
     /// SWIFT extends SST format with SuperBlock hierarchy for 3-tier filtering
@@ -205,7 +221,7 @@ impl UnifiedSwiftReader {
         unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         config: SwiftReaderConfig,
-        bandwidth_optimizer: Option<
+        _bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
         >,
     ) -> Result<Self> {
@@ -397,7 +413,7 @@ impl UnifiedSwiftReader {
     ) -> Result<SuperBlockMetadata> {
         // CACHE-FIRST: Check zero-copy cache for SWIFT SuperBlock metadata
         // Cache key format: filename:collection_id:swift:superblock:{id}
-        let cache_key = format!(
+        let _cache_key = format!(
             "{}:{}:swift:superblock:{}",
             self.file_path, self.collection_id, superblock_id
         );
@@ -416,7 +432,7 @@ impl UnifiedSwiftReader {
     /// Extract SuperBlock metadata from cached data
     async fn extract_superblock_from_cache(
         &self,
-        cached_metadata: Arc<
+        _cached_metadata: Arc<
             Box<dyn crate::storage::engines::core::io::zero_copy::traits::EngineMetadata>,
         >,
         superblock_id: u32,
@@ -480,6 +496,7 @@ impl UnifiedSwiftReader {
     }
 
     /// Deserialize header from bytes
+    #[allow(dead_code)]
     fn deserialize_header(&self, data: &[u8]) -> Result<super::SwiftHeader> {
         // Check magic bytes
         if data.len() < 4 {
@@ -848,13 +865,13 @@ impl UnifiedSwiftReader {
     // Helper methods
 
     fn parse_records_from_chunk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
-        // Implementation depends on data format
-        unimplemented!("Record parsing from chunk")
+        Err(anyhow!(
+            "SWIFT engine: record chunk parsing not yet implemented"
+        ))
     }
 
     fn parse_records_from_data(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
-        // Implementation depends on data format
-        unimplemented!("Record parsing")
+        Err(anyhow!("SWIFT engine: record parsing not yet implemented"))
     }
 
     fn parse_superblock_metadata(
@@ -862,8 +879,9 @@ impl UnifiedSwiftReader {
         _data: &[u8],
         _count: u32,
     ) -> Result<Vec<SuperBlockMetadata>> {
-        // Implementation depends on metadata format
-        unimplemented!("Superblock metadata parsing")
+        Err(anyhow!(
+            "SWIFT engine: superblock metadata parsing not yet implemented"
+        ))
     }
 
     fn prune_superblocks(
@@ -872,8 +890,9 @@ impl UnifiedSwiftReader {
         _metadata_filter: &Option<MetadataFilter>,
         _id_filter: &Option<Vec<String>>,
     ) -> Result<Vec<u32>> {
-        // Implementation depends on pruning logic
-        unimplemented!("Superblock pruning")
+        Err(anyhow!(
+            "SWIFT engine: superblock pruning not yet implemented"
+        ))
     }
 
     fn should_read_superblock_bloom(
@@ -886,13 +905,15 @@ impl UnifiedSwiftReader {
     }
 
     async fn read_bloom_filter(&self, _sb_id: u32) -> Result<Vec<u8>> {
-        // Read bloom filter data
-        unimplemented!("Bloom filter reading")
+        Err(anyhow!(
+            "SWIFT engine: bloom filter reading not yet implemented"
+        ))
     }
 
     fn bloom_filter_matches(&self, _data: &[u8], _id_filter: &Option<Vec<String>>) -> Result<bool> {
-        // Check bloom filter
-        unimplemented!("Bloom filter matching")
+        Err(anyhow!(
+            "SWIFT engine: bloom filter matching not yet implemented"
+        ))
     }
 
     async fn superblock_metadata(&self, sb_id: u32) -> Result<SuperBlockMetadata> {
@@ -904,8 +925,9 @@ impl UnifiedSwiftReader {
     }
 
     fn calculate_block_offset(&self, _sb_id: u32, _block_id: u32) -> Result<u64> {
-        // Calculate block offset within file
-        unimplemented!("Block offset calculation")
+        Err(anyhow!(
+            "SWIFT engine: block offset calculation not yet implemented"
+        ))
     }
 }
 
@@ -920,9 +942,13 @@ pub struct SwiftReadResult {
 
 /// Iterator for streaming large results
 pub struct SwiftRecordIterator {
+    #[allow(dead_code)]
     reader: Arc<UnifiedSwiftReader>,
+    #[allow(dead_code)]
     current_superblock: u32,
+    #[allow(dead_code)]
     current_block: u32,
+    #[allow(dead_code)]
     buffer: Vec<VectorRecord>,
     finished: bool,
 }
@@ -933,8 +959,9 @@ impl SwiftRecordIterator {
             return Ok(None);
         }
 
-        // Implementation for streaming iteration
-        unimplemented!("Streaming iteration")
+        Err(anyhow!(
+            "SWIFT engine: streaming iteration not yet implemented"
+        ))
     }
 }
 
@@ -944,7 +971,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_range_coalescing() {
-        let config = SwiftReaderConfig::default();
+        let _config = SwiftReaderConfig::default();
         // Test that nearby reads are coalesced
         // Implementation depends on test infrastructure
     }

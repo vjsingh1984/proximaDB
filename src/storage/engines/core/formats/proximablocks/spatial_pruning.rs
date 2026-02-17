@@ -335,8 +335,8 @@ impl SpatialPruner {
                 diff as f32 / u128::MAX as f32 * 1000.0
             }
             (
-                SpatialCode::Code256 { low: al, high: ah },
-                SpatialCode::Code256 { low: bl, high: bh },
+                SpatialCode::Code256 { low: _, high: ah },
+                SpatialCode::Code256 { low: _, high: bh },
             ) => {
                 // Use high bits for distance approximation
                 let high_diff = ah.abs_diff(*bh);

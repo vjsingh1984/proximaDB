@@ -2,18 +2,13 @@
 //!
 //! Tests for VIPER metadata serialization and codebook sidecar storage.
 
-use super::helpers::*;
-use std::collections::HashMap;
-use std::sync::Arc;
-
-// Tests from unified_metadata_serializer.rs
-
 #[test]
 fn test_viper_metadata_serialization() {
     use crate::storage::engines::impls::viper::unified_metadata_serializer::{
         ClusterInfo, RowGroupMetadata, ViperCachedMetadata, ViperMetadataSerializer,
     };
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+    use std::collections::HashMap;
 
     let metadata = ViperCachedMetadata {
         file_path: "/data/viper/collection1.parquet".to_string(),

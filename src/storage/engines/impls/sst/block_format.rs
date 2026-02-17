@@ -80,7 +80,6 @@
 //! - **ProximaBlocks are now accessible via Arrow Flight** for external tool access
 
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::{debug, info};
@@ -167,6 +166,7 @@ impl BlockFormatWriter {
 /// Adapter for reading blocks in different formats
 pub struct BlockFormatReader {
     format: BlockFormat,
+    #[allow(dead_code)]
     dimension: u32,
 }
 

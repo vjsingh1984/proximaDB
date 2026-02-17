@@ -178,7 +178,7 @@ impl RAGPipeline {
     ///
     /// This coordinates retrieval from ProximaDB and generation via Victor.
     /// The actual implementation is in Python (Victor/codingagent).
-    pub async fn query(&self, request: RAGRequest) -> Result<RAGResponse> {
+    pub async fn query(&self, _request: RAGRequest) -> Result<RAGResponse> {
         let start = std::time::Instant::now();
 
         // Increment query counter

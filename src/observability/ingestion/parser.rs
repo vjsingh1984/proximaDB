@@ -16,6 +16,7 @@ use crate::proto::proximadb_v1::{IngestionFormat, LogEntry, Severity, SqlValue};
 /// Log parser for different formats
 pub struct LogParser {
     /// Default timezone for logs without timezone
+    #[allow(dead_code)]
     default_timezone: chrono_tz::Tz,
 }
 

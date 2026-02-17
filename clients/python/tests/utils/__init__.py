@@ -10,8 +10,8 @@ across different test modules without tight SDK coupling.
 from .test_helpers import (
     CollectionInfo,
     InsertResult,
-    SearchResult,
     ProximaDBTestError,
+    SearchResult,
     assert_proximadb_error,
 )
 

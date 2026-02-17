@@ -6,6 +6,9 @@
 //! - Similarity search operations
 //! - Memory management and flush operations
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
@@ -13,11 +16,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, BincodeSerializationStrategy, WALBatchStrategy, WALConfig,
 };
-use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 /// Counter for generating unique test paths
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -289,7 +288,7 @@ async fn test_bincode_memory_management() {
 
     // Skip stats for now - method not yet implemented
     // TODO: Implement stats() method on BincodeSerializationStrategy
-    let initial_memory = 0;
+    let _initial_memory = 0;
 
     // Add vectors and track memory growth
     for batch_num in 0..5 {

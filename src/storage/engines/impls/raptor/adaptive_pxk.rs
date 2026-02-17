@@ -711,7 +711,7 @@ impl PxKStorageImpl for SparseCoverageStorage {
         }
     }
 
-    fn detect_boundaries(&self, threshold: f32) -> Vec<BoundaryInfo> {
+    fn detect_boundaries(&self, _threshold: f32) -> Vec<BoundaryInfo> {
         // Only detect boundaries for selected vectors
         Vec::new() // Simplified for now
     }
@@ -742,7 +742,7 @@ pub struct AdaptivePxKStorage {
 impl AdaptivePxKStorage {
     /// Create new adaptive storage based on K and D
     pub fn new(k: usize, d: usize, p: usize) -> Self {
-        let (strategy, coverage) = Self::determine_strategy(k, d);
+        let (strategy, _coverage) = Self::determine_strategy(k, d);
         let storage = Self::create_storage(&strategy, k, p);
 
         Self { strategy, storage }

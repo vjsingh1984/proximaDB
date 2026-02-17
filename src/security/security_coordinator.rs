@@ -360,7 +360,7 @@ impl SecurityCoordinator {
     /// Get security policy for tenant
     pub async fn get_tenant_security_policy(
         &self,
-        tenant_id: &str,
+        _tenant_id: &str,
     ) -> Result<TenantSecurityPolicy> {
         // This would integrate with tenant manager
         // For now, return default policy based on security mode
@@ -524,7 +524,7 @@ pub struct SecurityHealthStatus {
 fn create_authorization_failure_event(
     user_context: &UnifiedUserContext,
     requested_permission: &UnifiedPermission,
-    start_time: chrono::DateTime<Utc>,
+    _start_time: chrono::DateTime<Utc>,
 ) -> crate::audit::types::AuditEvent {
     use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
     use std::collections::HashMap;

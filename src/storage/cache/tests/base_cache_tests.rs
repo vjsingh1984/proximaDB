@@ -1,5 +1,5 @@
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
+use crate::storage::cache::traits::{BaseCache, CacheValue};
 
 // CacheKey for String already implemented in vector_data.rs
 // CacheKey for u64 already implemented in traits.rs

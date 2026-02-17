@@ -285,7 +285,7 @@ pub fn encode_quantized_tensor(
             output.write_all(&(subvectors as u32).to_le_bytes())?;
             output.write_all(&(codebook_size as u32).to_le_bytes())?;
 
-            let subvector_dim = dimension / subvectors;
+            let _subvector_dim = dimension / subvectors;
 
             // Build codebooks using k-means (simplified - use random initialization)
             let mut codebooks = Vec::new();
@@ -294,11 +294,11 @@ pub fn encode_quantized_tensor(
 
                 // Create codebook entries (simplified - would use k-means in production)
                 for code_idx in 0..codebook_size {
-                    for dim_idx in 0..subvector_dim {
+                    for dim_idx in 0.._subvector_dim {
                         // Use representative values from data
                         let vec_idx = (code_idx * num_vectors / codebook_size) % num_vectors;
                         let value =
-                            vectors[vec_idx * dimension + subvec_idx * subvector_dim + dim_idx];
+                            vectors[vec_idx * dimension + subvec_idx * _subvector_dim + dim_idx];
                         codebook.push(value);
                         output.write_all(&value.to_le_bytes())?;
                     }
@@ -315,11 +315,11 @@ pub fn encode_quantized_tensor(
 
                     for code_idx in 0..codebook_size {
                         let mut dist = 0.0f32;
-                        for dim_idx in 0..subvector_dim {
-                            let vec_val =
-                                vectors[vec_idx * dimension + subvec_idx * subvector_dim + dim_idx];
+                        for dim_idx in 0.._subvector_dim {
+                            let vec_val = vectors
+                                [vec_idx * dimension + subvec_idx * _subvector_dim + dim_idx];
                             let code_val =
-                                codebooks[subvec_idx][code_idx * subvector_dim + dim_idx];
+                                codebooks[subvec_idx][code_idx * _subvector_dim + dim_idx];
                             dist += (vec_val - code_val).powi(2);
                         }
 
@@ -416,11 +416,11 @@ pub fn decode_quantized_tensor(data: &[u8]) -> Result<(Vec<f32>, usize, usize, Q
             let codebook_size = u32::from_le_bytes(codebook_bytes) as usize;
 
             // Read codebooks
-            let subvector_dim = dimension / num_subvectors;
-            let mut codebooks = vec![vec![0.0f32; codebook_size * subvector_dim]; num_subvectors];
+            let _subvector_dim = dimension / num_subvectors;
+            let mut codebooks = vec![vec![0.0f32; codebook_size * _subvector_dim]; num_subvectors];
 
             for subvec in 0..num_subvectors {
-                for entry in 0..codebook_size * subvector_dim {
+                for entry in 0..codebook_size * _subvector_dim {
                     let mut val_bytes = [0u8; 4];
                     cursor.read_exact(&mut val_bytes)?;
                     codebooks[subvec][entry] = f32::from_le_bytes(val_bytes);
@@ -435,8 +435,8 @@ pub fn decode_quantized_tensor(data: &[u8]) -> Result<(Vec<f32>, usize, usize, Q
             for vec_idx in 0..num_vectors {
                 for subvec_idx in 0..num_subvectors {
                     let code = pq_codes[vec_idx * num_subvectors + subvec_idx] as usize;
-                    let offset = code * subvector_dim;
-                    for dim in 0..subvector_dim {
+                    let offset = code * _subvector_dim;
+                    for dim in 0.._subvector_dim {
                         dense.push(codebooks[subvec_idx][offset + dim]);
                     }
                 }
@@ -538,8 +538,8 @@ pub fn transpose_to_row_major(
 /// This provides consistent encoding selection across all engines
 pub fn choose_optimal_tensor_encoding(
     vectors: &[f32],
-    num_vectors: usize,
-    dimension: usize,
+    _num_vectors: usize,
+    _dimension: usize,
 ) -> ProximaScheme {
     // Calculate statistics
     let mut min_val = f32::MAX;

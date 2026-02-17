@@ -13,7 +13,9 @@ use crate::storage::engines::core::formats::columnar::{
 
 /// Branched filter executor for optimized queries
 pub struct BranchedFilterExecutor {
+    #[allow(dead_code)]
     analyzer: MetadataFilterAnalyzer,
+    #[allow(dead_code)]
     reader: UnifiedColumnarReader,
 }
 
@@ -109,8 +111,8 @@ impl BranchedFilterExecutor {
     /// Check if a value matches a condition
     fn value_matches_condition(
         &self,
-        value: &crate::proto::proximadb_v1::SqlValue,
-        condition: &crate::storage::engines::core::formats::columnar::FilterCondition,
+        _value: &crate::proto::proximadb_v1::SqlValue,
+        _condition: &crate::storage::engines::core::formats::columnar::FilterCondition,
     ) -> bool {
         // Simplified implementation - would need full SQL value comparison
         // This would convert SqlValue to serde_json::Value and compare against FilterCondition

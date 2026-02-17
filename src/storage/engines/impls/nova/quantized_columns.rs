@@ -4,11 +4,11 @@
 //! in compute/quantization, eliminating duplication and ensuring consistency across engines.
 
 use anyhow::{Result, anyhow};
+use arrow::array::ArrayRef;
 use arrow_array::RecordBatch;
-use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, Int8Array};
+use arrow_array::array::{BinaryArray, Float32Array, Int8Array};
 use arrow_schema::{DataType, Field};
 use std::sync::Arc;
-use tracing::debug;
 
 // Use unified quantization from compute module
 use crate::compute::quantization::unified::{Codebook, UnifiedQuantizationEngine};
@@ -325,20 +325,17 @@ impl QuantizedColumnBuilder {
 
         // Build binary column if enabled
         if self.config.enable_binary {
-            debug!("Building binary quantized column");
-            columns.build_binary_column(&self.vectors).await?;
+            let _ = columns.build_binary_column(&self.vectors).await?;
         }
 
         // Build INT8 column if enabled
         if self.config.enable_int8 {
-            debug!("Building INT8 quantized column");
-            columns.build_int8_column(&self.vectors).await?;
+            let _ = columns.build_int8_column(&self.vectors).await?;
         }
 
         // Build PQ column if enabled
         if self.config.enable_pq {
-            debug!("Building PQ quantized column");
-            columns
+            let _ = columns
                 .build_pq_column(
                     &self.vectors,
                     self.config.pq_segments as usize,
@@ -385,7 +382,11 @@ pub fn hamming_distance(a: &[u8], b: &[u8]) -> u32 {
 }
 
 /// Helper to compute asymmetric distance for PQ
-pub fn asymmetric_distance_pq(query: &[f32], pq_code: &[u8], codebook: &Codebook) -> Result<f32> {
+pub fn asymmetric_distance_pq(
+    _query: &[f32],
+    _pq_code: &[u8],
+    _codebook: &Codebook,
+) -> Result<f32> {
     // This will use the unified engine's PQ distance computation
     // For now, return placeholder
     Ok(0.0)
@@ -393,8 +394,6 @@ pub fn asymmetric_distance_pq(query: &[f32], pq_code: &[u8], codebook: &Codebook
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_binary_quantization() {
         // Test will use unified quantization engine

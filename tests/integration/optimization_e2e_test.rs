@@ -397,6 +397,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             use_axis_indexes: false,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let sst_results = sst_engine
@@ -433,6 +435,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
                 use_axis_indexes: false,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let no_filter_results = sst_engine
@@ -510,6 +514,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             use_axis_indexes: false,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let viper_results = viper_engine

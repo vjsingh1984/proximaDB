@@ -334,7 +334,7 @@ impl UnifiedColumnarCompaction {
         let mut engine = StorageQuantizationEngine::new_with_config(config);
 
         // Create unified memory pool for batch processing
-        let memory_pool = Arc::new(VectorMemoryPool::new());
+        let _memory_pool = Arc::new(VectorMemoryPool::new());
 
         // Use batch configuration for optimal performance
         let batch_config = crate::storage::strategy::BatchConfig {
@@ -779,8 +779,8 @@ impl UnifiedColumnarCompaction {
         }
 
         // Create and write with ArrowWriter
-        let file = File::create(local_path)
-            .with_context(|| format!("Failed to create: {}", local_path))?;
+        let file =
+            File::create(local_path).with_context(|| format!("Failed to create: {local_path}"))?;
 
         let mut writer = ArrowWriter::try_new(file, schema, Some(writer_properties))?;
 
@@ -873,7 +873,7 @@ impl UnifiedColumnarCompaction {
             .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
             .ok_or_else(|| anyhow::anyhow!("No storage assignment for collection"))?;
 
-        Ok(format!("{}/{}", base_path, filename))
+        Ok(format!("{base_path}/{filename}"))
     }
 
     /// Atomically replace old files with new

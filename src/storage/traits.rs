@@ -45,6 +45,7 @@
 
 use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
+use crate::security::unified_rbac::{TenantContext, UnifiedUserContext};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -378,6 +379,7 @@ struct MetricsData {
     latencies_ms: std::collections::VecDeque<u64>,
     cache_hits: u64,
     cache_misses: u64,
+    #[allow(dead_code)]
     started_at: chrono::DateTime<chrono::Utc>,
     last_reset: chrono::DateTime<chrono::Utc>,
 }
@@ -648,7 +650,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         &self,
         _collection_id: &str,
         _strategy: crate::storage::unified_scan_strategy::ScanStrategy,
-        collection_config: Option<&Collection>,
+        _collection_config: Option<&Collection>,
     ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
         // Default implementation - engines should override with their specific implementation
         Err(anyhow::anyhow!(
@@ -1475,6 +1477,14 @@ pub struct StorageQueryContext {
     /// Additional context that might be needed during search
     /// (can be extended without breaking existing code)
     pub metadata: StorageQueryMetadata,
+
+    /// User context for RBAC authorization checks
+    /// Optional for backward compatibility with existing code
+    pub user_context: Option<UnifiedUserContext>,
+
+    /// Tenant context for multi-tenant operations
+    /// Optional for backward compatibility with existing code
+    pub tenant_context: Option<TenantContext>,
 }
 
 /// Parsed quantization configuration for efficient progressive search
@@ -1733,6 +1743,8 @@ impl StorageQueryContext {
             search_params: Arc::new(adjusted_params),
             collection,
             metadata,
+            user_context: None,
+            tenant_context: None,
         }
     }
 

@@ -778,8 +778,6 @@ impl LeveledCompactor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::persistence::filesystem::FilesystemFactory;
-
     #[tokio::test]
     async fn test_compactor_creation() {
         let config = HelixConfig::default();

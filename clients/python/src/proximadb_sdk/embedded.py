@@ -54,6 +54,8 @@ Usage:
 import asyncio
 import hashlib
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -61,14 +63,21 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, Protocol, runtime_checkable
-import os
-import signal
-
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Union,
+    runtime_checkable,
+)
 
 # =============================================================================
 # Embedding Model Abstraction
 # =============================================================================
+
 
 @runtime_checkable
 class EmbeddingFunction(Protocol):
@@ -77,6 +86,7 @@ class EmbeddingFunction(Protocol):
     Any callable that takes a string and returns a list of floats can be used.
     This allows integration with any embedding provider.
     """
+
     def __call__(self, text: str) -> List[float]:
         """Generate embedding for text."""
         ...
@@ -85,6 +95,7 @@ class EmbeddingFunction(Protocol):
 @runtime_checkable
 class AsyncEmbeddingFunction(Protocol):
     """Protocol for async embedding functions."""
+
     async def __call__(self, text: str) -> List[float]:
         """Generate embedding for text asynchronously."""
         ...
@@ -93,6 +104,7 @@ class AsyncEmbeddingFunction(Protocol):
 @runtime_checkable
 class BatchEmbeddingFunction(Protocol):
     """Protocol for batch embedding functions."""
+
     def __call__(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts."""
         ...
@@ -143,7 +155,9 @@ class SentenceTransformerModel(BaseEmbeddingModel):
     - all-mpnet-base-v2: High quality, 768-dim (420MB)
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None):
+    def __init__(
+        self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None
+    ):
         """Initialize sentence-transformer model.
 
         Args:
@@ -163,7 +177,10 @@ class SentenceTransformerModel(BaseEmbeddingModel):
                 if self._model is None:
                     try:
                         from sentence_transformers import SentenceTransformer
-                        self._model = SentenceTransformer(self.model_name, device=self.device)
+
+                        self._model = SentenceTransformer(
+                            self.model_name, device=self.device
+                        )
                         self._dimension = self._model.get_sentence_embedding_dimension()
                     except ImportError:
                         raise ImportError(
@@ -174,13 +191,17 @@ class SentenceTransformerModel(BaseEmbeddingModel):
     def embed(self, text: str) -> List[float]:
         """Generate embedding for text."""
         self._ensure_loaded()
-        embedding = self._model.encode(text, convert_to_numpy=True, show_progress_bar=False)
+        embedding = self._model.encode(
+            text, convert_to_numpy=True, show_progress_bar=False
+        )
         return embedding.tolist()
 
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts."""
         self._ensure_loaded()
-        embeddings = self._model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        embeddings = self._model.encode(
+            texts, convert_to_numpy=True, show_progress_bar=False
+        )
         return embeddings.tolist()
 
     def get_dimension(self) -> int:
@@ -431,13 +452,16 @@ def create_embedding_model(
             api_key=kwargs.get("api_key"),
         )
     else:
-        raise ValueError(f"Unknown model type: {model_type}. "
-                        f"Available: sentence-transformers, ollama, openai")
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Available: sentence-transformers, ollama, openai"
+        )
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
+
 
 @dataclass
 class EmbeddedConfig:
@@ -671,8 +695,14 @@ class EmbeddedProximaDB:
             # Installed via pip (future)
             Path(sys.prefix) / "bin" / "proximadb-server",
             # Development build
-            Path(__file__).parent.parent.parent.parent.parent / "target" / "release" / "proximadb-server",
-            Path(__file__).parent.parent.parent.parent.parent / "target" / "debug" / "proximadb-server",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "target"
+            / "release"
+            / "proximadb-server",
+            Path(__file__).parent.parent.parent.parent.parent
+            / "target"
+            / "debug"
+            / "proximadb-server",
             # System PATH
             "proximadb-server",
         ]
@@ -684,6 +714,7 @@ class EmbeddedProximaDB:
             else:
                 # Check PATH
                 import shutil
+
                 if shutil.which(path):
                     return path
 
@@ -767,7 +798,7 @@ prefetch_budget = 4
                 [binary, "--config", config_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=os.setsid if hasattr(os, 'setsid') else None,
+                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
             )
 
             # Wait for server to be ready
@@ -775,6 +806,7 @@ prefetch_budget = 4
             while time.time() - start_time < timeout:
                 try:
                     import httpx
+
                     response = httpx.get(f"{self.rest_url}/health", timeout=1.0)
                     if response.status_code == 200:
                         self._started = True
@@ -794,13 +826,13 @@ prefetch_budget = 4
         """Kill the server process."""
         if self._process:
             try:
-                if hasattr(os, 'killpg'):
+                if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
                 else:
                     self._process.terminate()
                 self._process.wait(timeout=5)
             except Exception:
-                if hasattr(os, 'killpg'):
+                if hasattr(os, "killpg"):
                     os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
                 else:
                     self._process.kill()
@@ -891,7 +923,7 @@ prefetch_budget = 4
                         "name": name,
                         "dimension": dimension,
                         "distance_metric": metric_value,
-                    }
+                    },
                 },
                 timeout=30.0,
             )
@@ -900,7 +932,9 @@ prefetch_budget = 4
             if not result.get("success") and "already exists" not in str(result):
                 raise RuntimeError(f"Failed to create collection: {result}")
 
-        collection = EmbeddedCollection(name, dimension, self, embedding_model=model_instance)
+        collection = EmbeddedCollection(
+            name, dimension, self, embedding_model=model_instance
+        )
         self._collections[name] = collection
         return collection
 
@@ -1111,6 +1145,7 @@ prefetch_budget = 4
 
         try:
             import httpx
+
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.rest_url}/health",
@@ -1119,6 +1154,83 @@ prefetch_budget = 4
                 return response.status_code == 200
         except Exception:
             return False
+
+    async def execute_multi_modal_query(
+        self,
+        query: "MultiModalQuery",
+        rerank_config: Optional["RerankConfig"] = None,
+        context: Optional["QueryContext"] = None,
+    ) -> "MultiModalQueryResult":
+        """Execute a multi-modal query combining vector, graph, and document searches.
+
+        This method allows combining different query types (vector similarity,
+        graph traversal, document filtering) into a single unified query with
+        result fusion and optional reranking.
+
+        Args:
+            query: A MultiModalQuery object built with MultiModalQueryBuilder
+            rerank_config: Optional configuration for cross-modal reranking
+            context: Optional query context for context-aware scoring
+
+        Returns:
+            MultiModalQueryResult with fused results from all query components
+
+        Example:
+            from proximadb_sdk.multimodal_query import (
+                MultiModalQueryBuilder, FusionStrategy, RerankConfig, QueryContext
+            )
+
+            # Build a multi-modal query
+            query = (MultiModalQueryBuilder()
+                .vector("products", query_embedding, top_k=20)
+                .graph("knowledge", start_label="Category", edge_types=["CONTAINS"])
+                .fuse(FusionStrategy.RRF)
+                .limit(10)
+                .build())
+
+            # Execute with optional reranking
+            results = await db.execute_multi_modal_query(
+                query,
+                rerank_config=RerankConfig(diversity_optimization=True)
+            )
+
+            for record in results:
+                print(f"{record['id']}: {record.get('_rrf_score', 0)}")
+        """
+        if not self._started:
+            await self.start()
+
+        # Import here to avoid circular imports
+        from .multimodal_query import (
+            CrossModalReranker,
+            MultiModalQueryResult,
+        )
+        from .multimodal_query import QueryContext as QC
+        from .multimodal_query import RerankConfig as RC
+
+        # Create embedded executor
+        executor = EmbeddedMultiModalQueryExecutor(self)
+        result = await executor.execute(query)
+
+        # Apply reranking if configured
+        if rerank_config is not None:
+            reranker = CrossModalReranker(config=rerank_config)
+            reranked = reranker.rerank(result.records, context)
+            result = MultiModalQueryResult(
+                records=reranked.records,
+                total_count=len(reranked.records),
+                query_time_ms=result.query_time_ms,
+                component_times=result.component_times,
+                fusion_strategy=result.fusion_strategy,
+                metadata={
+                    **result.metadata,
+                    "reranked": True,
+                    "quality_score": reranked.quality_score,
+                    "diversity_score": reranked.diversity_score,
+                },
+            )
+
+        return result
 
     def __enter__(self):
         """Context manager entry."""
@@ -1143,8 +1255,7 @@ prefetch_budget = 4
 
 # Convenience function
 async def connect_embedded(
-    data_dir: Optional[str] = None,
-    **kwargs
+    data_dir: Optional[str] = None, **kwargs
 ) -> EmbeddedProximaDB:
     """Create and start an embedded ProximaDB instance.
 
@@ -1155,7 +1266,561 @@ async def connect_embedded(
     Returns:
         Started EmbeddedProximaDB instance
     """
-    config = EmbeddedConfig(data_dir=data_dir or str(Path.home() / ".proximadb"), **kwargs)
+    config = EmbeddedConfig(
+        data_dir=data_dir or str(Path.home() / ".proximadb"), **kwargs
+    )
     db = EmbeddedProximaDB(config=config)
     await db.start()
     return db
+
+
+# =============================================================================
+# Embedded Multi-Modal Query Executor
+# =============================================================================
+
+
+class EmbeddedMultiModalQueryExecutor:
+    """
+    Multi-modal query executor for embedded ProximaDB mode.
+
+    Executes vector, graph, and document queries against an embedded database
+    and fuses results using various strategies (RRF, intersection, union, weighted).
+
+    This executor is designed to work with the subprocess-based embedded mode
+    that communicates via REST API.
+    """
+
+    def __init__(self, db: EmbeddedProximaDB):
+        """Initialize with an embedded database instance.
+
+        Args:
+            db: EmbeddedProximaDB instance (must be started)
+        """
+        self._db = db
+
+    async def execute(self, query: "MultiModalQuery") -> "MultiModalQueryResult":
+        """Execute a multi-modal query.
+
+        Args:
+            query: Compiled MultiModalQuery object
+
+        Returns:
+            MultiModalQueryResult with fused results
+        """
+        import math
+
+        from .multimodal_query import MultiModalQueryResult, TimeDecayFunction
+
+        start_time = time.time()
+        component_times: Dict[str, float] = {}
+        component_results: List[List[Dict[str, Any]]] = []
+
+        # Execute each component
+        for i, component in enumerate(query.components):
+            comp_start = time.time()
+
+            comp_type = component.get("type")
+            if comp_type == "vector":
+                results = await self._execute_vector(component)
+            elif comp_type == "graph":
+                # Check if this depends on previous results
+                if component.get("_from_previous") and component_results:
+                    prev_results = component_results[-1]
+                    id_field = component.get("_id_field", "id")
+                    start_nodes = [
+                        r.get(id_field) for r in prev_results if r.get(id_field)
+                    ]
+                    component["start_nodes"] = start_nodes
+                results = await self._execute_graph(component)
+            elif comp_type == "document":
+                results = await self._execute_document(component)
+            elif comp_type == "logs":
+                results = await self._execute_logs(component)
+            elif comp_type == "metrics":
+                results = await self._execute_metrics(component)
+            else:
+                results = []
+
+            component_results.append(results)
+            component_times[f"{comp_type}_{i}"] = (time.time() - comp_start) * 1000
+
+        # Apply joins if specified
+        if query.joins:
+            component_results = self._apply_joins(component_results, query.joins)
+
+        # Fuse results
+        fused = self._fuse_results(
+            component_results,
+            query.fusion_strategy,
+            query.fusion_weights,
+        )
+
+        # Apply time decay if specified
+        if query.time_decay:
+            fused = self._apply_time_decay(fused, query.time_decay)
+
+        # Apply custom scorer if specified
+        if query.custom_scorer:
+            for record in fused:
+                record["_custom_score"] = query.custom_scorer(record)
+            fused.sort(key=lambda x: x.get("_custom_score", 0), reverse=True)
+
+        # Apply limit and offset
+        fused = fused[query.offset : query.offset + query.limit]
+
+        total_time = (time.time() - start_time) * 1000
+
+        return MultiModalQueryResult(
+            records=fused,
+            total_count=len(fused),
+            query_time_ms=total_time,
+            component_times=component_times,
+            fusion_strategy=query.fusion_strategy,
+            metadata={
+                "component_count": len(query.components),
+                "join_count": len(query.joins),
+                "executor": "embedded",
+            },
+        )
+
+    async def _execute_vector(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Execute vector search component against embedded database."""
+        try:
+            collection = component.get("collection", "")
+            query_vector = component.get("query_vector", [])
+            top_k = component.get("top_k", 10)
+            filters = component.get("filter")
+
+            # Use the embedded DB's search method via REST API
+            results = await self._db._search_vectors(
+                collection,
+                query_vector,
+                top_k,
+                filters,
+            )
+
+            # Transform results to standard format
+            return [
+                {
+                    "id": r.get("id", r.get("vector_id", "")),
+                    "score": r.get("score", r.get("similarity", 0.0)),
+                    "metadata": r.get("metadata", {}),
+                    "_source_type": "vector",
+                }
+                for r in results
+            ]
+        except Exception as e:
+            # Log error but return empty results to allow other components to proceed
+            return []
+
+    async def _execute_graph(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Execute graph traversal component against embedded database.
+
+        Performs graph traversal by:
+        1. Getting start nodes (by label or explicit IDs)
+        2. Traversing outgoing edges up to max_depth
+        3. Filtering by edge types if specified
+        """
+        try:
+            import httpx
+
+            graph_id = component.get("graph_id", "")
+            start_nodes = component.get("start_nodes")
+            start_label = component.get("start_label")
+            edge_types = component.get("edge_types")
+            max_depth = component.get("max_depth", 2)
+            limit = component.get("limit", 100)
+
+            results: List[Dict[str, Any]] = []
+
+            # Get start nodes
+            node_ids: List[str] = []
+            if start_nodes:
+                node_ids = start_nodes
+            elif start_label:
+                # Query nodes by label via REST API
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{self._db.rest_url}/api/v1/graphs/{graph_id}/nodes/query",
+                        json={"labels": [start_label]},
+                        timeout=30.0,
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        nodes = data.get("nodes", [])
+                        node_ids = [n.get("id") for n in nodes if n.get("id")]
+
+            if not node_ids:
+                return []
+
+            # BFS traversal
+            visited = set()
+            queue = [(nid, 0) for nid in node_ids[:limit]]  # (node_id, depth)
+
+            async with httpx.AsyncClient() as client:
+                while queue and len(results) < limit:
+                    node_id, depth = queue.pop(0)
+
+                    if node_id in visited:
+                        continue
+                    visited.add(node_id)
+
+                    # Get node info
+                    response = await client.get(
+                        f"{self._db.rest_url}/api/v1/graphs/{graph_id}/nodes/{node_id}",
+                        timeout=10.0,
+                    )
+
+                    if response.status_code == 200:
+                        node_data = response.json().get("node", {})
+                        results.append(
+                            {
+                                "id": node_id,
+                                "node": node_data,
+                                "depth": depth,
+                                "labels": node_data.get("labels", []),
+                                "properties": node_data.get("properties", {}),
+                                "_source_type": "graph",
+                            }
+                        )
+
+                        # Get outgoing edges for further traversal
+                        if depth < max_depth:
+                            edge_response = await client.get(
+                                f"{self._db.rest_url}/api/v1/graphs/{graph_id}/nodes/{node_id}/edges/outgoing",
+                                timeout=10.0,
+                            )
+
+                            if edge_response.status_code == 200:
+                                edges = edge_response.json().get("edges", [])
+                                for edge in edges:
+                                    edge_type = edge.get("edge_type", "")
+                                    if edge_types is None or edge_type in edge_types:
+                                        target = edge.get("to_node_id")
+                                        if target and target not in visited:
+                                            queue.append((target, depth + 1))
+
+            return results[:limit]
+
+        except Exception as e:
+            return []
+
+    async def _execute_document(
+        self, component: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Execute document query component against embedded database."""
+        try:
+            import httpx
+
+            collection = component.get("collection", "")
+            filter_expr = component.get("filter")
+            text_query = component.get("text_query")
+            limit = component.get("limit", 100)
+
+            # Build filter expression
+            filter_str = None
+            if filter_expr:
+                # Convert dict filter to string expression
+                if isinstance(filter_expr, dict):
+                    parts = []
+                    for k, v in filter_expr.items():
+                        if isinstance(v, str):
+                            parts.append(f"$.{k} = '{v}'")
+                        else:
+                            parts.append(f"$.{k} = {v}")
+                    filter_str = " AND ".join(parts)
+                else:
+                    filter_str = str(filter_expr)
+
+            # Query documents via REST API
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self._db.rest_url}/api/v1/documents/{collection}/query",
+                    json={
+                        "filter": filter_str,
+                        "text_query": text_query,
+                        "limit": limit,
+                    },
+                    timeout=30.0,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    documents = data.get("documents", [])
+                    return [
+                        {
+                            "id": doc.get("id", doc.get("_id", "")),
+                            "document": doc,
+                            "_source_type": "document",
+                        }
+                        for doc in documents
+                    ]
+
+            return []
+
+        except Exception as e:
+            return []
+
+    async def _execute_logs(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Execute log query component.
+
+        Note: Log queries are not yet fully implemented in embedded mode.
+        Returns empty results for now.
+        """
+        # Log queries would require observability backend integration
+        return []
+
+    async def _execute_metrics(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Execute metric aggregation component.
+
+        Note: Metric queries are not yet fully implemented in embedded mode.
+        Returns empty results for now.
+        """
+        # Metric queries would require observability backend integration
+        return []
+
+    def _apply_joins(
+        self,
+        component_results: List[List[Dict[str, Any]]],
+        joins: List[Dict[str, Any]],
+    ) -> List[List[Dict[str, Any]]]:
+        """Apply joins between component results."""
+        if len(component_results) < 2:
+            return component_results
+
+        for join in joins:
+            join_type = join.get("join_type", "inner")
+            left_field = join.get("left_field", "id")
+            right_field = join.get("right_field", "id")
+
+            if join_type in ("inner", "semantic"):
+                left_results = component_results[0]
+                right_results = component_results[1]
+
+                # Build index of right results
+                right_index: Dict[str, Dict[str, Any]] = {}
+                for r in right_results:
+                    key = self._extract_field(r, right_field)
+                    if key:
+                        right_index[key] = r
+
+                # Join
+                joined: List[Dict[str, Any]] = []
+                for left in left_results:
+                    left_key = self._extract_field(left, left_field)
+                    if left_key and left_key in right_index:
+                        merged = {**left, **right_index[left_key]}
+                        merged["_join_type"] = join_type
+                        joined.append(merged)
+
+                component_results = [joined] + component_results[2:]
+
+        return component_results
+
+    def _extract_field(self, record: Dict[str, Any], field_path: str) -> Optional[str]:
+        """Extract a field value from a nested record."""
+        parts = field_path.split(".")
+        current: Any = record
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None
+        return str(current) if current is not None else None
+
+    def _fuse_results(
+        self,
+        component_results: List[List[Dict[str, Any]]],
+        strategy: str,
+        weights: Dict[str, float],
+    ) -> List[Dict[str, Any]]:
+        """Fuse results from multiple components."""
+        if not component_results:
+            return []
+
+        if len(component_results) == 1:
+            return component_results[0]
+
+        if strategy == "intersection":
+            return self._fuse_intersection(component_results)
+        elif strategy == "union":
+            return self._fuse_union(component_results)
+        elif strategy == "rrf":
+            return self._fuse_rrf(component_results, weights)
+        elif strategy == "weighted":
+            return self._fuse_weighted(component_results, weights)
+        else:
+            # Default to RRF
+            return self._fuse_rrf(component_results, weights)
+
+    def _fuse_intersection(
+        self,
+        component_results: List[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """Return only records present in all components."""
+        if not component_results:
+            return []
+
+        # Get IDs from first component
+        common_ids = set(r.get("id") for r in component_results[0] if r.get("id"))
+
+        # Intersect with other components
+        for results in component_results[1:]:
+            ids = set(r.get("id") for r in results if r.get("id"))
+            common_ids &= ids
+
+        # Return records with common IDs, merging data from all components
+        merged_records: Dict[str, Dict[str, Any]] = {}
+        for results in component_results:
+            for r in results:
+                record_id = r.get("id")
+                if record_id in common_ids:
+                    if record_id not in merged_records:
+                        merged_records[record_id] = r.copy()
+                    else:
+                        # Merge additional fields
+                        for k, v in r.items():
+                            if k not in merged_records[record_id]:
+                                merged_records[record_id][k] = v
+
+        return list(merged_records.values())
+
+    def _fuse_union(
+        self,
+        component_results: List[List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """Return all records from any component (deduplicated)."""
+        seen_ids: set = set()
+        result: List[Dict[str, Any]] = []
+
+        for results in component_results:
+            for r in results:
+                record_id = r.get("id")
+                if record_id and record_id not in seen_ids:
+                    seen_ids.add(record_id)
+                    result.append(r)
+                elif not record_id:
+                    result.append(r)
+
+        return result
+
+    def _fuse_rrf(
+        self,
+        component_results: List[List[Dict[str, Any]]],
+        weights: Dict[str, float],
+        k: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Reciprocal Rank Fusion.
+
+        RRF score = sum(weight_i / (k + rank_i)) for each component
+
+        This is a robust fusion method that works well when different
+        components have different score scales.
+        """
+        scores: Dict[str, float] = {}
+        records: Dict[str, Dict[str, Any]] = {}
+
+        for comp_idx, results in enumerate(component_results):
+            weight = weights.get(f"component_{comp_idx}", 1.0)
+            # Also check for type-based weights
+            if results and results[0].get("_source_type"):
+                source_type = results[0]["_source_type"]
+                weight = weights.get(f"{source_type}_{comp_idx + 1}", weight)
+
+            for rank, record in enumerate(results):
+                record_id = record.get("id", f"_anon_{comp_idx}_{rank}")
+                rrf_score = weight / (k + rank + 1)
+
+                if record_id in scores:
+                    scores[record_id] += rrf_score
+                else:
+                    scores[record_id] = rrf_score
+                    records[record_id] = record
+
+        # Sort by RRF score
+        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+
+        result: List[Dict[str, Any]] = []
+        for record_id in sorted_ids:
+            record = records[record_id].copy()
+            record["_rrf_score"] = scores[record_id]
+            result.append(record)
+
+        return result
+
+    def _fuse_weighted(
+        self,
+        component_results: List[List[Dict[str, Any]]],
+        weights: Dict[str, float],
+    ) -> List[Dict[str, Any]]:
+        """Weighted score combination."""
+        scores: Dict[str, float] = {}
+        records: Dict[str, Dict[str, Any]] = {}
+
+        for comp_idx, results in enumerate(component_results):
+            weight = weights.get(f"component_{comp_idx}", 1.0)
+
+            for record in results:
+                record_id = record.get("id", id(record))
+                component_score = record.get("score", 1.0) * weight
+
+                if record_id in scores:
+                    scores[record_id] += component_score
+                else:
+                    scores[record_id] = component_score
+                    records[record_id] = record
+
+        # Sort by weighted score
+        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+
+        result: List[Dict[str, Any]] = []
+        for record_id in sorted_ids:
+            record = records[record_id].copy()
+            record["_weighted_score"] = scores[record_id]
+            result.append(record)
+
+        return result
+
+    def _apply_time_decay(
+        self,
+        records: List[Dict[str, Any]],
+        time_decay: tuple,
+    ) -> List[Dict[str, Any]]:
+        """Apply time decay to record scores."""
+        import math
+
+        func, params = time_decay
+        reference_time = params.get("reference_time", int(time.time() * 1e9))
+        halflife_ns = params.get("halflife_hours", 24) * 3600 * 1e9
+        time_field = params.get("time_field", "timestamp")
+
+        for record in records:
+            timestamp = record.get(time_field)
+            if timestamp is None:
+                continue
+
+            age_ns = reference_time - timestamp
+            if age_ns < 0:
+                age_ns = 0
+
+            # Get function type (handle both enum and string)
+            func_name = func.value if hasattr(func, "value") else str(func)
+
+            if func_name == "linear":
+                decay = max(0, 1 - (age_ns / (halflife_ns * 2)))
+            elif func_name == "exponential":
+                decay = math.exp(-0.693 * age_ns / halflife_ns)  # ln(2) = 0.693
+            elif func_name == "gaussian":
+                decay = math.exp(-0.5 * (age_ns / halflife_ns) ** 2)
+            else:
+                decay = 1.0
+
+            # Apply decay to existing score
+            current_score = record.get("score", record.get("_rrf_score", 1.0))
+            record["_decayed_score"] = current_score * decay
+            record["_time_decay"] = decay
+
+        # Re-sort by decayed score
+        records.sort(key=lambda x: x.get("_decayed_score", 0), reverse=True)
+
+        return records

@@ -23,7 +23,7 @@ pub struct BusinessIntelligenceEngine {
     llm_engine: Arc<LLMIntegrationEngine>,
     nl_translator: Arc<NLQueryTranslator>,
     insight_generator: Arc<InsightGenerator>,
-    report_generator: Arc<ReportGenerator>,
+    _report_generator: Arc<ReportGenerator>,
     trend_analyzer: Arc<TrendAnalyzer>,
     config: BIEngineConfig,
 }
@@ -202,7 +202,7 @@ impl BusinessIntelligenceEngine {
             llm_engine,
             nl_translator,
             insight_generator,
-            report_generator,
+            _report_generator: report_generator,
             trend_analyzer,
             config,
         })
@@ -727,8 +727,6 @@ impl Default for BIEngineConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     #[ignore = "Requires async runtime and complex mocking setup"]
     fn test_performance_status_calculation() {

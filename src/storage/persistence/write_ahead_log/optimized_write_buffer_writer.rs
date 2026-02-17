@@ -53,8 +53,10 @@ struct WalWriteRequest {
 #[derive(Clone)]
 struct CachedAssignment {
     storage_url: String,
+    #[allow(dead_code)]
     collection_wal_dir: String,
     logs_dir: String,
+    #[allow(dead_code)]
     cached_at: Instant,
 }
 
@@ -67,7 +69,7 @@ enum FlushReason {
 }
 
 #[derive(Default, Clone)]
-struct WalWriterMetrics {
+pub struct WalWriterMetrics {
     // Basic counters
     total_writes: u64,
     total_bytes_written: u64,
@@ -533,8 +535,9 @@ impl OptimizedWriteBufferWriter {
     }
 
     /// Optimized serialization
+    #[allow(dead_code)]
     fn serialize_vectors_optimized(
-        vectors: &[VectorRecord],
+        _vectors: &[VectorRecord],
         // TODO: Restore when OptimizedFormat is available
         // format: &OptimizedFormat,
     ) -> Result<Vec<u8>> {

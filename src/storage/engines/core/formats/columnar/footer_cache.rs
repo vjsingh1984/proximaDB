@@ -396,8 +396,7 @@ impl ParquetFooterCache {
         // Check file size cache first
         {
             let size_cache = self.file_size_cache.read().await;
-            let key = file_path;
-            let key_string = key.to_string();
+            let key_string = file_path.to_string();
             if let Some(&(size, modified)) = size_cache.get(&key_string) {
                 return Ok((size, modified));
             }
@@ -407,9 +406,6 @@ impl ParquetFooterCache {
         let fs = self.filesystem.get_filesystem(file_path)?;
         let metadata = fs.metadata(file_path).await?;
 
-        // For mock implementation, return reasonable values
-        let size_field = "size";
-        let modified_field = "modified";
         // Use FileMetadata fields directly
         let file_size = metadata.size;
         let modified_time = metadata
@@ -455,7 +451,6 @@ impl ParquetFooterCache {
         }
 
         // Check if file is accessed frequently enough
-        let key = file_path;
         let key = file_path.to_string();
         if let Some(footer) = self.cache.get(&key).await {
             if footer.access_count >= self.config.prefetch_threshold {

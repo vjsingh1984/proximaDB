@@ -28,6 +28,7 @@ pub struct AccessPatternTracker {
 
 /// Access history for a single file
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct FileAccessHistory {
     /// Recent access times
     access_times: VecDeque<Instant>,
@@ -49,6 +50,7 @@ struct FileAccessHistory {
 
 /// Global access statistics
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct GlobalAccessStats {
     total_files_accessed: usize,
     total_accesses: u64,
@@ -200,7 +202,7 @@ impl AccessPatternTracker {
     /// Get files that are frequently accessed together
     pub async fn get_correlated_files(&self, path: &str) -> Vec<String> {
         // Track files accessed within a short time window
-        let now = Instant::now();
+        let _now = Instant::now();
         let window = Duration::from_secs(10); // 10 second correlation window
 
         // Find recent accesses to the given file

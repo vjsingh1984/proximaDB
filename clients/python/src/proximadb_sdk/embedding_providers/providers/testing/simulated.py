@@ -4,14 +4,14 @@ Simulated Embedding Provider
 Fast deterministic embeddings for testing without model downloads.
 """
 
-from typing import List
-import numpy as np
 import hashlib
+from typing import List
+
+import numpy as np
 
 from ...core.base import BaseEmbeddingProvider
-from ...core.config import ProviderConfig, ModelMetadata
+from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry
-
 
 SIMULATED_MODELS = {
     "simulated-embeddings": ModelMetadata(
@@ -20,7 +20,7 @@ SIMULATED_MODELS = {
         max_length=512,
         provider_type="simulated",
         description="Fast hash-based embeddings for testing",
-        use_case="Testing, development, CI/CD pipelines"
+        use_case="Testing, development, CI/CD pipelines",
     )
 }
 
@@ -29,7 +29,7 @@ SIMULATED_MODELS = {
     name="simulated",
     models=SIMULATED_MODELS,
     aliases=["test", "mock"],
-    description="Fast deterministic embeddings for testing (no model download)"
+    description="Fast deterministic embeddings for testing (no model download)",
 )
 class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     """
@@ -59,7 +59,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
             model=SIMULATED_MODELS["simulated-embeddings"],
             batch_size=1000,
             normalize=True,
-            extra={"seed": 42, "method": "hash"}
+            extra={"seed": 42, "method": "hash"},
         )
 
     def _load_model(self):
@@ -92,7 +92,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
 
     def _hash_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding using deterministic hash"""
-        hash_input = f"{text}_{seed}".encode('utf-8')
+        hash_input = f"{text}_{seed}".encode("utf-8")
         hash_obj = hashlib.sha256(hash_input)
 
         embedding = []
@@ -100,12 +100,14 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
 
         for i in range(dimension):
             if i * 4 >= len(hash_bytes):
-                hash_input = f"{text}_{seed}_{i}".encode('utf-8')
+                hash_input = f"{text}_{seed}_{i}".encode("utf-8")
                 hash_obj = hashlib.sha256(hash_input)
                 hash_bytes = hash_obj.digest()
 
             byte_idx = (i * 4) % len(hash_bytes)
-            val = int.from_bytes(hash_bytes[byte_idx:byte_idx+4], 'big', signed=False)
+            val = int.from_bytes(
+                hash_bytes[byte_idx : byte_idx + 4], "big", signed=False
+            )
             normalized_val = (val / (2**32 - 1)) * 2 - 1
             embedding.append(normalized_val)
 

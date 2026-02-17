@@ -118,6 +118,7 @@ impl OptimizationTarget {
 #[derive(Debug, Clone)]
 pub struct RewardCalculator {
     /// Default optimization goal
+    #[allow(dead_code)]
     default_goal: OptimizationGoal,
     /// Default target thresholds
     default_target: OptimizationTarget,
@@ -654,7 +655,7 @@ mod tests {
         let calc = RewardCalculator::new(OptimizationGoal::Balanced);
 
         // Standard calculate (no size awareness) - 40ms latency
-        let standard_reward = calc.calculate(40.0, 0.95, 100.0, None);
+        let _standard_reward = calc.calculate(40.0, 0.95, 100.0, None);
 
         // Size-aware for small collection (2K) - should be worse
         let small_reward = calc.calculate_with_collection_size(40.0, 0.95, 100.0, 2_000, None);

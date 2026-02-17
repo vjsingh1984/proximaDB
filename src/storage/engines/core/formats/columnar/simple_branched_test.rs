@@ -17,7 +17,7 @@ mod tests {
         // Create simple test data without metadata to avoid MapArray issues
         let test_records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
-                id: format!("id_{}", i),
+                id: format!("id_{i}"),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(), // Empty to avoid MapArray
                 timestamp: Some(i as i64),
@@ -37,7 +37,7 @@ mod tests {
         writer.finalize().await.unwrap();
 
         // Read back
-        let filesystem = std::sync::Arc::new(
+        let _filesystem = std::sync::Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
@@ -50,7 +50,7 @@ mod tests {
         // let reader = UnifiedParquetReader::new(filesystem, vec![file_path.to_str().unwrap().to_string()]).await.unwrap();
 
         // Test reading without filters (no MapArray projection issues)
-        let all_ids = test_records
+        let _all_ids = test_records
             .iter()
             .map(|r| r.id.clone())
             .collect::<Vec<_>>();

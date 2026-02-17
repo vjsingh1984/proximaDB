@@ -11,6 +11,7 @@ Copyright 2025 ProximaDB
 """
 
 import warnings
+
 from .grpc_sync import ProximaDBSyncGrpcClient
 
 # Issue deprecation warning when module is imported
@@ -18,7 +19,7 @@ warnings.warn(
     "grpc_async.ProximaDBClient is deprecated. "
     "Use grpc_sync.ProximaDBSyncGrpcClient instead.",
     DeprecationWarning,
-    stacklevel=2
+    stacklevel=2,
 )
 
 
@@ -51,7 +52,7 @@ class ProximaDBClient(ProximaDBSyncGrpcClient):
             "grpc_async.ProximaDBClient is deprecated. "
             "Use grpc_sync.ProximaDBSyncGrpcClient instead.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
         super().__init__(endpoint, **kwargs)
 

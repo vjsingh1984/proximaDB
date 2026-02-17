@@ -41,6 +41,7 @@ pub struct ProtoSerializationStrategy {
     storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
 
     /// Flush coordinator
+    #[allow(dead_code)]
     flush_coordinator: Arc<WALFlushCoordinator>,
 
     /// Distance computation
@@ -181,7 +182,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
-        base_location: &str,
+        _base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors",
@@ -570,6 +571,7 @@ impl ProtoSerializationStrategy {
     }
 
     /// Trigger background flush for a collection
+    #[allow(dead_code)]
     fn trigger_background_flush(&self, collection_id: &str) {
         let collection_id = collection_id.to_string();
         let _memtable = self.memtable_manager.clone();

@@ -264,7 +264,6 @@ impl PhysicalOperator for ExpandOperator {
 mod tests {
     use super::*;
     use crate::graph::query::operators::scan::NodeScanOperator;
-    use crate::proto::proximadb_v1::{PropertyValue, property_value::Value};
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Arc;

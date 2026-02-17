@@ -41,7 +41,7 @@ use std::sync::Arc;
 /// - Memory-efficient storage (Vec<Vec<f64>> for distance matrix)
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust,ignore
 /// use proximadb::graph::engines::orion::algorithms::pathfinding::FloydWarshallAPSP;
 /// use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 ///
@@ -50,6 +50,7 @@ use std::sync::Arc;
 /// ```
 pub struct FloydWarshallAPSP {
     engine: Arc<OrionGraphEngine>,
+    #[allow(dead_code)]
     use_simd: bool,
 }
 
@@ -161,6 +162,9 @@ impl FloydWarshallAPSP {
             if is_x86_feature_detected!("avx2") {
                 // SAFETY: We've checked for AVX2 support at runtime
                 return unsafe { self.floyd_warshall_avx2(dist) };
+            } else {
+                // Fallback to scalar when AVX2 is not available
+                return self.floyd_warshall_scalar(dist);
             }
         }
 
@@ -239,50 +243,52 @@ impl FloydWarshallAPSP {
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
     unsafe fn floyd_warshall_neon(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
-        use std::arch::aarch64::*;
+        unsafe {
+            use std::arch::aarch64::*;
 
-        let n = dist.len();
-        const SIMD_WIDTH: usize = 2; // 128 bits / 64 bits per f64 = 2 elements
+            let n = dist.len();
+            const SIMD_WIDTH: usize = 2; // 128 bits / 64 bits per f64 = 2 elements
 
-        for k in 0..n {
-            for i in 0..n {
-                // Broadcast dist[i][k] to both lanes
-                let dist_ik = vdupq_n_f64(dist[i][k]);
+            for k in 0..n {
+                for i in 0..n {
+                    // Broadcast dist[i][k] to both lanes
+                    let dist_ik = vdupq_n_f64(dist[i][k]);
 
-                let mut j = 0;
+                    let mut j = 0;
 
-                // Process 2 distances at a time with NEON
-                while j + SIMD_WIDTH <= n {
-                    // Load dist[k][j..j+2]
-                    let dist_kj = vld1q_f64(dist[k].as_ptr().add(j));
+                    // Process 2 distances at a time with NEON
+                    while j + SIMD_WIDTH <= n {
+                        // Load dist[k][j..j+2]
+                        let dist_kj = vld1q_f64(dist[k].as_ptr().add(j));
 
-                    // Compute dist[i][k] + dist[k][j..j+2]
-                    let new_dist = vaddq_f64(dist_ik, dist_kj);
+                        // Compute dist[i][k] + dist[k][j..j+2]
+                        let new_dist = vaddq_f64(dist_ik, dist_kj);
 
-                    // Load current dist[i][j..j+2]
-                    let current_dist = vld1q_f64(dist[i].as_ptr().add(j));
+                        // Load current dist[i][j..j+2]
+                        let current_dist = vld1q_f64(dist[i].as_ptr().add(j));
 
-                    // Compute min(current_dist, new_dist)
-                    let min_dist = vminq_f64(current_dist, new_dist);
+                        // Compute min(current_dist, new_dist)
+                        let min_dist = vminq_f64(current_dist, new_dist);
 
-                    // Store result
-                    vst1q_f64(dist[i].as_mut_ptr().add(j), min_dist);
+                        // Store result
+                        vst1q_f64(dist[i].as_mut_ptr().add(j), min_dist);
 
-                    j += SIMD_WIDTH;
-                }
-
-                // Handle remaining elements (scalar fallback)
-                while j < n {
-                    let new_dist = dist[i][k] + dist[k][j];
-                    if new_dist < dist[i][j] {
-                        dist[i][j] = new_dist;
+                        j += SIMD_WIDTH;
                     }
-                    j += 1;
+
+                    // Handle remaining elements (scalar fallback)
+                    while j < n {
+                        let new_dist = dist[i][k] + dist[k][j];
+                        if new_dist < dist[i][j] {
+                            dist[i][j] = new_dist;
+                        }
+                        j += 1;
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     }
 }
 

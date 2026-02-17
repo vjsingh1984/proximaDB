@@ -37,31 +37,39 @@ Usage:
 
 import asyncio
 import logging
+import threading
 import time
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import (
-    Any, AsyncGenerator, Callable, Dict, Generator,
-    List, Optional, Protocol, Tuple, Union
+    Any,
+    AsyncGenerator,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    Union,
 )
-import threading
-from contextlib import asynccontextmanager, contextmanager
 
 from .document_processor import (
-    DocumentType,
     DocumentProcessor,
-    ProcessorConfig,
-    ProcessingResult,
-    ProcessedChunk,
-    VectorRecord,
+    DocumentProcessorRegistry,
+    DocumentType,
     EmbeddingProviderAdapter,
     PlaceholderEmbeddingProvider,
-    DocumentProcessorRegistry,
-    get_processor_registry,
-    detect_document_type,
-    create_processor,
+    ProcessedChunk,
+    ProcessingResult,
+    ProcessorConfig,
+    VectorRecord,
     create_embedding_adapter,
+    create_processor,
+    detect_document_type,
+    get_processor_registry,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,15 +79,18 @@ logger = logging.getLogger(__name__)
 # Pipeline Configuration
 # =============================================================================
 
+
 class PipelineMode(Enum):
     """Processing mode for the pipeline"""
-    PROCESS_ONLY = "process_only"      # Chunk + prepare (no embedding)
-    EMBED = "embed"                     # Chunk + embed (no store)
-    STORE = "store"                     # Chunk + embed + store
+
+    PROCESS_ONLY = "process_only"  # Chunk + prepare (no embedding)
+    EMBED = "embed"  # Chunk + embed (no store)
+    STORE = "store"  # Chunk + embed + store
 
 
 class ErrorStrategy(Enum):
     """Error handling strategy"""
+
     FAIL_FAST = "fail_fast"
     SKIP = "skip"
     COLLECT = "collect"
@@ -88,6 +99,7 @@ class ErrorStrategy(Enum):
 @dataclass
 class PipelineConfig:
     """Configuration for the document pipeline"""
+
     # Processing mode
     mode: PipelineMode = PipelineMode.EMBED
 
@@ -121,6 +133,7 @@ class PipelineConfig:
 @dataclass
 class PipelineMetrics:
     """Metrics collected during pipeline execution"""
+
     total_documents: int = 0
     processed_documents: int = 0
     failed_documents: int = 0
@@ -148,13 +161,14 @@ class PipelineMetrics:
             "total_processing_time_sec": self.total_processing_time_sec,
             "embedding_time_sec": self.embedding_time_sec,
             "storage_time_sec": self.storage_time_sec,
-            "error_count": len(self.errors)
+            "error_count": len(self.errors),
         }
 
 
 @dataclass
 class BatchResult:
     """Result of batch processing"""
+
     results: List[ProcessingResult] = field(default_factory=list)
     metrics: PipelineMetrics = field(default_factory=PipelineMetrics)
 
@@ -179,6 +193,7 @@ class BatchResult:
 # Vector Store Protocol
 # =============================================================================
 
+
 class VectorStoreProtocol(Protocol):
     """Protocol for vector stores"""
 
@@ -190,6 +205,7 @@ class VectorStoreProtocol(Protocol):
 # =============================================================================
 # Progress Tracker
 # =============================================================================
+
 
 class ProgressTracker:
     """Tracks and reports pipeline progress"""
@@ -238,6 +254,7 @@ class ProgressTracker:
 # Document Pipeline
 # =============================================================================
 
+
 class DocumentPipeline:
     """
     Unified document processing pipeline.
@@ -271,7 +288,7 @@ class DocumentPipeline:
         self,
         embedding_provider: Optional[Any] = None,
         vector_store: Optional[VectorStoreProtocol] = None,
-        config: Optional[PipelineConfig] = None
+        config: Optional[PipelineConfig] = None,
     ):
         self.config = config or PipelineConfig()
         self.vector_store = vector_store
@@ -279,14 +296,13 @@ class DocumentPipeline:
         # Initialize embedding adapter
         if embedding_provider:
             self.embedding_adapter = create_embedding_adapter(
-                embedding_provider,
-                batch_size=self.config.embedding_batch_size
+                embedding_provider, batch_size=self.config.embedding_batch_size
             )
         elif self.config.use_placeholder_embeddings:
             self.embedding_adapter = create_embedding_adapter(
                 None,
                 use_placeholder=True,
-                placeholder_dimension=self.config.placeholder_dimension
+                placeholder_dimension=self.config.placeholder_dimension,
             )
         else:
             self.embedding_adapter = None
@@ -305,23 +321,21 @@ class DocumentPipeline:
     # Configuration API
     # -------------------------------------------------------------------------
 
-    def with_embedding_provider(self, provider: Any) -> 'DocumentPipeline':
+    def with_embedding_provider(self, provider: Any) -> "DocumentPipeline":
         """Set embedding provider"""
         self.embedding_adapter = create_embedding_adapter(
-            provider,
-            batch_size=self.config.embedding_batch_size
+            provider, batch_size=self.config.embedding_batch_size
         )
         return self
 
-    def with_vector_store(self, store: VectorStoreProtocol) -> 'DocumentPipeline':
+    def with_vector_store(self, store: VectorStoreProtocol) -> "DocumentPipeline":
         """Set vector store"""
         self.vector_store = store
         return self
 
     def with_progress_callback(
-        self,
-        callback: Callable[[int, int, str], None]
-    ) -> 'DocumentPipeline':
+        self, callback: Callable[[int, int, str], None]
+    ) -> "DocumentPipeline":
         """Set progress callback"""
         self.config.progress_callback = callback
         self._progress = ProgressTracker(callback)
@@ -337,7 +351,7 @@ class DocumentPipeline:
         source_id: str,
         metadata: Optional[Dict[str, Any]] = None,
         document_type: Optional[DocumentType] = None,
-        processor_name: Optional[str] = None
+        processor_name: Optional[str] = None,
     ) -> ProcessingResult:
         """
         Process a single document.
@@ -356,14 +370,20 @@ class DocumentPipeline:
 
         try:
             # Step 1: Get processor
-            processor = self._get_processor(content, source_id, document_type, processor_name)
+            processor = self._get_processor(
+                content, source_id, document_type, processor_name
+            )
 
             # Step 2: Process with processor
             result = await processor.process(
                 content=content,
                 source_id=source_id,
-                embedding_adapter=self.embedding_adapter if self.config.mode != PipelineMode.PROCESS_ONLY else None,
-                metadata=metadata
+                embedding_adapter=(
+                    self.embedding_adapter
+                    if self.config.mode != PipelineMode.PROCESS_ONLY
+                    else None
+                ),
+                metadata=metadata,
             )
 
             # Update metrics
@@ -385,17 +405,14 @@ class DocumentPipeline:
             with self._lock:
                 self._metrics.total_documents += 1
                 self._metrics.failed_documents += 1
-                self._metrics.errors.append({
-                    "source_id": source_id,
-                    "error": str(e)
-                })
+                self._metrics.errors.append({"source_id": source_id, "error": str(e)})
 
             return ProcessingResult(
                 success=False,
                 source_id=source_id,
                 document_type=document_type or DocumentType.UNKNOWN,
                 errors=[{"stage": "pipeline", "error": str(e)}],
-                metrics={"processing_time_sec": time.time() - start_time}
+                metrics={"processing_time_sec": time.time() - start_time},
             )
 
     async def process_and_store(
@@ -403,7 +420,7 @@ class DocumentPipeline:
         content: str,
         source_id: str,
         metadata: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> ProcessingResult:
         """
         Process document and store vectors in vector store.
@@ -451,9 +468,7 @@ class DocumentPipeline:
     # -------------------------------------------------------------------------
 
     async def process_batch(
-        self,
-        documents: List[Dict[str, Any]],
-        concurrent_limit: Optional[int] = None
+        self, documents: List[Dict[str, Any]], concurrent_limit: Optional[int] = None
     ) -> BatchResult:
         """
         Process multiple documents concurrently.
@@ -483,7 +498,7 @@ class DocumentPipeline:
                     source_id=doc.get("source_id", "unknown"),
                     metadata=doc.get("metadata"),
                     document_type=doc.get("document_type"),
-                    processor_name=doc.get("processor")
+                    processor_name=doc.get("processor"),
                 )
                 self._progress.update(1)
                 return result
@@ -498,24 +513,21 @@ class DocumentPipeline:
         processed_results = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                processed_results.append(ProcessingResult(
-                    success=False,
-                    source_id=documents[i].get("source_id", "unknown"),
-                    document_type=DocumentType.UNKNOWN,
-                    errors=[{"error": str(result)}]
-                ))
+                processed_results.append(
+                    ProcessingResult(
+                        success=False,
+                        source_id=documents[i].get("source_id", "unknown"),
+                        document_type=DocumentType.UNKNOWN,
+                        errors=[{"error": str(result)}],
+                    )
+                )
             else:
                 processed_results.append(result)
 
-        return BatchResult(
-            results=processed_results,
-            metrics=self._metrics
-        )
+        return BatchResult(results=processed_results, metrics=self._metrics)
 
     async def process_batch_and_store(
-        self,
-        documents: List[Dict[str, Any]],
-        concurrent_limit: Optional[int] = None
+        self, documents: List[Dict[str, Any]], concurrent_limit: Optional[int] = None
     ) -> BatchResult:
         """
         Process and store multiple documents.
@@ -541,10 +553,7 @@ class DocumentPipeline:
 
             except Exception as e:
                 logger.error(f"Batch storage failed: {e}")
-                self._metrics.errors.append({
-                    "stage": "batch_storage",
-                    "error": str(e)
-                })
+                self._metrics.errors.append({"stage": "batch_storage", "error": str(e)})
 
         return batch_result
 
@@ -553,9 +562,7 @@ class DocumentPipeline:
     # -------------------------------------------------------------------------
 
     async def process_file(
-        self,
-        file_path: Union[str, Path],
-        encoding: str = "utf-8"
+        self, file_path: Union[str, Path], encoding: str = "utf-8"
     ) -> ProcessingResult:
         """
         Process a single file.
@@ -574,7 +581,7 @@ class DocumentPipeline:
                 success=False,
                 source_id=str(file_path),
                 document_type=DocumentType.UNKNOWN,
-                errors=[{"error": f"File not found: {file_path}"}]
+                errors=[{"error": f"File not found: {file_path}"}],
             )
 
         try:
@@ -586,8 +593,8 @@ class DocumentPipeline:
                 metadata={
                     "file_path": str(file_path),
                     "file_name": file_path.name,
-                    "file_extension": file_path.suffix
-                }
+                    "file_extension": file_path.suffix,
+                },
             )
 
         except Exception as e:
@@ -595,7 +602,7 @@ class DocumentPipeline:
                 success=False,
                 source_id=str(file_path),
                 document_type=DocumentType.UNKNOWN,
-                errors=[{"error": f"Failed to read file: {e}"}]
+                errors=[{"error": f"Failed to read file: {e}"}],
             )
 
     async def process_directory(
@@ -603,7 +610,7 @@ class DocumentPipeline:
         directory: Union[str, Path],
         pattern: str = "**/*",
         recursive: bool = True,
-        extensions: Optional[List[str]] = None
+        extensions: Optional[List[str]] = None,
     ) -> BatchResult:
         """
         Process all matching files in a directory.
@@ -651,20 +658,14 @@ class DocumentPipeline:
         self._progress.complete()
 
         # Aggregate metrics
-        return BatchResult(
-            results=results,
-            metrics=self._metrics
-        )
+        return BatchResult(results=results, metrics=self._metrics)
 
     # -------------------------------------------------------------------------
     # Streaming Processing
     # -------------------------------------------------------------------------
 
     async def process_stream(
-        self,
-        content: str,
-        source_id: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, content: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
     ) -> AsyncGenerator[ProcessedChunk, None]:
         """
         Process document as a stream, yielding chunks as they're ready.
@@ -697,7 +698,7 @@ class DocumentPipeline:
         content: str,
         source_id: str,
         document_type: Optional[DocumentType] = None,
-        processor_name: Optional[str] = None
+        processor_name: Optional[str] = None,
     ) -> DocumentProcessor:
         """Get appropriate processor for content"""
         if processor_name:
@@ -713,8 +714,9 @@ class DocumentPipeline:
         if self.config.auto_detect_type:
             return self._registry.detect_and_get(content, source_id)
 
-        return self._registry.get(self.config.default_processor) or \
-               create_processor("text", self.config.processor_config)
+        return self._registry.get(self.config.default_processor) or create_processor(
+            "text", self.config.processor_config
+        )
 
     # -------------------------------------------------------------------------
     # Metrics and Monitoring
@@ -734,11 +736,12 @@ class DocumentPipeline:
 # Factory Functions
 # =============================================================================
 
+
 def create_document_pipeline(
     embedding_provider: Optional[Any] = None,
     vector_store: Optional[VectorStoreProtocol] = None,
     mode: PipelineMode = PipelineMode.EMBED,
-    **kwargs
+    **kwargs,
 ) -> DocumentPipeline:
     """
     Create a document processing pipeline.
@@ -762,15 +765,12 @@ def create_document_pipeline(
     config = PipelineConfig(mode=mode, **kwargs)
 
     return DocumentPipeline(
-        embedding_provider=embedding_provider,
-        vector_store=vector_store,
-        config=config
+        embedding_provider=embedding_provider, vector_store=vector_store, config=config
     )
 
 
 def create_code_pipeline(
-    embedding_provider: Optional[Any] = None,
-    **kwargs
+    embedding_provider: Optional[Any] = None, **kwargs
 ) -> DocumentPipeline:
     """
     Create a pipeline optimized for code processing.
@@ -786,30 +786,27 @@ def create_code_pipeline(
         extract_symbols=True,
         include_docstrings=True,
         include_type_hints=True,
-        max_text_length=16384
+        max_text_length=16384,
     )
 
     config = PipelineConfig(
         processor_config=processor_config,
         embedding_batch_size=16,
         default_processor="code",
-        **kwargs
+        **kwargs,
     )
 
-    return DocumentPipeline(
-        embedding_provider=embedding_provider,
-        config=config
-    )
+    return DocumentPipeline(embedding_provider=embedding_provider, config=config)
 
 
 # =============================================================================
 # Context Managers
 # =============================================================================
 
+
 @contextmanager
 def pipeline_context(
-    embedding_provider: Optional[Any] = None,
-    **kwargs
+    embedding_provider: Optional[Any] = None, **kwargs
 ) -> Generator[DocumentPipeline, None, None]:
     """
     Sync context manager for pipeline usage.
@@ -828,8 +825,7 @@ def pipeline_context(
 
 @asynccontextmanager
 async def async_pipeline_context(
-    embedding_provider: Optional[Any] = None,
-    **kwargs
+    embedding_provider: Optional[Any] = None, **kwargs
 ) -> AsyncGenerator[DocumentPipeline, None]:
     """
     Async context manager for pipeline usage.

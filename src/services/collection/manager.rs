@@ -689,7 +689,6 @@ impl CollectionService {
     }
 
     /// Convert Collection to core Collection - direct proto to core mapping
-
     /// Get IndexConfig for a collection by name or UUID with caching
     pub async fn native_index_config(
         &self,
@@ -1291,6 +1290,7 @@ impl CollectionService {
     }
 
     /// Validate collection configuration
+    #[allow(dead_code)]
     fn validate_collection_config(&self, config: &CollectionConfig) -> Result<()> {
         if config.name.is_empty() {
             return Err(anyhow::anyhow!("Collection name cannot be empty"));
@@ -1722,6 +1722,10 @@ mod tests {
             tags: vec![],
             owner: Some("test".to_string()),
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         // Test create with valid config
@@ -1849,6 +1853,10 @@ mod tests {
                 owner: Some("test".to_string()),
                 embedding_models: vec![],
                 storage_config: None,
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             };
 
             let result = service.create_collection(&config).await.unwrap();

@@ -35,15 +35,19 @@ Top providers:
 # Core components
 from .core import (
     BaseEmbeddingProvider,
-    ProviderConfig,
-    ModelMetadata,
-    ProviderRegistry,
     ModelCache,
+    ModelMetadata,
+    ProviderConfig,
+    ProviderRegistry,
 )
 
 # Import providers to trigger registration
 from .providers.local.gte_qwen_v2 import GTEQwenProvider, GTEQwenProviderV2
-from .providers.testing.simulated_v2 import SimulatedEmbeddingProvider, SimulatedEmbeddingProviderV2
+from .providers.testing.simulated_v2 import (
+    SimulatedEmbeddingProvider,
+    SimulatedEmbeddingProviderV2,
+)
+
 
 # Convenience functions
 def get_provider(name: str, **config_kwargs):
@@ -101,7 +105,7 @@ def get_provider(name: str, **config_kwargs):
             mteb_score=default_config.model.mteb_score,
             languages=default_config.model.languages,
             description=default_config.model.description,
-            use_case=default_config.model.use_case
+            use_case=default_config.model.use_case,
         )
         config_kwargs["model"] = new_model
 
@@ -174,10 +178,11 @@ def get_embedding_provider(provider: str, **kwargs):
         >>> provider = get_provider("simulated", dimension=384)
     """
     import warnings
+
     warnings.warn(
         "get_embedding_provider() is deprecated. Use get_provider() instead.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     return get_provider(provider, **kwargs)
 
@@ -199,11 +204,12 @@ def get_default_embedding_provider():
         >>> provider = get_provider("simulated")
     """
     import warnings
+
     warnings.warn(
         "get_default_embedding_provider() is deprecated. "
         "Use get_provider('simulated') instead.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     return get_provider("simulated")
 

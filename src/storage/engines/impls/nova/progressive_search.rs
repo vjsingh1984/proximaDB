@@ -18,11 +18,13 @@ use tracing::{debug, info, instrument};
 
 // Create compatibility types for progressive search
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BinarySketch {
     bits: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct Int8Vector {
     values: Vec<i8>,
     scale: f32,
@@ -422,7 +424,7 @@ impl ProgressiveColumnarSearch {
         candidates: Vec<ProgressiveCandidate>,
         total_processed: &mut usize,
         total_filtered: &mut usize,
-        peak_memory: &mut usize,
+        _peak_memory: &mut usize,
     ) -> Result<(Vec<ProgressiveCandidate>, StageMetrics)> {
         let stage_start = std::time::Instant::now();
         let candidates_in = candidates.len();
@@ -512,7 +514,7 @@ impl ProgressiveColumnarSearch {
         candidates: Vec<ProgressiveCandidate>,
         total_processed: &mut usize,
         total_filtered: &mut usize,
-        peak_memory: &mut usize,
+        _peak_memory: &mut usize,
     ) -> Result<(Vec<ProgressiveCandidate>, StageMetrics)> {
         let stage_start = std::time::Instant::now();
         let candidates_in = candidates.len();
@@ -603,7 +605,7 @@ impl ProgressiveColumnarSearch {
         candidates: Vec<ProgressiveCandidate>,
         total_processed: &mut usize,
         total_filtered: &mut usize,
-        peak_memory: &mut usize,
+        _peak_memory: &mut usize,
     ) -> Result<(Vec<ProgressiveCandidate>, StageMetrics)> {
         let stage_start = std::time::Instant::now();
         let candidates_in = candidates.len();
@@ -694,7 +696,7 @@ impl ProgressiveColumnarSearch {
         candidates: Vec<ProgressiveCandidate>,
         top_k: usize,
         total_processed: &mut usize,
-        peak_memory: &mut usize,
+        _peak_memory: &mut usize,
     ) -> Result<(Vec<VectorRecord>, StageMetrics)> {
         let stage_start = std::time::Instant::now();
         let candidates_in = candidates.len();
@@ -897,7 +899,7 @@ impl Default for ProgressiveSearchConfig {
 
 // Additional implementations for helper types
 impl DistanceTable {
-    fn compute_for_query(query: &[f32], segments: u8, bits: u8) -> Result<Self> {
+    fn compute_for_query(_query: &[f32], segments: u8, bits: u8) -> Result<Self> {
         // Simulate distance table computation
         let centroids_per_segment = 1 << bits; // 2^bits
         let mut table = Vec::new();
@@ -923,6 +925,7 @@ impl DistanceTable {
     }
 }
 
+#[allow(dead_code)]
 impl BinarySketch {
     fn from_vector(vector: &[f32], threshold: f32) -> Self {
         let dimension = vector.len();
@@ -947,6 +950,7 @@ impl BinarySketch {
     }
 }
 
+#[allow(dead_code)]
 impl Int8Vector {
     fn from_vector(vector: &[f32]) -> Self {
         // Find min and max for scaling

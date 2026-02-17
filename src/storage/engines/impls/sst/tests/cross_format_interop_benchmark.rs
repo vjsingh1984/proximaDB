@@ -54,6 +54,7 @@ mod tests {
     struct FormatBenchmarkResult {
         engine_format: String,
         flush_time_ms: f64,
+        #[allow(dead_code)]
         file_size_bytes: u64,
         full_scan_time_ms: f64,
         filtered_read_time_ms: f64,
@@ -235,6 +236,8 @@ mod tests {
                 collection_id: collection_id.clone(),
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let scan_start = Instant::now();
@@ -263,6 +266,8 @@ mod tests {
                 collection_id: collection_id.clone(),
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let filter_start = Instant::now();
@@ -341,8 +346,9 @@ mod tests {
                 storage_path: base_path.clone(),
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
-
         let scan_start = Instant::now();
         let _scan_results = engine.search_vectors_unified(&ctx).await?;
         let full_scan_time_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
@@ -370,8 +376,9 @@ mod tests {
                 storage_path: base_path.clone(),
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
-
         let filter_start = Instant::now();
         let _filtered_results = engine.search_vectors_unified(&filtered_ctx).await?;
         let filtered_read_time_ms = filter_start.elapsed().as_secs_f64() * 1000.0;
@@ -445,8 +452,9 @@ mod tests {
                 storage_path: base_path.clone(),
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
-
         let scan_start = Instant::now();
         let _scan_results = engine.search_vectors_unified(&ctx).await?;
         let full_scan_time_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
@@ -474,8 +482,9 @@ mod tests {
                 storage_path: base_path.clone(),
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
-
         let filter_start = Instant::now();
         let _filtered_results = engine.search_vectors_unified(&filtered_ctx).await?;
         let filtered_read_time_ms = filter_start.elapsed().as_secs_f64() * 1000.0;
@@ -803,7 +812,7 @@ mod tests {
 
         let num_vectors = 1000;
         let dimension = 128;
-        let vectors = generate_test_vectors(num_vectors, dimension);
+        let _vectors = generate_test_vectors(num_vectors, dimension);
 
         // Calculate raw size (uncompressed)
         let raw_vector_size = num_vectors * dimension * 4; // f32 = 4 bytes

@@ -1383,7 +1383,6 @@ impl IcebergFormat {
         batch_size: usize,
         projection: Option<&Vec<String>>,
     ) -> Result<Vec<RecordBatch>> {
-        use arrow_array::RecordBatchReader;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 

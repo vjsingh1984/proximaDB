@@ -10,13 +10,14 @@ Tests the Docker demo container functionality including:
 - Performance validation
 """
 
+import json
+import os
+import subprocess
+import time
+from typing import Dict, List, Optional
+
 import pytest
 import requests
-import time
-import json
-import subprocess
-from typing import Dict, List, Optional
-import os
 
 
 class TestDockerDemoContainer:
@@ -39,7 +40,7 @@ class TestDockerDemoContainer:
         """Wait for container to be ready before running tests"""
         timeout = 60
         start_time = time.time()
-        
+
         while time.time() - start_time < timeout:
             try:
                 response = session.get(f"{base_url}/health", timeout=5)
@@ -48,18 +49,22 @@ class TestDockerDemoContainer:
             except requests.exceptions.RequestException:
                 pass
             time.sleep(2)
-        
+
         pytest.fail("Container failed to become ready within timeout")
 
     def test_health_endpoints(self, base_url, session):
         """Test health check endpoints"""
         # Test REST health endpoint
         response = session.get(f"{base_url}/health")
-        assert response.status_code == 200, f"Health check failed: {response.status_code}"
-        
+        assert (
+            response.status_code == 200
+        ), f"Health check failed: {response.status_code}"
+
         health_data = response.json()
         # Server returns status: "healthy" instead of success: true
-        assert health_data.get("status") == "healthy", f"Health check not successful: {health_data.get('status')}"
+        assert (
+            health_data.get("status") == "healthy"
+        ), f"Health check not successful: {health_data.get('status')}"
         assert "timestamp" in health_data, "Missing timestamp in health response"
 
     def test_collection_operations(self, base_url):
@@ -68,48 +73,58 @@ class TestDockerDemoContainer:
 
         # Use SDK instead of raw REST calls for proper API handling
         from proximadb_sdk import ProximaDBClient
-        client = ProximaDBClient(url=base_url, force_protocol='rest')
+
+        client = ProximaDBClient(url=base_url, force_protocol="rest")
 
         try:
             # Test create collection using SDK
             collection = client.create_collection(
-                collection_name,
-                dimension=384,
-                distance_metric="cosine",
-                engine="viper"
+                collection_name, dimension=384, distance_metric="cosine", engine="viper"
             )
-            assert collection is not None, "Collection creation should return collection object"
+            assert (
+                collection is not None
+            ), "Collection creation should return collection object"
 
             # Test list collections
             collections = client.list_collections()
-            assert isinstance(collections, list), "List collections should return a list"
+            assert isinstance(
+                collections, list
+            ), "List collections should return a list"
             # Handle both dict and object responses
             collection_names = []
             for c in collections:
                 if isinstance(c, dict):
                     collection_names.append(c.get("name"))
-                elif hasattr(c, 'config') and hasattr(c.config, 'name'):
+                elif hasattr(c, "config") and hasattr(c.config, "name"):
                     collection_names.append(c.config.name)
-                elif hasattr(c, 'name'):
+                elif hasattr(c, "name"):
                     collection_names.append(c.name)
-                elif hasattr(c, 'id'):
+                elif hasattr(c, "id"):
                     collection_names.append(c.id)
-            assert collection_name in collection_names, f"Created collection should be in list"
+            assert (
+                collection_name in collection_names
+            ), f"Created collection should be in list"
 
             # Test get specific collection
             collection_info = client.get_collection(collection_name)
-            assert collection_info is not None, "Get collection should return collection info"
+            assert (
+                collection_info is not None
+            ), "Get collection should return collection info"
             # Handle both dict and object responses
             actual_name = None
             if isinstance(collection_info, dict):
                 actual_name = collection_info.get("name")
-            elif hasattr(collection_info, 'config') and hasattr(collection_info.config, 'name'):
+            elif hasattr(collection_info, "config") and hasattr(
+                collection_info.config, "name"
+            ):
                 actual_name = collection_info.config.name
-            elif hasattr(collection_info, 'name'):
+            elif hasattr(collection_info, "name"):
                 actual_name = collection_info.name
-            elif hasattr(collection_info, 'id'):
+            elif hasattr(collection_info, "id"):
                 actual_name = collection_info.id
-            assert actual_name == collection_name, f"Collection name should match: {actual_name} != {collection_name}"
+            assert (
+                actual_name == collection_name
+            ), f"Collection name should match: {actual_name} != {collection_name}"
 
         finally:
             # Test delete collection
@@ -121,37 +136,40 @@ class TestDockerDemoContainer:
     def test_vector_operations(self, base_url, session):
         """Test vector operations using SDK"""
         collection_name = f"vector_test_collection_{int(time.time())}"
-        
+
         # Use SDK instead of raw REST calls for proper metadata handling
-        from proximadb_sdk import ProximaDBClient
-        from proximadb_sdk import VectorRecord
-        client = ProximaDBClient(url=base_url, force_protocol='rest')
-        
+        from proximadb_sdk import ProximaDBClient, VectorRecord
+
+        client = ProximaDBClient(url=base_url, force_protocol="rest")
+
         try:
             # Create test collection using SDK
             client.create_collection(
-                collection_name,
-                dimension=3,
-                distance_metric="cosine",
-                engine="viper"
+                collection_name, dimension=3, distance_metric="cosine", engine="viper"
             )
-            
+
             # Test vector insert using SDK (handles metadata conversion)
-            vectors = [VectorRecord(
-                id="test_vector_1",
-                vector=[0.1, 0.2, 0.3],
-                metadata={"category": "test", "author": "demo"}
-            )]
-            
+            vectors = [
+                VectorRecord(
+                    id="test_vector_1",
+                    vector=[0.1, 0.2, 0.3],
+                    metadata={"category": "test", "author": "demo"},
+                )
+            ]
+
             result = client.insert_vectors(collection_name, records=vectors)
             assert result.metrics.successful_count > 0, "Vector insert should succeed"
-            
+
             # Test vector retrieval with metadata
-            retrieved = client.get_vector(collection_name, "test_vector_1", include_metadata=True)
+            retrieved = client.get_vector(
+                collection_name, "test_vector_1", include_metadata=True
+            )
             assert retrieved is not None, "Vector should be retrievable"
             assert "metadata" in retrieved, "Metadata should be included"
-            assert retrieved["metadata"]["category"] == "test", "Metadata should be preserved"
-            
+            assert (
+                retrieved["metadata"]["category"] == "test"
+            ), "Metadata should be preserved"
+
         finally:
             # Cleanup using SDK
             try:
@@ -165,34 +183,38 @@ class TestDockerDemoContainer:
         start_time = time.time()
         response = session.get(f"{base_url}/health")
         health_latency = (time.time() - start_time) * 1000
-        
+
         assert response.status_code == 200
         assert health_latency < 100, f"Health check too slow: {health_latency:.2f}ms"
-        
+
         # Measure collection list latency
         start_time = time.time()
         response = session.get(f"{base_url}/api/v1/collections")
         list_latency = (time.time() - start_time) * 1000
-        
+
         assert response.status_code == 200
         assert list_latency < 200, f"Collection list too slow: {list_latency:.2f}ms"
 
     def test_demo_collections(self, base_url, session):
         """Test that demo collections are created"""
         response = session.get(f"{base_url}/api/v1/collections")
-        assert response.status_code == 200, f"Get collections failed: {response.status_code}"
-        
+        assert (
+            response.status_code == 200
+        ), f"Get collections failed: {response.status_code}"
+
         collections_response = response.json()
         if not collections_response.get("success"):
             pytest.skip("Collections response not successful, but endpoint works")
-        
+
         collections = collections_response.get("data", [])
-        collection_names = [col.get("name") for col in collections if isinstance(col, dict)]
-        
+        collection_names = [
+            col.get("name") for col in collections if isinstance(col, dict)
+        ]
+
         # Check for demo collections (they might be created by setup script)
         demo_collections = ["documents", "products"]
         found_demo = any(name in collection_names for name in demo_collections)
-        
+
         # This is informational - demo collections may or may not exist
         if not found_demo:
             pytest.skip("Demo collections not found (may be created async)")

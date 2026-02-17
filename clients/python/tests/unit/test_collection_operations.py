@@ -6,17 +6,26 @@ Consolidated tests for collection CRUD operations, configuration, and lifecycle 
 Tests run against embedded ProximaDB database for fast, reliable testing.
 """
 
-import pytest
 import time
-from typing import Dict, Any
+from typing import Any, Dict
+
+import pytest
 
 from proximadb_sdk import (
-    CollectionConfig, IndexConfiguration,
-    DistanceMetric, StorageEngine, IndexType,
-    Collection, CollectionStats, StorageConfig, CompressionType, CompressionConfig,
-    FlushConfig
+    Collection,
+    CollectionConfig,
+    CollectionNotFoundError,
+    CollectionStats,
+    CompressionConfig,
+    CompressionType,
+    DistanceMetric,
+    FlushConfig,
+    IndexConfiguration,
+    IndexType,
+    ProximaDBError,
+    StorageConfig,
+    StorageEngine,
 )
-from proximadb_sdk import ProximaDBError, CollectionNotFoundError
 
 
 class TestCollectionCRUD:
@@ -33,7 +42,7 @@ class TestCollectionCRUD:
             name="test_collection",
             dimension=128,
             distance_metric="cosine",
-            description="REST test collection"
+            description="REST test collection",
         )
 
         # Create collection
@@ -50,9 +59,9 @@ class TestCollectionCRUD:
             for col in collections:
                 if isinstance(col, str):
                     collection_names.append(col)
-                elif hasattr(col, 'name'):
+                elif hasattr(col, "name"):
                     collection_names.append(col.name)
-                elif hasattr(col, 'id'):
+                elif hasattr(col, "id"):
                     collection_names.append(col.id)
                 else:
                     collection_names.append(str(col))
@@ -76,7 +85,7 @@ class TestCollectionCRUD:
             name=collection_name,
             dimension=256,
             distance_metric="dot_product",
-            description="gRPC test collection"
+            description="gRPC test collection",
         )
 
         # Create collection
@@ -100,7 +109,7 @@ class TestCollectionCRUD:
             name="test_collection",
             dimension=128,
             distance_metric="cosine",
-            description="Cross-protocol test collection"
+            description="Cross-protocol test collection",
         )
 
         # Create with REST client
@@ -116,8 +125,12 @@ class TestCollectionCRUD:
         grpc_collections = grpc_client.list_collections()
 
         # Extract names from both
-        rest_names = [col.name if hasattr(col, 'name') else str(col) for col in rest_collections]
-        grpc_names = [col.name if hasattr(col, 'name') else str(col) for col in grpc_collections]
+        rest_names = [
+            col.name if hasattr(col, "name") else str(col) for col in rest_collections
+        ]
+        grpc_names = [
+            col.name if hasattr(col, "name") else str(col) for col in grpc_collections
+        ]
 
         assert collection_name in rest_names
         assert collection_name in grpc_names
@@ -136,9 +149,8 @@ class TestCollectionConfiguration:
     def test_basic_collection_config(self):
         """Test basic collection configuration"""
         config = CollectionConfig(
-            name="test_collection",
-            dimension=768,
-            distance_metric="cosine")
+            name="test_collection", dimension=768, distance_metric="cosine"
+        )
         assert config.dimension == 768
         assert config.distance_metric == "cosine"
 
@@ -157,7 +169,7 @@ class TestCollectionConfiguration:
             storage_engine=StorageEngine.VIPER,
             description="Advanced test collection",
             filterable_metadata_fields=["category", "timestamp"],
-            compression={"algorithm": CompressionType.LZ4}
+            compression={"algorithm": CompressionType.LZ4},
         )
 
         assert config.dimension == 384
@@ -167,19 +179,12 @@ class TestCollectionConfiguration:
 
     def test_distance_metrics(self):
         """Test all distance metric options"""
-        metrics = [
-            "cosine",
-            "euclidean",
-            "dot_product",
-            "manhattan",
-            "hamming"
-        ]
+        metrics = ["cosine", "euclidean", "dot_product", "manhattan", "hamming"]
 
         for metric in metrics:
             config = CollectionConfig(
-                name="test_collection",
-                dimension=128,
-                distance_metric=metric)
+                name="test_collection", dimension=128, distance_metric=metric
+            )
             assert config.distance_metric == metric
 
     def test_index_algorithms(self):
@@ -189,18 +194,15 @@ class TestCollectionConfiguration:
             IndexType.IVF,
             IndexType.PQ,
             IndexType.FLAT,
-            IndexType.ANNOY
+            IndexType.ANNOY,
         ]
 
         for algo in algorithms:
             index_config = IndexConfiguration(
-                index_name=f"test_{algo.value}_index",
-                algorithm=algo
+                index_name=f"test_{algo.value}_index", algorithm=algo
             )
             config = CollectionConfig(
-                name="test_algo_config",
-                dimension=128,
-                index_configs=[index_config]
+                name="test_algo_config", dimension=128, index_configs=[index_config]
             )
             assert config.index_config.algorithm == algo
 
@@ -210,11 +212,13 @@ class TestCollectionConfiguration:
             StorageEngine.VIPER,
             StorageEngine.SST,
             StorageEngine.MMAP,
-            StorageEngine.HYBRID
+            StorageEngine.HYBRID,
         ]
 
         for engine in engines:
-            config = CollectionConfig(name="test_engine_config", dimension=128, storage_engine=engine)
+            config = CollectionConfig(
+                name="test_engine_config", dimension=128, storage_engine=engine
+            )
             assert config.storage_engine == engine
 
     def test_collection_with_filterable_columns(self):
@@ -222,15 +226,19 @@ class TestCollectionConfiguration:
         from proximadb_sdk import FilterableColumn, FilterableDataType
 
         filterable_cols = [
-            FilterableColumn(name="category", data_type=FilterableDataType.STRING, indexed=True),
-            FilterableColumn(name="timestamp", data_type=FilterableDataType.DATETIME, indexed=True),
-            FilterableColumn(name="score", data_type=FilterableDataType.FLOAT, indexed=False)
+            FilterableColumn(
+                name="category", data_type=FilterableDataType.STRING, indexed=True
+            ),
+            FilterableColumn(
+                name="timestamp", data_type=FilterableDataType.DATETIME, indexed=True
+            ),
+            FilterableColumn(
+                name="score", data_type=FilterableDataType.FLOAT, indexed=False
+            ),
         ]
 
         config = CollectionConfig(
-            name="test_filterable",
-            dimension=512,
-            filterable_columns=filterable_cols
+            name="test_filterable", dimension=512, filterable_columns=filterable_cols
         )
 
         assert config.filterable_columns is not None
@@ -246,7 +254,7 @@ class TestCollectionConfiguration:
             dimension=384,
             distance_metric="cosine",
             description="Configuration test collection",
-            storage_engine=StorageEngine.SST  # Use SST which is supported by embedded
+            storage_engine=StorageEngine.SST,  # Use SST which is supported by embedded
         )
 
         try:
@@ -271,9 +279,8 @@ class TestCollectionValidation:
         """Test dimension validation"""
         # Valid dimensions
         valid_config = CollectionConfig(
-            name="test_collection",
-            dimension=128,
-            distance_metric="cosine")
+            name="test_collection", dimension=128, distance_metric="cosine"
+        )
         assert valid_config.dimension == 128
 
         # Invalid dimensions should raise validation errors
@@ -281,13 +288,15 @@ class TestCollectionValidation:
             CollectionConfig(
                 name="test_collection",
                 dimension=0,  # Invalid dimension
-                distance_metric="cosine")
+                distance_metric="cosine",
+            )
 
         with pytest.raises((ValueError, TypeError)):
             CollectionConfig(
                 name="test_collection",
                 dimension=70000,  # Too large (max is 65536)
-                distance_metric="cosine")
+                distance_metric="cosine",
+            )
 
     def test_collection_not_found_error(self, rest_client):
         """Test CollectionNotFoundError handling"""
@@ -301,9 +310,8 @@ class TestCollectionValidation:
         collection_name = f"duplicate_test_{int(time.time() * 1000)}"
 
         config = CollectionConfig(
-            name=collection_name,
-            dimension=128,
-            distance_metric="cosine")
+            name=collection_name, dimension=128, distance_metric="cosine"
+        )
 
         try:
             # Create first time - should succeed
@@ -332,7 +340,7 @@ class TestCollectionPersistence:
             name=collection_name,
             dimension=256,
             distance_metric="cosine",
-            description="Persistence test collection"
+            description="Persistence test collection",
         )
 
         try:

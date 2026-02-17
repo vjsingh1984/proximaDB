@@ -32,17 +32,24 @@ pub struct QueryLowering {
 #[derive(Debug, Clone)]
 struct CollectionMetadata {
     id: String,
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     dimension: u32,
+    #[allow(dead_code)]
     distance_metric: String,
+    #[allow(dead_code)]
     schema: Option<CollectionSchema>,
 }
 
 /// Collection schema for field validation and optimization
 #[derive(Debug, Clone)]
 struct CollectionSchema {
+    #[allow(dead_code)]
     embedding_fields: Vec<String>,
+    #[allow(dead_code)]
     metadata_fields: Vec<String>,
+    #[allow(dead_code)]
     indexed_fields: Vec<String>,
 }
 
@@ -735,6 +742,7 @@ impl QueryLowering {
     }
 
     /// Lower JOIN clauses from SQL AST to query AST
+    #[allow(dead_code)]
     async fn lower_joins(
         &self,
         joins: &[sqlparser::ast::Join],

@@ -32,6 +32,10 @@ pub enum ApiError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    /// Forbidden - insufficient permissions
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     /// Operation not implemented
     #[error("Not implemented: {0}")]
     NotImplemented(String),
@@ -59,6 +63,10 @@ pub enum ApiError {
     /// Invalid vector data
     #[error("Invalid vector: {0}")]
     InvalidVector(String),
+
+    /// Conflict error (e.g., schema evolution violation)
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 impl ApiError {
@@ -77,6 +85,7 @@ impl From<ApiError> for tonic::Status {
             ApiError::Internal(msg) => tonic::Status::internal(msg),
             ApiError::ResourceExhausted(msg) => tonic::Status::resource_exhausted(msg),
             ApiError::Unauthorized(msg) => tonic::Status::unauthenticated(msg),
+            ApiError::Forbidden(msg) => tonic::Status::permission_denied(msg),
             ApiError::NotImplemented(msg) => tonic::Status::unimplemented(msg),
             ApiError::DeadlineExceeded(msg) => tonic::Status::deadline_exceeded(msg),
             ApiError::AlreadyExists(msg) => tonic::Status::already_exists(msg),
@@ -91,6 +100,7 @@ impl From<ApiError> for tonic::Status {
             ApiError::InvalidVector(msg) => {
                 tonic::Status::invalid_argument(format!("Invalid vector: {}", msg))
             }
+            ApiError::Conflict(msg) => tonic::Status::aborted(msg),
         }
     }
 }
@@ -104,6 +114,7 @@ impl IntoResponse for ApiError {
             ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
             ApiError::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "resource_exhausted"),
             ApiError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             ApiError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             ApiError::DeadlineExceeded(_) => (StatusCode::REQUEST_TIMEOUT, "deadline_exceeded"),
             ApiError::AlreadyExists(_) => (StatusCode::CONFLICT, "already_exists"),
@@ -111,6 +122,7 @@ impl IntoResponse for ApiError {
             ApiError::Gone(_) => (StatusCode::GONE, "gone"),
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
+            ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
         };
 
         let body = Json(json!({
@@ -216,7 +228,7 @@ mod tests {
     #[test]
     fn test_api_error_to_response() {
         let err = ApiError::InvalidArgument("bad input".to_string());
-        let response = err.into_response();
+        let _response = err.into_response();
         // Response will have status 400 and JSON body
     }
 }

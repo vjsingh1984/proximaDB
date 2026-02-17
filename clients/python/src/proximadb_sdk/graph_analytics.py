@@ -8,14 +8,15 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union, Callable
-import json
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 class GraphAlgorithm(str, Enum):
     """Supported graph algorithms"""
+
     PAGERANK = "pagerank"
     BETWEENNESS_CENTRALITY = "betweenness_centrality"
     CLOSENESS_CENTRALITY = "closeness_centrality"
@@ -34,6 +35,7 @@ class GraphAlgorithm(str, Enum):
 
 class TraversalDirection(str, Enum):
     """Direction of graph traversal"""
+
     OUTGOING = "outgoing"
     INCOMING = "incoming"
     BOTH = "both"
@@ -41,6 +43,7 @@ class TraversalDirection(str, Enum):
 
 class PatternMatchMode(str, Enum):
     """Pattern matching mode"""
+
     EXACT = "exact"
     PARTIAL = "partial"
     FUZZY = "fuzzy"
@@ -49,6 +52,7 @@ class PatternMatchMode(str, Enum):
 @dataclass
 class AlgorithmConfig:
     """Configuration for graph algorithms"""
+
     # PageRank settings
     damping_factor: float = 0.85
     max_iterations: int = 100
@@ -81,6 +85,7 @@ class AlgorithmConfig:
 @dataclass
 class SemanticTraversalConfig:
     """Configuration for semantic graph traversal"""
+
     # Vector similarity settings
     similarity_threshold: float = 0.7
     vector_field: str = "embedding"
@@ -117,6 +122,7 @@ class SemanticTraversalConfig:
 @dataclass
 class PatternElement:
     """Element in a graph pattern"""
+
     variable: str
     label: Optional[str] = None
     properties: Optional[Dict[str, Any]] = None
@@ -127,7 +133,9 @@ class PatternElement:
         if self.label:
             parts.append(f":{self.label}")
         if self.properties:
-            props = ", ".join(f"{k}: {json.dumps(v)}" for k, v in self.properties.items())
+            props = ", ".join(
+                f"{k}: {json.dumps(v)}" for k, v in self.properties.items()
+            )
             parts.append(f" {{{props}}}")
         parts.append(")")
         return "".join(parts)
@@ -136,6 +144,7 @@ class PatternElement:
 @dataclass
 class RelationshipPattern:
     """Relationship pattern in graph matching"""
+
     source: PatternElement
     target: PatternElement
     relationship_type: Optional[str] = None
@@ -158,7 +167,9 @@ class RelationshipPattern:
             else:
                 rel_parts.append(f"*{self.min_hops}..{self.max_hops}")
         if self.properties:
-            props = ", ".join(f"{k}: {json.dumps(v)}" for k, v in self.properties.items())
+            props = ", ".join(
+                f"{k}: {json.dumps(v)}" for k, v in self.properties.items()
+            )
             rel_parts.append(f" {{{props}}}")
         rel_parts.append("]-")
 
@@ -171,7 +182,10 @@ class RelationshipPattern:
 @dataclass
 class GraphPattern:
     """Complete graph pattern for matching"""
-    patterns: List[Union[PatternElement, RelationshipPattern]] = field(default_factory=list)
+
+    patterns: List[Union[PatternElement, RelationshipPattern]] = field(
+        default_factory=list
+    )
     where_clauses: List[str] = field(default_factory=list)
     return_variables: List[str] = field(default_factory=list)
     order_by: Optional[str] = None
@@ -192,14 +206,16 @@ class GraphPattern:
         max_hops: int = 1,
     ) -> "GraphPattern":
         """Add a relationship pattern"""
-        self.patterns.append(RelationshipPattern(
-            source=source,
-            target=target,
-            relationship_type=rel_type,
-            direction=direction,
-            min_hops=min_hops,
-            max_hops=max_hops,
-        ))
+        self.patterns.append(
+            RelationshipPattern(
+                source=source,
+                target=target,
+                relationship_type=rel_type,
+                direction=direction,
+                min_hops=min_hops,
+                max_hops=max_hops,
+            )
+        )
         return self
 
     def where(self, clause: str) -> "GraphPattern":
@@ -239,6 +255,7 @@ class GraphPattern:
 @dataclass
 class AlgorithmResult:
     """Result from a graph algorithm execution"""
+
     algorithm: GraphAlgorithm
     node_scores: Optional[Dict[str, float]] = None
     communities: Optional[Dict[str, int]] = None
@@ -263,6 +280,7 @@ class AlgorithmResult:
 @dataclass
 class SemanticTraversalResult:
     """Result from semantic graph traversal"""
+
     nodes: List[Dict[str, Any]]
     edges: Optional[List[Dict[str, Any]]] = None
     paths: Optional[List[List[str]]] = None
@@ -274,6 +292,7 @@ class SemanticTraversalResult:
 @dataclass
 class PatternMatchResult:
     """Result from pattern matching"""
+
     matches: List[Dict[str, Any]]
     total_count: int = 0
     execution_time_ms: float = 0
@@ -320,7 +339,11 @@ class GraphAnalytics:
             client: ProximaDBClient instance
         """
         self._client = client
-        self._base_url = getattr(client, '_base_url', client.url if hasattr(client, 'url') else 'http://localhost:5678')
+        self._base_url = getattr(
+            client,
+            "_base_url",
+            client.url if hasattr(client, "url") else "http://localhost:5678",
+        )
 
     def run_algorithm(
         self,
@@ -364,18 +387,19 @@ class GraphAnalytics:
             payload["node_subset"] = node_subset
 
         # Use client's internal request method if available
-        if hasattr(self._client, '_make_request'):
+        if hasattr(self._client, "_make_request"):
             response = self._client._make_request(
                 "POST",
                 f"/v1/graphs/{graph_id}/algorithms/{algorithm.value}",
-                json=payload
+                json=payload,
             )
         else:
             # Fallback to direct HTTP
             import requests
+
             response = requests.post(
                 f"{self._base_url}/v1/graphs/{graph_id}/algorithms/{algorithm.value}",
-                json=payload
+                json=payload,
             ).json()
 
         return AlgorithmResult.from_dict(response)
@@ -411,7 +435,7 @@ class GraphAnalytics:
                 damping_factor=damping_factor,
                 max_iterations=max_iterations,
                 convergence_threshold=convergence_threshold,
-            )
+            ),
         )
         return result.node_scores or {}
 
@@ -455,7 +479,7 @@ class GraphAnalytics:
             AlgorithmConfig(
                 normalized=normalized,
                 weight_property=weight_property,
-            )
+            ),
         )
         return result.node_scores or {}
 
@@ -484,7 +508,11 @@ class GraphAnalytics:
             >>> for node, comm in communities.items():
             ...     community_sizes[comm] = community_sizes.get(comm, 0) + 1
         """
-        algo = GraphAlgorithm.LOUVAIN if algorithm == "louvain" else GraphAlgorithm.LABEL_PROPAGATION
+        algo = (
+            GraphAlgorithm.LOUVAIN
+            if algorithm == "louvain"
+            else GraphAlgorithm.LABEL_PROPAGATION
+        )
 
         result = self.run_algorithm(
             graph_id,
@@ -492,7 +520,7 @@ class GraphAnalytics:
             AlgorithmConfig(
                 resolution=resolution,
                 random_seed=random_seed,
-            )
+            ),
         )
         return result.communities or {}
 
@@ -516,7 +544,11 @@ class GraphAnalytics:
             >>> print(f"Found {len(components)} components")
             >>> largest = max(components, key=len)
         """
-        algo = GraphAlgorithm.STRONGLY_CONNECTED if strongly_connected else GraphAlgorithm.CONNECTED_COMPONENTS
+        algo = (
+            GraphAlgorithm.STRONGLY_CONNECTED
+            if strongly_connected
+            else GraphAlgorithm.CONNECTED_COMPONENTS
+        )
 
         result = self.run_algorithm(graph_id, algo)
         return result.components or []
@@ -548,14 +580,14 @@ class GraphAnalytics:
             ...     print(" -> ".join(path))
         """
         # Use client's existing shortest_path if available
-        if hasattr(self._client, 'graph_shortest_path'):
+        if hasattr(self._client, "graph_shortest_path"):
             result = self._client.graph_shortest_path(
                 graph_id=graph_id,
                 start_node=source,
                 end_node=target,
                 edge_types=edge_types,
             )
-            return result.get('path') if result else None
+            return result.get("path") if result else None
 
         result = self.run_algorithm(
             graph_id,
@@ -615,17 +647,15 @@ class GraphAnalytics:
         if collection_id:
             payload["collection_id"] = collection_id
 
-        if hasattr(self._client, '_make_request'):
+        if hasattr(self._client, "_make_request"):
             response = self._client._make_request(
-                "POST",
-                f"/v1/graphs/{graph_id}/semantic-traverse",
-                json=payload
+                "POST", f"/v1/graphs/{graph_id}/semantic-traverse", json=payload
             )
         else:
             import requests
+
             response = requests.post(
-                f"{self._base_url}/v1/graphs/{graph_id}/semantic-traverse",
-                json=payload
+                f"{self._base_url}/v1/graphs/{graph_id}/semantic-traverse", json=payload
             ).json()
 
         return SemanticTraversalResult(
@@ -733,17 +763,15 @@ class GraphAnalytics:
             "mode": mode.value,
         }
 
-        if hasattr(self._client, '_make_request'):
+        if hasattr(self._client, "_make_request"):
             response = self._client._make_request(
-                "POST",
-                f"/v1/graphs/{graph_id}/pattern-match",
-                json=payload
+                "POST", f"/v1/graphs/{graph_id}/pattern-match", json=payload
             )
         else:
             import requests
+
             response = requests.post(
-                f"{self._base_url}/v1/graphs/{graph_id}/pattern-match",
-                json=payload
+                f"{self._base_url}/v1/graphs/{graph_id}/pattern-match", json=payload
             ).json()
 
         return PatternMatchResult(
@@ -804,7 +832,11 @@ class GraphAnalytics:
         )
         if node_id:
             return result.node_scores.get(node_id, 0.0) if result.node_scores else 0.0
-        return result.statistics.get("global_coefficient", 0.0) if result.statistics else 0.0
+        return (
+            result.statistics.get("global_coefficient", 0.0)
+            if result.statistics
+            else 0.0
+        )
 
 
 # Convenience function for creating pattern elements
@@ -831,7 +863,7 @@ def relationship(
     target: PatternElement,
     rel_type: Optional[str] = None,
     direction: TraversalDirection = TraversalDirection.OUTGOING,
-    **properties
+    **properties,
 ) -> RelationshipPattern:
     """
     Create a relationship pattern for graph matching.
@@ -861,26 +893,21 @@ def relationship(
 __all__ = [
     # Main class
     "GraphAnalytics",
-
     # Configuration
     "AlgorithmConfig",
     "SemanticTraversalConfig",
-
     # Patterns
     "GraphPattern",
     "PatternElement",
     "RelationshipPattern",
-
     # Results
     "AlgorithmResult",
     "SemanticTraversalResult",
     "PatternMatchResult",
-
     # Enums
     "GraphAlgorithm",
     "TraversalDirection",
     "PatternMatchMode",
-
     # Convenience functions
     "node",
     "relationship",

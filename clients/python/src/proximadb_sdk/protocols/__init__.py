@@ -12,9 +12,10 @@ try:
         FlightPutResult,
         FlightSearchResult,
         WriteMode,
-        vectors_to_arrow_table,
         arrow_table_to_vectors,
+        vectors_to_arrow_table,
     )
+
     ARROW_FLIGHT_AVAILABLE = True
 except ImportError:
     ARROW_FLIGHT_AVAILABLE = False

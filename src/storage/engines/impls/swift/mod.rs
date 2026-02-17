@@ -375,6 +375,7 @@ impl SuperBlock {
 /// Placeholder for quantized index - now handled by unified compute module
 #[derive(Debug)]
 pub struct QuantizedIndex {
+    #[allow(dead_code)]
     dimension: usize,
 }
 
@@ -425,6 +426,7 @@ pub struct SwiftFile {
     pub metadata_index: hierarchical_blocks::MetadataIndex,
 
     /// Memory management
+    #[allow(dead_code)]
     memory_manager: Arc<MemoryManager>,
     // Note: simd_encoder removed - encoding now done via ProximaCodec per-operation
 }
@@ -565,7 +567,9 @@ pub struct ColumnStats {
 /// Memory manager for efficient resource usage
 #[derive(Debug)]
 pub struct MemoryManager {
+    #[allow(dead_code)]
     max_memory_bytes: usize,
+    #[allow(dead_code)]
     current_usage: std::sync::atomic::AtomicUsize,
 }
 
@@ -1282,6 +1286,7 @@ impl SwiftFile {
 
     /// PROXIMA: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
+    #[allow(dead_code)]
     fn finalize_superblock_encoding(&mut self) {
         // use crate::core::hardware_capabilities::HardwareCapabilities; // Unused import
 
@@ -1324,7 +1329,7 @@ impl SwiftFile {
             }
 
             // SIMD-optimized scheme selection based on hardware capabilities
-            let (marker, scheme) = if hw_caps.cpu.simd.has_avx512 {
+            let (marker, _scheme) = if hw_caps.cpu.simd.has_avx512 {
                 // AVX-512: 16x f32 SIMD operations
                 Self::select_avx512_scheme(&columnar_stats, vector_count)
             } else if hw_caps.cpu.simd.has_avx2 {
@@ -1339,7 +1344,7 @@ impl SwiftFile {
             };
 
             // Calculate global statistics for metadata
-            let (global_min, global_max) = columnar_stats.iter().fold(
+            let (_global_min, _global_max) = columnar_stats.iter().fold(
                 (f32::MAX, f32::MIN),
                 |(min_acc, max_acc), &(min_val, max_val, _, _)| {
                     (min_acc.min(min_val), max_acc.max(max_val))
@@ -1369,9 +1374,10 @@ impl SwiftFile {
     }
 
     /// AVX-512 optimized scheme selection for 16-wide SIMD
+    #[allow(dead_code)]
     fn select_avx512_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
@@ -1409,9 +1415,10 @@ impl SwiftFile {
     }
 
     /// AVX2 optimized scheme selection for 8-wide SIMD
+    #[allow(dead_code)]
     fn select_avx2_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
@@ -1449,9 +1456,10 @@ impl SwiftFile {
     }
 
     /// SSE optimized scheme selection for 4-wide SIMD
+    #[allow(dead_code)]
     fn select_sse_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
@@ -1489,9 +1497,10 @@ impl SwiftFile {
     }
 
     /// Scalar optimized scheme selection (no SIMD)
+    #[allow(dead_code)]
     fn select_scalar_scheme(
         stats: &[(f32, f32, f32, f32)],
-        vector_count: usize,
+        _vector_count: usize,
     ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;

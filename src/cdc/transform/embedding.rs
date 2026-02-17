@@ -101,7 +101,7 @@ pub struct EmbeddingPipeline {
     /// Configuration
     config: EmbeddingConfig,
     /// Embedding cache
-    cache: HashMap<String, Vec<f32>>,
+    _cache: HashMap<String, Vec<f32>>,
     /// Stats
     stats: EmbeddingStats,
 }
@@ -126,7 +126,7 @@ impl EmbeddingPipeline {
     pub fn new(config: EmbeddingConfig) -> Self {
         Self {
             config,
-            cache: HashMap::new(),
+            _cache: HashMap::new(),
             stats: EmbeddingStats::default(),
         }
     }
@@ -308,63 +308,65 @@ impl EmbeddingPipeline {
 }
 
 /// Builder for EmbeddingConfig
+#[allow(dead_code)]
 pub struct EmbeddingConfigBuilder {
-    config: EmbeddingConfig,
+    _config: EmbeddingConfig,
 }
 
+#[allow(dead_code)]
 impl EmbeddingConfigBuilder {
     /// Create a new builder
     pub fn new() -> Self {
         Self {
-            config: EmbeddingConfig::default(),
+            _config: EmbeddingConfig::default(),
         }
     }
 
     /// Set the provider
     pub fn provider(mut self, provider: EmbeddingProvider) -> Self {
-        self.config.provider = provider;
+        self._config.provider = provider;
         self
     }
 
     /// Set the model
     pub fn model(mut self, model: impl Into<String>) -> Self {
-        self.config.model = model.into();
+        self._config.model = model.into();
         self
     }
 
     /// Set fields to embed
     pub fn fields(mut self, fields: Vec<impl Into<String>>) -> Self {
-        self.config.fields = fields.into_iter().map(|f| f.into()).collect();
+        self._config.fields = fields.into_iter().map(|f| f.into()).collect();
         self
     }
 
     /// Set the separator
     pub fn separator(mut self, separator: impl Into<String>) -> Self {
-        self.config.separator = separator.into();
+        self._config.separator = separator.into();
         self
     }
 
     /// Set max length
     pub fn max_length(mut self, length: usize) -> Self {
-        self.config.max_length = length;
+        self._config.max_length = length;
         self
     }
 
     /// Set batch size
     pub fn batch_size(mut self, size: usize) -> Self {
-        self.config.batch_size = size;
+        self._config.batch_size = size;
         self
     }
 
     /// Enable caching
     pub fn cache_enabled(mut self, enabled: bool) -> Self {
-        self.config.cache_enabled = enabled;
+        self._config.cache_enabled = enabled;
         self
     }
 
     /// Build the config
     pub fn build(self) -> EmbeddingConfig {
-        self.config
+        self._config
     }
 }
 

@@ -189,7 +189,7 @@ impl QueryExecutor {
     async fn load_and_filter(
         &self,
         _collection: &str,
-        candidates: &[String],
+        _candidates: &[String],
         params: &DocumentQueryParams,
     ) -> Result<Vec<DocumentRecord>> {
         // TODO: Load documents from storage engine
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_query_executor_new() {
-        let executor = QueryExecutor::new();
+        let _executor = QueryExecutor::new();
         // Basic instantiation test
         assert!(true);
     }

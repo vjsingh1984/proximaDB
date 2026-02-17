@@ -18,7 +18,7 @@ pub struct AWSBedrockClient {
     config: AWSBedrockConfig,
     // AWS SDK client would be initialized here
     // For now, using reqwest for demonstration
-    client: reqwest::Client,
+    _client: reqwest::Client,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,7 +57,10 @@ impl AWSBedrockClient {
                 LLMError::ConfigurationError(format!("Failed to create HTTP client: {}", e))
             })?;
 
-        let bedrock_client = Self { config, client };
+        let bedrock_client = Self {
+            config,
+            _client: client,
+        };
 
         // Test authentication (would use AWS SDK in real implementation)
         bedrock_client.test_authentication().await?;
@@ -151,7 +154,7 @@ impl AWSBedrockClient {
     /// Invoke Bedrock model (placeholder for actual AWS SDK implementation)
     async fn invoke_bedrock_model(
         &self,
-        request: &BedrockRequest,
+        _request: &BedrockRequest,
     ) -> Result<BedrockResponse, LLMError> {
         // PLACEHOLDER: In a real implementation, this would use AWS SDK:
         //

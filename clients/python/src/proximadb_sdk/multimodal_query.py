@@ -15,15 +15,16 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
+import math
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-import time
-import math
 
 
 class QueryType(Enum):
     """Types of queries that can be combined."""
+
     VECTOR = "vector"
     GRAPH = "graph"
     DOCUMENT = "document"
@@ -34,6 +35,7 @@ class QueryType(Enum):
 
 class FusionStrategy(Enum):
     """Strategies for combining results from multiple query types."""
+
     INTERSECTION = "intersection"  # Only results matching all queries
     UNION = "union"  # All results from any query
     RRF = "rrf"  # Reciprocal Rank Fusion
@@ -43,6 +45,7 @@ class FusionStrategy(Enum):
 
 class JoinType(Enum):
     """Types of joins between query results."""
+
     INNER = "inner"  # Only matching records
     LEFT = "left"  # All from left, matches from right
     SEMANTIC = "semantic"  # Join by vector similarity
@@ -51,6 +54,7 @@ class JoinType(Enum):
 
 class TimeDecayFunction(Enum):
     """Time decay functions for scoring."""
+
     LINEAR = "linear"
     EXPONENTIAL = "exponential"
     GAUSSIAN = "gaussian"
@@ -59,6 +63,7 @@ class TimeDecayFunction(Enum):
 
 class QueryIntent(Enum):
     """Query intent classification for context-aware reranking."""
+
     NAVIGATIONAL = "navigational"  # Looking for a specific item
     INFORMATIONAL = "informational"  # Seeking information
     TRANSACTIONAL = "transactional"  # Action-oriented
@@ -69,6 +74,7 @@ class QueryIntent(Enum):
 
 class TemporalPreference(Enum):
     """Temporal preference for recency-aware reranking."""
+
     RECENT = "recent"  # Prefer recent results
     HISTORICAL = "historical"  # Prefer established results
     NEUTRAL = "neutral"  # No temporal preference
@@ -88,6 +94,7 @@ class RerankConfig:
         generate_explanations: Generate human-readable explanations
         rerank_top_k: Number of top results to consider for reranking
     """
+
     semantic_rerank: bool = True
     diversity_optimization: bool = True
     diversity_weight: float = 0.3
@@ -132,6 +139,7 @@ class QueryContext:
         required_models: Query types that must appear in results
         user_preferences: User-specific preference weights
     """
+
     query_text: Optional[str] = None
     query_embedding: Optional[List[float]] = None
     intent: Optional[QueryIntent] = None
@@ -153,6 +161,7 @@ class QueryContext:
 @dataclass
 class ScoreComponent:
     """Component of a reranking score with explanation."""
+
     name: str
     value: float
     weight: float
@@ -170,6 +179,7 @@ class ScoreComponent:
 @dataclass
 class RerankExplanation:
     """Explanation for a reranking decision."""
+
     record_id: str
     original_rank: int
     new_rank: int
@@ -191,6 +201,7 @@ class RerankExplanation:
 @dataclass
 class RerankedResult:
     """Result of cross-modal reranking."""
+
     records: List[Dict[str, Any]]
     explanations: List[RerankExplanation]
     quality_score: float
@@ -208,6 +219,7 @@ class RerankedResult:
 @dataclass
 class VectorQueryComponent:
     """Vector similarity search component."""
+
     collection: str
     query_vector: List[float]
     top_k: int = 10
@@ -230,6 +242,7 @@ class VectorQueryComponent:
 @dataclass
 class GraphQueryComponent:
     """Graph traversal query component."""
+
     graph_id: str
     start_nodes: Optional[List[str]] = None
     start_label: Optional[str] = None
@@ -258,6 +271,7 @@ class GraphQueryComponent:
 @dataclass
 class DocumentQueryComponent:
     """Document search query component."""
+
     collection: str
     filter: Optional[Dict[str, Any]] = None
     text_query: Optional[str] = None
@@ -284,6 +298,7 @@ class DocumentQueryComponent:
 @dataclass
 class LogQueryComponent:
     """Log search query component."""
+
     namespace: str
     time_range: Optional[Tuple[int, int]] = None  # (start_ns, end_ns)
     services: Optional[List[str]] = None
@@ -308,6 +323,7 @@ class LogQueryComponent:
 @dataclass
 class MetricQueryComponent:
     """Metric aggregation query component."""
+
     namespace: str
     metric_names: List[str]
     time_range: Tuple[int, int]  # (start_ns, end_ns)
@@ -330,6 +346,7 @@ class MetricQueryComponent:
 @dataclass
 class SemanticJoin:
     """Semantic join configuration."""
+
     left_field: str
     right_field: str
     similarity_threshold: float = 0.7
@@ -347,6 +364,7 @@ class SemanticJoin:
 @dataclass
 class MultiModalQueryResult:
     """Result from a multi-modal query."""
+
     records: List[Dict[str, Any]]
     total_count: int
     query_time_ms: float
@@ -364,6 +382,7 @@ class MultiModalQueryResult:
         """Convert to pandas DataFrame if pandas is available."""
         try:
             import pandas as pd
+
             return pd.DataFrame(self.records)
         except ImportError:
             raise ImportError("pandas is required for to_dataframe()")
@@ -542,12 +561,14 @@ class MultiModalQueryBuilder:
         similarity_threshold: float = 0.7,
     ) -> "MultiModalQueryBuilder":
         """Add a semantic join between components based on vector similarity."""
-        self._joins.append(SemanticJoin(
-            left_field=left_field,
-            right_field=right_field,
-            similarity_threshold=similarity_threshold,
-            join_type=JoinType.SEMANTIC,
-        ))
+        self._joins.append(
+            SemanticJoin(
+                left_field=left_field,
+                right_field=right_field,
+                similarity_threshold=similarity_threshold,
+                join_type=JoinType.SEMANTIC,
+            )
+        )
         return self
 
     def join_by_id(
@@ -556,12 +577,14 @@ class MultiModalQueryBuilder:
         right_field: str,
     ) -> "MultiModalQueryBuilder":
         """Add an inner join between components by ID field."""
-        self._joins.append(SemanticJoin(
-            left_field=left_field,
-            right_field=right_field,
-            similarity_threshold=1.0,
-            join_type=JoinType.INNER,
-        ))
+        self._joins.append(
+            SemanticJoin(
+                left_field=left_field,
+                right_field=right_field,
+                similarity_threshold=1.0,
+                join_type=JoinType.INNER,
+            )
+        )
         return self
 
     def join_graph_path(
@@ -602,11 +625,14 @@ class MultiModalQueryBuilder:
         time_field: str = "timestamp",
     ) -> "MultiModalQueryBuilder":
         """Apply time decay to scoring."""
-        self._time_decay = (function, {
-            "halflife_hours": halflife_hours,
-            "reference_time": reference_time or int(time.time() * 1e9),
-            "time_field": time_field,
-        })
+        self._time_decay = (
+            function,
+            {
+                "halflife_hours": halflife_hours,
+                "reference_time": reference_time or int(time.time() * 1e9),
+                "time_field": time_field,
+            },
+        )
         return self
 
     def with_custom_scorer(
@@ -662,6 +688,7 @@ class MultiModalQueryBuilder:
 @dataclass
 class MultiModalQuery:
     """Compiled multi-modal query ready for execution."""
+
     components: List[Dict[str, Any]]
     joins: List[Dict[str, Any]]
     fusion_strategy: str
@@ -751,7 +778,7 @@ class CrossModalReranker:
         context = context or QueryContext()
 
         # Limit to top-k for reranking
-        records_to_rerank = records[:self.config.rerank_top_k]
+        records_to_rerank = records[: self.config.rerank_top_k]
 
         # Step 1: Compute base scores
         scored_records = self._compute_base_scores(records_to_rerank, context)
@@ -771,7 +798,9 @@ class CrossModalReranker:
         # Step 5: Generate explanations
         explanations = []
         if self.config.generate_explanations:
-            explanations = self._generate_explanations(records_to_rerank, scored_records)
+            explanations = self._generate_explanations(
+                records_to_rerank, scored_records
+            )
 
         # Step 6: Sort and extract final records
         scored_records.sort(key=lambda x: x["final_score"], reverse=True)
@@ -806,23 +835,25 @@ class CrossModalReranker:
             base_score = record.get("score", record.get("_score", 0.5))
             weighted_score = base_score * model_weight
 
-            scored.append({
-                "record": record,
-                "original_rank": idx,
-                "base_score": base_score,
-                "semantic_score": 0.0,
-                "context_score": 0.0,
-                "diversity_penalty": 0.0,
-                "final_score": weighted_score,
-                "score_components": [
-                    ScoreComponent(
-                        name="base_score",
-                        value=base_score,
-                        weight=model_weight,
-                        contribution=weighted_score,
-                    )
-                ],
-            })
+            scored.append(
+                {
+                    "record": record,
+                    "original_rank": idx,
+                    "base_score": base_score,
+                    "semantic_score": 0.0,
+                    "context_score": 0.0,
+                    "diversity_penalty": 0.0,
+                    "final_score": weighted_score,
+                    "score_components": [
+                        ScoreComponent(
+                            name="base_score",
+                            value=base_score,
+                            weight=model_weight,
+                            contribution=weighted_score,
+                        )
+                    ],
+                }
+            )
 
         return scored
 
@@ -839,12 +870,18 @@ class CrossModalReranker:
             # Try to get record embedding
             embedding = record["record"].get("embedding")
             if embedding:
-                semantic_score = self._cosine_similarity(context.query_embedding, embedding)
+                semantic_score = self._cosine_similarity(
+                    context.query_embedding, embedding
+                )
             else:
                 # Fall back to text similarity
-                record_text = record["record"].get("content", record["record"].get("text", ""))
+                record_text = record["record"].get(
+                    "content", record["record"].get("text", "")
+                )
                 if context.query_text and record_text:
-                    semantic_score = self._text_similarity(context.query_text, record_text)
+                    semantic_score = self._text_similarity(
+                        context.query_text, record_text
+                    )
                 else:
                     semantic_score = 0.5
 
@@ -875,15 +912,27 @@ class CrossModalReranker:
             # Intent-based scoring
             if context.intent:
                 intent_boost = 0.0
-                if context.intent == QueryIntent.SIMILARITY_SEARCH and source_type == "vector":
+                if (
+                    context.intent == QueryIntent.SIMILARITY_SEARCH
+                    and source_type == "vector"
+                ):
                     intent_boost = 0.2
-                elif context.intent == QueryIntent.RELATIONSHIP_EXPLORATION and source_type == "graph":
+                elif (
+                    context.intent == QueryIntent.RELATIONSHIP_EXPLORATION
+                    and source_type == "graph"
+                ):
                     intent_boost = 0.2
-                elif context.intent == QueryIntent.NAVIGATIONAL and record["base_score"] > 0.9:
+                elif (
+                    context.intent == QueryIntent.NAVIGATIONAL
+                    and record["base_score"] > 0.9
+                ):
                     intent_boost = 0.15
                 elif context.intent == QueryIntent.INFORMATIONAL:
                     intent_boost = 0.05
-                elif context.intent == QueryIntent.ANALYTICAL and source_type in ("logs", "metrics"):
+                elif context.intent == QueryIntent.ANALYTICAL and source_type in (
+                    "logs",
+                    "metrics",
+                ):
                     intent_boost = 0.15
 
                 context_score += intent_boost
@@ -898,7 +947,9 @@ class CrossModalReranker:
                     )
 
             # Temporal preference
-            timestamp = record["record"].get("timestamp", record["record"].get("created_at"))
+            timestamp = record["record"].get(
+                "timestamp", record["record"].get("created_at")
+            )
             if timestamp:
                 temporal_boost = self._compute_temporal_boost(
                     timestamp, context.temporal_preference
@@ -965,7 +1016,9 @@ class CrossModalReranker:
                 )
 
                 # MMR score
-                mmr_score = lambda_param * relevance - (1 - lambda_param) * max_similarity
+                mmr_score = (
+                    lambda_param * relevance - (1 - lambda_param) * max_similarity
+                )
 
                 if mmr_score > best_mmr:
                     best_mmr = mmr_score
@@ -989,7 +1042,9 @@ class CrossModalReranker:
 
         # Update final scores with diversity penalty
         for record in selected:
-            record["final_score"] -= record["diversity_penalty"] * self.config.diversity_weight
+            record["final_score"] -= (
+                record["diversity_penalty"] * self.config.diversity_weight
+            )
 
         return selected
 
@@ -999,7 +1054,9 @@ class CrossModalReranker:
         reranked: List[Dict[str, Any]],
     ) -> List[RerankExplanation]:
         """Generate explanations for reranking decisions."""
-        original_ranks = {r.get("id", str(i)): i for i, r in enumerate(original_records)}
+        original_ranks = {
+            r.get("id", str(i)): i for i, r in enumerate(original_records)
+        }
 
         explanations = []
         for new_rank, scored in enumerate(reranked):
@@ -1008,26 +1065,38 @@ class CrossModalReranker:
             rank_change = original_rank - new_rank
 
             if rank_change > 0:
-                explanation_text = f"Promoted {rank_change} positions due to: " + \
-                    ", ".join(f"{c.name} (+{c.contribution:.2f})"
-                              for c in scored["score_components"] if c.contribution > 0)
+                explanation_text = (
+                    f"Promoted {rank_change} positions due to: "
+                    + ", ".join(
+                        f"{c.name} (+{c.contribution:.2f})"
+                        for c in scored["score_components"]
+                        if c.contribution > 0
+                    )
+                )
             elif rank_change < 0:
-                explanation_text = f"Demoted {-rank_change} positions due to: " + \
-                    ", ".join(f"{c.name} ({c.contribution:.2f})"
-                              for c in scored["score_components"] if c.contribution < 0)
+                explanation_text = (
+                    f"Demoted {-rank_change} positions due to: "
+                    + ", ".join(
+                        f"{c.name} ({c.contribution:.2f})"
+                        for c in scored["score_components"]
+                        if c.contribution < 0
+                    )
+                )
             else:
                 explanation_text = "Rank unchanged"
 
             confidence = self._compute_explanation_confidence(scored)
 
-            explanations.append(RerankExplanation(
-                record_id=record_id,
-                original_rank=original_rank,
-                new_rank=new_rank,
-                score_components=scored["score_components"],
-                explanation_text=explanation_text,
-                confidence=confidence,
-            ))
+            explanations.append(
+                RerankExplanation(
+                    record_id=record_id,
+                    original_rank=original_rank,
+                    new_rank=new_rank,
+                    score_components=scored["score_components"],
+                    explanation_text=explanation_text,
+                    confidence=confidence,
+                )
+            )
 
         return explanations
 
@@ -1111,7 +1180,9 @@ class CrossModalReranker:
         count = 0
         for i in range(len(records)):
             for j in range(i + 1, len(records)):
-                total_dissimilarity += 1 - self._record_similarity(records[i], records[j])
+                total_dissimilarity += 1 - self._record_similarity(
+                    records[i], records[j]
+                )
                 count += 1
 
         avg_dissimilarity = total_dissimilarity / count if count > 0 else 0.0
@@ -1174,11 +1245,15 @@ class MultiModalQueryExecutor:
                 results = self._execute_vector(component)
             elif comp_type == "graph":
                 # Check if this depends on previous results
-                if hasattr(component, "_from_previous") and component.get("_from_previous"):
+                if hasattr(component, "_from_previous") and component.get(
+                    "_from_previous"
+                ):
                     if component_results:
                         prev_results = component_results[-1]
                         id_field = component.get("_id_field", "id")
-                        start_nodes = [r.get(id_field) for r in prev_results if r.get(id_field)]
+                        start_nodes = [
+                            r.get(id_field) for r in prev_results if r.get(id_field)
+                        ]
                         component["start_nodes"] = start_nodes
                 results = self._execute_graph(component)
             elif comp_type == "document":
@@ -1215,7 +1290,7 @@ class MultiModalQueryExecutor:
             fused.sort(key=lambda x: x.get("_custom_score", 0), reverse=True)
 
         # Apply limit and offset
-        fused = fused[query.offset:query.offset + query.limit]
+        fused = fused[query.offset : query.offset + query.limit]
 
         total_time = (time.time() - start_time) * 1000
 
@@ -1232,7 +1307,11 @@ class MultiModalQueryExecutor:
         )
 
     def _execute_vector(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute vector search component."""
+        """Execute vector search component.
+
+        Searches for similar vectors in the specified collection and returns
+        results with score and metadata.
+        """
         try:
             results = self._client.search(
                 collection=component["collection"],
@@ -1245,18 +1324,22 @@ class MultiModalQueryExecutor:
                     "id": r.id,
                     "score": r.score,
                     "metadata": r.metadata,
-                    "_source": "vector",
+                    "_source_type": "vector",
                 }
                 for r in results
             ]
-        except Exception as e:
+        except Exception:
             return []
 
     def _execute_graph(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute graph traversal component."""
+        """Execute graph traversal component.
+
+        Performs graph traversal starting from specified nodes or nodes
+        with a given label, following edges up to max_depth hops.
+        """
         try:
             # Use graph analytics if available
-            if hasattr(self._client, 'graph'):
+            if hasattr(self._client, "graph"):
                 results = self._client.graph.traverse(
                     graph_id=component["graph_id"],
                     start_nodes=component.get("start_nodes"),
@@ -1269,7 +1352,9 @@ class MultiModalQueryExecutor:
                         "id": r.get("id"),
                         "node": r,
                         "depth": r.get("depth", 0),
-                        "_source": "graph",
+                        "labels": r.get("labels", []),
+                        "properties": r.get("properties", {}),
+                        "_source_type": "graph",
                     }
                     for r in results
                 ]
@@ -1278,9 +1363,12 @@ class MultiModalQueryExecutor:
             return []
 
     def _execute_document(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute document query component."""
+        """Execute document query component.
+
+        Queries documents from a collection with optional filters and text search.
+        """
         try:
-            if hasattr(self._client, 'query_documents'):
+            if hasattr(self._client, "query_documents"):
                 results = self._client.query_documents(
                     collection=component["collection"],
                     filter=component.get("filter"),
@@ -1291,7 +1379,7 @@ class MultiModalQueryExecutor:
                     {
                         "id": r.get("id"),
                         "document": r,
-                        "_source": "document",
+                        "_source_type": "document",
                     }
                     for r in results
                 ]
@@ -1300,9 +1388,12 @@ class MultiModalQueryExecutor:
             return []
 
     def _execute_logs(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute log query component."""
+        """Execute log query component.
+
+        Searches logs within a time range with optional service and text filters.
+        """
         try:
-            if hasattr(self._client, 'query_logs'):
+            if hasattr(self._client, "query_logs"):
                 results = self._client.query_logs(
                     namespace=component["namespace"],
                     time_range=component.get("time_range"),
@@ -1315,7 +1406,7 @@ class MultiModalQueryExecutor:
                         "id": r.get("id"),
                         "log": r,
                         "timestamp": r.get("timestamp"),
-                        "_source": "logs",
+                        "_source_type": "logs",
                     }
                     for r in results
                 ]
@@ -1324,9 +1415,12 @@ class MultiModalQueryExecutor:
             return []
 
     def _execute_metrics(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute metric aggregation component."""
+        """Execute metric aggregation component.
+
+        Aggregates metrics over a time range with optional grouping.
+        """
         try:
-            if hasattr(self._client, 'aggregate_metrics'):
+            if hasattr(self._client, "aggregate_metrics"):
                 results = self._client.aggregate_metrics(
                     namespace=component["namespace"],
                     metric_names=component["metric_names"],
@@ -1338,7 +1432,7 @@ class MultiModalQueryExecutor:
                         "metric_name": r.get("name"),
                         "value": r.get("value"),
                         "timestamp": r.get("timestamp"),
-                        "_source": "metrics",
+                        "_source_type": "metrics",
                     }
                     for r in results
                 ]
@@ -1570,6 +1664,7 @@ class MultiModalQueryExecutor:
 
 # Convenience functions for common query patterns
 
+
 def semantic_search_with_graph(
     client,
     collection: str,
@@ -1583,12 +1678,14 @@ def semantic_search_with_graph(
 
     Finds similar vectors, then explores their graph neighborhood.
     """
-    query = (MultiModalQueryBuilder()
+    query = (
+        MultiModalQueryBuilder()
         .vector(collection, query_vector, top_k=top_k * 2)
         .graph_from_vector_results(graph_id, edge_types=edge_types)
         .fuse(FusionStrategy.RRF)
         .limit(top_k)
-        .build())
+        .build()
+    )
 
     executor = MultiModalQueryExecutor(client)
     return executor.execute(query)
@@ -1608,13 +1705,15 @@ def knowledge_graph_search(
 
     Traverses graph from nodes of a given label, ranking by vector similarity.
     """
-    query = (MultiModalQueryBuilder()
+    query = (
+        MultiModalQueryBuilder()
         .graph(graph_id, start_label=start_label, max_depth=max_depth)
         .vector(vector_collection, query_vector, top_k=top_k * 3)
         .join_by_id("graph.id", "vector.id")
         .fuse(FusionStrategy.WEIGHTED, weights={"graph_1": 0.3, "vector_2": 0.7})
         .limit(top_k)
-        .build())
+        .build()
+    )
 
     executor = MultiModalQueryExecutor(client)
     return executor.execute(query)
@@ -1633,14 +1732,23 @@ def logs_with_context(
 
     Searches logs for errors, then traverses service dependency graph.
     """
-    query = (MultiModalQueryBuilder()
-        .logs(namespace, time_range=time_range, text_query=error_query, severities=["ERROR", "FATAL"])
-        .graph(context_graph_id, start_label="Service", edge_types=["DEPENDS_ON", "CALLS"])
+    query = (
+        MultiModalQueryBuilder()
+        .logs(
+            namespace,
+            time_range=time_range,
+            text_query=error_query,
+            severities=["ERROR", "FATAL"],
+        )
+        .graph(
+            context_graph_id, start_label="Service", edge_types=["DEPENDS_ON", "CALLS"]
+        )
         .join_by_id("logs.service", "graph.node.name")
         .fuse(FusionStrategy.SEQUENTIAL)
         .with_time_decay(TimeDecayFunction.EXPONENTIAL, halflife_hours=1)
         .limit(top_k)
-        .build())
+        .build()
+    )
 
     executor = MultiModalQueryExecutor(client)
     return executor.execute(query)
@@ -1653,6 +1761,7 @@ def logs_with_context(
 
 class FusionModelType(Enum):
     """Model type for learned fusion."""
+
     LINEAR = "linear"  # Linear model with learned weights
     GRADIENT_BOOSTING = "gradient_boosting"  # LightGBM-style
     NEURAL_NETWORK = "neural_network"  # Simple MLP
@@ -1674,6 +1783,7 @@ class LearnedFusionConfig:
         enable_online_learning: Enable continuous learning
         online_update_frequency: How often to update (in queries)
     """
+
     model_type: FusionModelType = FusionModelType.GRADIENT_BOOSTING
     num_features: int = 32
     learning_rate: float = 0.01
@@ -1695,6 +1805,7 @@ class FusionFeatures:
         record_features: Per-record features
         interaction_features: Cross-model interaction features
     """
+
     query_features: List[float] = field(default_factory=list)
     model_features: Dict[str, List[float]] = field(default_factory=dict)
     record_features: Dict[str, List[float]] = field(default_factory=dict)
@@ -1717,6 +1828,7 @@ class FusionFeatures:
 
 class FeedbackType(Enum):
     """Types of user feedback for learning."""
+
     CLICK = "click"  # User clicked on result
     RATING = "rating"  # User rated results
     QUERY_REFINEMENT = "query_refinement"  # Negative signal
@@ -1734,6 +1846,7 @@ class FeedbackSignal:
         score: Rating score (for rating feedback)
         relevant: Relevance judgment (True/False)
     """
+
     feedback_type: FeedbackType
     record_id: Optional[str] = None
     position: Optional[int] = None
@@ -1751,6 +1864,7 @@ class TrainingSample:
         feedback: Optional user feedback
         timestamp_ms: Sample timestamp
     """
+
     features: FusionFeatures
     target_scores: Dict[str, float]
     feedback: Optional[FeedbackSignal] = None
@@ -1768,6 +1882,7 @@ class TrainingMetrics:
         training_time_ms: Training time in milliseconds
         iterations: Number of training iterations
     """
+
     num_samples: int = 0
     loss: float = 0.0
     validation_loss: Optional[float] = None
@@ -1889,9 +2004,11 @@ class LearnedFusion:
 
         # Increment query count for online learning
         self._query_count += 1
-        if (self.config.enable_online_learning and
-            self._query_count % self.config.online_update_frequency == 0 and
-            len(self._training_buffer) >= self.config.min_samples_for_training):
+        if (
+            self.config.enable_online_learning
+            and self._query_count % self.config.online_update_frequency == 0
+            and len(self._training_buffer) >= self.config.min_samples_for_training
+        ):
             self._maybe_train()
 
         return fused_records
@@ -2004,7 +2121,9 @@ class LearnedFusion:
                 target = 0.5
 
             # Loss
-            loss = -target * math.log(predicted + 1e-10) - (1 - target) * math.log(1 - predicted + 1e-10)
+            loss = -target * math.log(predicted + 1e-10) - (1 - target) * math.log(
+                1 - predicted + 1e-10
+            )
             total_loss += loss
 
             # Gradient descent
@@ -2012,14 +2131,19 @@ class LearnedFusion:
             gradient_scale = error * predicted * (1.0 - predicted)
 
             for i in range(min(len(flat_features), len(self._model_weights))):
-                gradient = gradient_scale * flat_features[i] + self.config.regularization * self._model_weights[i]
+                gradient = (
+                    gradient_scale * flat_features[i]
+                    + self.config.regularization * self._model_weights[i]
+                )
                 self._model_weights[i] -= self.config.learning_rate * gradient
 
             iterations += 1
 
         return TrainingMetrics(
             num_samples=len(self._training_buffer),
-            loss=total_loss / len(self._training_buffer) if self._training_buffer else 0,
+            loss=(
+                total_loss / len(self._training_buffer) if self._training_buffer else 0
+            ),
             iterations=iterations,
         )
 
@@ -2033,7 +2157,9 @@ class LearnedFusion:
         targets = []
         for sample in self._training_buffer:
             if sample.target_scores:
-                targets.append(sum(sample.target_scores.values()) / len(sample.target_scores))
+                targets.append(
+                    sum(sample.target_scores.values()) / len(sample.target_scores)
+                )
             else:
                 targets.append(0.5)
 
@@ -2060,7 +2186,7 @@ class LearnedFusion:
             iterations += 1
 
             # Check convergence
-            mse = sum(r ** 2 for r in residuals) / len(residuals)
+            mse = sum(r**2 for r in residuals) / len(residuals)
             total_loss = mse
             if mse < 1e-6:
                 break
@@ -2082,12 +2208,14 @@ class LearnedFusion:
 
         num_features = len(feature_vecs[0])
         best_stump = None
-        best_loss = float('inf')
+        best_loss = float("inf")
 
         for feature_idx in range(num_features):
             # Get feature values with residuals
-            values = [(fv[feature_idx] if feature_idx < len(fv) else 0.0, r)
-                      for fv, r in zip(feature_vecs, residuals)]
+            values = [
+                (fv[feature_idx] if feature_idx < len(fv) else 0.0, r)
+                for fv, r in zip(feature_vecs, residuals)
+            ]
             values.sort(key=lambda x: x[0])
 
             # Try different thresholds
@@ -2095,8 +2223,8 @@ class LearnedFusion:
                 threshold = (values[i][0] + values[i + 1][0]) / 2.0
 
                 # Compute left and right means
-                left = values[:i + 1]
-                right = values[i + 1:]
+                left = values[: i + 1]
+                right = values[i + 1 :]
 
                 left_mean = sum(v[1] for v in left) / len(left) if left else 0.0
                 right_mean = sum(v[1] for v in right) / len(right) if right else 0.0
@@ -2137,7 +2265,9 @@ class LearnedFusion:
         if self.config.model_type == FusionModelType.LINEAR:
             # Ensure weights match
             if len(flat_features) > len(self._model_weights):
-                self._model_weights.extend([0.0] * (len(flat_features) - len(self._model_weights)))
+                self._model_weights.extend(
+                    [0.0] * (len(flat_features) - len(self._model_weights))
+                )
 
             score = sum(w * f for w, f in zip(self._model_weights, flat_features))
             base_score = 1.0 / (1.0 + math.exp(-score))
@@ -2170,9 +2300,7 @@ class LearnedFusion:
             records = result_set.get("records", [])
             # Sort by score
             sorted_records = sorted(
-                records,
-                key=lambda x: x.get("score", 0),
-                reverse=True
+                records, key=lambda x: x.get("score", 0), reverse=True
             )
 
             for rank, record in enumerate(sorted_records):
@@ -2288,9 +2416,7 @@ class FeatureExtractor:
         features[0] = len(results) / 4.0
 
         # Total results
-        total_results = sum(
-            len(r.get("records", [])) for r in results
-        )
+        total_results = sum(len(r.get("records", [])) for r in results)
         features[1] = math.log(total_results + 1) / 10.0
 
         # Average results per modality
@@ -2396,10 +2522,7 @@ class FeatureExtractor:
         # Compute overlap between result sets
         id_sets = []
         for result_set in results:
-            ids = {
-                r.get("id", str(id(r)))
-                for r in result_set.get("records", [])
-            }
+            ids = {r.get("id", str(id(r))) for r in result_set.get("records", [])}
             id_sets.append(ids)
 
         # Pairwise Jaccard similarity

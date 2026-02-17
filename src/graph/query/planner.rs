@@ -309,6 +309,7 @@ pub struct CostEstimate {
 #[derive(Debug, Clone)]
 struct CachedPlan {
     plan: QueryPlan,
+    #[allow(dead_code)]
     access_count: u64,
     last_accessed: Instant,
 }
@@ -874,7 +875,7 @@ impl QueryPlanner {
         parameters: &HashMap<String, serde_json::Value>,
         algorithm: TraversalAlgorithm,
     ) -> QueryResult<QueryPlan> {
-        let start_node = parameters
+        let _start_node = parameters
             .get("start_node")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {

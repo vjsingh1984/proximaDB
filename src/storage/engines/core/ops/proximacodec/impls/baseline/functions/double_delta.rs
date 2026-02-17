@@ -375,12 +375,11 @@ fn decode_double_delta_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     let mut result = Vec::with_capacity(count);
     result.push(base);
 
-    let mut prev_value = base;
     let mut prev_delta = first_delta;
 
     let second_value = base.wrapping_add(first_delta);
     result.push(second_value);
-    prev_value = second_value;
+    let mut prev_value = second_value;
 
     for &dd in &double_deltas {
         let delta = prev_delta.wrapping_add(dd);
@@ -448,12 +447,11 @@ fn decode_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     let mut result = Vec::with_capacity(count);
     result.push(base);
 
-    let mut prev_value = base;
     let mut prev_delta = first_delta;
 
     let second_value = base.wrapping_add(first_delta);
     result.push(second_value);
-    prev_value = second_value;
+    let mut prev_value = second_value;
 
     for &dd in &double_deltas {
         let delta = prev_delta.wrapping_add(dd);

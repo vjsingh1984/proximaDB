@@ -233,8 +233,6 @@ mod tests {
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use std::collections::HashMap;
-
     #[tokio::test]
     async fn test_validate_flush_preconditions() {
         let engine = create_test_engine().await;

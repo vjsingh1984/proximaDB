@@ -75,9 +75,11 @@ pub struct OrionPersistence {
     base_url: String,
 
     /// Filesystem factory for creating appropriate filesystem
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Unified caching filesystem wrapper
+    #[allow(dead_code)]
     filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// WAL path for future implementation

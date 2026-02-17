@@ -7,7 +7,7 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from proximadb_sdk.llm.config import EmbeddingConfig, LLMConfig, RAGConfig
 from proximadb_sdk.llm.embedding import EmbeddingService
@@ -177,16 +177,18 @@ class RAGPipeline:
             # Prepare vectors for insertion
             vectors = []
             for doc, embedding in zip(batch, embeddings):
-                vectors.append({
-                    "id": doc.id,
-                    "vector": embedding,
-                    "metadata": {
-                        "title": doc.title,
-                        "content": doc.content[:1000],  # Truncate for metadata
-                        "source": doc.source,
-                        **doc.metadata,
-                    },
-                })
+                vectors.append(
+                    {
+                        "id": doc.id,
+                        "vector": embedding,
+                        "metadata": {
+                            "title": doc.title,
+                            "content": doc.content[:1000],  # Truncate for metadata
+                            "source": doc.source,
+                            **doc.metadata,
+                        },
+                    }
+                )
 
             # Insert into ProximaDB
             await self.client.insert_vectors_async(collection, vectors)
@@ -385,7 +387,7 @@ Answer:"""
             return 0.0
 
         # Average relevance of top sources
-        top_relevances = [s.relevance for s in sources[: 3]]
+        top_relevances = [s.relevance for s in sources[:3]]
         return sum(top_relevances) / len(top_relevances)
 
     async def delete_documents(

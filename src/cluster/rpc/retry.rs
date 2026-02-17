@@ -610,6 +610,7 @@ mod tests {
     #[test]
     fn test_retry_policy_max_delay_cap() {
         let policy = RetryPolicy::default()
+            .with_max_retries(10) // Allow more retries
             .with_base_delay(Duration::from_secs(1))
             .with_max_delay(Duration::from_secs(5))
             .with_jitter(0.0);

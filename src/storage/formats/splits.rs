@@ -611,7 +611,7 @@ pub trait SplitGenerator: Send + Sync {
     fn generate_splits_with_target(
         &self,
         file_path: &str,
-        target_count: usize,
+        _target_count: usize,
     ) -> anyhow::Result<Vec<FileSplit>> {
         // Default: just generate all splits
         self.generate_splits(file_path)
@@ -720,7 +720,7 @@ mod tests {
 
     #[test]
     fn test_scalar_predicate_equal() {
-        let mut bounds = ColumnBounds {
+        let bounds = ColumnBounds {
             min: Some(serde_json::json!(10)),
             max: Some(serde_json::json!(100)),
             null_count: 0,

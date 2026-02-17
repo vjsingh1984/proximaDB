@@ -10,16 +10,16 @@ use crate::core::{
     VectorRecord, hardware_capabilities::HardwareCapabilities, memory::pool::VectorMemoryPool,
 };
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::info;
 // Memory-mapped Parquet operations would be imported here
 // For now, we'll use placeholder types
 struct MmapParquetReader;
 struct MmapPool {
-    size: usize,
+    _size: usize,
 }
 impl MmapPool {
     fn new(size: usize) -> Self {
-        Self { size }
+        Self { _size: size }
     }
 }
 
@@ -45,15 +45,15 @@ use crate::storage::engines::core::formats::columnar::SearchCandidate;
 /// Optimized VIPER operations using existing infrastructure
 pub struct OptimizedNovaOperations {
     /// Hardware capabilities
-    hardware: Arc<HardwareCapabilities>,
+    _hardware: Arc<HardwareCapabilities>,
     /// Unified distance computation
     distance_compute: UnifiedDistanceCompute,
     /// Vector memory pool
     vector_pool: Arc<VectorMemoryPool>,
     /// Memory-mapped file pool
-    mmap_pool: Arc<MmapPool>,
+    _mmap_pool: Arc<MmapPool>,
     /// Parquet-specific optimizations
-    enable_pushdown: bool,
+    _enable_pushdown: bool,
     enable_projection: bool,
 }
 
@@ -66,11 +66,11 @@ impl OptimizedNovaOperations {
         let mmap_pool = Arc::new(MmapPool::new(50));
 
         Ok(Self {
-            hardware,
+            _hardware: hardware,
             distance_compute,
             vector_pool,
-            mmap_pool,
-            enable_pushdown: true,
+            _mmap_pool: mmap_pool,
+            _enable_pushdown: true,
             enable_projection: true,
         })
     }
@@ -80,9 +80,9 @@ impl OptimizedNovaOperations {
         &self,
         // TODO: Update to use NovaFile or appropriate type
         // nova_file: &NovaFile,
-        query: &[f32],
-        top_k: usize,
-        config: ColumnarSearchConfig,
+        _query: &[f32],
+        _top_k: usize,
+        _config: ColumnarSearchConfig,
     ) -> Result<Vec<VectorRecord>> {
         info!("Starting optimized columnar search with hardware capabilities");
 
@@ -92,34 +92,30 @@ impl OptimizedNovaOperations {
         #[allow(unreachable_code)]
         {
             // Build projection mask for needed columns only
-            let projection = if self.enable_projection {
-                self.build_projection_mask(&config)
+            let _projection = if self.enable_projection {
+                self.build_projection_mask(&_config)
             } else {
                 vec![]
             };
 
             // Create placeholder nova_file until proper integration
-            let nova_file = (); // Placeholder
+            let _nova_file = (); // Placeholder
 
             // Phase 1: Row group pruning using statistics
             // Pass parquet metadata from file system
             // TODO: file_path should be derived from nova_file when properly integrated
-            let file_path = "placeholder.parquet"; // Temporary placeholder
-            let parquet_metadata = self.load_parquet_metadata(&file_path).await?;
-            let candidate_row_groups =
-                self.prune_row_groups_with_metadata(&parquet_metadata, &query)?;
-            debug!(
-                "Pruned to {} row groups using actual metadata",
-                candidate_row_groups.len()
-            );
+            let _file_path = "placeholder.parquet"; // Temporary placeholder
+            let _parquet_metadata = self.load_parquet_metadata(&_file_path).await?;
+            let _candidate_row_groups =
+                self.prune_row_groups_with_metadata(&_parquet_metadata, &_query)?;
 
             // Phase 2: Columnar filtering with SIMD using actual Parquet metadata
             return Ok(self
                 .execute_columnar_search_with_metadata(
-                    &parquet_metadata,
-                    &candidate_row_groups,
-                    &query,
-                    top_k,
+                    &_parquet_metadata,
+                    &_candidate_row_groups,
+                    &_query,
+                    _top_k,
                 )
                 .await?);
         }
@@ -300,7 +296,8 @@ impl OptimizedNovaOperations {
         Ok(vectors)
     }
     /// Select optimal computation mode based on data size
-    fn select_compute_mode(&self, vectors: &[Vec<f32>]) -> DistanceMode {
+    #[allow(dead_code)]
+    fn select_compute_mode(&self, _vectors: &[Vec<f32>]) -> DistanceMode {
         // DistanceMode is about value normalization, not hardware selection
         // Hardware selection is handled internally by UnifiedDistanceCompute
         // Return normalized mode for consistency
@@ -343,7 +340,7 @@ pub async fn batch_id_lookup_optimized(
     let mut locations: Vec<Option<(usize, u32)>> = Vec::with_capacity(ids.len());
 
     // Use existing ID index infrastructure for lookups
-    for id in ids {
+    for _id in ids {
         // This would integrate with the actual NovaFile ID index when available
         // For now, provide a basic lookup that can be enhanced
         locations.push(None); // Placeholder - implement when NovaFile is defined
@@ -367,7 +364,7 @@ pub async fn batch_id_lookup_optimized(
         // Load row group with projection
         let batch = load_row_group_projected(_parquet_metadata, rg_idx, &projection).await?;
         // Extract specific rows
-        for (id, offset) in id_offsets {
+        for (_id, offset) in id_offsets {
             if let Some(record) = extract_record(&batch, offset) {
                 results.push(record);
             }

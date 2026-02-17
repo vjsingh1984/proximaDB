@@ -56,13 +56,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// memmap2 imports removed - using filesystem API for memory mapping
 use anyhow::Result;
 use tracing::info;
 
-use crate::storage::persistence::filesystem::FilesystemFactory;
-// Using UnifiedCachingFilesystem for efficient caching
 use crate::core::error::{ProximaDBError, StorageError};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// File type enum for cache key discrimination
@@ -129,18 +127,21 @@ pub struct SharedSstFormatReader {
     filesystem: Arc<FilesystemFactory>,
 
     /// Memory mapping strategy (kept for region-specific optimizations)
+    #[allow(dead_code)]
     mmap_strategy: SstMmapStrategy,
 
     /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
     unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
+    #[allow(dead_code)]
     collection_id: String,
 
     /// Stats for monitoring
     stats: Arc<ReaderStats>,
 
     /// ✅ Reusable distance compute engine - created once and passed to all search operations
+    #[allow(dead_code)]
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 }
 
@@ -148,27 +149,37 @@ pub struct SharedSstFormatReader {
 /// Complements the reader for full read/write support
 pub struct SharedSstFormatWriter {
     /// Filesystem for I/O operations
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 
     /// Unified filesystem for write operations
+    #[allow(dead_code)]
     unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
+    #[allow(dead_code)]
     collection_id: String,
 
     /// Compression configuration
+    #[allow(dead_code)]
     compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
 
     /// Stats for monitoring writes
+    #[allow(dead_code)]
     stats: Arc<WriterStats>,
 }
 
 /// Writer statistics for monitoring
 pub struct WriterStats {
+    #[allow(dead_code)]
     blocks_written: AtomicU64,
+    #[allow(dead_code)]
     bytes_written: AtomicU64,
+    #[allow(dead_code)]
     bytes_compressed: AtomicU64,
+    #[allow(dead_code)]
     compression_time_ms: AtomicU64,
+    #[allow(dead_code)]
     writes_total: AtomicU64,
 }
 
@@ -228,7 +239,7 @@ impl SharedSstFormatReader {
         &'a self,
         file_path: &'a str,
         strategy: &'a crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy,
-        filter_expression: Option<&'a crate::core::search::FilterExpression>,
+        _filter_expression: Option<&'a crate::core::search::FilterExpression>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>>{
         Box::pin(async move {
             use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
@@ -249,7 +260,7 @@ impl SharedSstFormatReader {
                         *enable_bloom_filters,
                         *enable_cache_lookup,
                         *enable_metadata_cache,
-                        filter_expression,
+                        _filter_expression,
                     )
                     .await
                 }
@@ -293,7 +304,7 @@ impl SharedSstFormatReader {
                         file_path,
                         &blocks_u32,
                         *skip_bloom_check,
-                        filter_expression,
+                        _filter_expression,
                     )
                     .await
                 }
@@ -303,7 +314,7 @@ impl SharedSstFormatReader {
                 } => {
                     // Try primary strategy first, then fallback for specific blocks
                     let mut primary_results = self
-                        .read_with_strategy(file_path, primary_strategy, filter_expression)
+                        .read_with_strategy(file_path, primary_strategy, _filter_expression)
                         .await?;
 
                     // Add fallback blocks if needed
@@ -383,7 +394,7 @@ impl SharedSstFormatReader {
         enable_bloom_filters: bool,
         enable_cache_lookup: bool,
         _enable_metadata_cache: bool,
-        filter_expression: Option<&crate::core::search::FilterExpression>,
+        _filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>{
         // Use mmap-first reading for zero-copy performance
         let data = self
@@ -403,12 +414,10 @@ impl SharedSstFormatReader {
         for block in all_blocks {
             // Check bloom filter if enabled
             if enable_bloom_filters {
-                if let Some(ref _filter_expr) = filter_expression {
-                    // Proxima blocks have auto-generated bloom filters
-                    if let Some(ref _bloom) = block.bloom_filter {
-                        // Check if block might contain matching records
-                        // TODO: Implement bloom filter check logic
-                    }
+                // Proxima blocks have auto-generated bloom filters
+                if let Some(ref _bloom) = block.bloom_filter {
+                    // Check if block might contain matching records
+                    // TODO: Implement bloom filter check logic
                 }
             }
 
@@ -672,7 +681,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             let bloom_data = fs
@@ -681,7 +690,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read bloom filter: {}", e),
+                        format!("Failed to read bloom filter: {e}"),
                     )))
                 })?;
 
@@ -725,7 +734,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             let index_data = fs
@@ -734,7 +743,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read index: {}", e),
+                        format!("Failed to read index: {e}"),
                     )))
                 })?;
 
@@ -757,10 +766,10 @@ impl SharedSstFormatReader {
     async fn read_data_block_smart(
         &self,
         file_path: &str,
-        collection_id: &str,
+        _collection_id: &str,
         block_info: &BlockInfo,
     ) -> Result<Vec<u8>, ProximaDBError> {
-        let filename = std::path::Path::new(file_path)
+        let _filename = std::path::Path::new(file_path)
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("unknown");
@@ -771,7 +780,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
 
@@ -780,7 +789,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read block from cloud: {}", e),
+                        format!("Failed to read block from cloud: {e}"),
                     )))
                 })?
         } else {
@@ -789,7 +798,7 @@ impl SharedSstFormatReader {
             let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to get filesystem: {}", e),
+                    format!("Failed to get filesystem: {e}"),
                 )))
             })?;
             fs.read_range(file_path, block_info.offset, block_info.size)
@@ -797,7 +806,7 @@ impl SharedSstFormatReader {
                 .map_err(|e| {
                     ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("Failed to read block: {}", e),
+                        format!("Failed to read block: {e}"),
                     )))
                 })?
         };
@@ -912,7 +921,7 @@ impl SharedSstFormatReader {
     }
 
     /// Check bloom filter
-    fn check_bloom(&self, bloom_data: &[u8], key: &[u8]) -> bool {
+    fn check_bloom(&self, _bloom_data: &[u8], _key: &[u8]) -> bool {
         // Bloom filter implementation
         // Returns false if key definitely not present
         // Returns true if key might be present
@@ -922,8 +931,8 @@ impl SharedSstFormatReader {
     /// Find block for key in index
     fn find_block_for_key(
         &self,
-        index_data: &[u8],
-        key: &[u8],
+        _index_data: &[u8],
+        _key: &[u8],
     ) -> Result<Option<BlockInfo>, ProximaDBError> {
         // Binary search in index to find block
         // Returns None if key not in range
@@ -936,8 +945,8 @@ impl SharedSstFormatReader {
     /// Search for key in data block
     fn find_in_block(
         &self,
-        block_data: &[u8],
-        key: &[u8],
+        _block_data: &[u8],
+        _key: &[u8],
     ) -> Result<Option<Vec<u8>>, ProximaDBError> {
         // Binary search in sorted block
         Ok(None) // Placeholder
@@ -954,7 +963,7 @@ impl SharedSstFormatReader {
         let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
             ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to get filesystem: {}", e),
+                format!("Failed to get filesystem: {e}"),
             )))
         })?;
         let bloom_data = fs
@@ -963,7 +972,7 @@ impl SharedSstFormatReader {
             .map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to read bloom filter: {}", e),
+                    format!("Failed to read bloom filter: {e}"),
                 )))
             })?;
         Ok(Arc::new(bloom_data))
@@ -980,7 +989,7 @@ impl SharedSstFormatReader {
         let fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
             ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to get filesystem: {}", e),
+                format!("Failed to get filesystem: {e}"),
             )))
         })?;
         let index_data = fs
@@ -989,7 +998,7 @@ impl SharedSstFormatReader {
             .map_err(|e| {
                 ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to read index: {}", e),
+                    format!("Failed to read index: {e}"),
                 )))
             })?;
         Ok(Arc::new(index_data))

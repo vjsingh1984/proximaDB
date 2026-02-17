@@ -109,10 +109,13 @@ struct CollectionPartition {
 
     /// Collection statistics for monitoring and management
     total_size: usize, // Total bytes consumed by all batches
-    vector_count: usize,      // Total number of vectors across all batches
-    batch_count: usize,       // Number of batches in this partition
+    vector_count: usize, // Total number of vectors across all batches
+    batch_count: usize,  // Number of batches in this partition
+    #[allow(dead_code)]
     last_flush_sequence: u64, // Sequence number of last successful flush
+    #[allow(dead_code)]
     timestamp: std::time::SystemTime, // Last modification time
+    #[allow(dead_code)]
     created_at: std::time::SystemTime, // Partition creation time
 }
 

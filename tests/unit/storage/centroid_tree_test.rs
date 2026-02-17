@@ -746,13 +746,13 @@ fn test_bloom_consolidator_merge_multiple() {
     for i in 0..50 {
         builder1.add(&format!("set1:item:{}", i));
     }
-    let bloom1 = builder1.build().unwrap();
+    let _bloom1 = builder1.build().unwrap();
 
     let mut builder2 = IncrementalBloomBuilder::new(1000, 0.01);
     for i in 0..50 {
         builder2.add(&format!("set2:item:{}", i));
     }
-    let bloom2 = builder2.build().unwrap();
+    let _bloom2 = builder2.build().unwrap();
 
     // Act: Create a new consolidated bloom that contains all items
     let mut consolidated_builder = IncrementalBloomBuilder::new(2000, 0.01);

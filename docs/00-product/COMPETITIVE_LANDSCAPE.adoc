@@ -1,0 +1,406 @@
+= ProximaDB Competitive Landscape
+:toc: left
+:toclevels: 3
+:icons: font
+:sectnums:
+
+== Market Overview
+
+The vector database market is projected to grow from *$2.65B (2025)* to *$8.95B (2030)*, representing a *27.5% CAGR*. However, the multi-model database market is growing even faster as AI applications increasingly require unified access to vectors, graphs, and documents within a single system.
+
+=== Key Market Drivers
+
+Vector Search Alone Is No Longer Sufficient::
+Modern AI applications -- particularly agentic AI and RAG pipelines -- need to combine semantic similarity (vectors), relationship traversal (graphs), structured queries (documents), and temporal context (time-series) in a single query path. Single-model vector databases force application-level joins that add latency and complexity.
+
+Agentic AI::
+Autonomous AI agents require a "context database" that can store and retrieve episodic memory (vectors), causal relationships (graphs), tool outputs (documents), and event sequences (time-series) with sub-10ms latency. No existing product owns this category.
+
+RAG Applications::
+Retrieval-Augmented Generation has moved from prototype to production. Production RAG demands hybrid search (BM25 + vector), metadata filtering, and graph-aware retrieval -- capabilities that span multiple data models.
+
+Hybrid Search Demand::
+65% of Fortune 500 AI teams now use BM25 + vector hybrid search in production. This is table stakes for any database competing in the AI infrastructure market.
+
+Embedded and Edge Computing::
+The LanceDB trend -- databases moving into the application process -- is accelerating. Edge AI, mobile applications, and latency-sensitive trading systems all benefit from embedded database modes that eliminate network overhead.
+
+== Competitor Feature Matrix -- vs Vector Database Leaders
+
+The following matrix compares ProximaDB against the leading purpose-built vector databases.
+
+[cols="2,2,2,2,2,2", options="header"]
+|===
+| Capability
+| ProximaDB
+| Pinecone
+| Milvus
+| Weaviate
+| Qdrant
+
+| Vector Search
+| 6 engines / ~5ms (10K)
+| Single engine / managed
+| IVF / HNSW / DiskANN
+| HNSW
+| HNSW / p95 ~37ms
+
+| Hybrid Search (BM25 + Vector)
+| *MISSING (P0)*
+| Sparse vectors
+| Sparse + dense
+| BM25 + vector
+| Sparse + dense
+
+| Graph Support
+| ORION (CSR, WAL)
+| None
+| None
+| Minimal
+| None
+
+| Document Support
+| JSON path, aggregation
+| Metadata only
+| Metadata only
+| Object store
+| Payload filtering
+
+| Time-Series
+| *MISSING (P0)*
+| None
+| None
+| None
+| None
+
+| Embedded Mode
+| PyO3, JNI, NAPI, C FFI
+| None (cloud only)
+| Milvus Lite
+| None
+| None
+
+| Cross-Model Queries
+| SQL with extensions
+| None
+| None
+| GraphQL
+| None
+
+| Integrated Inference
+| *MISSING (P1)*
+| Yes (2025)
+| None
+| Modules (Cohere, OpenAI)
+| FastEmbed
+
+| LangChain / LlamaIndex
+| *MISSING (P1)*
+| Yes
+| Yes
+| Yes
+| Yes
+
+| Distributed
+| *INCOMPLETE*
+| Yes (managed)
+| Milvus 2.x (Raft)
+| Raft
+| Raft
+
+| PostgreSQL Wire Protocol
+| Yes (pgvector compat)
+| None
+| None
+| None
+| None
+|===
+
+=== Key Takeaways -- Vector Database Leaders
+
+* ProximaDB's *cross-model SQL queries* and *embedded mode* are unique differentiators that no pure vector database offers.
+* ProximaDB's *PostgreSQL wire protocol* compatibility provides a low-friction migration path from pgvector deployments.
+* The absence of *hybrid search (BM25 + vector)* is the most critical competitive gap. Every major competitor has shipped this capability.
+* The absence of *framework integrations* (LangChain, LlamaIndex) blocks adoption by the largest developer segment building RAG applications.
+* *Distributed consensus* is table stakes for production deployments. Pinecone, Milvus, Weaviate, and Qdrant all offer this; ProximaDB does not.
+
+== Competitor Feature Matrix -- vs Multi-Model Leaders
+
+The following matrix compares ProximaDB against databases that also target multi-model workloads.
+
+[cols="2,2,2,2,2", options="header"]
+|===
+| Capability
+| ProximaDB
+| SurrealDB
+| ArangoDB
+| Vespa
+
+| Data Models
+| Vector / Graph / Document / Observability
+| Relational / Document / Graph / Vector
+| Document / Graph / Key-Value
+| Vector / Text / Tensor / Structured
+
+| Query Language
+| SQL + extensions
+| SurrealQL (unified)
+| AQL (unified)
+| YQL (unified)
+
+| ACID Transactions
+| *INCOMPLETE* (2PC skeleton)
+| Full ACID
+| Full ACID
+| Eventual consistency
+
+| Time-Series
+| *MISSING*
+| Basic
+| None
+| Streaming
+
+| Hybrid Search
+| *MISSING*
+| Vector + full-text
+| Full-text + graph
+| BM25 + vector (best-in-class)
+
+| Performance
+| Vector ~5ms (10K)
+| 508K reads/sec
+| Graph traversals
+| 8.5x Elasticsearch
+
+| Distributed
+| *INCOMPLETE*
+| In progress
+| Synchronous replication
+| Shared-nothing
+
+| Real-Time Ingestion
+| WAL-based
+| Event-driven
+| Document inserts
+| Continuous (no rebuilds)
+|===
+
+=== Key Takeaways -- Multi-Model Leaders
+
+* SurrealDB is the most direct competitor, targeting the same multi-model space with a unified query language and full ACID transactions. ProximaDB's advantage is raw vector performance and the depth of its vector engine portfolio.
+* ArangoDB has mature graph traversals and full ACID but lacks native vector search. ProximaDB's vector performance is a clear differentiator.
+* Vespa has *best-in-class hybrid search* and production-proven distributed architecture. Competing head-to-head on hybrid search is inadvisable until ProximaDB ships BM25 + vector. The strategy is to differentiate on embedded mode, graph support, and financial services compliance.
+
+== SWOT Analysis
+
+=== Strengths
+
+[cols="1,3"]
+|===
+| S1 | *Multi-model with cross-model SQL joins* -- the only database that can join vector search results with graph traversals and document queries in a single SQL statement. This is a unique differentiator.
+
+| S2 | *6 specialized vector engines* with progressive quantization -- SST (~5ms), HELIX (~13ms), RAPTOR (~9ms), VIPER (~89ms), SWIFT (~95ms), NOVA (~101ms) -- allowing workload-specific optimization that no competitor offers.
+
+| S3 | *PostgreSQL wire protocol compatibility* -- pgvector-compatible interface on port 5433, enabling seamless migration from existing PostgreSQL deployments.
+
+| S4 | *Embedded mode* (PyO3, JNI, NAPI, C FFI) -- LanceDB-competitive in-process database that eliminates network overhead for latency-sensitive applications.
+
+| S5 | *Rust performance with SIMD acceleration* (AVX2/AVX512/NEON) -- hardware-accelerated distance calculations and quantization with automatic runtime CPU detection and fallback.
+
+| S6 | *Proto-first zero-copy pipeline* -- VectorRecord flows from API to storage without intermediate copies, minimizing allocation overhead and GC pressure.
+
+| S7 | *Comprehensive deployment infrastructure* -- Docker, Kubernetes, Helm charts, and Terraform modules for production deployment across cloud providers.
+|===
+
+=== Weaknesses
+
+[cols="1,3"]
+|===
+| W1 | *No time-series engine* -- critical gap for financial services (ibkrtrading), IoT, and observability workloads where temporal queries are fundamental.
+
+| W2 | *No hybrid search / BM25* -- table stakes in 2026. 65% of Fortune 500 AI teams use BM25 + vector. Every major competitor has shipped this.
+
+| W3 | *No distributed consensus* -- single-node ceiling limits production deployments. Milvus, Weaviate, Qdrant, and ArangoDB all offer Raft-based consensus.
+
+| W4 | *11,536 unwrap/expect calls in codebase* -- production code quality concern that increases crash risk under edge conditions.
+
+| W5 | *Experimental features advertised as production* -- PULSAR and QUASAR graph engines are at ~60% completion but are visible in the public API surface.
+
+| W6 | *No framework integrations* (LangChain, LlamaIndex) -- blocks adoption by the largest developer segment building RAG and agentic AI applications.
+
+| W7 | *5% API handler test coverage* -- critical gap that increases the risk of regressions in the most user-facing layer of the system.
+|===
+
+=== Opportunities
+
+[cols="1,3"]
+|===
+| O1 | *Market consolidation favors integrated platforms* -- as the vector database market matures, customers increasingly prefer unified solutions over point products that require application-level integration.
+
+| O2 | *FaunaDB shutdown validates self-hosted databases* -- the demise of FaunaDB demonstrated that developer teams want databases they can run themselves, not cloud-only services that can be shut down.
+
+| O3 | *"Context Database" category creation* -- no company owns the term "context database" for the unified vector + graph + document + time-series category that agentic AI demands. First mover advantage is available.
+
+| O4 | *ibkrtrading as reference implementation* -- a working algorithmic trading platform built on ProximaDB provides a concrete, verifiable proof-of-concept for financial services buyers.
+
+| O5 | *Financial services is a premium market* -- algorithmic trading, risk management, and compliance teams have high willingness to pay and value performance, auditability, and embedded deployment.
+
+| O6 | *Agentic AI needs multi-model + low-latency* -- autonomous agents need to combine episodic memory, causal graphs, tool outputs, and event sequences in real time. ProximaDB's architecture is well-aligned with this workload.
+|===
+
+=== Threats
+
+[cols="1,3"]
+|===
+| T1 | *PostgreSQL absorbing vectors* -- pgvectorscale achieves 471 QPS at 99% recall. As PostgreSQL's vector capabilities improve, the "just add an extension" argument becomes compelling for teams already running PostgreSQL.
+
+| T2 | *Major cloud vendors adding vector capabilities* -- AWS OpenSearch, Google AlloyDB, Azure Cosmos DB are all adding vector search. Cloud vendor lock-in and existing contracts make these the path of least resistance for enterprise buyers.
+
+| T3 | *SurrealDB targeting the same multi-model space* -- SurrealDB has a unified query language, full ACID transactions, and growing community. If they ship production-quality vector search before ProximaDB ships hybrid search, the differentiation gap narrows.
+
+| T4 | *Qdrant and Milvus expanding beyond vectors* -- Qdrant is adding full-text search and graph-like filtering. Milvus is adding sparse vectors and multi-model capabilities. The "vector-only" incumbents are becoming multi-model.
+
+| T5 | *Vespa has best-in-class hybrid search* -- Vespa's BM25 + vector implementation is the industry benchmark. Competing on hybrid search quality will require significant engineering investment.
+|===
+
+== Industry Trends (2025-2026)
+
+=== Agentic AI
+
+Autonomous AI agents represent the most demanding database workload emerging in 2025-2026. An agent needs:
+
+* *Episodic memory* (vectors) -- "what similar situations have I encountered?"
+* *Causal relationships* (graphs) -- "what happened as a result of my last action?"
+* *Tool outputs* (documents) -- "what did the API return?"
+* *Event sequences* (time-series) -- "what is the temporal pattern?"
+
+No existing database serves all four models with sub-10ms cross-model queries. This is the "context database" opportunity.
+
+=== Hybrid Search
+
+65% of Fortune 500 AI teams now use BM25 + vector hybrid search in production. The combination of lexical precision (BM25) and semantic understanding (vectors) consistently outperforms either approach alone. This capability is *table stakes* for any database competing in the AI infrastructure market. ProximaDB's absence from this category is the single most urgent competitive gap.
+
+=== Embedded and Edge
+
+The LanceDB trend is accelerating: databases are moving into the application process to eliminate network latency. Use cases include:
+
+* Mobile and edge AI (on-device inference with local context)
+* Latency-sensitive trading systems (sub-millisecond access)
+* CI/CD pipelines (test data and embeddings co-located with code)
+* Serverless functions (database as a library, no external service)
+
+ProximaDB's embedded mode (PyO3, JNI, NAPI, C FFI) is competitive with LanceDB and superior to cloud-only offerings.
+
+=== Market Consolidation
+
+The VectorDBBench report notes that "winners embed vectors into broader ecosystems." The market is consolidating around two patterns:
+
+1. *Incumbent expansion* -- PostgreSQL, Elasticsearch, and cloud databases adding vector capabilities.
+2. *Vector databases expanding* -- Qdrant, Milvus, and Weaviate adding graph, full-text, and structured data support.
+
+ProximaDB's multi-model architecture is aligned with the consolidation direction, but execution speed is critical.
+
+=== Open Source
+
+CNCF projects and open-source databases are gaining enterprise trust. Companies burned by vendor lock-in (FaunaDB, managed-only services) are prioritizing databases with self-hosted options, permissive licenses, and active open-source communities.
+
+=== Financial Services
+
+Algorithmic trading, risk management, and regulatory compliance are driving multi-model database adoption in financial services:
+
+* *Trading* -- regime detection (vectors), portfolio relationships (graphs), order events (time-series)
+* *Risk management* -- scenario similarity (vectors), counterparty networks (graphs), position history (time-series)
+* *Compliance* -- document similarity (vectors), entity relationships (graphs), audit trails (time-series)
+
+Financial services is a premium market with high willingness to pay and stringent requirements for performance, auditability, and embedded deployment.
+
+== Positioning Strategy
+
+=== Create the "Context Database" Category
+
+The term "context database" is unclaimed. ProximaDB should define and own this category:
+
+[quote]
+A context database is a unified data platform that stores and retrieves the full context an AI application needs -- semantic similarity (vectors), relationships (graphs), structured data (documents), and temporal patterns (time-series) -- through a single query interface.
+
+This framing elevates ProximaDB above the "another vector database" comparison and positions it as a new category leader.
+
+=== Lead with Cross-Model Queries
+
+ProximaDB's primary differentiator is the ability to join vector search results with graph traversals and document queries in a single SQL statement. No competitor offers this today. Every competitive conversation should start with a cross-model query demo.
+
+=== ibkrtrading as Proof-of-Concept Reference Architecture
+
+A working algorithmic trading platform that replaces PostgreSQL, SQLite, and JSONL with a single ProximaDB instance provides:
+
+* Concrete performance benchmarks (not synthetic)
+* Real-world multi-model query patterns (regime detection + portfolio graphs + order events)
+* Financial services credibility
+
+=== Target Audience Prioritization
+
+1. *AI agent developers* -- highest alignment with multi-model + low-latency value proposition
+2. *Trading platform builders* -- ibkrtrading as reference, high willingness to pay
+3. *Observability and knowledge management teams* -- vectors + graphs + logs in one system
+4. *IoT and edge computing* -- embedded mode + time-series (after time-series engine ships)
+
+== Win/Loss Scenarios
+
+[cols="1,2,2,2", options="header"]
+|===
+| Competitor
+| We Win When
+| We Lose When
+| Strategy
+
+| Pinecone
+| Customer needs multi-model + embedded + self-hosted
+| Customer wants managed-only + simplicity
+| Lead with cross-model queries and embedded mode
+
+| Milvus
+| Customer needs graphs + documents + SQL
+| Customer needs billion-scale distributed
+| Close distributed gap, lead with multi-model
+
+| Weaviate
+| Customer needs trading/finance workloads + PostgreSQL compat
+| Customer wants modules ecosystem + hybrid search
+| Ship hybrid search, lead with finance vertical
+
+| Qdrant
+| Customer needs cross-model joins + embedded
+| Customer wants simple vector-only + Raft HA
+| Ship Raft, lead with multi-model query
+
+| SurrealDB
+| Customer needs vector performance + time-series
+| Customer wants mature ACID + full SurrealQL
+| Ship time-series, lead with vector engine performance
+
+| Vespa
+| Customer needs embedded mode + graph + financial compliance
+| Customer wants best-in-class hybrid search at scale
+| Ship hybrid search, differentiate with embedded + graph
+|===
+
+=== Common Objection Handling
+
+"Why not just use pgvector?"::
+pgvector is excellent for adding vector search to an existing PostgreSQL deployment. ProximaDB is for workloads that need *cross-model queries* -- joining vectors with graphs and documents in a single query -- and *embedded deployment* with sub-5ms latency. If your workload is purely vector-in-PostgreSQL, pgvector is the right choice. If you need multi-model context, ProximaDB is purpose-built for it.
+
+"Pinecone/Qdrant is simpler."::
+Simplicity is valuable when your workload is vector-only. When your application needs to correlate vector similarity with graph relationships and document attributes -- which is increasingly common in agentic AI and financial services -- the simplicity of a single-model database becomes the complexity of application-level joins. ProximaDB moves that complexity into the database where it belongs.
+
+"SurrealDB already does multi-model."::
+SurrealDB is a strong multi-model database with excellent ACID transactions and a unified query language. ProximaDB differentiates on *vector search performance* (6 specialized engines, ~5ms at 10K vectors), *embedded mode* (PyO3, JNI, NAPI, C FFI), and *PostgreSQL wire protocol compatibility*. For workloads where vector search performance is the primary bottleneck, ProximaDB is the better choice.
+
+== Related Documents
+
+* link:VISION.adoc[Vision Document]
+* link:PRD.adoc[Product Requirements Document]
+* link:../10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis]
+
+'''
+
+_Last Updated_: February 2026

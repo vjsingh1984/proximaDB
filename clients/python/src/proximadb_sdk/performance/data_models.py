@@ -63,10 +63,16 @@ class ThroughputMetrics(BaseModel):
     """Throughput metrics for operations."""
 
     operations_per_second: float = Field(description="Operations completed per second")
-    vectors_per_second: float = Field(default=0.0, description="Vectors processed per second")
-    bytes_per_second: float = Field(default=0.0, description="Bytes processed per second")
+    vectors_per_second: float = Field(
+        default=0.0, description="Vectors processed per second"
+    )
+    bytes_per_second: float = Field(
+        default=0.0, description="Bytes processed per second"
+    )
     total_operations: int = Field(default=0, description="Total number of operations")
-    total_duration_ms: float = Field(default=0.0, description="Total duration in milliseconds")
+    total_duration_ms: float = Field(
+        default=0.0, description="Total duration in milliseconds"
+    )
 
 
 class MemoryMetrics(BaseModel):
@@ -74,7 +80,9 @@ class MemoryMetrics(BaseModel):
 
     peak_memory_mb: float = Field(description="Peak memory usage in MB")
     avg_memory_mb: float = Field(default=0.0, description="Average memory usage in MB")
-    memory_delta_mb: float = Field(default=0.0, description="Memory change during operation")
+    memory_delta_mb: float = Field(
+        default=0.0, description="Memory change during operation"
+    )
     gc_collections: int = Field(default=0, description="Number of garbage collections")
 
 
@@ -82,10 +90,16 @@ class BenchmarkMetrics(BaseModel):
     """Combined metrics for a benchmark operation."""
 
     latency: LatencyStats = Field(description="Latency statistics")
-    throughput: ThroughputMetrics | None = Field(default=None, description="Throughput metrics")
+    throughput: ThroughputMetrics | None = Field(
+        default=None, description="Throughput metrics"
+    )
     memory: MemoryMetrics | None = Field(default=None, description="Memory metrics")
-    recall: float | None = Field(default=None, description="Recall rate for search operations")
-    precision: float | None = Field(default=None, description="Precision for search operations")
+    recall: float | None = Field(
+        default=None, description="Recall rate for search operations"
+    )
+    precision: float | None = Field(
+        default=None, description="Precision for search operations"
+    )
 
 
 class EnginePerformance(BaseModel):
@@ -104,25 +118,39 @@ class EnginePerformance(BaseModel):
     delete_metrics: BenchmarkMetrics | None = Field(
         default=None, description="Delete operation metrics"
     )
-    flush_time_ms: float | None = Field(default=None, description="Flush duration in ms")
-    compaction_time_ms: float | None = Field(default=None, description="Compaction duration in ms")
-    storage_size_mb: float | None = Field(default=None, description="Storage size in MB")
+    flush_time_ms: float | None = Field(
+        default=None, description="Flush duration in ms"
+    )
+    compaction_time_ms: float | None = Field(
+        default=None, description="Compaction duration in ms"
+    )
+    storage_size_mb: float | None = Field(
+        default=None, description="Storage size in MB"
+    )
 
 
 class BenchmarkResult(BaseModel):
     """Result of a benchmark run."""
 
     benchmark_name: str = Field(description="Name of the benchmark")
-    timestamp: datetime = Field(default_factory=datetime.now, description="When benchmark ran")
+    timestamp: datetime = Field(
+        default_factory=datetime.now, description="When benchmark ran"
+    )
     duration_seconds: float = Field(description="Total benchmark duration")
     vector_count: int = Field(description="Number of vectors tested")
     dimension: int = Field(description="Vector dimension")
     engine_results: list[EnginePerformance] = Field(
         default_factory=list, description="Per-engine results"
     )
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-    success: bool = Field(default=True, description="Whether benchmark completed successfully")
-    error_message: str | None = Field(default=None, description="Error message if failed")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
+    success: bool = Field(
+        default=True, description="Whether benchmark completed successfully"
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if failed"
+    )
 
 
 class ValidationResult(BaseModel):
@@ -134,7 +162,9 @@ class ValidationResult(BaseModel):
     expected_value: Any | None = Field(default=None, description="Expected value")
     actual_value: Any | None = Field(default=None, description="Actual value")
     threshold: float | None = Field(default=None, description="Threshold for pass/fail")
-    details: dict[str, Any] = Field(default_factory=dict, description="Additional details")
+    details: dict[str, Any] = Field(
+        default_factory=dict, description="Additional details"
+    )
 
 
 class PerformanceSummary(BaseModel):
@@ -144,9 +174,15 @@ class PerformanceSummary(BaseModel):
     total_queries_executed: int = Field(default=0, description="Total search queries")
     avg_insert_latency_ms: float = Field(description="Average insert latency")
     avg_search_latency_ms: float = Field(description="Average search latency")
-    best_engine_insert: str | None = Field(default=None, description="Best engine for inserts")
-    best_engine_search: str | None = Field(default=None, description="Best engine for search")
-    overall_recall: float | None = Field(default=None, description="Overall recall rate")
+    best_engine_insert: str | None = Field(
+        default=None, description="Best engine for inserts"
+    )
+    best_engine_search: str | None = Field(
+        default=None, description="Best engine for search"
+    )
+    overall_recall: float | None = Field(
+        default=None, description="Overall recall rate"
+    )
     recommendations: list[str] = Field(
         default_factory=list, description="Performance recommendations"
     )
@@ -168,7 +204,9 @@ class PerformanceReport(BaseModel):
     validation_results: list[ValidationResult] = Field(
         default_factory=list, description="All validation results"
     )
-    summary: PerformanceSummary | None = Field(default=None, description="Performance summary")
+    summary: PerformanceSummary | None = Field(
+        default=None, description="Performance summary"
+    )
     competitor_comparison: dict[str, Any] = Field(
         default_factory=dict, description="Comparison with competitor databases"
     )

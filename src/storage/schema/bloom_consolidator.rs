@@ -66,6 +66,7 @@ use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, BloomStrategy};
 #[derive(Debug)]
 pub struct BloomConsolidator {
     /// Expected number of items across all rowgroups.
+    #[allow(dead_code)]
     expected_items: usize,
 
     /// Target false positive rate.

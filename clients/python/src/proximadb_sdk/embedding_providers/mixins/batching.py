@@ -4,9 +4,10 @@ Batching mixin
 Provides intelligent batching strategies for embedding generation.
 """
 
-from typing import List, Iterator, Optional
-import numpy as np
 import logging
+from typing import Iterator, List, Optional
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,7 @@ class BatchingMixin:
     """
 
     def create_batches(
-        self,
-        texts: List[str],
-        batch_size: Optional[int] = None
+        self, texts: List[str], batch_size: Optional[int] = None
     ) -> Iterator[List[str]]:
         """
         Split texts into batches
@@ -51,10 +50,10 @@ class BatchingMixin:
             3
         """
         if batch_size is None:
-            batch_size = getattr(self.config, 'batch_size', 32)
+            batch_size = getattr(self.config, "batch_size", 32)
 
         for i in range(0, len(texts), batch_size):
-            yield texts[i:i + batch_size]
+            yield texts[i : i + batch_size]
 
     def adaptive_batch_size(self, texts: List[str]) -> int:
         """
@@ -78,7 +77,7 @@ class BatchingMixin:
             4
         """
         if not texts:
-            return getattr(self.config, 'batch_size', 32)
+            return getattr(self.config, "batch_size", 32)
 
         # Calculate average text length
         avg_length = sum(len(t) for t in texts) / len(texts)
@@ -95,11 +94,7 @@ class BatchingMixin:
         else:
             return 4
 
-    def estimate_memory_usage(
-        self,
-        num_texts: int,
-        avg_text_length: int
-    ) -> float:
+    def estimate_memory_usage(self, num_texts: int, avg_text_length: int) -> float:
         """
         Estimate memory usage for embedding batch
 
@@ -120,7 +115,7 @@ class BatchingMixin:
         # - Model hidden states ~4x text size
         # - Embedding output: num_texts * dimension * 4 bytes (float32)
 
-        dimension = getattr(self.config.model, 'dimension', 768)
+        dimension = getattr(self.config.model, "dimension", 768)
 
         text_memory = num_texts * avg_text_length * 2
         hidden_memory = text_memory * 4
@@ -146,5 +141,5 @@ class BatchingMixin:
             >>> print(mixin.should_use_batching(100))
             True
         """
-        batch_size = getattr(self.config, 'batch_size', 32)
+        batch_size = getattr(self.config, "batch_size", 32)
         return num_texts > batch_size

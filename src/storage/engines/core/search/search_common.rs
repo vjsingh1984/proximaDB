@@ -9,7 +9,6 @@ use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
@@ -20,12 +19,6 @@ use crate::proto::proximadb_v1::VectorRecord;
 pub struct SearchConfig {
     /// Number of results to return
     pub top_k: usize,
-
-    /// Distance metric to use
-    pub distance_metric: DistanceMetric,
-
-    /// Optional filter expression
-    pub filter: Option<FilterExpression>,
 
     /// Include vectors in results
     pub include_vectors: bool,
@@ -41,19 +34,21 @@ pub struct SearchConfig {
 
     /// Enable progressive quantization
     pub enable_progressive_search: bool,
+
+    /// Distance metric for similarity calculation
+    pub distance_metric: crate::compute::distance_computation::DistanceMetric,
 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
             top_k: 10,
-            distance_metric: DistanceMetric::Cosine,
-            filter: None,
             include_vectors: false,
             include_metadata: true,
             enable_reranking: true,
             max_parallel_files: 4,
             enable_progressive_search: true,
+            distance_metric: crate::compute::distance_computation::DistanceMetric::default(),
         }
     }
 }
@@ -148,6 +143,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
 pub struct UniversalSearchPipeline {
     distance_compute: Arc<UnifiedDistanceCompute>,
     quantization_engine: Arc<UnifiedQuantizationEngine>,
+    #[allow(dead_code)]
     filter_processor: Arc<FilterProcessor>,
     result_manager: Arc<ResultManager>,
 }
@@ -157,11 +153,12 @@ impl UniversalSearchPipeline {
         distance_compute: Arc<UnifiedDistanceCompute>,
         quantization_engine: Arc<UnifiedQuantizationEngine>,
     ) -> Self {
+        let dc = distance_compute.clone();
         Self {
-            distance_compute: distance_compute.clone(),
+            distance_compute,
             quantization_engine,
             filter_processor: Arc::new(FilterProcessor::new()),
-            result_manager: Arc::new(ResultManager::new(distance_compute)),
+            result_manager: Arc::new(ResultManager::new(dc)),
         }
     }
 
@@ -178,8 +175,8 @@ impl UniversalSearchPipeline {
         B: SearchableBlock + Send + 'static,
         S: FileSearcher<F, B> + 'static,
     {
-        // 1. File-level filtering
-        let filtered_files = self.filter_files(files, &config.filter)?;
+        // 1. File-level filtering (filter is embedded in config)
+        let filtered_files = self.filter_files(files, &None)?;
 
         if filtered_files.is_empty() {
             return Ok(Vec::new());
@@ -194,9 +191,7 @@ impl UniversalSearchPipeline {
         let mut merged = self.result_manager.merge_results(file_results)?;
 
         // 4. Apply final ranking
-        merged = self
-            .result_manager
-            .rank_by_distance(merged, &config.distance_metric)?;
+        merged = self.result_manager.rank_by_distance(merged, &None)?;
 
         // 5. Select top-k
         merged = self.result_manager.select_top_k(merged, config.top_k)?;
@@ -373,7 +368,7 @@ impl UniversalSearchPipeline {
             })),
         };
 
-        let binary_query = self
+        let _binary_query = self
             .quantization_engine
             .quantize(query_vector, &binary_level)
             .await?;
@@ -392,7 +387,7 @@ impl UniversalSearchPipeline {
     async fn int8_rank(
         &self,
         records: Vec<VectorRecord>,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         top_k: usize,
     ) -> Result<Vec<VectorRecord>> {
         // This would use INT8 quantization from the quantization engine
@@ -406,7 +401,7 @@ impl UniversalSearchPipeline {
     async fn pq_rank(
         &self,
         records: Vec<VectorRecord>,
-        query_vector: &[f32],
+        _query_vector: &[f32],
         top_k: usize,
     ) -> Result<Vec<VectorRecord>> {
         // This would use PQ from the quantization engine
@@ -429,7 +424,7 @@ impl UniversalSearchPipeline {
             let similarity_result = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &record.vector,
-                &DistanceMetric::Cosine, // Use default for now
+                &crate::compute::distance_computation::DistanceMetric::default(),
             );
 
             // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>
@@ -530,7 +525,7 @@ impl FilterProcessor {
         Self {}
     }
 
-    pub fn process_filter(&self, filter: &FilterExpression) -> Result<FilterPlan> {
+    pub fn process_filter(&self, _filter: &FilterExpression) -> Result<FilterPlan> {
         // Convert filter expression to execution plan
         Ok(FilterPlan {
             // Implementation details
@@ -540,7 +535,7 @@ impl FilterProcessor {
     pub fn apply_to_metadata(
         &self,
         metadata: &Option<serde_json::Value>,
-        filter: &FilterExpression,
+        _filter: &FilterExpression,
     ) -> bool {
         // Apply filter to metadata
         // This is a simplified implementation
@@ -565,6 +560,7 @@ pub struct FilterPlan {
 
 /// Result manager for handling search results
 pub struct ResultManager {
+    #[allow(dead_code)]
     distance_compute: Arc<UnifiedDistanceCompute>,
 }
 
@@ -589,7 +585,7 @@ impl ResultManager {
     pub fn rank_by_distance(
         &self,
         mut results: Vec<OptimizedSearchRecord>,
-        _distance_metric: &DistanceMetric,
+        _distance_metric: &Option<()>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         results.sort_by(|a, b| {
             a.similarity

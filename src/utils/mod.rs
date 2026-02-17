@@ -1,6 +1,7 @@
-// Internal utilities module - replacing external dependencies
-// This module provides internal implementations of common utilities
-// to reduce external dependencies and improve performance
+//! Internal utilities module - replacing external dependencies
+//!
+//! This module provides internal implementations of common utilities
+//! to reduce external dependencies and improve performance.
 
 pub mod bitmap;
 pub mod btree;

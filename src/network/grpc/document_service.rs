@@ -244,9 +244,23 @@ impl DocumentService for DocumentServiceImpl {
 
     async fn aggregate_documents(
         &self,
-        _request: Request<proximadb_v1::AggregateDocumentsRequest>,
+        request: Request<proximadb_v1::AggregateDocumentsRequest>,
     ) -> Result<Response<proximadb_v1::AggregateDocumentsResponse>, Status> {
-        // TODO: Implement aggregation pipeline
-        Err(Status::unimplemented("Aggregation not yet implemented"))
+        let req = request.into_inner();
+
+        match self
+            .document_service
+            .aggregate_documents(&req.collection, req.filter, req.pipeline)
+            .await
+        {
+            Ok(result) => Ok(Response::new(proximadb_v1::AggregateDocumentsResponse {
+                results: result.results,
+                query_time_ms: result.query_time_ms,
+            })),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to aggregate documents: {}",
+                e
+            ))),
+        }
     }
 }

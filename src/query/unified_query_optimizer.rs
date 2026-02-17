@@ -31,7 +31,9 @@ use crate::storage::engines::core::formats::columnar::common::EarlyTerminationCo
 /// Consolidates Universal Metadata Filtering + Unified Search Optimizer
 pub struct UnifiedQueryOptimizer {
     /// Shared metadata caches (consolidated from both systems)
+    #[allow(dead_code)]
     file_metadata_cache: Arc<dashmap::DashMap<String, FileMetadata>>,
+    #[allow(dead_code)]
     column_metadata_cache: Arc<dashmap::DashMap<String, ColumnMetadata>>,
 
     /// Unified performance tracking (merged from both)
@@ -41,12 +43,14 @@ pub struct UnifiedQueryOptimizer {
     index_capabilities: Arc<dashmap::DashMap<String, IndexCapabilities>>,
 
     /// Quantization engines (from search optimizer)
+    #[allow(dead_code)]
     quantization_engines: Arc<dashmap::DashMap<String, Arc<StorageQuantizationEngine>>>,
 
     /// Unified cost model (NEW - combines both systems)
     cost_model: Arc<UnifiedCostModel>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: UnifiedOptimizerConfig,
 }
 
@@ -289,12 +293,15 @@ pub enum ExecutionStep {
 pub struct UnifiedCostModel {
     /// Cost calculation strategies
     /// Cost calculation strategies
+    #[allow(dead_code)]
     strategies: HashMap<String, Box<dyn CostStrategy>>,
 
     /// Historical cost data
+    #[allow(dead_code)]
     historical_costs: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
 
     /// Hardware capabilities for cost adjustment
+    #[allow(dead_code)]
     hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
 }
 
@@ -822,18 +829,24 @@ impl CostStrategy for DefaultCostStrategy {
 /// Cost analysis results
 #[derive(Debug)]
 struct CostAnalysis {
+    #[allow(dead_code)]
     total_cost: f64,
     filter_cost: Option<f64>,
     search_cost: Option<f64>,
+    #[allow(dead_code)]
     index_cost: Option<f64>,
     filter_selectivity: Option<f64>,
     filters: Vec<FilterAnalysis>,
+    #[allow(dead_code)]
     has_bloom_filters: bool,
     /// Dataset size for accurate cost estimation
+    #[allow(dead_code)]
     dataset_size: usize,
     /// Estimated memory usage for operation
+    #[allow(dead_code)]
     estimated_memory_mb: f64,
     /// Estimated I/O operations required
+    #[allow(dead_code)]
     estimated_io_ops: usize,
 }
 
@@ -848,7 +861,7 @@ struct FilterAnalysis {
 }
 
 /// Operation types for cost calculation
-enum Operation {
+pub enum Operation {
     MetadataFilter(FilterOperation),
     VectorSearch(SearchOperation),
     IndexLookup(IndexOperation),
@@ -856,26 +869,27 @@ enum Operation {
 }
 
 /// Index operation details
-struct IndexOperation {
+pub struct IndexOperation {
     index_type: Index,
+    #[allow(dead_code)]
     lookup_params: IndexLookupParams,
 }
 
 /// Filter operation details
-struct FilterOperation {
+pub struct FilterOperation {
     condition: FilterCondition,
     rows_to_scan: usize,
     can_use_index: bool,
 }
 
 /// Search operation details
-struct SearchOperation {
+pub struct SearchOperation {
     method: SearchExecutionMethod,
     num_vectors: usize,
 }
 
 /// Combined operation details
-struct CombinedOperation {
+pub struct CombinedOperation {
     filter: FilterOperation,
     search: SearchOperation,
     can_parallelize: bool,
@@ -1117,7 +1131,9 @@ struct UnifiedPerformanceHistory {
 struct StrategyPerformance {
     pub avg_latency_ms: f32,
     pub avg_recall: f32,
+    #[allow(dead_code)]
     pub avg_memory_mb: usize,
+    #[allow(dead_code)]
     pub success_rate: f32,
 }
 
@@ -1176,7 +1192,6 @@ pub fn migrate_universal_filter(
     filter: &crate::core::search::FilterExpression,
 ) -> UnifiedMetadataFilter {
     let mut conditions = Vec::new();
-    let mut logic = FilterLogic::And;
 
     fn extract_conditions(
         expr: &crate::core::search::FilterExpression,
@@ -1289,17 +1304,13 @@ pub fn migrate_universal_filter(
     }
 
     // Determine the overall logic based on the top-level expression
-    match filter {
-        crate::core::search::FilterExpression::And(_) => {
-            logic = FilterLogic::And;
-        }
-        crate::core::search::FilterExpression::Or(_) => {
-            logic = FilterLogic::Or;
-        }
+    let logic = match filter {
+        crate::core::search::FilterExpression::And(_) => FilterLogic::And,
+        crate::core::search::FilterExpression::Or(_) => FilterLogic::Or,
         _ => {
-            logic = FilterLogic::And; // Default for single conditions
+            FilterLogic::And // Default for single conditions
         }
-    }
+    };
 
     // Extract all conditions
     extract_conditions(filter, &mut conditions);
@@ -2269,9 +2280,10 @@ mod tests {
             value: serde_json::json!("electronics"),
         };
 
+        let search_params = SearchParams::default();
         let context = UnifiedQueryContext {
             collection,
-            search_params: Some(&SearchParams::default()),
+            search_params: Some(&search_params),
             filter_params: Some(&filter),
             optimization_goal: OptimizationGoal::Balanced,
             available_files: vec!["file1.parquet".to_string()],

@@ -3,9 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
     use crate::metrics::collectors::{
-        AccessPatternMetricsCollector, EngineMetricsCollector, FilesystemMetricsCollector,
+        AccessPatternMetricsCollector, FilesystemMetricsCollector,
         MetricsCollector as MetricsCollectorTrait, UnifiedMetricsCollector,
     };
     use std::sync::Arc;

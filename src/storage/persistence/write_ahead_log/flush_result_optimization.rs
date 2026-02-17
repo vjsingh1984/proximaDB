@@ -90,6 +90,7 @@ pub struct StreamingFlushResult {
 /// Batch flush processor for optimal throughput
 pub struct BatchFlushProcessor {
     /// Batch size for processing
+    #[allow(dead_code)]
     batch_size: usize,
 
     /// Number of parallel workers
@@ -164,6 +165,7 @@ pub struct FlushResultCache {
     cache: moka::future::Cache<String, Arc<FlushResult>>,
 
     /// Maximum cache size
+    #[allow(dead_code)]
     max_entries: u64,
 }
 
@@ -408,7 +410,7 @@ mod tests {
         assert!(result.base.success);
 
         // Test cache hit
-        let result2 = coordinator
+        let _result2 = coordinator
             .execute_optimized_flush("test_collection", vectors)
             .await
             .unwrap();

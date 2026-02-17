@@ -49,6 +49,7 @@
 // - JSON over HTTP
 
 pub mod alerting;
+pub mod audit;
 pub mod ingestion;
 pub mod query;
 pub mod storage;
@@ -238,6 +239,404 @@ impl ObservabilityService {
             last_ingest_at_ns: state.last_ingest_at_ns,
         })
     }
+
+    /// Delete a namespace
+    pub async fn delete_namespace(&self, namespace: &str) -> Result<()> {
+        info!("Deleting observability namespace: {}", namespace);
+
+        // Verify namespace exists
+        {
+            let namespaces = self.namespaces.read().await;
+            if !namespaces.contains_key(namespace) {
+                return Err(anyhow::anyhow!("Namespace '{}' not found", namespace));
+            }
+        }
+
+        // Delete from storage (handles WAL write)
+        self.storage.delete_namespace(namespace).await?;
+
+        // Remove from in-memory state
+        {
+            let mut namespaces = self.namespaces.write().await;
+            namespaces.remove(namespace);
+        }
+
+        info!("Deleted observability namespace: {}", namespace);
+        Ok(())
+    }
+
+    /// List all namespaces
+    pub async fn list_namespaces(&self) -> Vec<NamespaceInfo> {
+        let namespaces = self.namespaces.read().await;
+        namespaces
+            .iter()
+            .map(|(name, state)| NamespaceInfo {
+                name: name.clone(),
+                created_at_ns: state.created_at_ns,
+                last_ingest_at_ns: state.last_ingest_at_ns,
+                total_events: state.total_events,
+            })
+            .collect()
+    }
+
+    /// Query metrics with time range and label filters
+    pub async fn query_metrics(
+        &self,
+        namespace: &str,
+        metric_name: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        labels: &std::collections::HashMap<String, String>,
+        limit: u32,
+    ) -> Result<MetricQueryResult> {
+        let start = std::time::Instant::now();
+
+        // Get raw metrics from storage
+        let mut samples = self
+            .storage
+            .query_metrics(namespace, metric_name, start_time_ns, end_time_ns)
+            .await?;
+
+        // Apply label filters
+        if !labels.is_empty() {
+            samples.retain(|sample| {
+                labels
+                    .iter()
+                    .all(|(k, v)| sample.labels.get(k).map_or(false, |sv| sv == v))
+            });
+        }
+
+        // Apply limit
+        if limit > 0 && samples.len() > limit as usize {
+            samples.truncate(limit as usize);
+        }
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+
+        Ok(MetricQueryResult {
+            samples,
+            query_time_ms,
+        })
+    }
+
+    /// Ingest a batch of trace spans
+    pub async fn ingest_traces(
+        &self,
+        namespace: &str,
+        traces: Vec<crate::proto::proximadb_v1::TraceData>,
+    ) -> Result<IngestResult> {
+        use crate::observability::storage::traces::TraceSpan;
+
+        debug!(
+            "Ingesting {} traces to namespace {}",
+            traces.len(),
+            namespace
+        );
+
+        // Verify namespace exists
+        {
+            let namespaces = self.namespaces.read().await;
+            if !namespaces.contains_key(namespace) {
+                return Err(anyhow::anyhow!("Namespace '{}' not found", namespace));
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let mut ingested = 0u64;
+        let mut failed = 0u64;
+        let mut errors = Vec::new();
+
+        // TraceData in proto is a single span, convert and write
+        for trace_data in traces {
+            // Extract service name from attributes or use empty string
+            let service_name = trace_data
+                .attributes
+                .get("service.name")
+                .and_then(|v| v.value.as_ref())
+                .and_then(|v| match v {
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            // Convert SqlValue attributes to String attributes
+            let attributes: std::collections::HashMap<String, String> = trace_data
+                .attributes
+                .iter()
+                .filter_map(|(k, v)| {
+                    v.value.as_ref().and_then(|val| match val {
+                        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                            Some((k.clone(), s.clone()))
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                            Some((k.clone(), i.to_string()))
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                            Some((k.clone(), f.to_string()))
+                        }
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                            Some((k.clone(), b.to_string()))
+                        }
+                        _ => None,
+                    })
+                })
+                .collect();
+
+            // Extract status code from SpanStatus message
+            let (status_code, status_message) = trace_data
+                .status
+                .map(|s| (s.code, s.message.unwrap_or_default()))
+                .unwrap_or((0, String::new())); // 0 = Unset
+
+            let span = TraceSpan {
+                trace_id: trace_data.trace_id,
+                span_id: trace_data.span_id,
+                parent_span_id: trace_data.parent_span_id.unwrap_or_default(),
+                name: trace_data.name,
+                service_name,
+                start_time_ns: trace_data.start_time_ns,
+                end_time_ns: trace_data.end_time_ns,
+                attributes,
+                status: status_code,
+                status_message,
+            };
+
+            match self.storage.write_span(namespace, &span).await {
+                Ok(()) => ingested += 1,
+                Err(e) => {
+                    failed += 1;
+                    errors.push(e.to_string());
+                }
+            }
+        }
+
+        // Update namespace stats
+        {
+            let mut namespaces = self.namespaces.write().await;
+            if let Some(state) = namespaces.get_mut(namespace) {
+                state.last_ingest_at_ns =
+                    Some(chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+                state.total_events += ingested;
+            }
+        }
+
+        Ok(IngestResult {
+            ingested,
+            failed,
+            errors,
+            processing_time_ms: start.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// Query traces with filters
+    pub async fn query_traces(
+        &self,
+        namespace: &str,
+        params: TraceQueryParams,
+    ) -> Result<TraceQueryResult> {
+        let start = std::time::Instant::now();
+
+        // If trace_id is specified, fetch that specific trace
+        if let Some(trace_id) = &params.trace_id {
+            let spans = self.storage.query_trace(namespace, trace_id).await?;
+
+            let query_time_ms = start.elapsed().as_millis() as u64;
+
+            // Convert spans to TraceData
+            let traces = spans.into_iter().map(Self::span_to_trace_data).collect();
+
+            return Ok(TraceQueryResult {
+                traces,
+                next_cursor: None,
+                query_time_ms,
+            });
+        }
+
+        // Query by time range or service
+        let summaries = if let Some(service) = &params.service {
+            self.storage
+                .query_traces_by_service(
+                    namespace,
+                    service,
+                    params.start_time_ns,
+                    params.end_time_ns,
+                    params.limit as usize,
+                )
+                .await?
+        } else {
+            self.storage
+                .query_traces_by_time(
+                    namespace,
+                    params.start_time_ns,
+                    params.end_time_ns,
+                    params.limit as usize,
+                )
+                .await?
+        };
+
+        // Apply additional filters and convert to TraceData
+        let mut traces = Vec::new();
+
+        for summary in summaries {
+            // Apply operation filter
+            if let Some(op) = &params.operation {
+                if &summary.root_operation != op {
+                    continue;
+                }
+            }
+
+            // Apply min duration filter
+            if let Some(min_dur) = params.min_duration_ns {
+                if summary.duration_ns < min_dur {
+                    continue;
+                }
+            }
+
+            // Fetch all spans for this trace
+            let spans = self
+                .storage
+                .query_trace(namespace, &summary.trace_id)
+                .await?;
+
+            // Apply status filter if specified
+            if let Some(status) = params.status {
+                let has_matching_status = spans.iter().any(|s| s.status == status);
+                if !has_matching_status {
+                    continue;
+                }
+            }
+
+            // Convert spans to TraceData and add to results
+            for span in spans {
+                traces.push(Self::span_to_trace_data(span));
+            }
+
+            if traces.len() >= params.limit as usize {
+                break;
+            }
+        }
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+
+        Ok(TraceQueryResult {
+            traces,
+            next_cursor: None,
+            query_time_ms,
+        })
+    }
+
+    /// Get a single trace by ID (all spans)
+    pub async fn get_trace(&self, namespace: &str, trace_id: &str) -> Result<GetTraceResult> {
+        let spans = self.storage.query_trace(namespace, trace_id).await?;
+
+        let complete = !spans.is_empty() && spans.iter().any(|s| s.parent_span_id.is_empty()); // Has root span
+
+        let traces = spans.into_iter().map(Self::span_to_trace_data).collect();
+
+        Ok(GetTraceResult {
+            spans: traces,
+            complete,
+        })
+    }
+
+    /// Convert internal TraceSpan to proto TraceData
+    fn span_to_trace_data(
+        span: crate::observability::storage::traces::TraceSpan,
+    ) -> crate::proto::proximadb_v1::TraceData {
+        // Convert String attributes back to SqlValue attributes
+        let mut attributes = std::collections::HashMap::new();
+        for (k, v) in span.attributes {
+            attributes.insert(
+                k,
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                },
+            );
+        }
+
+        // Add service.name attribute
+        if !span.service_name.is_empty() {
+            attributes.insert(
+                "service.name".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        span.service_name,
+                    )),
+                },
+            );
+        }
+
+        // Convert status to SpanStatus message
+        let status = Some(crate::proto::proximadb_v1::SpanStatus {
+            code: span.status,
+            message: if span.status_message.is_empty() {
+                None
+            } else {
+                Some(span.status_message)
+            },
+        });
+
+        crate::proto::proximadb_v1::TraceData {
+            trace_id: span.trace_id,
+            span_id: span.span_id,
+            parent_span_id: if span.parent_span_id.is_empty() {
+                None
+            } else {
+                Some(span.parent_span_id)
+            },
+            name: span.name,
+            kind: crate::proto::proximadb_v1::SpanKind::Unspecified as i32,
+            start_time_ns: span.start_time_ns,
+            end_time_ns: span.end_time_ns,
+            status,
+            attributes,
+            events: vec![],
+            links: vec![],
+        }
+    }
+}
+
+/// Parameters for trace queries
+#[derive(Debug, Clone)]
+pub struct TraceQueryParams {
+    /// Start of time range (nanoseconds since epoch)
+    pub start_time_ns: i64,
+    /// End of time range (nanoseconds since epoch)
+    pub end_time_ns: i64,
+    /// Filter by trace ID
+    pub trace_id: Option<String>,
+    /// Filter by service
+    pub service: Option<String>,
+    /// Filter by operation name
+    pub operation: Option<String>,
+    /// Minimum duration filter
+    pub min_duration_ns: Option<i64>,
+    /// Status filter (SpanStatusCode as i32)
+    pub status: Option<i32>,
+    /// Maximum results
+    pub limit: u32,
+    /// Cursor for pagination
+    pub cursor: Option<String>,
+}
+
+/// Result of a trace query
+#[derive(Debug, Clone)]
+pub struct TraceQueryResult {
+    /// Matched traces (as spans)
+    pub traces: Vec<crate::proto::proximadb_v1::TraceData>,
+    /// Cursor for next page
+    pub next_cursor: Option<String>,
+    /// Query time in milliseconds
+    pub query_time_ms: u64,
+}
+
+/// Result of getting a single trace
+#[derive(Debug, Clone)]
+pub struct GetTraceResult {
+    /// All spans in the trace
+    pub spans: Vec<crate::proto::proximadb_v1::TraceData>,
+    /// Whether the trace is complete (has root span)
+    pub complete: bool,
 }
 
 /// Result of an ingestion operation
@@ -359,6 +758,28 @@ pub struct NamespaceStats {
     pub created_at_ns: i64,
     /// Last ingestion timestamp
     pub last_ingest_at_ns: Option<i64>,
+}
+
+/// Namespace info (for list_namespaces)
+#[derive(Debug, Clone)]
+pub struct NamespaceInfo {
+    /// Namespace name
+    pub name: String,
+    /// Created timestamp (nanoseconds since epoch)
+    pub created_at_ns: i64,
+    /// Last ingestion timestamp (nanoseconds since epoch)
+    pub last_ingest_at_ns: Option<i64>,
+    /// Total events ingested
+    pub total_events: u64,
+}
+
+/// Result of a metric query
+#[derive(Debug, Clone)]
+pub struct MetricQueryResult {
+    /// Metric samples matching the query
+    pub samples: Vec<MetricSample>,
+    /// Query time in milliseconds
+    pub query_time_ms: u64,
 }
 
 // =============================================================================

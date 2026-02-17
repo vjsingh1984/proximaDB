@@ -660,6 +660,7 @@ fn parse_return_clause(input: &str) -> IResult<&str, ReturnSpec> {
 // ==================== Mutation Clause Parsers ====================
 
 // Parse a property value map for CREATE/SET operations
+#[allow(dead_code)]
 fn parse_property_value_map(input: &str) -> IResult<&str, HashMap<String, serde_json::Value>> {
     map(
         delimited(
@@ -679,6 +680,7 @@ fn parse_property_value_map(input: &str) -> IResult<&str, HashMap<String, serde_
 }
 
 // Parse a CREATE node specification (n:Label {props})
+#[allow(dead_code)]
 fn parse_create_node_spec(input: &str) -> IResult<&str, CreateNodeSpec> {
     map(
         delimited(
@@ -699,6 +701,7 @@ fn parse_create_node_spec(input: &str) -> IResult<&str, CreateNodeSpec> {
 }
 
 // Parse a CREATE edge specification (a)-[r:TYPE {props}]->(b)
+#[allow(dead_code)]
 fn parse_create_edge_pattern(
     input: &str,
 ) -> IResult<&str, (CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
@@ -732,6 +735,7 @@ fn parse_create_edge_pattern(
 }
 
 // Parse edge spec for CREATE: -[r:TYPE {props}]->
+#[allow(dead_code)]
 fn parse_create_edge_spec(
     input: &str,
 ) -> IResult<
@@ -774,6 +778,7 @@ fn parse_create_edge_spec(
 }
 
 // Parse CREATE clause
+#[allow(dead_code)]
 fn parse_create_clause(input: &str) -> IResult<&str, CreateClause> {
     preceded(
         tag("CREATE"),
@@ -806,6 +811,7 @@ fn parse_create_clause(input: &str) -> IResult<&str, CreateClause> {
 }
 
 // Parse DELETE clause
+#[allow(dead_code)]
 fn parse_delete_clause(input: &str) -> IResult<&str, DeleteClause> {
     map(
         tuple((
@@ -826,6 +832,7 @@ fn parse_delete_clause(input: &str) -> IResult<&str, DeleteClause> {
 }
 
 // Parse SET item: n.prop = value OR n:Label OR n = {props} OR n += {props}
+#[allow(dead_code)]
 fn parse_set_item(input: &str) -> IResult<&str, SetItem> {
     alt((
         // Property assignment: n.prop = value
@@ -876,6 +883,7 @@ fn parse_set_item(input: &str) -> IResult<&str, SetItem> {
 }
 
 // Parse SET clause
+#[allow(dead_code)]
 fn parse_set_clause(input: &str) -> IResult<&str, SetClause> {
     preceded(
         tag("SET"),
@@ -893,6 +901,7 @@ fn parse_set_clause(input: &str) -> IResult<&str, SetClause> {
 }
 
 // Parse REMOVE item: n.prop OR n:Label
+#[allow(dead_code)]
 fn parse_remove_item(input: &str) -> IResult<&str, RemoveItem> {
     alt((
         // Remove property: n.prop
@@ -909,6 +918,7 @@ fn parse_remove_item(input: &str) -> IResult<&str, RemoveItem> {
 }
 
 // Parse REMOVE clause
+#[allow(dead_code)]
 fn parse_remove_clause(input: &str) -> IResult<&str, RemoveClause> {
     preceded(
         tag("REMOVE"),
@@ -926,6 +936,7 @@ fn parse_remove_clause(input: &str) -> IResult<&str, RemoveClause> {
 }
 
 // Parse MERGE clause
+#[allow(dead_code)]
 fn parse_merge_clause(input: &str) -> IResult<&str, MergeClause> {
     map(
         tuple((
@@ -978,6 +989,7 @@ fn parse_merge_clause(input: &str) -> IResult<&str, MergeClause> {
 }
 
 // Parse OPTIONAL MATCH clause
+#[allow(dead_code)]
 fn parse_optional_match_clause(input: &str) -> IResult<&str, (Vec<NodePattern>, Vec<EdgePattern>)> {
     map(
         preceded(tag("OPTIONAL"), preceded(multispace1, parse_match_clause)),
@@ -1003,6 +1015,7 @@ fn parse_optional_match_clause(input: &str) -> IResult<&str, (Vec<NodePattern>, 
 }
 
 // Parse WITH clause
+#[allow(dead_code)]
 fn parse_with_clause(input: &str) -> IResult<&str, WithClause> {
     preceded(
         tag("WITH"),
@@ -1034,6 +1047,7 @@ fn parse_with_clause(input: &str) -> IResult<&str, WithClause> {
 }
 
 // Parse a full Cypher query with all clause types
+#[allow(dead_code)]
 fn parse_cypher_query(input: &str) -> IResult<&str, CypherQuery> {
     map(
         tuple((

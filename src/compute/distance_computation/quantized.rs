@@ -261,15 +261,18 @@ pub struct QuantizedDistanceCalculator {
     distance_engine: Arc<UnifiedDistanceCompute>,
 
     /// Hardware capabilities
+    #[allow(dead_code)]
     hardware_caps: Arc<HardwareCapabilities>,
 
     /// Distance table cache for PQ
+    #[allow(dead_code)]
     pq_distance_cache: Arc<std::sync::RwLock<PQDistanceCache>>,
 
     /// Binary Hamming LUT for fast binary distance
     hamming_lut: Arc<HammingLookupTable>,
 
     /// INT8 distance tables
+    #[allow(dead_code)]
     int8_distance_tables: Arc<std::sync::RwLock<Int8DistanceTables>>,
 }
 
@@ -277,13 +280,17 @@ pub struct QuantizedDistanceCalculator {
 #[derive(Debug)]
 struct PQDistanceCache {
     /// Cached distance tables by codebook hash
+    #[allow(dead_code)]
     tables: std::collections::HashMap<u64, Arc<PQDistanceTable>>,
 
     /// Cache statistics
+    #[allow(dead_code)]
     hits: usize,
+    #[allow(dead_code)]
     misses: usize,
 
     /// Total memory usage
+    #[allow(dead_code)]
     memory_usage_bytes: usize,
 }
 
@@ -291,21 +298,27 @@ struct PQDistanceCache {
 #[derive(Debug)]
 struct PQDistanceTable {
     /// Distance table [subvector][centroid] = distance
+    #[allow(dead_code)]
     tables: Vec<Vec<f32>>,
 
     /// Number of subvectors
+    #[allow(dead_code)]
     num_subvectors: usize,
 
     /// Number of centroids per subvector
+    #[allow(dead_code)]
     num_centroids: usize,
 
     /// Distance metric used
+    #[allow(dead_code)]
     distance_metric: DistanceMetric,
 
     /// Creation timestamp for cache eviction
+    #[allow(dead_code)]
     timestamp: std::time::Instant,
 
     /// Access count for LFU eviction
+    #[allow(dead_code)]
     access_count: std::sync::atomic::AtomicUsize,
 }
 
@@ -323,9 +336,11 @@ struct HammingLookupTable {
 #[derive(Debug)]
 struct Int8DistanceTables {
     /// Distance computation lookup tables
+    #[allow(dead_code)]
     tables: std::collections::HashMap<(DistanceMetric, usize), Arc<Int8DistanceTable>>,
 
     /// Memory usage tracking
+    #[allow(dead_code)]
     memory_usage_bytes: usize,
 }
 
@@ -333,12 +348,15 @@ struct Int8DistanceTables {
 #[derive(Debug)]
 struct Int8DistanceTable {
     /// Precomputed squared differences for INT8 values
+    #[allow(dead_code)]
     squared_diff_table: Vec<Vec<f32>>,
 
     /// Distance metric
+    #[allow(dead_code)]
     distance_metric: DistanceMetric,
 
     /// Dimension
+    #[allow(dead_code)]
     dimension: usize,
 }
 
@@ -760,6 +778,7 @@ impl QuantizedDistanceCalculator {
     }
 
     /// Compute INT8 distance with caching
+    #[allow(dead_code)]
     async fn compute_int8_distance(
         &self,
         query: &[f32],
@@ -794,6 +813,7 @@ impl QuantizedDistanceCalculator {
     }
 
     /// Compute PQ distance with distance table caching
+    #[allow(dead_code)]
     async fn compute_pq_distance(
         &self,
         query: &[f32],
@@ -964,6 +984,7 @@ impl QuantizedDistanceCalculator {
         Ok(distance)
     }
 
+    #[allow(dead_code)]
     fn compute_int8_distance_with_table(
         &self,
         query: &[f32],
@@ -995,6 +1016,7 @@ impl QuantizedDistanceCalculator {
         }
     }
 
+    #[allow(dead_code)]
     fn compute_pq_distance_with_table(
         &self,
         pq_codes: &[u8],
@@ -1065,6 +1087,7 @@ impl QuantizedDistanceCalculator {
         Ok(results)
     }
 
+    #[allow(dead_code)]
     fn evict_pq_cache_entries(&self, cache: &mut PQDistanceCache) {
         // Implement cache eviction based on configured policy
         match self.config.cache_config.eviction_policy {
@@ -1103,6 +1126,7 @@ impl HammingLookupTable {
 }
 
 impl Int8DistanceTable {
+    #[allow(dead_code)]
     fn new(distance_metric: DistanceMetric, dimension: usize) -> Result<Self> {
         let mut squared_diff_table = Vec::with_capacity(dimension);
 
@@ -1122,12 +1146,14 @@ impl Int8DistanceTable {
         })
     }
 
+    #[allow(dead_code)]
     fn estimated_size(&self) -> usize {
         self.dimension * 256 * std::mem::size_of::<f32>()
     }
 }
 
 impl PQDistanceTable {
+    #[allow(dead_code)]
     fn new(query: &[f32], codebook: &[Vec<f32>], distance_metric: DistanceMetric) -> Result<Self> {
         let num_subvectors = codebook.len();
         let num_centroids = codebook.first().map(|c| c.len()).unwrap_or(256);
@@ -1181,6 +1207,7 @@ impl PQDistanceTable {
         })
     }
 
+    #[allow(dead_code)]
     fn estimated_size(&self) -> usize {
         self.num_subvectors * self.num_centroids * std::mem::size_of::<f32>()
     }
