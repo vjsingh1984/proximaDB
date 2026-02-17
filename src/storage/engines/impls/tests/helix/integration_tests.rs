@@ -39,7 +39,27 @@ use crate::storage::traits::{
     StorageQueryMetadata, UnifiedStorageEngine,
 };
 
-// Import helpers from consolidated helpers module
+/// Create a test HelixEngine using new_with_config with a proper temp directory,
+/// avoiding HelixEngine::new() which tries to load levels from /tmp and fails on CI.
+async fn create_test_helix_engine() -> (HelixEngine, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let config = HelixConfig::default();
+    let filesystem_factory = Arc::new(
+        FilesystemFactory::create(
+            crate::storage::persistence::filesystem::FilesystemConfig::default(),
+        )
+        .await
+        .unwrap(),
+    );
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        crate::proto::proximadb_v1::DistanceMetric::Cosine,
+    ));
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
+    (engine, temp_dir)
+}
+
 // =============================================================================
 // Section 1: Tests from tests/integration_tests.rs (12 tests)
 // =============================================================================
@@ -78,33 +98,9 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
 #[tokio::test]
 async fn test_helix_engine_initialization() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
-    let filesystem_factory = Arc::new(
-        FilesystemFactory::create(
-            crate::storage::persistence::filesystem::FilesystemConfig::default(),
-        )
-        .await
-        .unwrap(),
-    );
-
-    let distance_compute = Arc::new(
-        crate::compute::distance_computation::UnifiedDistanceCompute::new(
-            crate::proto::proximadb_v1::DistanceMetric::Cosine,
-        ),
-    );
-
-    // Use new_with_config which creates a proper temp directory,
-    // instead of new() which uses /tmp and may fail on CI runners
-    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
-        .await
-        .unwrap();
-
+    let (engine, _temp_dir) = create_test_helix_engine().await;
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
-    // temp_dir kept alive for the duration of the test
-    drop(temp_dir);
 }
 
 /// Test PCA model training and projection
@@ -182,7 +178,7 @@ async fn test_flush_and_compaction() {
         cfg
     };
 
-    let engine = HelixEngine::new().await.unwrap();
+    let (engine, _helix_temp) = create_test_helix_engine().await;
 
     // Create and flush test vectors
     let vectors = create_test_vectors(500, 64);
@@ -497,7 +493,7 @@ async fn test_end_to_end_search() {
     );
     let _filesystem = _filesystem_factory.get_filesystem("file://").unwrap();
 
-    let engine = HelixEngine::new().await.unwrap();
+    let (engine, _helix_temp) = create_test_helix_engine().await;
 
     // Flush test vectors
     let vectors = create_test_vectors(1000, 64);
@@ -757,7 +753,7 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
 async fn test_helix_engine_creation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let engine = HelixEngine::new().await.unwrap();
+    let (engine, _helix_temp) = create_test_helix_engine().await;
 
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
