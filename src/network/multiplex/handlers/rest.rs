@@ -218,19 +218,53 @@ impl RestHandler {
         };
 
         // Extract collection name and config
-        let name = request.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let dimension = request
-            .get("dimension")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let engine = request
-            .get("engine")
-            .and_then(|v| v.as_str())
-            .unwrap_or("sst");
-        let distance_metric = request
-            .get("distance_metric")
-            .and_then(|v| v.as_str())
-            .unwrap_or("cosine");
+        // Try nested proto format first (SDK sends collection_config), fall back to flat format
+        let (name, dimension, engine_str, metric_str) =
+            if let Some(config) = request.get("collection_config") {
+                let eng = config
+                    .get("storage_engine")
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                    })
+                    .unwrap_or_else(|| "sst".to_string());
+                let met = config
+                    .get("distance_metric")
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                    })
+                    .unwrap_or_else(|| "cosine".to_string());
+                (
+                    config.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                    config
+                        .get("dimension")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32,
+                    eng,
+                    met,
+                )
+            } else {
+                (
+                    request.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                    request
+                        .get("dimension")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32,
+                    request
+                        .get("engine")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("sst")
+                        .to_string(),
+                    request
+                        .get("distance_metric")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("cosine")
+                        .to_string(),
+                )
+            };
 
         if name.is_empty() || dimension == 0 {
             return Response::builder()
@@ -244,19 +278,19 @@ impl RestHandler {
 
         // Create collection via collection service
         use crate::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
-        let storage_engine = match engine.to_lowercase().as_str() {
-            "sst" => StorageEngine::Sst,
-            "helix" => StorageEngine::Helix,
-            "viper" => StorageEngine::Viper,
-            "nova" => StorageEngine::Nova,
-            "swift" => StorageEngine::Swift,
-            "raptor" => StorageEngine::Raptor,
+        let storage_engine = match engine_str.to_lowercase().as_str() {
+            "sst" | "4" => StorageEngine::Sst,
+            "helix" | "2" => StorageEngine::Helix,
+            "viper" | "5" => StorageEngine::Viper,
+            "nova" | "3" => StorageEngine::Nova,
+            "swift" | "7" => StorageEngine::Swift,
+            "raptor" | "6" => StorageEngine::Raptor,
             _ => StorageEngine::Sst,
         };
-        let distance = match distance_metric.to_lowercase().as_str() {
-            "cosine" => DistanceMetric::Cosine,
-            "euclidean" | "l2" => DistanceMetric::Euclidean,
-            "dot" | "dot_product" | "dotproduct" => DistanceMetric::DotProduct,
+        let distance = match metric_str.to_lowercase().as_str() {
+            "cosine" | "1" => DistanceMetric::Cosine,
+            "euclidean" | "l2" | "2" => DistanceMetric::Euclidean,
+            "dot" | "dot_product" | "dotproduct" | "3" => DistanceMetric::DotProduct,
             _ => DistanceMetric::Cosine,
         };
 

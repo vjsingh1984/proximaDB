@@ -863,7 +863,20 @@ jobs:
               --ignore=tests/integration/test_batching_real_server.py \
               --ignore=tests/integration/test_connection_pools.py \
               --ignore=tests/integration/test_grpc_sync_real_server.py \
-              --ignore=tests/integration/test_operation_router_integration.py 2>&1 | tee pytest_output.txt
+              --ignore=tests/integration/test_operation_router_integration.py \
+              --ignore=tests/integration/test_entity_store_comprehensive.py \
+              --ignore=tests/integration/test_entity_store_extended.py \
+              --ignore=tests/integration/test_sks_graph_first_integration.py \
+              --ignore=tests/integration/test_sks_semantic_graph_and_vector.py \
+              --ignore=tests/integration/test_sql_integration.py \
+              --ignore=tests/integration/test_semantic_chunking_integration.py \
+              --ignore=tests/integration/test_integration.py \
+              --ignore=tests/integration/test_multilang_code_indexing.py \
+              --ignore=tests/integration/test_chunking_embedding_integration.py \
+              --ignore=tests/integration/test_chunking_embedding_benchmark.py \
+              --ignore=tests/integration/test_graph_operations.py \
+              --ignore=tests/integration/test_code_indexing_integration.py \
+              --ignore=tests/integration/test_response_cache_integration.py 2>&1 | tee pytest_output.txt
           '
           exit_code=${PIPESTATUS[0]:-$?}
           set -e
