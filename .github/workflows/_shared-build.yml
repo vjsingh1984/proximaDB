@@ -46,9 +46,10 @@ on:
       binaries-built:
         description: 'Number of binary artifacts built'
         value: ${{ jobs.build-binaries.outputs.built-count }}
-      wheels-built:
-        description: 'Number of wheel artifacts built'
-        value: ${{ jobs.build-wheels.outputs.built-count }}
+      # NOTE: build-wheels temporarily disabled - see TODO in job definition
+      # wheels-built:
+      #   description: 'Number of wheel artifacts built'
+      #   value: ${{ jobs.build-wheels.outputs.built-count }}
       sdist-built:
         description: 'Number of sdist artifacts built'
         value: ${{ jobs.build-sdist.outputs.built-count }}
@@ -243,147 +244,160 @@ jobs:
   # ============================================================================
   # BUILD WHEELS - Skipped if cache hit
   # ============================================================================
-  build-wheels:
-    name: Build Wheels (${{ matrix.os }}, ${{ matrix.python }})
-    needs: cache-check
-    if: needs.cache-check.outputs.cache-hit != 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux x86_64
-          - os: ubuntu-22.04
-            target: x86_64
-            python: "3.9"
-          - os: ubuntu-22.04
-            target: x86_64
-            python: "3.10"
-          - os: ubuntu-22.04
-            target: x86_64
-            python: "3.11"
-          - os: ubuntu-22.04
-            target: x86_64
-            python: "3.12"
-          # Linux aarch64
-          - os: ubuntu-22.04
-            target: aarch64
-            python: "3.10"
-          - os: ubuntu-22.04
-            target: aarch64
-            python: "3.11"
-          - os: ubuntu-22.04
-            target: aarch64
-            python: "3.12"
-          # macOS x86_64
-          - os: macos-13
-            target: x86_64
-            python: "3.9"
-          - os: macos-13
-            target: x86_64
-            python: "3.10"
-          - os: macos-13
-            target: x86_64
-            python: "3.11"
-          - os: macos-13
-            target: x86_64
-            python: "3.12"
-          # macOS aarch64
-          - os: macos-14
-            target: aarch64
-            python: "3.9"
-          - os: macos-14
-            target: aarch64
-            python: "3.10"
-          - os: macos-14
-            target: aarch64
-            python: "3.11"
-          - os: macos-14
-            target: aarch64
-            python: "3.12"
-          # Windows x64
-          - os: windows-2022
-            target: x64
-            python: "3.9"
-          - os: windows-2022
-            target: x64
-            python: "3.10"
-          - os: windows-2022
-            target: x64
-            python: "3.11"
-          - os: windows-2022
-            target: x64
-            python: "3.12"
-    outputs:
-      built-count: ${{ steps.summary.outputs.count }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "${{ inputs.cache-key }}-wheel-${{ matrix.os }}-${{ matrix.target }}"
-          shared-key: "shared-build-wheel"
-
-      - name: Install Maturin
-        run: pip install maturin
-
-      - name: Build Wheel (Linux x86_64)
-        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
-        uses: PyO3/maturin-action@v1
-        with:
-          target: x86_64
-          manylinux: auto
-          args: --release --out dist --features python
-
-      - name: Build Wheel (Linux aarch64)
-        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
-        uses: PyO3/maturin-action@v1
-        with:
-          target: aarch64
-          manylinux: auto
-          args: --release --out dist --features python
-
-      - name: Build Wheel (macOS/Windows)
-        if: runner.os != 'Linux'
-        run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            if [ "${{ matrix.target }}" = "aarch64" ]; then
-              maturin build --release --out dist --features python --target aarch64-apple-darwin
-            else
-              maturin build --release --out dist --features python --target x86_64-apple-darwin
-            fi
-          else
-            maturin build --release --out dist --features python
-          fi
-        shell: bash
-
-      - name: Save to Build Cache
-        uses: actions/cache/save@v4
-        with:
-          path: dist/*.whl
-          key: wheel-${{ inputs.cache-key }}-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}-${{ github.run_id }}
-
-      - name: Upload Wheel Artifact
-        if: inputs.upload-artifacts == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}
-          path: dist/*.whl
-          retention-days: 7
-
-      - name: Build Summary
-        id: summary
-        run: echo "count=1" >> $GITHUB_OUTPUT
+  # build-wheels:
+  # NOTE: Temporarily disabled - clients/python is a pure Python package without
+  # Rust bindings. It does not have Cargo.toml or lib.rs, so maturin-based
+  # Rust-Python hybrid builds fail. The package is a gRPC client that only needs
+  # standard Python wheels built via setup.py/pyproject.toml.
+  #
+  # For v0.2.0 release, we're focusing on:
+  # - Native binaries (6 platforms)
+  # - Platform packages (RPM, DEB, DMG, MSI)
+  # - Source distribution (sdist)
+  #
+  # TODO: Re-enable when proper Rust bindings are added to clients/python
+  #
+  # build-wheels:
+  #   name: Build Wheels (${{ matrix.os }}, ${{ matrix.python }})
+  #   needs: cache-check
+  #   if: needs.cache-check.outputs.cache-hit != 'true'
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         # Linux x86_64
+  #         - os: ubuntu-22.04
+  #           target: x86_64
+  #           python: "3.9"
+  #         - os: ubuntu-22.04
+  #           target: x86_64
+  #           python: "3.10"
+  #         - os: ubuntu-22.04
+  #           target: x86_64
+  #           python: "3.11"
+  #         - os: ubuntu-22.04
+  #           target: x86_64
+  #           python: "3.12"
+  #         # Linux aarch64
+  #         - os: ubuntu-22.04
+  #           target: aarch64
+  #           python: "3.10"
+  #         - os: ubuntu-22.04
+  #           target: aarch64
+  #           python: "3.11"
+  #         - os: ubuntu-22.04
+  #           target: aarch64
+  #           python: "3.12"
+  #         # macOS x86_64
+  #         - os: macos-13
+  #           target: x86_64
+  #           python: "3.9"
+  #         - os: macos-13
+  #           target: x86_64
+  #           python: "3.10"
+  #         - os: macos-13
+  #           target: x86_64
+  #           python: "3.11"
+  #         - os: macos-13
+  #           target: x86_64
+  #           python: "3.12"
+  #         # macOS aarch64
+  #         - os: macos-14
+  #           target: aarch64
+  #           python: "3.9"
+  #         - os: macos-14
+  #           target: aarch64
+  #           python: "3.10"
+  #         - os: macos-14
+  #           target: aarch64
+  #           python: "3.11"
+  #         - os: macos-14
+  #           target: aarch64
+  #           python: "3.12"
+  #         # Windows x64
+  #         - os: windows-2022
+  #           target: x64
+  #           python: "3.9"
+  #         - os: windows-2022
+  #           target: x64
+  #           python: "3.10"
+  #         - os: windows-2022
+  #           target: x64
+  #           python: "3.11"
+  #         - os: windows-2022
+  #           target: x64
+  #           python: "3.12"
+  #   outputs:
+  #     built-count: ${{ steps.summary.outputs.count }}
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Setup Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ matrix.python }}
+  #
+  #     - name: Install Rust Toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #
+  #     - name: Setup Rust Cache
+  #       uses: Swatinem/rust-cache@v2
+  #       with:
+  #         prefix-key: "${{ inputs.cache-key }}-wheel-${{ matrix.os }}-${{ matrix.target }}"
+  #         shared-key: "shared-build-wheel"
+  #
+  #     - name: Install Maturin
+  #       run: pip install maturin
+  #
+  #     - name: Build Wheel (Linux x86_64)
+  #       if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         target: x86_64
+  #         manylinux: auto
+  #         args: --release --out dist --features python
+  #
+  #     - name: Build Wheel (Linux aarch64)
+  #       if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         target: aarch64
+  #         manylinux: auto
+  #         args: --release --out dist --features python
+  #
+  #     - name: Build Wheel (macOS/Windows)
+  #       if: runner.os != 'Linux'
+  #       run: |
+  #         if [ "${{ runner.os }}" = "macOS" ]; then
+  #           if [ "${{ matrix.target }}" = "aarch64" ]; then
+  #             maturin build --release --out dist --features python --target aarch64-apple-darwin
+  #           else
+  #             maturin build --release --out dist --features python --target x86_64-apple-darwin
+  #           fi
+  #         else
+  #           maturin build --release --out dist --features python
+  #         fi
+  #       shell: bash
+  #
+  #     - name: Save to Build Cache
+  #       uses: actions/cache/save@v4
+  #       with:
+  #         path: dist/*.whl
+  #         key: wheel-${{ inputs.cache-key }}-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}-${{ github.run_id }}
+  #
+  #     - name: Upload Wheel Artifact
+  #       if: inputs.upload-artifacts == 'true'
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: wheel-${{ matrix.os }}-${{ matrix.target }}-py${{ matrix.python }}
+  #         path: dist/*.whl
+  #         retention-days: 7
+  #
+  #     - name: Build Summary
+  #       id: summary
+  #       run: echo "count=1" >> $GITHUB_OUTPUT
 
   # ============================================================================
   # BUILD EMBEDDED WHEELS - Skipped if cache hit
@@ -538,8 +552,8 @@ jobs:
   # ============================================================================
   save-cache:
     name: Save Build Cache
-    # NOTE: build-embedded-wheels removed from dependencies - see above for TODO
-    needs: [cache-check, build-binaries, build-wheels, build-sdist]
+    # NOTE: build-wheels and build-embedded-wheels removed from dependencies - see above for TODOs
+    needs: [cache-check, build-binaries, build-sdist]
     if: always() && needs.cache-check.outputs.cache-hit != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -561,8 +575,8 @@ jobs:
   # ============================================================================
   summary:
     name: Build Summary
-    # NOTE: build-embedded-wheels removed from dependencies - see above for TODO
-    needs: [cache-check, build-binaries, build-wheels, build-sdist]
+    # NOTE: build-wheels and build-embedded-wheels removed from dependencies - see above for TODOs
+    needs: [cache-check, build-binaries, build-sdist]
     if: always()
     runs-on: ubuntu-latest
     outputs:
@@ -575,9 +589,10 @@ jobs:
             echo "::notice::Used cached artifacts"
             echo "total=cached" >> $GITHUB_OUTPUT
           else
+            # NOTE: Wheel builds temporarily disabled - see above for TODOs
             BINARIES=${{ needs.build-binaries.outputs.built-count }}
-            WHEELS=${{ needs.build-wheels.outputs.built-count }}
+            # WHEELS=${{ needs.build-wheels.outputs.built-count }}
             SDIST=${{ needs.build-sdist.outputs.built-count }}
-            TOTAL=$((BINARIES + WHEELS + SDIST))
+            TOTAL=$((BINARIES + SDIST))
             echo "total=$TOTAL" >> $GITHUB_OUTPUT
           fi

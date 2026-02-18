@@ -117,6 +117,10 @@ jobs:
           echo "Version: $VERSION"
           echo "=============================================="
           echo ""
+          echo "NOTE: Python wheel builds skipped - clients/python is a pure Python"
+          echo "      package without Rust bindings. For v0.2.0, we're releasing"
+          echo "      native binaries + platform packages + sdist only."
+          echo ""
 
           # Binary validation
           echo "## Binary Artifacts"
@@ -142,25 +146,26 @@ jobs:
           echo "  Binary Summary: $BINARY_COUNT/${#EXPECTED_BINARIES[@]} found"
           echo ""
 
+          # NOTE: Wheel validation temporarily disabled - clients/python is pure Python
+          # TODO: Re-enable when proper Rust bindings are added
           # Wheel validation
-          echo "## Python Wheel Artifacts"
-          LINUX_X64_WHEELS=$(find artifacts -name "*manylinux*x86_64*.whl" -type f 2>/dev/null | wc -l)
-          LINUX_ARM64_WHEELS=$(find artifacts -name "*manylinux*aarch64*.whl" -type f 2>/dev/null | wc -l)
-          MACOS_X64_WHEELS=$(find artifacts -name "*macosx*x86_64*.whl" -type f 2>/dev/null | wc -l)
-          MACOS_ARM64_WHEELS=$(find artifacts -name "*macosx*arm64*.whl" -type f 2>/dev/null | wc -l)
-          WINDOWS_WHEELS=$(find artifacts -name "*win_amd64*.whl" -type f 2>/dev/null | wc -l)
-
-          echo "  Linux x86_64: $LINUX_X64_WHEELS, Linux aarch64: $LINUX_ARM64_WHEELS"
-          echo "  macOS x86_64: $MACOS_X64_WHEELS, macOS arm64: $MACOS_ARM64_WHEELS"
-          echo "  Windows: $WINDOWS_WHEELS"
-          TOTAL_WHEELS=$((LINUX_X64_WHEELS + LINUX_ARM64_WHEELS + MACOS_X64_WHEELS + MACOS_ARM64_WHEELS + WINDOWS_WHEELS))
-          echo "  Total wheels: $TOTAL_WHEELS"
-          echo ""
-
-          if [ "$TOTAL_WHEELS" -lt 15 ]; then
-            echo "  [WARNING] Fewer than expected wheels"
-            VALIDATION_PASSED=false
-          fi
+          # echo "## Python Wheel Artifacts"
+          # LINUX_X64_WHEELS=$(find artifacts -name "*manylinux*x86_64*.whl" -type f 2>/dev/null | wc -l)
+          # LINUX_ARM64_WHEELS=$(find artifacts -name "*manylinux*aarch64*.whl" -type f 2>/dev/null | wc -l)
+          # MACOS_X64_WHEELS=$(find artifacts -name "*macosx*x86_64*.whl" -type f 2>/dev/null | wc -l)
+          # MACOS_ARM64_WHEELS=$(find artifacts -name "*macosx*arm64*.whl" -type f 2>/dev/null | wc -l)
+          # WINDOWS_WHEELS=$(find artifacts -name "*win_amd64*.whl" -type f 2>/dev/null | wc -l)
+          # echo "  Linux x86_64: $LINUX_X64_WHEELS, Linux aarch64: $LINUX_ARM64_WHEELS"
+          # echo "  macOS x86_64: $MACOS_X64_WHEELS, macOS arm64: $MACOS_ARM64_WHEELS"
+          # echo "  Windows: $WINDOWS_WHEELS"
+          # TOTAL_WHEELS=$((LINUX_X64_WHEELS + LINUX_ARM64_WHEELS + MACOS_X64_WHEELS + MACOS_ARM64_WHEELS + WINDOWS_WHEELS))
+          # echo "  Total wheels: $TOTAL_WHEELS"
+          # echo ""
+          # if [ "$TOTAL_WHEELS" -lt 15 ]; then
+          #   echo "  [WARNING] Fewer than expected wheels"
+          #   VALIDATION_PASSED=false
+          # fi
+          TOTAL_WHEELS=0
 
           # Platform packages
           echo "## Platform Packages"
@@ -205,7 +210,7 @@ jobs:
           echo "report<<EOF" >> $GITHUB_OUTPUT
           echo "Version: $VERSION" >> $GITHUB_OUTPUT
           echo "Binaries: $BINARY_COUNT/6" >> $GITHUB_OUTPUT
-          echo "Wheels: $TOTAL_WHEELS" >> $GITHUB_OUTPUT
+          echo "Wheels: skipped (pure Python package)" >> $GITHUB_OUTPUT
           echo "SDists: $SDIST_COUNT" >> $GITHUB_OUTPUT
           echo "RPM: $RPM_COUNT, DEB: $DEB_COUNT" >> $GITHUB_OUTPUT
           echo "DMG: $DMG_COUNT, MSI: $MSI_COUNT" >> $GITHUB_OUTPUT
