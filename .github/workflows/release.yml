@@ -250,6 +250,9 @@ jobs:
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
+        with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install Cross (for cross-compilation)
@@ -442,6 +445,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -523,6 +528,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Install Maturin
         run: pip install maturin
@@ -1376,6 +1383,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces
@@ -1619,6 +1628,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Verify crates.io Installation
         run: |
