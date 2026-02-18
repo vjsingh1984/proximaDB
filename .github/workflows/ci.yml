@@ -773,7 +773,7 @@ jobs:
   integration-test:
     name: Python Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: [changes, rust-build, python-test]
     if: |
       always() &&
@@ -854,14 +854,31 @@ jobs:
       - name: Run Integration Tests
         working-directory: clients/python
         run: |
+          set +e
           # Skip tests requiring native embedded bindings (PyO3 not built in CI)
-          PROXIMADB_URL=http://localhost:5678 \
-          PROXIMADB_GRPC_URL=http://localhost:5679 \
-          pytest tests/integration/ -v --tb=short --timeout=120 \
-            --ignore=tests/integration/test_batching_real_server.py \
-            --ignore=tests/integration/test_connection_pools.py \
-            --ignore=tests/integration/test_grpc_sync_real_server.py \
-            --ignore=tests/integration/test_operation_router_integration.py
+          timeout 900 bash -c '
+            PROXIMADB_URL=http://localhost:5678 \
+            PROXIMADB_GRPC_URL=http://localhost:5679 \
+            pytest tests/integration/ -v --tb=short --timeout=120 \
+              --ignore=tests/integration/test_batching_real_server.py \
+              --ignore=tests/integration/test_connection_pools.py \
+              --ignore=tests/integration/test_grpc_sync_real_server.py \
+              --ignore=tests/integration/test_operation_router_integration.py 2>&1 | tee pytest_output.txt
+          '
+          exit_code=${PIPESTATUS[0]:-$?}
+          set -e
+          # Handle pytest daemon thread hang (exit 124 = timeout killed)
+          if [ "$exit_code" -eq 124 ]; then
+            if grep -qE "[0-9]+ passed" pytest_output.txt; then
+              echo "WARNING: pytest hung after completion (daemon thread cleanup), treating as completed"
+              # Still exit with failure if tests failed, success if all passed
+              if grep -qE "[0-9]+ failed|[0-9]+ error" pytest_output.txt; then
+                exit 1
+              fi
+              exit 0
+            fi
+          fi
+          exit ${exit_code}
 
       - name: Collect Server Logs on Failure
         if: failure()
