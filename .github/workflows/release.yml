@@ -248,7 +248,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -441,7 +441,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -522,7 +522,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Maturin
         run: pip install maturin
@@ -1375,7 +1375,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces
@@ -1618,7 +1618,7 @@ jobs:
           python -c "import proximadb; print(f'ProximaDB version: {proximadb.__version__}')" || true
 
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Verify crates.io Installation
         run: |
