@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  ProximaDB WiX v4 MSI Installer Manifest
+  Builds a Windows Installer package for ProximaDB.
+
+  Build with:
+    wix build -o proximadb.msi packaging/wix/proximadb.wxs
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="ProximaDB"
+    Manufacturer="ProximaDB Contributors"
+    Version="!(bind.FileVersion.proximadb_server)"
+    UpgradeCode="7A3E4F2B-1C8D-4E5A-9B0F-6D2A8C3E7F1B"
+    Scope="perMachine">
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of ProximaDB is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Install directory -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="ProximaDB">
+        <Directory Id="BinFolder" Name="bin" />
+        <Directory Id="ConfigFolder" Name="config" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Binary components -->
+    <ComponentGroup Id="Binaries" Directory="BinFolder">
+      <Component>
+        <File Id="proximadb_server" Source="proximadb-server.exe" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Id="proximadb_bench" Source="proximadb-bench.exe" KeyPath="yes" />
+      </Component>
+      <Component>
+        <File Id="proximadb_migrate" Source="proximadb-migrate.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Config files -->
+    <ComponentGroup Id="ConfigFiles" Directory="ConfigFolder">
+      <Component>
+        <File Id="config_toml" Source="config\config.toml" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- PATH environment variable -->
+    <ComponentGroup Id="EnvironmentPath" Directory="BinFolder">
+      <Component Id="PathEntry" Guid="8B4E5F3C-2D9A-4F6B-A1C0-7E3D9B5A2F4C">
+        <Environment Id="PATH"
+          Name="PATH"
+          Value="[BinFolder]"
+          Permanent="no"
+          Part="last"
+          Action="set"
+          System="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Feature tree -->
+    <Feature Id="Complete" Title="ProximaDB" Level="1">
+      <Feature Id="Server" Title="ProximaDB Server" Level="1">
+        <ComponentGroupRef Id="Binaries" />
+        <ComponentGroupRef Id="ConfigFiles" />
+      </Feature>
+      <Feature Id="PathFeature" Title="Add to PATH" Level="1">
+        <ComponentGroupRef Id="EnvironmentPath" />
+      </Feature>
+    </Feature>
+
+  </Package>
+</Wix>

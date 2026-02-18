@@ -1,6 +1,6 @@
 {
   "name": "@proximadb/client",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "TypeScript/Node.js SDK for ProximaDB vector database",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
