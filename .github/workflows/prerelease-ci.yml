@@ -80,7 +80,7 @@ jobs:
   # ============================================================================
   platform-packages:
     name: Build Platform Packages
-    needs: version-check
+    needs: [version-check, build]
     uses: ./.github/workflows/_platform-packages.yml
     with:
       version: ${{ needs.version-check.outputs.version }}
