@@ -251,13 +251,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-        with:
-          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install Cross (for cross-compilation)
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: |
+          # Install cross from a temp directory to avoid rust-version downgrade
+          # The project's Cargo.toml specifies rust-version = "1.88" which causes
+          # cargo to downgrade, but cross 0.2.5 requires Rust 1.92+
+          cd /tmp
+          cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
