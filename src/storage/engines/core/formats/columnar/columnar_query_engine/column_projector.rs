@@ -6,9 +6,8 @@
 use anyhow::{Context, Result};
 use arrow::datatypes::Schema;
 use parquet::arrow::ProjectionMask;
-use parquet::schema::types::{SchemaDescriptor, Type};
+use parquet::schema::types::Type;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 /// Column projection builder
 pub struct ProjectionBuilder {
@@ -48,7 +47,7 @@ impl ProjectionBuilder {
         if self.include_all {
             Ok(ProjectionMask::all())
         } else {
-            let indices = self.get_column_indices(parquet_schema)?;
+            let _indices = self.get_column_indices(parquet_schema)?;
             // ProjectionMask::roots expects SchemaDescriptor, not Type
             // For now, create mask from indices directly
             // Convert Type to SchemaDescriptor if needed, or use from_raw_projection

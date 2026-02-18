@@ -37,9 +37,12 @@
 //!
 //! ## Error Propagation
 //!
-//! ```rust
+//! ```rust,no_run
+//! # use proximadb::core::ProximaDBError;
 //! // Automatic conversion with ? operator
 //! fn process_vector() -> Result<(), ProximaDBError> {
+//! #   fn load_config() -> Result<(), ProximaDBError> { Ok(()) }
+//! #   fn open_storage() -> Result<(), ProximaDBError> { Ok(()) }
 //!     let config = load_config()?;  // ConfigError -> ProximaDBError
 //!     let storage = open_storage()?; // StorageError -> ProximaDBError
 //!     Ok(())
@@ -50,7 +53,7 @@
 //!
 //! All errors implement Serialize/Deserialize for network transmission:
 //!
-//! ```rust
+//! ```rust,ignore
 //! // Convert to gRPC status
 //! let status = match error {
 //!     ProximaDBError::NotFound { .. } => Status::not_found(error.to_string()),
@@ -134,6 +137,34 @@ pub enum ProximaDBError {
 
     #[error("Quantization error: {0}")]
     Quantization(String),
+
+    // Transaction errors
+    #[error("Transaction not found: {id}")]
+    TransactionNotFound { id: String },
+
+    #[error("Transaction not active: {id}")]
+    TransactionNotActive { id: String },
+
+    #[error("Transaction timed out: {id}")]
+    TransactionTimedOut { id: String },
+
+    #[error("Transaction conflict: {transaction} conflicts with {conflicting_with}")]
+    TransactionConflict {
+        transaction: String,
+        conflicting_with: String,
+    },
+
+    #[error("Too many transactions: maximum {max} concurrent transactions allowed")]
+    TooManyTransactions { max: usize },
+
+    #[error("Lock timeout for resource: {resource}")]
+    LockTimeout { resource: String },
+
+    #[error("Deadlock detected for transaction: {transaction}")]
+    DeadlockDetected { transaction: String },
+
+    #[error("Savepoint not found: {name}")]
+    SavepointNotFound { name: String },
 }
 
 /// Storage-specific error types

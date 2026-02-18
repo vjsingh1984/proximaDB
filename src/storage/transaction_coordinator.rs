@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::storage::persistence::filesystem::{
     FilesystemFactory,
@@ -85,9 +85,11 @@ pub struct StagingConfig {
     pub base_url: String,
 
     /// Collection ID (optional, for collection-specific operations)
+    #[allow(dead_code)]
     pub collection_id: Option<String>,
 
     /// Operation type
+    #[allow(dead_code)]
     pub operation_type: TransactionStageType,
 
     /// Custom staging directory name (overrides default)
@@ -374,9 +376,9 @@ impl TransactionCoordinator {
     ) -> Result<TransactionalOperationMetadata> {
         let operation_id = Uuid::new_v4().to_string();
 
-        info!("🚀 Beginning atomic operation: {}", operation_id);
-        info!(
-            "📋 Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}",
+        debug!("Beginning atomic operation: {}", operation_id);
+        trace!(
+            "Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}",
             staging_config.base_url,
             staging_config.operation_type,
             staging_config.custom_staging_dir
@@ -385,18 +387,18 @@ impl TransactionCoordinator {
         // Build staging and final URLs
         let (staging_url, final_url) = self.build_operation_urls(staging_config, &operation_id)?;
 
-        info!("📁 Staging URL: {}", staging_url);
-        info!("🎯 Final URL: {}", final_url);
+        trace!("Staging URL: {}", staging_url);
+        trace!("Final URL: {}", final_url);
 
         // Create both staging and final directories upfront for robustness
         // Note: staging_url and final_url are directory URLs, not file URLs
-        info!("📂 Creating staging directory: {}", staging_url);
+        trace!("Creating staging directory: {}", staging_url);
         self.filesystem
             .create_dir_all(&staging_url)
             .await
             .context("Failed to create staging directory")?;
 
-        info!("📂 Creating final directory: {}", final_url);
+        trace!("Creating final directory: {}", final_url);
         self.filesystem
             .create_dir_all(&final_url)
             .await
@@ -472,10 +474,11 @@ impl TransactionCoordinator {
         relative_path: &str,
         data: &[u8],
     ) -> Result<()> {
-        info!("📝 write_to_staging START");
-        info!("    operation_id: {}", operation_id);
-        info!("    relative_path: {}", relative_path);
-        info!("    data size: {} bytes", data.len());
+        trace!(
+            "write_to_staging: {} bytes to {}",
+            data.len(),
+            relative_path
+        );
 
         // Get operation metadata from DashMap
         let metadata = self
@@ -483,8 +486,6 @@ impl TransactionCoordinator {
             .get(operation_id)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
-
-        info!("    metadata.staging_url: {}", metadata.staging_url);
 
         // Update status to staging
         self.update_operation_status(operation_id, TransactionalOperationStatus::Staging)
@@ -497,11 +498,8 @@ impl TransactionCoordinator {
             relative_path
         );
 
-        info!("    staging_file_url: {}", staging_file_url);
-
         // Create file options using write strategy
         let fs = self.filesystem.get_filesystem(&staging_file_url)?;
-        info!("    filesystem type: {}", fs.filesystem_type());
 
         let file_options = self
             .write_strategy
@@ -509,21 +507,19 @@ impl TransactionCoordinator {
 
         // Extract path for write
         let staging_path = FilesystemFactory::resolve_path(&staging_file_url)?;
-        info!("    staging_path extracted: {}", staging_path);
 
         // Write to staging using atomic executor
-        info!("    Calling write_atomic...");
         match self
             .atomic_executor
             .write_atomic(fs.as_ref(), &staging_path, data, Some(file_options))
             .await
         {
             Ok(_) => {
-                info!("✅ Written to staging: {}", staging_file_url);
+                trace!("Written to staging: {}", staging_file_url);
                 Ok(())
             }
             Err(e) => {
-                error!("❌ Failed to write to staging: {}", e);
+                error!("Failed to write to staging: {}", e);
                 Err(anyhow::anyhow!("Failed to write to staging: {}", e))
             }
         }
@@ -531,7 +527,7 @@ impl TransactionCoordinator {
 
     /// Finalize atomic operation - move from staging to final location
     pub async fn finalize_atomic_operation(&self, operation_id: &OperationId) -> Result<()> {
-        info!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
+        trace!("🔄 [] Finalizing atomic operation: {}", operation_id);
         debug!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
 
         // Get operation metadata from DashMap
@@ -541,18 +537,10 @@ impl TransactionCoordinator {
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
 
-        info!("📋 [DEBUG] Operation metadata:");
-        info!("    operation_id: {}", metadata.operation_id);
-        info!("    staging_url: {}", metadata.staging_url);
-        info!("    final_url: {}", metadata.final_url);
-        info!("    operation_type: {:?}", metadata.operation_type);
-        info!("    collection_id: {:?}", metadata.collection_id);
-        info!("    zero_copy_managed: {}", metadata.zero_copy_managed);
-
-        debug!("📋 [DEBUG] Operation metadata:");
-        debug!("    staging_url: {}", metadata.staging_url);
-        debug!("    final_url: {}", metadata.final_url);
-        debug!("    zero_copy_managed: {}", metadata.zero_copy_managed);
+        trace!(
+            "Operation metadata: id={}, type={:?}, zero_copy={}",
+            metadata.operation_id, metadata.operation_type, metadata.zero_copy_managed
+        );
 
         // Check if this operation is managed by ZeroCopyFilesystem
         if metadata.zero_copy_managed {
@@ -577,14 +565,7 @@ impl TransactionCoordinator {
             .await?;
 
         // List all files in staging directory
-        info!(
-            "📂 [DEBUG] Listing staging directory: {}",
-            metadata.staging_url
-        );
-        debug!(
-            "📂 [DEBUG] Listing staging directory: {}",
-            metadata.staging_url
-        );
+        trace!("Listing staging directory: {}", metadata.staging_url);
 
         let staging_entries = self
             .filesystem
@@ -592,25 +573,9 @@ impl TransactionCoordinator {
             .await
             .context("Failed to list staging directory")?;
 
-        info!(
-            "📂 [DEBUG] Found {} files in staging",
-            staging_entries.len()
-        );
-        debug!(
-            "📂 [DEBUG] Found {} files in staging",
-            staging_entries.len()
-        );
+        trace!("Found {} files in staging", staging_entries.len());
 
-        for (idx, entry) in staging_entries.iter().enumerate() {
-            info!(
-                "    [{}] name={}, url={}, is_dir={}",
-                idx, entry.name, entry.url, entry.metadata.is_directory
-            );
-            debug!(
-                "    [{}] name={}, url={}, is_dir={}",
-                idx, entry.name, entry.url, entry.metadata.is_directory
-            );
-        }
+        // Individual file listing removed - too verbose for production
 
         // Move each file atomically from staging to final location
         // Note: Final directory was already created during begin_atomic_operation
@@ -624,12 +589,7 @@ impl TransactionCoordinator {
                     entry.name
                 );
 
-                info!("🔄 [DEBUG] Moving file:");
-                info!("    From (staging): {}", staging_file_url);
-                info!("    To (final):     {}", final_file_url);
-                debug!("🔄 [DEBUG] Moving file:");
-                debug!("    From (staging): {}", staging_file_url);
-                debug!("    To (final):     {}", final_file_url);
+                trace!("Moving file: {} -> {}", staging_file_url, final_file_url);
 
                 // Use FilesystemFactory's atomic move which handles cross-storage scenarios
                 match self
@@ -638,29 +598,11 @@ impl TransactionCoordinator {
                     .await
                 {
                     Ok(_) => {
-                        info!("    ✅ [DEBUG] Move successful");
-                        info!("    ✅ [DEBUG] Move successful");
-                        // Verify the file exists at the final location
-                        if let Ok(fs) = self.filesystem.get_filesystem(&final_file_url) {
-                            if let Ok(exists) = fs.exists(&final_file_url).await {
-                                info!(
-                                    "    ✅ [DEBUG] Verified file exists at final location: {}",
-                                    exists
-                                );
-                                info!(
-                                    "    ✅ [DEBUG] Verified file exists at final location: {}",
-                                    exists
-                                );
-                            } else {
-                                warn!("    ⚠️ [DEBUG] Could not verify file at final location");
-                            }
-                        } else {
-                            warn!("    ⚠️ [DEBUG] Could not get filesystem for verification");
-                        }
+                        trace!("Move successful: {}", entry.name);
+                        // File existence verification removed - move_atomic already guarantees this
                     }
                     Err(e) => {
-                        error!("    ❌ [DEBUG] Move failed: {}", e);
-                        error!("    ❌ [DEBUG] Move failed: {}", e);
+                        error!("Failed to move file {}: {}", entry.name, e);
                         return Err(anyhow::anyhow!(
                             "Failed to move {} to {}: {}",
                             staging_file_url,
@@ -691,21 +633,17 @@ impl TransactionCoordinator {
         self.active_operations.remove(operation_id);
 
         // List the final directory to confirm files are there
-        info!(
-            "📂 Listing final directory after operation: {}",
+        trace!(
+            "Listing final directory after operation: {}",
             metadata.final_url
         );
         if let Ok(final_entries) = self.filesystem.list(&metadata.final_url).await {
-            info!("📂 Found {} files in final location", final_entries.len());
-            for (idx, entry) in final_entries.iter().enumerate() {
-                info!(
-                    "    [{}] {} (size: {} bytes)",
-                    idx, entry.name, entry.metadata.size
-                );
-            }
+            debug!("Found {} files in final location", final_entries.len());
+            // Individual file listing removed - way too verbose for production
+            // Use trace if needed for deep debugging
         }
 
-        info!("🎉 Atomic operation completed: {}", operation_id);
+        debug!("Atomic operation completed: {}", operation_id);
         Ok(())
     }
 
@@ -742,8 +680,11 @@ impl TransactionCoordinator {
                 debug!("🚀 [DEBUG] ZeroCopyFilesystem will handle its own cleanup if needed");
             } else {
                 // Cleanup staging directory for traditional operations
-                self.filesystem.delete(&metadata.staging_url).await.ok();
-                debug!("🧹 Cleaned up staging directory after abort");
+                if let Err(e) = self.filesystem.delete(&metadata.staging_url).await {
+                    warn!("Failed to cleanup staging directory during abort: {}", e);
+                } else {
+                    debug!("🧹 Cleaned up staging directory after abort");
+                }
             }
 
             // Remove from active operations using DashMap
@@ -820,7 +761,7 @@ impl TransactionCoordinator {
         &self,
         tx_id: &str,
         participants: Vec<String>,
-    ) -> Result<TransactionHandle> {
+    ) -> Result<TransactionHandle<'_>> {
         info!("🔄 Beginning transaction: {}", tx_id);
 
         // Check if transaction already exists
@@ -1147,12 +1088,10 @@ impl TransactionCoordinator {
     ) -> Result<(String, String)> {
         let base_url = config.base_url.trim_end_matches('/');
 
-        info!("🔍 build_operation_urls START");
-        info!("    base_url: {}", base_url);
-        info!("    operation_type: {:?}", config.operation_type);
-        info!("    custom_staging_dir: {:?}", config.custom_staging_dir);
-        info!("    collection_id: {:?}", config.collection_id);
-        info!("    skip_uuid_subdir: {}", config.skip_uuid_subdir);
+        trace!(
+            "build_operation_urls: base={}, type={:?}, collection={:?}",
+            base_url, config.operation_type, config.collection_id
+        );
 
         // Build collection-specific path if provided
         let collection_path = if let Some(ref collection_id) = config.collection_id {
@@ -1168,15 +1107,12 @@ impl TransactionCoordinator {
             .map(|s| s.as_str())
             .unwrap_or_else(|| config.operation_type.staging_dir_name());
 
-        info!("    staging_dir resolved to: '{}'", staging_dir);
-        info!("    collection_path: '{}'", collection_path);
-
         // For metadata operations with custom staging dir containing path separators,
         // we need special handling
         let (staging_url, final_url) = if config.operation_type == TransactionStageType::Metadata
             && staging_dir.starts_with("../")
         {
-            info!("    Using metadata with relative staging path");
+            trace!("Using metadata with relative staging path");
             // For relative paths like "../staging", we need to resolve them properly
             // base_url is like "file:///path/to/metadata/current"
             // We want staging to be "file:///path/to/metadata/staging/{operation_id}"
@@ -1199,28 +1135,20 @@ impl TransactionCoordinator {
                 );
                 let final_url = base_url.to_string();
 
-                info!(
-                    "    Resolved URLs: staging='{}', final='{}'",
-                    staging_url, final_url
-                );
                 (staging_url, final_url)
             } else {
                 // Fallback for non-URL paths
-                info!("    Fallback: simple staging dir");
                 let staging_url = format!("{}/{}/{}", base_url, staging_dir, operation_id);
                 let final_url = base_url.to_string();
                 (staging_url, final_url)
             }
         } else if config.operation_type == TransactionStageType::Metadata {
-            info!("    Using simple metadata staging");
             let staging_url = format!("{}/{}/{}", base_url, staging_dir, operation_id);
             let final_url = base_url.to_string();
             (staging_url, final_url)
         } else {
-            info!("    Using non-metadata staging");
             // Check if UUID subdirectory should be skipped (useful for compaction to avoid cleanup issues)
             if config.skip_uuid_subdir {
-                info!("    Skipping UUID subdirectory as requested");
                 let staging_url = format!("{}{}/{}", base_url, collection_path, staging_dir);
                 let final_url = format!("{}{}", base_url, collection_path);
                 (staging_url, final_url)
@@ -1235,9 +1163,7 @@ impl TransactionCoordinator {
             }
         };
 
-        info!("🔍 build_operation_urls COMPLETE");
-        info!("    Final staging_url: {}", staging_url);
-        info!("    Final final_url: {}", final_url);
+        trace!("URLs: staging={}, final={}", staging_url, final_url);
         Ok((staging_url, final_url))
     }
 
@@ -1281,6 +1207,7 @@ impl TransactionCoordinator {
 pub struct TransactionHandle<'a> {
     id: String,
     coordinator: &'a TransactionCoordinator,
+    #[allow(dead_code)]
     transaction: Arc<RwLock<ActiveTransaction>>,
 }
 

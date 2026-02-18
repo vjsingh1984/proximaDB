@@ -34,13 +34,13 @@ struct CohereRequest {
 #[derive(Debug, Deserialize)]
 struct CohereResponse {
     text: String,
-    generation_id: String,
+    _generation_id: String,
     meta: CohereMetadata,
 }
 
 #[derive(Debug, Deserialize)]
 struct CohereMetadata {
-    api_version: Option<String>,
+    _api_version: Option<String>,
     billed_units: Option<CohereBilledUnits>,
 }
 
@@ -101,7 +101,7 @@ impl LLMClient for CohereClient {
 
         let response = self
             .client
-            .post(&format!("{}/generate", self.base_url))
+            .post(format!("{}/generate", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&cohere_request)
@@ -186,7 +186,7 @@ impl LLMClient for CohereClient {
 
         let response = self
             .client
-            .post(&format!("{}/generate", self.base_url))
+            .post(format!("{}/generate", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&test_request)

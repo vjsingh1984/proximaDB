@@ -26,6 +26,7 @@ pub struct SSOIntegrationManager {
     azure_integration: Option<Arc<AzureADIntegration>>,
 
     /// Google Cloud integration
+    #[allow(dead_code)]
     google_cloud_integration: Option<Arc<GoogleCloudIntegration>>,
 
     /// Simple token cache for performance
@@ -177,5 +178,379 @@ mod tests {
 
         assert_eq!(config.region, "us-east-1");
         assert!(!config.enable_cross_account);
+    }
+
+    // ========================== Additional Tests for Coverage ==========================
+
+    // --- SSOIntegrationManager Tests ---
+
+    #[test]
+    fn test_sso_manager_configure_aws_iam() {
+        let mut manager = SSOIntegrationManager::new();
+
+        let config = AWSIAMConfig {
+            region: "us-west-2".to_string(),
+            role_mapping: vec![AWSRoleMapping {
+                aws_role_arn: "arn:aws:iam::123456789012:role/TestRole".to_string(),
+                proximadb_role: "admin".to_string(),
+                tenant_id: "test_tenant".to_string(),
+            }],
+            enable_cross_account: true,
+            trusted_account_ids: vec!["123456789012".to_string()],
+        };
+
+        let result = manager.configure_aws_iam(config);
+        assert!(result.is_ok());
+        assert!(manager.aws_integration.is_some());
+    }
+
+    #[test]
+    fn test_sso_manager_configure_azure_ad() {
+        let mut manager = SSOIntegrationManager::new();
+
+        let config = AzureADConfig {
+            tenant_id: "12345678-1234-1234-1234-123456789012".to_string(),
+            client_id: "client-id-123".to_string(),
+            client_secret: "client-secret".to_string(),
+            authority: "https://login.microsoftonline.com/".to_string(),
+        };
+
+        let result = manager.configure_azure_ad(config);
+        assert!(result.is_ok());
+        assert!(manager.azure_integration.is_some());
+    }
+
+    #[test]
+    fn test_sso_manager_multiple_configurations() {
+        let mut manager = SSOIntegrationManager::new();
+
+        // Configure AWS
+        let aws_config = AWSIAMConfig {
+            region: "us-east-1".to_string(),
+            role_mapping: vec![],
+            enable_cross_account: false,
+            trusted_account_ids: vec![],
+        };
+        manager.configure_aws_iam(aws_config).unwrap();
+
+        // Configure Azure
+        let azure_config = AzureADConfig {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            authority: "https://login.microsoftonline.com/".to_string(),
+        };
+        manager.configure_azure_ad(azure_config).unwrap();
+
+        assert!(manager.aws_integration.is_some());
+        assert!(manager.azure_integration.is_some());
+    }
+
+    // --- Token Validation Tests ---
+
+    #[tokio::test]
+    async fn test_validate_and_resolve_token_aws_not_configured() {
+        let manager = SSOIntegrationManager::new();
+
+        let token = SSOToken::new(
+            SSOProvider::AWSIAM,
+            "token_data".to_string(),
+            "user".to_string(),
+            3600,
+        );
+
+        let result = manager.validate_and_resolve_token(&token).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("AWS IAM not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_resolve_token_azure_not_configured() {
+        let manager = SSOIntegrationManager::new();
+
+        let token = SSOToken::new(
+            SSOProvider::AzureAD,
+            "token_data".to_string(),
+            "user".to_string(),
+            3600,
+        );
+
+        let result = manager.validate_and_resolve_token(&token).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Azure AD not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_resolve_token_unsupported_provider() {
+        let manager = SSOIntegrationManager::new();
+
+        let token = SSOToken::new(
+            SSOProvider::OIDC,
+            "token_data".to_string(),
+            "user".to_string(),
+            3600,
+        );
+
+        let result = manager.validate_and_resolve_token(&token).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported SSO provider")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_and_resolve_token_generic_provider() {
+        let manager = SSOIntegrationManager::new();
+
+        let token = SSOToken::new(
+            SSOProvider::Generic,
+            "token_data".to_string(),
+            "user".to_string(),
+            3600,
+        );
+
+        let result = manager.validate_and_resolve_token(&token).await;
+        assert!(result.is_err());
+    }
+
+    // --- CachedTokenValidation Tests ---
+
+    #[test]
+    fn test_cached_token_validation_expired() {
+        let cached = CachedTokenValidation {
+            user_context: EnterpriseUserContext::system_admin(),
+            expires_at: chrono::Utc::now() - chrono::Duration::minutes(10),
+        };
+
+        assert!(cached.is_expired());
+    }
+
+    #[test]
+    fn test_cached_token_validation_not_expired() {
+        let cached = CachedTokenValidation {
+            user_context: EnterpriseUserContext::system_admin(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        };
+
+        assert!(!cached.is_expired());
+    }
+
+    // --- AWS IAM Config Tests ---
+
+    #[test]
+    fn test_aws_iam_config_complete() {
+        let config = AWSIAMConfig {
+            region: "eu-west-1".to_string(),
+            role_mapping: vec![
+                AWSRoleMapping {
+                    aws_role_arn: "arn:aws:iam::111:role/Admin".to_string(),
+                    proximadb_role: "admin".to_string(),
+                    tenant_id: "tenant1".to_string(),
+                },
+                AWSRoleMapping {
+                    aws_role_arn: "arn:aws:iam::222:role/User".to_string(),
+                    proximadb_role: "user".to_string(),
+                    tenant_id: "tenant2".to_string(),
+                },
+            ],
+            enable_cross_account: true,
+            trusted_account_ids: vec!["111111111111".to_string(), "222222222222".to_string()],
+        };
+
+        assert_eq!(config.region, "eu-west-1");
+        assert_eq!(config.role_mapping.len(), 2);
+        assert!(config.enable_cross_account);
+        assert_eq!(config.trusted_account_ids.len(), 2);
+    }
+
+    #[test]
+    fn test_aws_iam_config_empty() {
+        let config = AWSIAMConfig {
+            region: String::new(),
+            role_mapping: vec![],
+            enable_cross_account: false,
+            trusted_account_ids: vec![],
+        };
+
+        assert!(config.region.is_empty());
+        assert!(config.role_mapping.is_empty());
+        assert!(!config.enable_cross_account);
+        assert!(config.trusted_account_ids.is_empty());
+    }
+
+    // --- Azure AD Config Tests ---
+
+    #[test]
+    fn test_azure_ad_config_complete() {
+        let config = AzureADConfig {
+            tenant_id: "12345678-1234-1234-1234-123456789012".to_string(),
+            client_id: "87654321-4321-4321-4321-210987654321".to_string(),
+            client_secret: "super-secret-value".to_string(),
+            authority: "https://login.microsoftonline.com/common".to_string(),
+        };
+
+        assert!(!config.tenant_id.is_empty());
+        assert!(!config.client_id.is_empty());
+        assert!(!config.client_secret.is_empty());
+        assert!(config.authority.starts_with("https://"));
+    }
+
+    #[test]
+    fn test_azure_ad_config_clone() {
+        let config = AzureADConfig {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            authority: "authority".to_string(),
+        };
+
+        let cloned = config.clone();
+
+        assert_eq!(config.tenant_id, cloned.tenant_id);
+        assert_eq!(config.client_id, cloned.client_id);
+        assert_eq!(config.client_secret, cloned.client_secret);
+        assert_eq!(config.authority, cloned.authority);
+    }
+
+    // --- AWS Role Mapping Tests ---
+
+    #[test]
+    fn test_aws_role_mapping_structure() {
+        let mapping = AWSRoleMapping {
+            aws_role_arn: "arn:aws:iam::123456789012:role/MyRole".to_string(),
+            proximadb_role: "tenant_admin".to_string(),
+            tenant_id: "my_tenant".to_string(),
+        };
+
+        assert!(mapping.aws_role_arn.starts_with("arn:aws:iam::"));
+        assert_eq!(mapping.proximadb_role, "tenant_admin");
+        assert_eq!(mapping.tenant_id, "my_tenant");
+    }
+
+    #[test]
+    fn test_aws_role_mapping_clone() {
+        let mapping = AWSRoleMapping {
+            aws_role_arn: "arn".to_string(),
+            proximadb_role: "role".to_string(),
+            tenant_id: "tenant".to_string(),
+        };
+
+        let cloned = mapping.clone();
+
+        assert_eq!(mapping.aws_role_arn, cloned.aws_role_arn);
+        assert_eq!(mapping.proximadb_role, cloned.proximadb_role);
+        assert_eq!(mapping.tenant_id, cloned.tenant_id);
+    }
+
+    // --- Global SSO Manager Tests ---
+
+    #[test]
+    fn test_initialize_sso_manager() {
+        let manager = initialize_sso_manager();
+        assert!(std::ptr::eq(
+            manager as *const SSOIntegrationManager,
+            initialize_sso_manager() as *const SSOIntegrationManager
+        ));
+    }
+
+    #[test]
+    fn test_get_sso_manager_after_init() {
+        // Initialize first
+        let _ = initialize_sso_manager();
+
+        // Get should return the same instance
+        let manager = get_sso_manager();
+        assert!(manager.is_some());
+    }
+
+    // --- Token Cache Tests ---
+
+    #[tokio::test]
+    async fn test_token_cache_hit() {
+        let mut manager = SSOIntegrationManager::new();
+
+        // Configure Azure AD
+        let azure_config = AzureADConfig {
+            tenant_id: "tenant".to_string(),
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            authority: "https://login.microsoftonline.com/".to_string(),
+        };
+        manager.configure_azure_ad(azure_config).unwrap();
+
+        // Create a token
+        let token = SSOToken::new(
+            SSOProvider::AzureAD,
+            "token_data".to_string(),
+            "user".to_string(),
+            3600,
+        );
+
+        // First validation - should hit provider
+        let result1 = manager.validate_and_resolve_token(&token).await;
+        assert!(result1.is_ok());
+
+        // Insert into cache manually for test
+        let cached = CachedTokenValidation {
+            user_context: result1.unwrap(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        };
+        manager.token_cache.insert(token.token_id.clone(), cached);
+
+        // Second validation - should hit cache
+        let result2 = manager.validate_and_resolve_token(&token).await;
+        assert!(result2.is_ok());
+    }
+
+    // --- Re-export Tests ---
+
+    #[test]
+    fn test_re_exports() {
+        // Verify all re-exports work
+        let _ = SSOProvider::AWSIAM;
+        let _ = SSOProvider::AzureAD;
+        let _ = SSOProvider::GoogleCloud;
+        let _ = SSOProvider::SAML;
+        let _ = SSOProvider::OIDC;
+        let _ = SSOProvider::Okta;
+        let _ = SSOProvider::Generic;
+
+        let _ = EnterpriseUserContext::system_admin();
+
+        assert!(true);
+    }
+
+    // --- Integration Tests ---
+
+    #[test]
+    fn test_all_integrations_accessible() {
+        // Verify all integration types are accessible
+        use super::aws_iam::AWSIAMIntegration;
+        use super::azure_ad::AzureADIntegration;
+        use super::google_cloud::GoogleCloudIntegration;
+        use super::oidc::OIDCIntegration;
+        use super::saml::SAMLIntegration;
+
+        // These should all compile successfully
+        let _ = std::any::type_name::<AWSIAMIntegration>();
+        let _ = std::any::type_name::<AzureADIntegration>();
+        let _ = std::any::type_name::<GoogleCloudIntegration>();
+        let _ = std::any::type_name::<OIDCIntegration>();
+        let _ = std::any::type_name::<SAMLIntegration>();
+
+        assert!(true);
     }
 }

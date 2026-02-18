@@ -91,7 +91,7 @@ impl BloomFilter {
         let hash_count = Self::optimal_hash_count(size, expected_items);
 
         Self {
-            bits: vec![0; (size + 63) / 64],
+            bits: vec![0; size.div_ceil(64)],
             size,
             hash_count,
         }
@@ -182,7 +182,7 @@ impl ColumnarIdIndex {
                 // Generate all possible test ID formats for this row
                 // Each test uses different ID patterns, so we index all of them
                 let test_ids = vec![
-                    format!("id_{}", global_idx), // Simple format for simple_branched_test
+                    format!("id_{global_idx}"), // Simple format for simple_branched_test
                     format!("test_id_{:03}", global_idx), // Format for test_row_group_offset
                     format!("cust_{:03}", global_idx + 1),
                     format!("customer_id_{:06}", global_idx), // Fixed: use global_idx directly
@@ -245,7 +245,7 @@ impl ColumnarIdIndex {
     }
 
     /// Extract ID range from column metadata
-    fn extract_id_range(&self, column: &ColumnChunkMetaData) -> Result<(String, String)> {
+    fn extract_id_range(&self, _column: &ColumnChunkMetaData) -> Result<(String, String)> {
         // In production, read from Parquet statistics
         // For now, return placeholder based on file path
         let file_stem = std::path::Path::new(&self.file_path)
@@ -260,7 +260,7 @@ impl ColumnarIdIndex {
     }
 
     /// Build page-level indexes
-    fn build_page_indexes(&self, column: &ColumnChunkMetaData) -> Result<Vec<PageIdIndex>> {
+    fn build_page_indexes(&self, _column: &ColumnChunkMetaData) -> Result<Vec<PageIdIndex>> {
         // In production, read page metadata from Parquet
         // For now, create synthetic pages
         let mut pages = Vec::new();
@@ -286,7 +286,7 @@ impl ColumnarIdIndex {
     pub async fn lookup(&self, id: &str) -> Option<ParquetLocation> {
         // If bloom filters exist, use them for optimization
         if !self.bloom_filters.is_empty() {
-            for (idx, bloom) in self.bloom_filters.iter().enumerate() {
+            for (_idx, bloom) in self.bloom_filters.iter().enumerate() {
                 if bloom.contains(id) {
                     // Potential match in this row group
                     let map = self.id_to_location.read().await;
@@ -515,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_columnar_id_index() {
-        let mut index = ColumnarIdIndex::new("test.parquet".to_string());
+        let index = ColumnarIdIndex::new("test.parquet".to_string());
 
         // Simulate adding IDs
         {

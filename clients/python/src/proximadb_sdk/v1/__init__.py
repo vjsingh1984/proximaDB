@@ -1,0 +1,1 @@
+# ProximaDB protobuf generated modules

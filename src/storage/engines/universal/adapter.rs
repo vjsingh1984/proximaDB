@@ -31,6 +31,7 @@ use super::{
 // Hardware acceleration types
 #[derive(Debug, Clone)]
 pub struct HardwareAccelerationManager {
+    #[allow(dead_code)]
     capabilities: HardwareCapabilities,
 }
 
@@ -62,6 +63,7 @@ pub struct UniversalDistanceAdapter {
     config: UniversalAdapterConfig,
 
     /// Unified distance computation engine
+    #[allow(dead_code)]
     distance_engine: Arc<UnifiedDistanceCompute>,
 
     /// Quantized distance calculator
@@ -343,7 +345,7 @@ impl UniversalDistanceAdapter {
         self.validate_request(&request)?;
 
         // Get storage engine adapter
-        let engine_adapter = self.get_engine_adapter(&request.engine_type).await?;
+        let _engine_adapter = self.get_engine_adapter(&request.engine_type).await?;
 
         // Convert storage format if needed
         let converted_candidates = self

@@ -31,7 +31,7 @@ use crate::compute::quantization::types::UnifiedQuantizationLevel;
 
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::{
-    FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
+    FIELD_EXPIRES_AT, FIELD_ID, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
 
 // Universal performance optimization imports
@@ -155,7 +155,7 @@ pub struct ViperEngine {
     /// - Nested schema for complex metadata
     ///
     /// Shared between VIPER and NOVA for format compatibility
-    schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
+    _schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
 
     /// **Compaction Service**
     ///
@@ -190,6 +190,7 @@ pub struct ViperEngine {
     /// - File format version handling
     ///
     /// Shared utility functions used across flush/search/compaction
+    #[allow(dead_code)]
     utilities: ViperUtilities,
 
     /// **Engine Statistics** (Lock-Free Atomics)
@@ -225,7 +226,7 @@ pub struct ViperEngine {
     /// - Hardware-accelerated quantization (SIMD)
     ///
     /// Codebooks trained once during first flush, reused forever
-    storage_quantization_engine:
+    _storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
 
     /// **Fallback Quantization Engine** (Stateless)
@@ -237,6 +238,7 @@ pub struct ViperEngine {
     /// - Same algorithms as storage engine
     ///
     /// Falls back when collection doesn't have trained codebooks
+    #[allow(dead_code)]
     fallback_quantization_engine:
         Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
@@ -262,6 +264,16 @@ pub struct ViperEngine {
     ///
     /// None when caching disabled, Some in production deployments
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+
+    /// **AXIS Manager** (Optional)
+    ///
+    /// Integration with AXIS indexing service:
+    /// - Provides HNSW-based approximate nearest neighbor search
+    /// - Enables IVF partition pruning
+    /// - Supports hybrid vector + metadata queries
+    ///
+    /// None if AXIS disabled, Some for indexed collections
+    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
 
 impl std::fmt::Debug for ViperEngine {
@@ -283,6 +295,7 @@ impl std::fmt::Debug for ViperEngine {
     }
 }
 
+#[allow(dead_code)]
 impl ViperEngine {
     /// Attach orchestrator via context (future-proof DI)
     pub fn with_context(mut self, ctx: &crate::core::context::SharedContext) -> Self {
@@ -556,18 +569,19 @@ impl ViperEngine {
             collection_service: collection_service.clone(),
             filesystem: filesystem.clone(),
             filesystem_factory,
-            schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema::new(),
+            _schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema::new(),
             compaction,
             flush_manager,
             // ml_clustering_engine, // Moved to AXIS
-            utilities,
+            utilities: utilities,
             // Search engine removed - using IntegratedSearchOptimizer
             stats: Arc::new(EngineStats::default()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            storage_quantization_engine,
-            fallback_quantization_engine,
+            _storage_quantization_engine: storage_quantization_engine,
+            fallback_quantization_engine: fallback_quantization_engine,
             universal_optimizer,
             orchestrator: None,
+            axis_manager: None, // AXIS manager will be set externally if available
         })
     }
 
@@ -579,6 +593,84 @@ impl ViperEngine {
         let mut service_lock = self.collection_service.write().await;
         *service_lock = Some(collection_service);
         info!("🔗 VIPER Engine: Collection service set for metadata access");
+    }
+
+    // =========================================================================
+    // AXIS Manager Integration (for HNSW/IVF index operations)
+    // =========================================================================
+
+    /// Get the AXIS manager for HNSW/IVF index operations
+    ///
+    /// Returns the AXIS manager if available, enabling:
+    /// - HNSW-based approximate nearest neighbor search
+    /// - IVF partition pruning
+    /// - Hybrid vector + metadata queries
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+        self.axis_manager.as_ref()
+    }
+
+    /// Convert FilterExpression to AXIS MetadataFilter format
+    ///
+    /// This helper converts our internal FilterExpression type to AXIS's
+    /// MetadataFilter format for hybrid vector + metadata queries.
+    fn convert_filter_to_axis(
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
+
+        let Some(filter) = filter_expression else {
+            return Vec::new();
+        };
+
+        // Convert filter expressions to AXIS metadata filters
+        let mut axis_filters = Vec::new();
+
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                // Convert ComparisonOperator to AXIS FilterOperator
+                let axis_operator = match operator {
+                    ComparisonOperator::Equals => FilterOperator::Equals,
+                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
+                    ComparisonOperator::LessThan => FilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
+                    ComparisonOperator::In => FilterOperator::In,
+                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                    _ => {
+                        tracing::debug!(
+                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            operator
+                        );
+                        return axis_filters;
+                    }
+                };
+
+                axis_filters.push(MetadataFilter {
+                    field: field.clone(),
+                    operator: axis_operator,
+                    value: value.clone(),
+                });
+            }
+            FilterExpression::And(filters) => {
+                for f in filters {
+                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                }
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => {
+                // OR and NOT are not directly supported by AXIS, will use post-filtering
+                tracing::debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+            }
+        }
+
+        axis_filters
     }
 
     // ============================================================================
@@ -693,7 +785,7 @@ impl ViperEngine {
 
         // Convert batches to vectors - placeholder implementation
         let vectors: Vec<VectorRecord> = Vec::new();
-        for batch in batches {
+        for _batch in batches {
             // Extract records from batch - would need proper implementation
             // For now, create empty placeholder
         }
@@ -713,14 +805,14 @@ impl ViperEngine {
         } else {
             // Metadata column - extract specific metadata field
             // This is a simplified implementation
-            let data = Vec::new();
+            let _data = Vec::new();
             // TODO: Implement actual metadata serialization
             // This should serialize the actual metadata from records
             return Err(anyhow::anyhow!(
                 "Metadata serialization not yet implemented"
             ));
             #[allow(unreachable_code)]
-            data
+            _data
         };
 
         Ok(column_data)
@@ -786,7 +878,7 @@ impl ViperEngine {
     async fn read_row_group_optimized(
         file_path: &str,
         row_group_idx: usize,
-        optimizer: &UniversalPerformanceOptimizer,
+        _optimizer: &UniversalPerformanceOptimizer,
         filesystem_factory: Arc<FilesystemFactory>,
         cached_filesystem: Arc<
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
@@ -815,21 +907,19 @@ impl ViperEngine {
         // Calculate approximate row group boundaries
         // Parquet typically has row groups of ~50-100MB or ~50k-100k rows
         let rows_per_group = 50000;
-        let start_idx = row_group_idx * rows_per_group;
-        let end_idx = ((row_group_idx + 1) * rows_per_group).min(10000); // Placeholder, since all_vectors no longer exists
+        let _start_idx = row_group_idx * rows_per_group;
+        let _end_idx = ((row_group_idx + 1) * rows_per_group).min(10000); // Placeholder, since all_vectors no longer exists
 
         // Extract data from the record batches
-        let row_group_data = Vec::new();
-
-        for batch in record_batches {
-            // TODO: Properly extract vector data from the record batch columns
-            // This needs to read actual vector data from the batch columns
+        // TODO: Properly extract vector data from the record batch columns
+        // This needs to read actual vector data from the batch columns
+        if !record_batches.is_empty() {
             return Err(anyhow::anyhow!(
                 "Row group data extraction not yet implemented"
             ));
         }
 
-        Ok(row_group_data)
+        Ok(Vec::new())
     }
 
     /// Memory pool optimization for columnar operations (delegates to universal optimizer)
@@ -1468,6 +1558,8 @@ impl ViperEngine {
                 storage_path: base_location, // Use base_location, not full path
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let internal_results = self.search_vectors_unified(&ctx).await?;
@@ -1798,7 +1890,7 @@ impl UnifiedStorageEngine for ViperEngine {
             debug!("🟦 VIPER DO_FLUSH: Collection config found");
             if let Some(ref config) = collection_config.config {
                 debug!("🟦 VIPER DO_FLUSH: Config field found");
-                if let Some(ref storage_config) = config.storage_config.as_ref() {
+                if let Some(ref _storage_config) = config.storage_config.as_ref() {
                     debug!("🟦 VIPER DO_FLUSH: Storage config found");
                     debug!("   ✅ Found storage_config in collection_config");
                 } else {
@@ -2071,6 +2163,85 @@ impl UnifiedStorageEngine for ViperEngine {
         );
 
         // ========================================================================
+        // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
+        // ========================================================================
+        // Use AXIS manager if available for O(log N) approximate search
+        let has_axis_manager = self.axis_manager().is_some();
+        if has_axis_manager {
+            tracing::debug!("🔍 VIPER: AXIS manager is available for HNSW/IVF search");
+        }
+
+        if let Some(axis_manager) = self.axis_manager() {
+            tracing::info!(
+                "🔗 VIPER: AXIS manager available, attempting HNSW index search for collection {}",
+                collection_id
+            );
+
+            // Convert filter expression to AXIS metadata filters
+            let axis_filters = Self::convert_filter_to_axis(filter_expression);
+
+            // Build hybrid query for AXIS
+            use crate::index::axis::management::manager::{HybridQuery, VectorQuery};
+            let hybrid_query = HybridQuery {
+                collection_id: collection_id.to_string(),
+                vector_query: Some(VectorQuery::Dense {
+                    vector: query_vector.to_vec(),
+                    similarity_threshold: 0.0, // Return all results up to k
+                }),
+                metadata_filters: axis_filters,
+                id_filters: Vec::new(),
+                top_k: k,
+                include_expired: false,
+            };
+
+            // Execute AXIS query (HNSW or IVF based on index type)
+            let axis_start = std::time::Instant::now();
+            match axis_manager.query(hybrid_query).await {
+                Ok(axis_results) => {
+                    let axis_duration = axis_start.elapsed();
+                    tracing::info!(
+                        "✅ VIPER: AXIS HNSW search completed in {:?} - found {} candidates",
+                        axis_duration,
+                        axis_results.results.len()
+                    );
+
+                    // Convert AXIS results to OptimizedSearchRecord
+                    let results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+                        axis_results
+                            .results
+                            .into_iter()
+                            .take(k)
+                            .map(
+                                |scored| crate::core::search::results::OptimizedSearchRecord {
+                                    id: scored.vector_id.to_string(),
+                                    vector_id: Some(scored.vector_id.to_string()),
+                                    score: scored.similarity,
+                                    similarity: Some(scored.similarity),
+                                    vector: None, // AXIS doesn't return vectors by default
+                                    ..Default::default()
+                                },
+                            )
+                            .collect();
+
+                    // If we got results, return them
+                    if !results.is_empty() {
+                        return Ok(results);
+                    }
+
+                    tracing::info!(
+                        "⚠️ VIPER: AXIS returned no results, falling back to columnar search"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️ VIPER: AXIS query failed ({}), falling back to columnar search",
+                        e
+                    );
+                }
+            }
+        }
+
+        // ========================================================================
         // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
         // ========================================================================
 
@@ -2212,7 +2383,7 @@ impl UnifiedStorageEngine for ViperEngine {
         if let Some(filter_expr) = filter_expression {
             debug!("Search with filter expression: {:?}", filter_expr);
         }
-        let search_params = ctx.search_params.clone();
+        let _search_params = ctx.search_params.clone();
         // Collection metadata already available in context
         debug!(
             "Using collection config from context for: {}",
@@ -2337,7 +2508,7 @@ impl UnifiedStorageEngine for ViperEngine {
 
         // Create collection context for the reader
         // Get filterable columns from collection config if available
-        let filterable_column_specs = collection_opt
+        let _filterable_column_specs = collection_opt
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.filterable_columns.clone())
@@ -2354,7 +2525,7 @@ impl UnifiedStorageEngine for ViperEngine {
         };
 
         // Create search params
-        let search_params = crate::core::search::SearchParams {
+        let _search_params = crate::core::search::SearchParams {
             query_vectors: None,
             vector: Some(query_vector.to_vec()),
             top_k: Some(k),
@@ -2370,11 +2541,16 @@ impl UnifiedStorageEngine for ViperEngine {
             runtime_hints: None,
             enable_metadata_filtering_hint: None,
             custom_hints: Some(HashMap::new()),
+            block_prune: crate::core::search::BlockPruneConfig::default(),
             requires_ordering: None,
             enable_progressive_search: None,
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
+            search_mode: crate::core::search::SearchMode::default(),
+            hybrid_mode: crate::core::search::HybridSearchMode::default(),
+            text_query: None,
+            vector_weight: None,
         };
 
         // Perform search using the reader's search_vectors method

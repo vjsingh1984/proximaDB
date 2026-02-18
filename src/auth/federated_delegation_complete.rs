@@ -25,6 +25,7 @@ pub struct CompleteFederatedIdentityDelegation {
     gcp_delegation_handler: Arc<CompleteGCPIdentityDelegationHandler>,
 
     /// Okta delegation with Token Exchange
+    #[allow(dead_code)]
     okta_delegation_handler: Arc<CompleteOktaDelegationHandler>,
 
     /// Cross-provider delegation chain coordinator
@@ -52,6 +53,7 @@ pub struct CompleteAWSIdentityDelegationHandler {
     enterprise_iam_validator: Arc<EnterpriseIAMPolicyValidator>,
 
     /// Role chain optimizer for performance
+    #[allow(dead_code)]
     role_chain_optimizer: Arc<RoleChainOptimizer>,
 }
 
@@ -67,6 +69,7 @@ pub struct CompleteAzureADDelegationHandler {
     managed_identity_resolver: Arc<EnterpriseManagedIdentityResolver>,
 
     /// Azure AD group and role mapper
+    #[allow(dead_code)]
     azure_enterprise_mapper: Arc<AzureEnterpriseMapper>,
 
     /// On-Behalf-Of flow optimizer
@@ -987,7 +990,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_complete_federated_delegation_creation() {
-        let delegation_system = CompleteFederatedIdentityDelegation::new().await.unwrap();
+        let _delegation_system = CompleteFederatedIdentityDelegation::new().await.unwrap();
         // Basic validation that complete delegation system was created
         assert!(true);
     }

@@ -10,7 +10,7 @@
 //! - Concurrent write support with lock-free coordination
 //! - Metrics and monitoring for mode transitions
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,8 +24,6 @@ use crate::storage::engines::core::formats::columnar::parquet_write_engine::{
     batch_writer::BatchParquetWriter, streaming_writer::StreamingParquetWriter,
     writer_config::ParquetWriterConfig, writer_statistics::StreamingParquetWriterStats,
 };
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use uuid::Uuid;
 
 /// Hybrid writer mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -188,6 +186,7 @@ pub struct HybridParquetWriter {
 struct InsertionEvent {
     timestamp: Instant,
     batch_size: usize,
+    #[allow(dead_code)]
     mode: WriterMode,
 }
 
@@ -254,7 +253,7 @@ impl HybridParquetWriter {
             avg_flush_latency_ms: AtomicU64::new(0),
         });
 
-        let mut writer = Self {
+        let writer = Self {
             config: config.clone(),
             current_mode: Arc::new(RwLock::new(config.initial_mode)),
             streaming_writer: Arc::new(Mutex::new(streaming_writer)),
@@ -312,7 +311,7 @@ impl HybridParquetWriter {
             avg_flush_latency_ms: AtomicU64::new(0),
         });
 
-        let mut writer = Self {
+        let writer = Self {
             config: config.clone(),
             current_mode: Arc::new(RwLock::new(config.initial_mode)),
             streaming_writer: Arc::new(Mutex::new(streaming_writer)),
@@ -675,6 +674,7 @@ impl HybridParquetWriter {
     }
 
     /// Start background flush task
+    #[allow(dead_code)]
     async fn start_background_flush_task(&mut self) {
         let buffer = self.buffer.clone();
         let last_flush_time = self.last_flush_time.clone();
@@ -731,6 +731,7 @@ impl HybridParquetWriter {
     }
 
     /// Clone for background tasks
+    #[allow(dead_code)]
     fn clone_for_task(&self) -> Arc<Self> {
         // This would need proper Arc wrapping in production
         // For now, return a placeholder
@@ -1001,7 +1002,7 @@ mod tests {
         // Write small batches (streaming pattern)
         for i in 0..10 {
             let records = vec![VectorRecord {
-                id: format!("vec_{}", i),
+                id: format!("vec_{i}"),
                 vector: vec![0.1; 128],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(i as i64),
@@ -1038,7 +1039,7 @@ mod tests {
         // Write large batch (batch pattern)
         let records: Vec<_> = (0..1000)
             .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
+                id: format!("vec_{i}"),
                 vector: vec![0.1; 128],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(i as i64),

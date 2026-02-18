@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::engines::universal::adapter::{
-        AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
+        CandidateVector, DistanceComputationRequest, HardwareAccelerationManager,
         UniversalDistanceAdapter,
-    };
-    use crate::storage::engines::universal::adapter::{
-        HardwareAccelerationManager, OptimizationStrategy,
     };
     use crate::storage::engines::universal::config::StorageEngineConfig;
     use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
@@ -15,8 +15,6 @@ mod tests {
         EngineType, NOVAAdapter, PRISMAdapter,
     };
     use crate::utils::uuid::Uuid;
-    use std::collections::HashMap;
-    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_universal_adapter_creation() {
@@ -75,9 +73,9 @@ mod tests {
         assert!(nova_adapter.is_ok());
 
         // Test format optimization - optimal_format method not yet implemented
-        let adapter = prism_adapter.unwrap();
+        let _adapter = prism_adapter.unwrap();
         // TODO: Implement optimal_format method on PRISMAdapter
-        // let optimal_format = adapter.optimal_format(128, 100_000, 0.9).await.unwrap();
+        // let optimal_format = _adapter.optimal_format(128, 100_000, 0.9).await.unwrap();
         // Basic test that adapter was created successfully
         assert!(true, "PRISM adapter created successfully");
     }
@@ -116,8 +114,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_hardware_acceleration_manager() {
-        use crate::storage::engines::universal::config::HardwareAccelerationConfig;
-        let config = HardwareAccelerationConfig::default();
         let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
 
         let manager = HardwareAccelerationManager::new((*capabilities).clone());
@@ -190,25 +186,25 @@ mod tests {
     #[tokio::test]
     async fn test_engine_adapter_vector_conversion() {
         let config = StorageEngineConfig::prism_default();
-        let adapter = PRISMAdapter::new(&config).await.unwrap();
+        let _adapter = PRISMAdapter::new(&config).await.unwrap();
 
-        let test_vectors = create_test_vectors(10, 64);
+        let _test_vectors = create_test_vectors(10, 64);
 
         // TODO: Test FP32 conversion - convert_vectors method needs to be implemented
-        // let fp32_result = adapter
-        //     .convert_vectors(&test_vectors, &StorageFormat::FP32)
+        // let fp32_result = _adapter
+        //     .convert_vectors(&_test_vectors, &StorageFormat::FP32)
         //     .await;
         // assert!(fp32_result.is_ok());
 
         // TODO: Test INT8 conversion - convert_vectors method needs to be implemented
-        // let int8_result = adapter.convert_vectors(&test_vectors, &int8_format).await;
+        // let int8_result = _adapter.convert_vectors(&_test_vectors, &int8_format).await;
         // assert!(int8_result.is_ok());
     }
 
     #[tokio::test]
     async fn test_memory_usage_estimation() {
         let config = StorageEngineConfig::nova_default();
-        let adapter = NOVAAdapter::new(&config).await.unwrap();
+        let _adapter = NOVAAdapter::new(&config).await.unwrap();
 
         // TODO: Memory usage estimation - estimate_memory_usage method needs to be implemented
         // For now, just test that the adapter was created successfully
@@ -220,12 +216,10 @@ mod tests {
 }
 
 // Re-export commonly used types for tests
+pub use crate::storage::engines::universal::adapter::HardwareAccelerationManager;
 pub use crate::storage::engines::universal::adapter::{
     AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
     UniversalDistanceAdapter,
-};
-pub use crate::storage::engines::universal::adapter::{
-    HardwareAccelerationManager, OptimizationStrategy,
 };
 pub use crate::storage::engines::universal::config::StorageEngineConfig;
 pub use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};

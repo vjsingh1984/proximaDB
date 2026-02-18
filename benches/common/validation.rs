@@ -2,8 +2,7 @@ use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::SqlValue;
 /// Validation utilities for benchmarks to ensure correctness
 use proximadb::storage::traits::FlushResult as TraitFlushResult;
-use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Validate flush operation results
 pub fn validate_flush_result(

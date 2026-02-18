@@ -4,7 +4,6 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, SuperBlock};
 
 /// Metadata index for efficient filtering
@@ -14,6 +13,7 @@ pub struct MetadataIndex {
     column_indexes: HashMap<String, ColumnIndex>,
 
     /// Composite indexes for common query patterns
+    #[allow(dead_code)]
     composite_indexes: Vec<CompositeIndex>,
 
     /// Table-level statistics
@@ -64,7 +64,7 @@ pub enum CompositeIndexType {
 
 /// Wrapper for f64 that implements Ord by treating NaN as greater than all other values
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct OrderedFloat(f64);
+pub struct OrderedFloat(pub f64);
 
 impl Eq for OrderedFloat {}
 
@@ -513,7 +513,7 @@ impl MetadataIndex {
             let mut result = BitSet::new(self.table_stats.total_blocks as usize);
 
             // With proper type-aware ordering, we can directly use the range
-            for (value, bitset) in tree.range(min_ordered..=max_ordered) {
+            for (_value, bitset) in tree.range(min_ordered..=max_ordered) {
                 result = result.union(bitset);
             }
             Ok(result)
@@ -522,7 +522,7 @@ impl MetadataIndex {
         }
     }
 
-    fn find_blocks_without_column(&self, column: &str) -> Result<BitSet> {
+    fn find_blocks_without_column(&self, _column: &str) -> Result<BitSet> {
         // This would track which blocks don't have the column
         // For simplicity, returning empty set
         Ok(BitSet::new(self.table_stats.total_blocks as usize))
@@ -532,6 +532,7 @@ impl MetadataIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::VectorRecord;
 
     #[test]
     fn test_bitset_operations() {

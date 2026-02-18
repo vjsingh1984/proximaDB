@@ -2,17 +2,13 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::{
-        MetricsConfig,
-        store::MetricsPersistenceLayer,
-        updater::{
-            CompactionMetricsUpdate, FlushMetricsUpdate, InternalMetricsUpdater,
-            MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
-        },
-    };
+    use super::super::super::{MetricsConfig, store::MetricsPersistenceLayer};
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::metrics::InternalMetricsUpdater;
+    use crate::metrics::updater::{
+        MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
+    };
     use crate::proto::proximadb_v1::VectorRecord;
-    use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -29,7 +25,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
-    use tracing::{debug, error, info};
+    use tracing::{debug, info};
 
     /// Mock storage engine for integration testing
     #[derive(Debug, Clone)]
@@ -81,10 +77,12 @@ mod tests {
                 entries_flushed: Some(params.vector_records.len() as u64),
                 bytes_written: Some((params.vector_records.len() * 1024) as u64),
                 files_created: Some(1),
+                file_paths: vec![],
                 duration_ms: Some(100),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: params.batch_ids.clone(),
             })
         }
@@ -412,7 +410,7 @@ mod tests {
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
 
         let config = Arc::new(WALConfig::default());
-        let mut bg_manager = BackgroundMaintenanceManager::new(config);
+        let bg_manager = BackgroundMaintenanceManager::new(config);
 
         // Register metrics updater with BackgroundManager
         // TODO: Add set_metrics_updater to BackgroundMaintenanceManager
@@ -511,7 +509,7 @@ mod tests {
         flush_coordinator.set_metrics_updater(metrics_updater.clone());
 
         let config = Arc::new(WALConfig::default());
-        let mut bg_manager = BackgroundMaintenanceManager::new(config);
+        let bg_manager = BackgroundMaintenanceManager::new(config);
         // Note: bg_manager doesn't have set_metrics_updater method, which is fine for this test
 
         // Create mock storage engine

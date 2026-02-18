@@ -212,6 +212,12 @@ impl ClusterManager {
         Ok(self.global_centroid.clone())
     }
 
+    /// Returns the number of centroids (clusters) currently managed.
+    /// Used for computing optimal nprobe = sqrt(k) during search.
+    pub fn centroid_count(&self) -> usize {
+        self.centroids.len()
+    }
+
     fn update_global_centroid(&mut self, vectors: &[Vec<f32>]) {
         if vectors.is_empty() {
             return;

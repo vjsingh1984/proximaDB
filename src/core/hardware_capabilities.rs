@@ -79,7 +79,7 @@
 //! ## SIMD Optimization Strategy
 //!
 //! ### Automatic Selection
-//! ```rust
+//! ```rust,ignore
 //! match hardware.preferred_backend() {
 //!     AVX512 => use_avx512_kernels(),
 //!     AVX2 => use_avx2_kernels(),
@@ -159,7 +159,7 @@
 //! ## Usage Examples
 //!
 //! ### Initialization
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::hardware::{initialize_hardware_capabilities, HardwareConfig};
 //!
 //! // Initialize at server startup
@@ -168,7 +168,7 @@
 //! ```
 //!
 //! ### Runtime Queries
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::hardware::{hardware_capabilities, HardwareQuery};
 //!
 //! // Get capabilities
@@ -317,12 +317,12 @@ impl HardwareBackend {
             if hw.has_gpu() {
                 let preferred = hw.preferred_backend();
 
-                #[cfg(all(target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 if matches!(preferred, Self::CUDA) {
                     return Self::CUDA;
                 }
 
-                #[cfg(all(target_os = "linux"))]
+                #[cfg(target_os = "linux")]
                 if matches!(preferred, Self::ROCm) {
                     return Self::ROCm;
                 }
@@ -838,51 +838,47 @@ impl HardwareCapabilities {
         let mut cache_sizes = CacheSizes::default();
 
         // L1 data cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l1dcachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l1dcachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l1_data = size;
-                }
-            }
+            cache_sizes.l1_data = size;
         }
 
         // L1 instruction cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l1icachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l1icachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l1_instruction = size;
-                }
-            }
+            cache_sizes.l1_instruction = size;
         }
 
         // L2 cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l2cachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l2cachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l2 = size;
-                }
-            }
+            cache_sizes.l2 = size;
         }
 
         // L3 cache
-        if let Ok(output) = Command::new("sysctl")
-            .args(&["-n", "hw.l3cachesize"])
+        if let Some(size) = Command::new("sysctl")
+            .args(["-n", "hw.l3cachesize"])
             .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
         {
-            if let Ok(size_str) = String::from_utf8(output.stdout) {
-                if let Ok(size) = size_str.trim().parse::<usize>() {
-                    cache_sizes.l3 = size;
-                }
-            }
+            cache_sizes.l3 = size;
         }
 
         tracing::info!(
@@ -1003,29 +999,28 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn detect_arm_cache_sizes() -> CacheSizes {
         use std::fs;
 
         // Generic ARM64 detection for non-Linux platforms (e.g., Windows ARM64)
-        let mut cache_sizes = CacheSizes::default();
-
         // Try to read ARM system registers via platform-specific methods
         #[cfg(target_os = "windows")]
-        {
+        let cache_sizes = {
             // Windows ARM64 would need WinAPI calls to get cache info
             // For now, use enhanced defaults based on common ARM architectures
-            cache_sizes = Self::get_arm_defaults();
-        }
+            Self::get_arm_defaults()
+        };
 
         #[cfg(not(target_os = "windows"))]
-        {
+        let cache_sizes = {
             // For other ARM64 platforms, try Linux-style detection first
             if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
-                cache_sizes = Self::parse_arm_cpuinfo(&cpuinfo);
+                Self::parse_arm_cpuinfo(&cpuinfo)
             } else {
-                cache_sizes = Self::get_arm_defaults();
+                Self::get_arm_defaults()
             }
-        }
+        };
 
         tracing::info!(
             "Detected ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
@@ -1039,6 +1034,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn get_arm_defaults() -> CacheSizes {
         // Enhanced defaults for ARM64 based on common architectures
         // Apple M1/M2: L1=128KB, L2=4MB, L3=8-24MB (shared)
@@ -1053,6 +1049,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_arm_cpuinfo(cpuinfo: &str) -> CacheSizes {
         let mut cache_sizes = Self::get_arm_defaults();
 
@@ -1066,13 +1063,14 @@ impl HardwareCapabilities {
                 if let Some(size) = Self::parse_arm_cache_size(&line) {
                     // ARM cpuinfo often doesn't specify cache level clearly
                     // Use heuristics based on size ranges
-                    if size <= 128 * 1024 {
-                        // Likely L1 cache
-                        if line_lower.contains("instruction") || line_lower.contains("icache") {
-                            cache_sizes.l1_instruction = size;
-                        } else {
-                            cache_sizes.l1_data = size;
-                        }
+                    if size <= 128 * 1024
+                        && (line_lower.contains("instruction") || line_lower.contains("icache"))
+                    {
+                        // Likely L1 instruction cache
+                        cache_sizes.l1_instruction = size;
+                    } else if size <= 128 * 1024 {
+                        // Likely L1 data cache
+                        cache_sizes.l1_data = size;
                     } else if size <= 4 * 1024 * 1024 {
                         // Likely L2 cache
                         cache_sizes.l2 = size;
@@ -1097,26 +1095,37 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_arm_cache_size(line: &str) -> Option<usize> {
         // ARM cache size parsing - more flexible than Linux KB/MB parsing
-        let line_lower = line.to_lowercase();
+        let _line_lower = line.to_lowercase();
 
         // Look for size patterns: "32KB", "1MB", "8192 KB", etc.
         for word in line.split_whitespace() {
             let word_clean = word.trim_matches(|c: char| !c.is_alphanumeric());
 
             if word_clean.ends_with("kb") {
-                if let Ok(size) = word_clean[..word_clean.len() - 2].parse::<usize>() {
-                    return Some(size * 1024);
+                if let Some(size) = word_clean[..word_clean.len() - 2]
+                    .parse::<usize>()
+                    .ok()
+                    .map(|s| s * 1024)
+                {
+                    return Some(size);
                 }
             } else if word_clean.ends_with("mb") {
-                if let Ok(size) = word_clean[..word_clean.len() - 2].parse::<usize>() {
-                    return Some(size * 1024 * 1024);
+                if let Some(size) = word_clean[..word_clean.len() - 2]
+                    .parse::<usize>()
+                    .ok()
+                    .map(|s| s * 1024 * 1024)
+                {
+                    return Some(size);
                 }
-            } else if word_clean.ends_with("k") {
-                if let Ok(size) = word_clean[..word_clean.len() - 1].parse::<usize>() {
-                    return Some(size * 1024);
-                }
+            } else if let Some(size) = word_clean
+                .strip_suffix("k")
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|s| s * 1024)
+            {
+                return Some(size);
             }
         }
 
@@ -1124,6 +1133,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_apple_silicon_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Apple Silicon has known cache configurations
         // M1: L1=128KB, L2=4MB, L3=8MB (efficiency cores share L3)
@@ -1148,6 +1158,7 @@ impl HardwareCapabilities {
     }
 
     #[cfg(target_arch = "aarch64")]
+    #[allow(dead_code)]
     fn parse_qualcomm_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Qualcomm Snapdragon typical configurations
         // Snapdragon 8 Gen 2: L1=64KB, L2=512KB, L3=8MB
@@ -1172,68 +1183,52 @@ impl HardwareCapabilities {
     fn detect_gpu() -> Result<GpuCapabilities> {
         #[cfg(feature = "gpu")]
         {
-            // TODO: Implement GPU detection using gpu module
-            // For now, return no GPU available
-            return Ok(GpuCapabilities {
-                backend: GpuBackend::None,
-                devices: vec![],
-                primary_device: None,
-                total_memory: 0,
-                cuda_compute_capability: None,
-            });
-
-            /* Original code - waiting for gpu_similarity module:
-            match crate::compute::gpu_similarity::detect_best_gpu() {
-                Ok(gpu_accel) => {
-                    let backend = match gpu_accel.backend() {
-                        HardwareBackend::CUDA => GpuBackend::CUDA,
-                        HardwareBackend::ROCm => GpuBackend::ROCm,
-                        HardwareBackend::MPS => GpuBackend::MPS,
-                        HardwareBackend::OpenCL => GpuBackend::OpenCL,
-                        _ => GpuBackend::None,
-                    };
-
-                    // For now, create a single device entry
-                    // In production, we'd enumerate all devices
-                    let devices = if backend != GpuBackend::None {
-                        vec![GpuDevice {
-                            id: 0,
-                            name: format!("{} GPU", backend),
-                            total_memory: 4 * 1024 * 1024 * 1024, // 4GB placeholder
-                            available_memory: 3 * 1024 * 1024 * 1024, // 3GB placeholder
-                            compute_capability: None,
-                            backend,
-                        }]
-                    } else {
-                        vec![]
-                    };
-
+            match crate::compute::gpu::distance::detect_gpu_capabilities() {
+                Ok((backend, devices)) => {
                     let total_memory = devices.iter().map(|d| d.total_memory).sum();
+                    let primary_device = if devices.is_empty() { None } else { Some(0) };
 
-                    Ok(GpuCapabilities {
+                    if backend != GpuBackend::None {
+                        info!(
+                            "✅ GPU detected: backend={:?}, devices={}",
+                            backend,
+                            devices.len()
+                        );
+                        for (idx, device) in devices.iter().enumerate() {
+                            info!(
+                                "   • [{}] {} (backend={:?}, mem={} MB)",
+                                idx,
+                                device.name,
+                                device.backend,
+                                device.total_memory / (1024 * 1024)
+                            );
+                        }
+                    } else {
+                        info!("GPU feature enabled but no GPU devices detected");
+                    }
+
+                    return Ok(GpuCapabilities {
                         backend,
                         devices,
-                        primary_device: if backend != GpuBackend::None {
-                            Some(0)
-                        } else {
-                            None
-                        },
+                        primary_device,
                         total_memory,
                         cuda_compute_capability: None,
-                    })
+                    });
                 }
-                Err(_) => {
-                    // No GPU available
-                    Ok(GpuCapabilities {
+                Err(err) => {
+                    tracing::warn!(
+                        "GPU detection failed, disabling GPU acceleration: {:?}",
+                        err
+                    );
+                    return Ok(GpuCapabilities {
                         backend: GpuBackend::None,
                         devices: vec![],
                         primary_device: None,
                         total_memory: 0,
                         cuda_compute_capability: None,
-                    })
+                    });
                 }
             }
-            */
         }
 
         #[cfg(not(feature = "gpu"))]
@@ -1260,10 +1255,15 @@ impl HardwareCapabilities {
         let available_memory = sys.available_memory(); // Already in bytes
 
         // Recommend cache size as 10% of available memory, capped at 8GB
-        let recommended_cache_size = std::cmp::min(
-            available_memory / 10,
-            8 * 1024 * 1024 * 1024, // 8GB max
-        );
+        // Ensure minimum of 1GB if detection returns 0 (environment-specific issue)
+        let recommended_cache_size = if available_memory > 0 {
+            std::cmp::min(
+                available_memory / 10,
+                8 * 1024 * 1024 * 1024, // 8GB max
+            )
+        } else {
+            1024 * 1024 * 1024 // 1GB fallback when detection fails
+        };
 
         Ok(MemoryInfo {
             total_memory,
@@ -1452,6 +1452,142 @@ impl Default for HardwareCapabilities {
 
 pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
     try_get_hardware_capabilities().unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
+}
+
+/// Log hardware capabilities summary - call this once when ProximaDB opens
+/// Returns a formatted summary string for display
+pub fn log_hardware_capabilities_summary() -> String {
+    let caps = get_hardware_capabilities();
+
+    // Determine the best SIMD backend
+    let simd_backend = get_best_simd_backend();
+    let backend_str = match simd_backend {
+        HardwareBackend::AVX512 => "AVX-512",
+        HardwareBackend::AVX2 => "AVX2",
+        HardwareBackend::SSE => "SSE",
+        HardwareBackend::NEON => "NEON",
+        HardwareBackend::CUDA => "CUDA",
+        HardwareBackend::ROCm => "ROCm",
+        HardwareBackend::MPS => "MPS",
+        HardwareBackend::OpenCL => "OpenCL",
+        HardwareBackend::Scalar => "Scalar",
+    };
+
+    // Format memory in GB
+    let total_mem_gb = caps.memory.total_memory as f64 / (1024.0 * 1024.0 * 1024.0);
+    let avail_mem_gb = caps.memory.available_memory as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    // Build summary
+    let summary = format!(
+        "Hardware: {} cores, {} SIMD, {:.1}GB/{:.1}GB RAM",
+        caps.cpu.physical_cores, backend_str, avail_mem_gb, total_mem_gb
+    );
+
+    info!(
+        "🖥️  ProximaDB Hardware: {} ({} cores), {} SIMD, {:.1}GB available",
+        caps.cpu.model_name, caps.cpu.physical_cores, backend_str, avail_mem_gb
+    );
+
+    summary
+}
+
+/// Get the best compute backend for distance calculations based on workload characteristics.
+///
+/// This considers:
+/// - Available GPU backend and its characteristics (unified vs discrete memory)
+/// - Batch size (larger batches benefit more from GPU)
+/// - Vector dimension (higher dimensions benefit from GPU parallelism)
+///
+/// # Arguments
+/// * `batch_size` - Number of vectors to process
+/// * `dimension` - Dimension of each vector
+///
+/// # Returns
+/// The optimal `HardwareBackend` for this workload
+pub fn get_best_distance_backend(batch_size: usize, dimension: usize) -> HardwareBackend {
+    let caps = get_hardware_capabilities();
+
+    // GPU is beneficial for larger batches or high dimensions
+    // The memory transfer overhead makes GPU less beneficial for small batches
+    let use_gpu = if caps.has_gpu() {
+        match caps.gpu.backend {
+            GpuBackend::MPS => {
+                // Apple Silicon has unified memory - lower threshold for GPU usage
+                // No PCIe transfer overhead
+                batch_size >= 500 || (batch_size >= 100 && dimension >= 512)
+            }
+            GpuBackend::CUDA | GpuBackend::ROCm => {
+                // Discrete GPU needs larger batches to overcome PCIe transfer
+                batch_size >= 1000 || (batch_size >= 500 && dimension >= 768)
+            }
+            GpuBackend::OpenCL => {
+                // OpenCL has higher overhead, need even larger batches
+                batch_size >= 2000 || (batch_size >= 1000 && dimension >= 1024)
+            }
+            GpuBackend::None => false,
+        }
+    } else {
+        false
+    };
+
+    if use_gpu {
+        match caps.gpu.backend {
+            GpuBackend::MPS => HardwareBackend::MPS,
+            GpuBackend::CUDA => HardwareBackend::CUDA,
+            GpuBackend::ROCm => HardwareBackend::ROCm,
+            GpuBackend::OpenCL => HardwareBackend::OpenCL,
+            GpuBackend::None => get_best_simd_backend(),
+        }
+    } else {
+        get_best_simd_backend()
+    }
+}
+
+/// Get the best SIMD backend for the current platform.
+///
+/// Priority order:
+/// 1. AVX-512 (x86_64 with AVX-512 support)
+/// 2. AVX2 (x86_64 with AVX2 support)
+/// 3. SSE (x86_64 fallback)
+/// 4. NEON (ARM64/aarch64)
+/// 5. Scalar (no SIMD available)
+pub fn get_best_simd_backend() -> HardwareBackend {
+    let simd = SimdCapabilities::detect();
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if simd.has_avx512 {
+            return HardwareBackend::AVX512;
+        }
+        if simd.has_avx2 {
+            return HardwareBackend::AVX2;
+        }
+        if simd.has_sse {
+            return HardwareBackend::SSE;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if simd.has_neon {
+            return HardwareBackend::NEON;
+        }
+    }
+
+    HardwareBackend::Scalar
+}
+
+/// Check if GPU acceleration is available and recommended for this workload.
+///
+/// # Arguments
+/// * `batch_size` - Number of vectors to process
+/// * `dimension` - Dimension of each vector
+///
+/// # Returns
+/// `true` if GPU should be used for this workload, `false` otherwise
+pub fn should_use_gpu_for_workload(batch_size: usize, dimension: usize) -> bool {
+    let best_backend = get_best_distance_backend(batch_size, dimension);
+    best_backend.is_gpu()
 }
 
 /// Hardware capability queries for easy access

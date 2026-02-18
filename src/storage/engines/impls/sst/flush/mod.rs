@@ -32,10 +32,12 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
+use crate::storage::engines::impls::sst::block_format::BlockFormat;
 use crate::storage::engines::impls::sst::utils::SortingStats;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
@@ -113,12 +115,23 @@ impl SstEngine {
             sort_stats.compression_estimate * 100.0
         );
 
-        // Generate SSTable filename
+        // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
-        let sst_filename = codec.generate(0, "sst"); // Level 0 for flush
+        let block_format = BlockFormat::from_str(&self.config().block_format);
+        let file_extension = match block_format {
+            BlockFormat::ArrowBlock => "arrow",
+            BlockFormat::ProximaBlocks => "sst",
+        };
+        let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
         debug!(
-            "🔧 SST: Creating SSTable file: {} for collection: {}",
-            sst_filename, collection_id
+            "🔧 SST: Creating {} file: {} for collection: {}",
+            if block_format == BlockFormat::ArrowBlock {
+                "Arrow"
+            } else {
+                "SSTable"
+            },
+            sst_filename,
+            collection_id
         );
 
         // Perform atomic flush operation
@@ -128,8 +141,40 @@ impl SstEngine {
                 &collection_storage_url,
                 &sst_filename,
                 &params,
+                block_format,
             )
             .await?;
+
+        // Train/update PCA model for Z-Order spatial encoding
+        // This is done after flush to ensure collection-level PCA model is up-to-date
+        if params.vector_records.len() >= 100 {
+            // Only train with enough samples
+            match self
+                .train_and_cache_pca_model(
+                    collection_id,
+                    &collection_storage_url,
+                    &params.vector_records,
+                )
+                .await
+            {
+                Ok(()) => {
+                    // Also update the global cache for search access
+                    if let Some(model) = self
+                        .get_pca_model(collection_id, &collection_storage_url)
+                        .await
+                    {
+                        super::core::set_collection_pca_model(collection_id, model);
+                    }
+                }
+                Err(e) => {
+                    // Log but don't fail flush - PCA is an optimization
+                    tracing::warn!(
+                        "[SST] Failed to train PCA model during flush: {}. Z-Order pruning may be less effective.",
+                        e
+                    );
+                }
+            }
+        }
 
         let duration = start_time.elapsed();
         info!(
@@ -189,6 +234,7 @@ impl SstEngine {
         storage_url: &str,
         filename: &str,
         params: &FlushParameters,
+        block_format: BlockFormat,
     ) -> Result<FlushResult> {
         // Begin atomic operation
         let staging_config = StagingConfig {
@@ -212,60 +258,109 @@ impl SstEngine {
 
         tracing::debug!(staging_url = %atomic_op.staging_url, final_url = %atomic_op.final_url, "Atomic operation initialized");
 
-        // Write to staging using SSTable writer
+        // Write to staging using appropriate writer based on block format
         let staging_url = format!("{}/{}", atomic_op.staging_url, filename);
         tracing::debug!(staging_path = %staging_url, "Full staging path constructed");
-        let block_size = (self.config().block_size_kb * 1024) as usize;
-
-        // Extract compression config from collection config if available
-        let compression_config = params
-            .collection_config
-            .as_ref()
-            .and_then(|c| c.config.as_ref())
-            .and_then(|cfg| cfg.storage_config.as_ref())
-            .and_then(|sc| {
-                // Convert storage_config.compression to CompressionConfig
-                use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig};
-                sc.compression.map(|compression_algo| {
-                    CompressionConfig {
-                        algorithm: compression_algo,
-                        level: Some(6), // Default level
-                        adaptive: false,
-                        min_ratio: None,
-                        enable_quantization: false,
-                        quantization_type: None,
-                        normalization_method: None,
-                        block_size_kb: self.config().block_size_kb,
-                        dynamic_block_sizing: false,
-                    }
-                })
-            });
-
-        let writer = SstableWriter::with_compression(
-            &staging_url,
-            block_size,
-            Arc::clone(self.filesystem()),
-            compression_config,
-        );
 
         // Count entries for writing
         let entries_written = sorted_vectors.len() as u64;
 
-        // Actually write vectors to SSTable file using the streaming writer
-        // This writes to the staging location which will be moved to final location on commit
-        tracing::debug!(entries_written, "Writing vectors to SSTable");
-        if entries_written > 0 {
-            // Check first vector before writing
-            let sorted_vec = sorted_vectors.clone();
-            if let Some((id, rec)) = sorted_vec.first() {
-                tracing::trace!(vector_id = %id, metadata = ?rec.metadata, "First vector before write");
+        match block_format {
+            BlockFormat::ArrowBlock => {
+                // Use ArrowBlockWriter for Arrow IPC format
+                // Get dimension from collection config or infer from first vector
+                let dimension = params
+                    .collection_config
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|cfg| cfg.dimension)
+                    .or_else(|| {
+                        // Fallback: infer from first vector
+                        sorted_vectors
+                            .first()
+                            .map(|(_, rec)| rec.vector.len() as u32)
+                    })
+                    .unwrap_or(128); // Default dimension if not available
+
+                tracing::debug!(entries_written, dimension, "Writing vectors to Arrow block");
+
+                // Convert staging URL to local path for ArrowBlockWriter
+                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+
+                // Ensure parent directory exists
+                if let Some(parent) = std::path::Path::new(staging_path).parent() {
+                    std::fs::create_dir_all(parent)
+                        .context("Failed to create staging directory for Arrow block")?;
+                }
+
+                let config = ArrowBlockConfig::new(dimension);
+                let mut writer = ArrowBlockWriter::new(staging_path, config)
+                    .context("Failed to create ArrowBlockWriter")?;
+
+                // Convert sorted_vectors to VectorRecord slice for writing
+                let records: Vec<VectorRecord> =
+                    sorted_vectors.iter().map(|(_, rec)| rec.clone()).collect();
+
+                writer
+                    .write_block(&records)
+                    .context("Failed to write block to Arrow file")?;
+                writer
+                    .finalize()
+                    .context("Failed to finalize Arrow block")?;
+
+                tracing::debug!("Arrow block write operation completed");
+            }
+            BlockFormat::ProximaBlocks => {
+                // Use SstableWriter for ProximaBlocks format
+                let block_size = (self.config().block_size_kb * 1024) as usize;
+
+                // Extract compression config from collection config if available
+                let compression_config = params
+                    .collection_config
+                    .as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .and_then(|cfg| cfg.storage_config.as_ref())
+                    .and_then(|sc| {
+                        use crate::proto::proximadb_v1::CompressionConfig;
+                        sc.compression.map(|compression_algo| CompressionConfig {
+                            algorithm: compression_algo,
+                            level: Some(6),
+                            adaptive: false,
+                            min_ratio: None,
+                            enable_quantization: false,
+                            quantization_type: None,
+                            normalization_method: None,
+                            block_size_kb: self.config().block_size_kb,
+                            dynamic_block_sizing: false,
+                        })
+                    });
+
+                let writer = SstableWriter::with_compression(
+                    &staging_url,
+                    block_size,
+                    Arc::clone(self.filesystem()),
+                    compression_config,
+                );
+
+                tracing::debug!(entries_written, "Writing vectors to SSTable");
+                if entries_written > 0 {
+                    let sorted_vec = sorted_vectors.clone();
+                    if let Some((id, rec)) = sorted_vec.first() {
+                        tracing::trace!(vector_id = %id, metadata = ?rec.metadata, "First vector before write");
+                    }
+                }
+
+                writer
+                    .write_sorted_vector_records(
+                        sorted_vectors.into_iter(),
+                        entries_written as usize,
+                    )
+                    .await
+                    .context("Failed to write vectors to SSTable")?;
+
+                tracing::debug!("SSTable write operation completed");
             }
         }
-        writer
-            .write_sorted_vector_records(sorted_vectors.into_iter(), entries_written as usize)
-            .await
-            .context("Failed to write vectors to SSTable")?;
-        tracing::debug!("Write operation completed");
 
         // Get actual bytes written from the filesystem
         let fs = self.filesystem().get_filesystem(&staging_url)?;
@@ -289,18 +384,24 @@ impl SstEngine {
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to commit atomic flush operation")?;
-        tracing::debug!(final_url = %atomic_op.final_url, "Atomic operation committed");
+        tracing::debug!(
+            final_url = %atomic_op.final_url,
+            filename = %filename,
+            bytes = bytes_written,
+            "SST flush atomic commit done"
+        );
 
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
 
-        // Create flush result
+        // Create flush result with file path for AXIS index building
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
             entries_flushed: Some(entries_written),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
+            file_paths: vec![format!("{}/{}", atomic_op.final_url, filename)],
             duration_ms: Some(0), // Will be set by caller
             completed_at: Utc::now(),
             engine_metrics: {
@@ -316,6 +417,7 @@ impl SstEngine {
                 metrics
             },
             compaction_triggered: should_trigger_compaction,
+            compaction_error: None,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }

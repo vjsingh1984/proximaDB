@@ -69,7 +69,7 @@
 //!
 //! ### Adaptive Eviction
 //! The cache automatically selects optimal eviction policy:
-//! ```rust
+//! ```rust,ignore
 //! // Monitor access patterns
 //! if access_pattern.is_sequential() {
 //!     use_lru();  // Better for scans
@@ -153,7 +153,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::cache::{CrossCacheOrchestrator, CacheConfig};
 //!
 //! // Initialize cache system
@@ -237,7 +237,7 @@ impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
         // quantized_vector removed - internalized in storage
 
         // Add size of metadata (approximate)
-        for (key, value) in &self.metadata {
+        for (key, _value) in &self.metadata {
             size += key.len();
             // Approximate size of SqlValue
             size += 64; // Conservative estimate for SqlValue

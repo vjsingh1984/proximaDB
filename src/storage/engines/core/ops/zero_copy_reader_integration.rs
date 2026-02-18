@@ -35,7 +35,7 @@ impl ZeroCopyReaderIntegration {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<EnhancedSstReader, ProximaDBError> {
         // 1. Create zero-copy I/O system with SST-optimized configuration
-        let io_system = ZeroCopyIOSystemBuilder::new()
+        let _io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(
                 crate::storage::engines::core::io::zero_copy::WorkloadType::HighThroughput,
             )
@@ -59,7 +59,7 @@ impl ZeroCopyReaderIntegration {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<EnhancedParquetReader, ProximaDBError> {
         // 1. Create zero-copy I/O system optimized for analytics workloads
-        let io_system = ZeroCopyIOSystemBuilder::new()
+        let _io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::Analytics)
             .with_filesystem(filesystem_factory.clone())
             .build()
@@ -84,7 +84,7 @@ impl ZeroCopyReaderIntegration {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<EnhancedSwiftReader, ProximaDBError> {
         // 1. Create zero-copy I/O system optimized for real-time workloads
-        let io_system = ZeroCopyIOSystemBuilder::new()
+        let _io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::RealTime)
             .with_filesystem(filesystem_factory.clone())
             .build()
@@ -124,7 +124,7 @@ impl ZeroCopyReaderIntegration {
             };
 
             // Create optimized I/O system for this engine type
-            let io_system = ZeroCopyIOSystemBuilder::new()
+            let _io_system = ZeroCopyIOSystemBuilder::new()
                 .for_workload(workload_type)
                 .with_filesystem(filesystem_factory.clone())
                 .build()
@@ -339,14 +339,14 @@ impl ReaderMigrationHelper {
     pub async fn migrate_existing_reader_example() -> Result<(), ProximaDBError> {
         // This is what existing code looks like:
         //
-        // ```rust
+        // ```rust,ignore
         // let reader = ExistingReader::new(filesystem_factory.clone());
         // let data = reader.read("s3://bucket/file.sst").await?;
         // ```
         //
         // This is what it becomes with zero-copy optimization:
         //
-        // ```rust
+        // ```rust,ignore
         // let io_system = ZeroCopyIOSystemBuilder::new().build()?;
         // let zero_copy_fs = filesystem_factory.create_zero_copy_filesystem(
         //     "s3://bucket/",

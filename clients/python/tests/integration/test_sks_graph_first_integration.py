@@ -20,18 +20,20 @@ Prerequisites:
 import os
 import time
 import uuid
-import pytest
 from typing import List
 
 import numpy as np
-from ..embedding_utils import embed_seed
+import pytest
 
-from proximadb import ProximaDBClient, VectorRecord
+from proximadb_sdk import ProximaDBClient, VectorRecord
+
+from ..embedding_utils import embed_seed
 
 
 def _server_available(url: str) -> bool:
     """Check if ProximaDB server is available"""
     import httpx
+
     try:
         r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return r.status_code < 500
@@ -53,10 +55,11 @@ def client():
     # Ensure default graph exists
     try:
         import httpx
+
         response = httpx.post(
             f"{base_url}/api/v1/graph/graphs",
             json={"graph_id": "default", "name": "Default Graph"},
-            timeout=5.0
+            timeout=5.0,
         )
         # Ignore if already exists (409 or success)
     except Exception:
@@ -106,8 +109,8 @@ def test_batch_entity_insertion_performance(client, test_collection):
             metadata={
                 "title": f"Entity {i}",
                 "category": ["tech", "science", "business"][i % 3],
-                "index": i
-            }
+                "index": i,
+            },
         )
         records.append(record)
 
@@ -118,8 +121,9 @@ def test_batch_entity_insertion_performance(client, test_collection):
 
     # Validate success
     assert result.success, f"Batch insertion failed"
-    assert result.metrics.successful_count >= num_entities, \
-        f"Expected {num_entities} entities, got {result.metrics.successful_count}"
+    assert (
+        result.metrics.successful_count >= num_entities
+    ), f"Expected {num_entities} entities, got {result.metrics.successful_count}"
 
     # Validate performance
     throughput = num_entities / duration
@@ -134,16 +138,19 @@ def test_batch_entity_insertion_performance(client, test_collection):
     # Conservative threshold for integration tests (actual is much higher)
     # Lowered to 1K to account for server load and test environment variability
     min_throughput = 1_000  # 1K entities/sec minimum for integration test
-    assert throughput >= min_throughput, \
-        f"Throughput ({throughput:.2f}/sec) below minimum ({min_throughput}/sec)"
+    assert (
+        throughput >= min_throughput
+    ), f"Throughput ({throughput:.2f}/sec) below minimum ({min_throughput}/sec)"
 
     # Target throughput (what we expect in production)
     target_throughput = 30_000  # 30K entities/sec
     if throughput >= target_throughput:
         print(f"  ✓ Exceeds production target ({target_throughput}/sec)")
     else:
-        print(f"  ⚠ Below production target ({target_throughput}/sec) "
-              f"but above minimum threshold")
+        print(
+            f"  ⚠ Below production target ({target_throughput}/sec) "
+            f"but above minimum threshold"
+        )
 
 
 @pytest.mark.integration
@@ -162,16 +169,17 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
     num_entities = 50
     records = []
     from ..embedding_utils import embed_seed
+
     for i in range(num_entities):
         vector = np.array(embed_seed(i, dimension), dtype=np.float32)
-        
+
         record = VectorRecord(
             id=f"doc_{i}",
             vector=vector.tolist(),
             metadata={
                 "title": f"Document {i}",
-                "category": "research" if i < 25 else "tutorial"
-            }
+                "category": "research" if i < 25 else "tutorial",
+            },
         )
         records.append(record)
 
@@ -184,7 +192,7 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
         client.create_node(
             node_id=f"doc_{i}",
             labels=["Document"],
-            properties={"title": f"Document {i}"}
+            properties={"title": f"Document {i}"},
         )
 
     # Create edges
@@ -194,7 +202,7 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
             from_node_id=f"doc_{i}",
             to_node_id=f"doc_{i+2}",
             edge_type="REFERENCES",
-            weight=0.9
+            weight=0.9,
         )
 
     # Hybrid Query Step 1: Vector search
@@ -206,7 +214,7 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
         collection_id=collection,
         vector=query_vector.tolist(),
         top_k=5,
-        include_metadata=True
+        include_metadata=True,
     )
     vector_time_ms = (time.time() - start_time) * 1000
 
@@ -225,14 +233,16 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
         max_depth=2,
         edge_types=["REFERENCES"],
         algorithm="BFS",
-        limit=10
+        limit=10,
     )
     graph_time_ms = (time.time() - start_time) * 1000
 
     nodes = traversal.get("nodes", [])
     edges = traversal.get("edges", [])
 
-    print(f"  Graph traversal: {len(nodes)} nodes, {len(edges)} edges ({graph_time_ms:.2f}ms)")
+    print(
+        f"  Graph traversal: {len(nodes)} nodes, {len(edges)} edges ({graph_time_ms:.2f}ms)"
+    )
     print(f"  Total time: {vector_time_ms + graph_time_ms:.2f}ms")
 
     # Validate results
@@ -240,8 +250,9 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
 
     # Validate total time < 500ms (conservative, actual is 10-20ms)
     total_time_ms = vector_time_ms + graph_time_ms
-    assert total_time_ms < 500, \
-        f"Hybrid query took {total_time_ms:.2f}ms (expected < 500ms)"
+    assert (
+        total_time_ms < 500
+    ), f"Hybrid query took {total_time_ms:.2f}ms (expected < 500ms)"
 
     if total_time_ms < 50:
         print(f"  ✓ Excellent performance (<50ms)")
@@ -266,9 +277,7 @@ def test_entity_retrieval_by_id(client, test_collection):
         vector = vector / np.linalg.norm(vector)
 
         record = VectorRecord(
-            id=entity_id,
-            vector=vector.tolist(),
-            metadata={"test_id": entity_id}
+            id=entity_id, vector=vector.tolist(), metadata={"test_id": entity_id}
         )
         records.append(record)
 
@@ -282,7 +291,7 @@ def test_entity_retrieval_by_id(client, test_collection):
             collection_id=collection,
             vector=records[0].vector,  # Use any vector
             top_k=100,
-            include_metadata=True
+            include_metadata=True,
         )
         lookup_time_us = (time.time() - start_time) * 1_000_000
 
@@ -309,9 +318,7 @@ def test_graph_traversal_depth(client, test_collection):
     for i in range(chain_length):
         node_id = f"node_{i*2}"
         client.create_node(
-            node_id=node_id,
-            labels=["ChainNode"],
-            properties={"index": i*2}
+            node_id=node_id, labels=["ChainNode"], properties={"index": i * 2}
         )
 
     for i in range(chain_length - 1):
@@ -320,7 +327,7 @@ def test_graph_traversal_depth(client, test_collection):
             from_node_id=f"node_{i*2}",
             to_node_id=f"node_{(i+1)*2}",
             edge_type="NEXT",
-            weight=1.0
+            weight=1.0,
         )
 
     # Test different depths
@@ -330,7 +337,7 @@ def test_graph_traversal_depth(client, test_collection):
             max_depth=max_depth,
             edge_types=["NEXT"],
             algorithm="BFS",
-            limit=10
+            limit=10,
         )
 
         nodes = traversal.get("nodes", [])
@@ -361,10 +368,7 @@ def test_metadata_filtering(client, test_collection):
         record = VectorRecord(
             id=f"doc_{i}",
             vector=vector.tolist(),
-            metadata={
-                "category": categories[i % 3],
-                "index": i
-            }
+            metadata={"category": categories[i % 3], "index": i},
         )
         records.append(record)
 
@@ -379,7 +383,7 @@ def test_metadata_filtering(client, test_collection):
         collection_id=collection,
         vector=query_vector.tolist(),
         top_k=10,
-        include_metadata=True
+        include_metadata=True,
     )
 
     assert len(results) >= 1, "Should return results"
@@ -391,7 +395,7 @@ def test_metadata_filtering(client, test_collection):
 
     print(f"\nMetadata Filtering:")
     print(f"  Retrieved {len(results)} results with metadata")
-    categories = [r.metadata.get('category') for r in results if r.metadata]
+    categories = [r.metadata.get("category") for r in results if r.metadata]
     print(f"  Categories found: {len(set(str(c) for c in categories))} unique")
 
 
@@ -411,9 +415,7 @@ def test_concurrent_operations(client, test_collection):
         vector = vector / np.linalg.norm(vector)
 
         record = VectorRecord(
-            id=f"entity_{i}",
-            vector=vector.tolist(),
-            metadata={"index": i}
+            id=f"entity_{i}", vector=vector.tolist(), metadata={"index": i}
         )
         records.append(record)
 
@@ -427,9 +429,7 @@ def test_concurrent_operations(client, test_collection):
         query_vector = np.array(embed_seed(task_id, dimension), dtype=np.float32)
 
         results = client.search(
-            collection_id=collection,
-            vector=query_vector.tolist(),
-            top_k=5
+            collection_id=collection, vector=query_vector.tolist(), top_k=5
         )
         return len(results)
 

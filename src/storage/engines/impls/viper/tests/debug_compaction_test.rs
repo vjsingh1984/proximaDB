@@ -4,7 +4,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
@@ -121,6 +121,10 @@ fn create_test_collection(
             tags: vec![],
             owner: None,
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),

@@ -2,7 +2,6 @@
 //!
 //! Tests collection-level and global flush configurations
 
-use anyhow::Result;
 use proximadb::storage::persistence::write_ahead_log::config::{
     CollectionWalConfig, MemTableConfig, PerformanceConfig, WALConfig,
 };

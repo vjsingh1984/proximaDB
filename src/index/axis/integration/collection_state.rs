@@ -256,7 +256,7 @@ impl CollectionStateManager {
 
         self.transition_history
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(transition);
 
         // Update state

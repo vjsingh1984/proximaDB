@@ -491,6 +491,7 @@ impl AxisLshIndex {
 
     // Private helper methods
 
+    #[allow(dead_code)]
     fn compute_distance(&self, a: &[f32], b: &[f32]) -> f32 {
         let result = self
             .distance_compute
@@ -683,9 +684,6 @@ pub fn create_lsh_index_for_collection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::axis::*;
-    use crate::proto::proximadb_v1::VectorRecord;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_lsh_basic_operations() {
@@ -699,7 +697,7 @@ mod tests {
         let index = AxisLshIndex::new(config, 4);
 
         // Add vectors
-        let vectors = vec![
+        let vectors = [
             vec![1.0, 0.0, 0.0, 0.0],
             vec![0.0, 1.0, 0.0, 0.0],
             vec![0.0, 0.0, 1.0, 0.0],
@@ -739,7 +737,7 @@ mod tests {
         let index = AxisLshIndex::new(config, 8);
 
         // Add binary vectors (represented as 0.0 or 1.0)
-        let vectors = vec![
+        let vectors = [
             vec![1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
             vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
             vec![1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],

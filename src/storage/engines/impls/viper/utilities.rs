@@ -81,15 +81,19 @@ pub struct ViperUtilitiesConfig {
 /// Performance statistics collector for VIPER operations
 pub struct PerformanceStatsCollector {
     /// Operation metrics
+    #[allow(dead_code)]
     operation_metrics: Arc<RwLock<HashMap<String, OperationMetrics>>>,
 
     /// Collection-level statistics
+    #[allow(dead_code)]
     collection_stats: Arc<RwLock<HashMap<String, CollectionStats>>>,
 
     /// Global VIPER statistics
+    #[allow(dead_code)]
     global_stats: Arc<RwLock<GlobalViperStats>>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: StatsConfig,
 }
 
@@ -169,18 +173,23 @@ pub struct OperationStatsCollector {
 /// TTL cleanup service for automatic vector expiration
 pub struct TTLCleanupService {
     /// TTL configuration
+    #[allow(dead_code)]
     config: TTLConfig,
 
     /// Filesystem access for file operations
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 
     /// Partition metadata tracking
+    #[allow(dead_code)]
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
 
     /// Background cleanup task handle
+    #[allow(dead_code)]
     cleanup_task: Option<tokio::task::JoinHandle<()>>,
 
     /// TTL statistics
+    #[allow(dead_code)]
     stats: Arc<RwLock<TTLStats>>,
 }
 
@@ -237,15 +246,19 @@ pub struct CleanupResult {
 /// Staging operations coordinator for Parquet optimization
 pub struct StagingOperationsCoordinator {
     /// Filesystem interface
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 
     /// Staging configuration
+    #[allow(dead_code)]
     config: StagingConfig,
 
     /// Active staging operations
+    #[allow(dead_code)]
     active_operations: Arc<RwLock<HashMap<String, StagingOperation>>>,
 
     /// Optimization cache
+    #[allow(dead_code)]
     optimization_cache: Arc<RwLock<HashMap<String, ParquetOptimizationConfig>>>,
 }
 
@@ -337,14 +350,17 @@ pub struct OptimizedParquetRecords {
 /// Data partitioner for intelligent clustering and partitioning
 pub struct DataPartitioner {
     /// Partitioning configuration
+    #[allow(dead_code)]
     config: PartitioningConfig,
 
     // ML models for clustering moved to AXIS
     // clustering_models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
     /// Partition metadata
+    #[allow(dead_code)]
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
 
     /// Partitioning statistics
+    #[allow(dead_code)]
     stats: Arc<RwLock<PartitioningStats>>,
 }
 
@@ -428,15 +444,19 @@ pub type ClusterId = String;
 /// Compression optimizer for advanced compression strategies
 pub struct CompressionOptimizer {
     /// Compression configuration
+    #[allow(dead_code)]
     config: CompressionConfig,
 
     /// Compression models per collection
+    #[allow(dead_code)]
     compression_models: Arc<RwLock<HashMap<String, CompressionModel>>>,
 
     /// Compression statistics
+    #[allow(dead_code)]
     stats: Arc<RwLock<CompressionStats>>,
 
     /// Algorithm performance cache
+    #[allow(dead_code)]
     algorithm_cache: Arc<RwLock<HashMap<String, AlgorithmPerformance>>>,
 }
 
@@ -690,12 +710,12 @@ pub struct StagingOperationResult {
 // Placeholder implementations for compilation
 
 impl PerformanceStatsCollector {
-    async fn new(_config: StatsConfig) -> Result<Self> {
+    async fn new(config: StatsConfig) -> Result<Self> {
         Ok(Self {
             operation_metrics: Arc::new(RwLock::new(HashMap::new())),
             collection_stats: Arc::new(RwLock::new(HashMap::new())),
             global_stats: Arc::new(RwLock::new(GlobalViperStats::default())),
-            config: _config,
+            config,
         })
     }
 

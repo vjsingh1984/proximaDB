@@ -7,7 +7,7 @@
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use anyhow::Result;
-use arrow_array::builder::{Float32Builder, ListBuilder};
+use arrow_array::builder::Float32Builder;
 use arrow_array::types::UInt8Type;
 use arrow_array::{ArrayRef, Float64Array, Int64Array, ListArray, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
@@ -15,8 +15,6 @@ use arrow_schema::{DataType, Field, Schema};
 // Currently using direct ArrowWriter for test data generation
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
-// Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{BatchParquetWriter, ParquetWriterConfig};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
@@ -349,7 +347,7 @@ impl TestDataGenerator {
         ));
 
         let expires_at: ArrayRef = Arc::new(Int64Array::from_iter(
-            (0..self.config.num_vectors).map(|i| {
+            (0..self.config.num_vectors).map(|_i| {
                 if self.rng.gen_range(0.0..1.0) < self.config.expiry_rate {
                     Some(current_time - 1000000) // Expired
                 } else {
@@ -466,7 +464,7 @@ impl TestDataGenerator {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use tracing::{debug, error, info};
+    use tracing::debug;
 
     #[test]
     fn test_data_generator_creation() {
@@ -613,7 +611,7 @@ mod tests {
         // Generate vectors and their quantized versions
         let vectors = generator.generate_vectors();
         let int8_codes = generator.generate_int8_codes(&vectors);
-        let pq8_codes = generator.generate_pq_codes(&vectors, 8);
+        let _pq8_codes = generator.generate_pq_codes(&vectors, 8);
         let binary_codes = generator.generate_binary_codes(&vectors);
 
         // Use UnifiedDistanceCompute for FP32 comparisons
@@ -656,7 +654,7 @@ mod tests {
 
         // Test binary quantization
         debug!("Testing binary quantized distances:");
-        for (idx, binary_vector) in binary_codes.iter().enumerate() {
+        for (_idx, binary_vector) in binary_codes.iter().enumerate() {
             // Convert binary back to float for comparison (1 bit per dimension)
             let mut dequantized = vec![0.0f32; dimension];
             for (i, &byte) in binary_vector.iter().enumerate() {
@@ -705,7 +703,7 @@ mod tests {
 
             // Generate quantized versions
             let int8_sparse = generator.generate_int8_codes(&sparse_vectors);
-            let binary_sparse = generator.generate_binary_codes(&sparse_vectors);
+            let _binary_sparse = generator.generate_binary_codes(&sparse_vectors);
 
             // Test query (also sparse)
             let sparse_query = generator.generate_sparse_vector(1.0 - sparsity);
@@ -1089,7 +1087,7 @@ mod tests {
 
         // Test with different compressions
         let uncompressed_path = temp_dir.path().join("sparse_uncompressed.parquet");
-        let gzip_path = temp_dir.path().join("sparse_gzip.parquet");
+        let _gzip_path = temp_dir.path().join("sparse_gzip.parquet");
 
         // Create uncompressed file with sparse vectors
         // We'll use the sparsity setting to generate mostly sparse vectors
@@ -1167,7 +1165,7 @@ mod tests {
             generator.rng = ChaCha8Rng::seed_from_u64(generator.config.seed);
 
             // Create custom vectors with specific density
-            let custom_vectors: Vec<Vec<f32>> = (0..500)
+            let _custom_vectors: Vec<Vec<f32>> = (0..500)
                 .map(|_| generator.generate_sparse_vector(density))
                 .collect();
 

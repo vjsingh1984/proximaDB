@@ -27,12 +27,12 @@ pub trait EngineMetadataSerializer: Send + Sync + Debug {
 
     /// Extract cacheable metadata components (e.g., Parquet footer for VIPER)
     /// Returns None if no special caching is needed
-    fn extract_cacheable_component(&self, data: &[u8], file_path: &str) -> Option<Bytes> {
+    fn extract_cacheable_component(&self, _data: &[u8], _file_path: &str) -> Option<Bytes> {
         None
     }
 
     /// Check if a file path should have metadata cached
-    fn should_cache_metadata(&self, file_path: &str) -> bool {
+    fn should_cache_metadata(&self, _file_path: &str) -> bool {
         true
     }
 }

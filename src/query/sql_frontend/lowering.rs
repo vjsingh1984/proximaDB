@@ -32,17 +32,24 @@ pub struct QueryLowering {
 #[derive(Debug, Clone)]
 struct CollectionMetadata {
     id: String,
+    #[allow(dead_code)]
     name: String,
+    #[allow(dead_code)]
     dimension: u32,
+    #[allow(dead_code)]
     distance_metric: String,
+    #[allow(dead_code)]
     schema: Option<CollectionSchema>,
 }
 
 /// Collection schema for field validation and optimization
 #[derive(Debug, Clone)]
 struct CollectionSchema {
+    #[allow(dead_code)]
     embedding_fields: Vec<String>,
+    #[allow(dead_code)]
     metadata_fields: Vec<String>,
+    #[allow(dead_code)]
     indexed_fields: Vec<String>,
 }
 
@@ -108,17 +115,54 @@ impl QueryLowering {
         };
 
         // 4. Process ORDER BY with vector function recognition
-        let order_by = self.lower_order_by(&query.order_by).await?;
+        let order_by = if let Some(order_by_clause) = &query.order_by {
+            match &order_by_clause.kind {
+                sqlparser::ast::OrderByKind::Expressions(exprs) => {
+                    self.lower_order_by(exprs).await?
+                }
+                sqlparser::ast::OrderByKind::All(_) => vec![],
+            }
+        } else {
+            vec![]
+        };
 
         // 5. Process LIMIT/OFFSET with bounds checking
-        let limit = query
-            .limit
-            .as_ref()
-            .and_then(|expr| self.extract_limit(expr));
-        let offset = query
-            .offset
-            .as_ref()
-            .and_then(|offset_expr| self.extract_offset(offset_expr));
+        // In sqlparser 0.59, LimitClause is an enum
+        let (limit, offset) = if let Some(lc) = &query.limit_clause {
+            match lc {
+                sqlparser::ast::LimitClause::LimitOffset {
+                    limit: lim,
+                    offset: off,
+                    ..
+                } => {
+                    let limit_val = lim.as_ref().and_then(|expr| self.extract_limit(expr));
+                    // In sqlparser 0.59, offset is Option<Offset>
+                    let offset_val = off
+                        .as_ref()
+                        .and_then(|off_struct| self.extract_offset(off_struct));
+                    (limit_val, offset_val)
+                }
+                sqlparser::ast::LimitClause::OffsetCommaLimit {
+                    offset: off,
+                    limit: lim,
+                } => {
+                    let limit_val = self.extract_limit(lim);
+                    // In OffsetCommaLimit, offset is an Expr, not an Offset struct
+                    let offset_val = if let SqlExpr::Value(value_with_span) = off {
+                        if let Value::Number(n, _) = &value_with_span.value {
+                            n.parse::<u64>().ok()
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    (limit_val, offset_val)
+                }
+            }
+        } else {
+            (None, None)
+        };
 
         Ok(Select {
             projection,
@@ -126,8 +170,8 @@ impl QueryLowering {
             joins,
             selection,
             group_by: match &select.group_by {
-                sqlparser::ast::GroupByExpr::All => vec![],
-                sqlparser::ast::GroupByExpr::Expressions(exprs) => {
+                sqlparser::ast::GroupByExpr::All(_) => vec![],
+                sqlparser::ast::GroupByExpr::Expressions(exprs, _modifiers) => {
                     self.lower_group_by(exprs).await?
                 }
             },
@@ -316,11 +360,11 @@ impl QueryLowering {
                 Ok(result)
             }
             SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
-            SqlExpr::Value(value) => {
+            SqlExpr::Value(value_with_span) => {
                 // Handle parameter placeholders separately
-                match value {
+                match &value_with_span.value {
                     Value::Placeholder(placeholder) => Ok(Expr::Param(placeholder.clone())),
-                    _ => Ok(Expr::Literal(self.convert_value(value)?)),
+                    _ => Ok(Expr::Literal(self.convert_value(&value_with_span.value)?)),
                 }
             }
             SqlExpr::Function(func) => {
@@ -346,7 +390,8 @@ impl QueryLowering {
 
         for order_expr in order_by {
             let expr = self.lower_expr(&order_expr.expr).await?;
-            let asc = order_expr.asc.unwrap_or(true);
+            // In sqlparser 0.59, asc is in options.asc: Option<bool> where Some(true) = ASC, Some(false) = DESC, None = ASC (default)
+            let asc = order_expr.options.asc.unwrap_or(true);
 
             order_exprs.push(OrderByExpr { expr, asc });
         }
@@ -369,7 +414,12 @@ impl QueryLowering {
     /// Lower function calls with special handling for vector and SKS functions
     async fn lower_function_call(&self, func: &Function) -> Result<Expr> {
         let name = func.name.to_string();
-        let args = self.lower_function_args(&func.args).await?;
+        // In sqlparser 0.59, func.args is FunctionArguments enum
+        let arg_list = match &func.args {
+            sqlparser::ast::FunctionArguments::List(func_arg_list) => &func_arg_list.args,
+            _ => return Err(anyhow!("Unsupported function argument type")),
+        };
+        let args = self.lower_function_args(arg_list).await?;
 
         // Recognize vector similarity functions
         if name.to_uppercase().contains("VECTOR_SIMILARITY")
@@ -384,7 +434,7 @@ impl QueryLowering {
             "SIMILAR" | "FOLLOW" | "ASSEMBLE"
         ) {
             // Parse SKS function arguments with validation and convert to structured AST
-            self.lower_sks_function(&name, &func.args).await
+            self.lower_sks_function(&name, arg_list).await
         }
         // Regular functions
         else if self.is_aggregate_function(&name) {
@@ -421,11 +471,12 @@ impl QueryLowering {
         Box::pin(async move {
             match expr {
                 SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
-                SqlExpr::Value(value) => {
+                SqlExpr::Value(value_with_span) => {
                     // Handle parameter placeholders separately
-                    match value {
+                    // In sqlparser 0.59, Value is wrapped in ValueWithSpan
+                    match &value_with_span.value {
                         Value::Placeholder(placeholder) => Ok(Expr::Param(placeholder.clone())),
-                        _ => Ok(Expr::Literal(self.convert_value(value)?)),
+                        _ => Ok(Expr::Literal(self.convert_value(&value_with_span.value)?)),
                     }
                 }
                 SqlExpr::BinaryOp { left, op, right } => {
@@ -443,8 +494,9 @@ impl QueryLowering {
                 SqlExpr::Case {
                     operand,
                     conditions,
-                    results,
                     else_result,
+                    case_token: _,
+                    end_token: _,
                 } => {
                     let lowered_operand = if let Some(op) = operand {
                         Some(Box::new(self.lower_expr(op).await?))
@@ -452,9 +504,10 @@ impl QueryLowering {
                         None
                     };
                     let mut lowered_conditions = Vec::new();
-                    for (condition, result) in conditions.iter().zip(results.iter()) {
-                        let when_expr = self.lower_expr(condition).await?;
-                        let then_expr = self.lower_expr(result).await?;
+                    // In sqlparser 0.59, conditions is Vec<CaseWhen> where CaseWhen has condition and result
+                    for case_when in conditions {
+                        let when_expr = self.lower_expr(&case_when.condition).await?;
+                        let then_expr = self.lower_expr(&case_when.result).await?;
                         lowered_conditions.push((when_expr, then_expr));
                     }
                     let lowered_else_expr = if let Some(el) = else_result {
@@ -636,20 +689,22 @@ impl QueryLowering {
 
     /// Extract LIMIT value with bounds checking
     fn extract_limit(&self, expr: &SqlExpr) -> Option<u64> {
-        if let SqlExpr::Value(Value::Number(n, _)) = expr {
-            n.parse::<u64>().ok()
-        } else {
-            None
+        if let SqlExpr::Value(value_with_span) = expr {
+            if let Value::Number(n, _) = &value_with_span.value {
+                return n.parse::<u64>().ok();
+            }
         }
+        None
     }
 
-    /// Extract OFFSET value with bounds checking  
+    /// Extract OFFSET value with bounds checking
     fn extract_offset(&self, offset_expr: &sqlparser::ast::Offset) -> Option<u64> {
-        if let SqlExpr::Value(Value::Number(n, _)) = &offset_expr.value {
-            n.parse::<u64>().ok()
-        } else {
-            None
+        if let SqlExpr::Value(value_with_span) = &offset_expr.value {
+            if let Value::Number(n, _) = &value_with_span.value {
+                return n.parse::<u64>().ok();
+            }
         }
+        None
     }
 
     /// Resolve collection name to UUID with caching for performance
@@ -687,6 +742,7 @@ impl QueryLowering {
     }
 
     /// Lower JOIN clauses from SQL AST to query AST
+    #[allow(dead_code)]
     async fn lower_joins(
         &self,
         joins: &[sqlparser::ast::Join],
@@ -708,7 +764,7 @@ impl QueryLowering {
             JoinOperator::LeftOuter(_) => JoinType::LeftOuter,
             JoinOperator::RightOuter(_) => JoinType::RightOuter,
             JoinOperator::FullOuter(_) => JoinType::FullOuter,
-            JoinOperator::CrossJoin => JoinType::Cross,
+            JoinOperator::CrossJoin(_) => JoinType::Cross,
             _ => return Err(anyhow!("Unsupported JOIN type")),
         };
 
@@ -728,7 +784,7 @@ impl QueryLowering {
                 }
                 sqlparser::ast::JoinConstraint::None => None,
             },
-            JoinOperator::CrossJoin => None,
+            JoinOperator::CrossJoin(_) => None,
             _ => return Err(anyhow!("Unsupported JOIN constraint")),
         };
 

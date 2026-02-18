@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::readers::sst_query_engine::UnifiedSstableReader;
 
@@ -194,6 +194,7 @@ impl StrategyAwareReader for UnifiedSSTReader {
 /// - Any sequential read of entire files
 pub struct DirectSSTReader {
     filesystem_factory: Arc<FilesystemFactory>,
+    #[allow(dead_code)]
     collection_id: String,
 }
 

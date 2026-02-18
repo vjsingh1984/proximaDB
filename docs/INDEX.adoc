@@ -1,263 +1,126 @@
-= ProximaDB Documentation Index
+= ProximaDB Documentation
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :icons: font
-:source-highlighter: highlight.js
 
 [.lead]
-Complete documentation map for ProximaDB - High-Performance Vector Database
+Developer-first documentation for building multi-model applications on ProximaDB.
 
-== 🚀 Quick Start
+== Start Building (Recommended)
 
-[cols="2,5a"]
 |===
-|Document |Description
+| Goal | Doc | Time
 
-|link:01-getting-started/getting_started.adoc[**Getting Started Guide**]
-|Quick start tutorial - install, configure, and run your first queries
-
-|link:USE_CASES.adoc[**Use Cases & Examples**]
-|Real-world use cases and example applications
-
-|link:README.adoc[**Documentation README**]
-|Overview of documentation structure
+| **Run locally** | link:../README.adoc[README] | 5 min
+| **REST API usage** | link:api/rest.adoc[REST API] | 15 min
+| **Python SDK** | link:../clients/python/SDK_DOCUMENTATION.adoc[Python SDK] | 10 min
+| **Architecture overview** | link:concepts/architecture.adoc[Architecture] | 15 min
 |===
-
-== 📘 User Guides
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:02-guides/engine_selection_optimization_guide.adoc[**Engine Selection & Optimization**]
-|Choose the right storage engine for your workload
-
-|link:02-guides/sks_graph_first_migration_guide.adoc[**SKS Graph-First Migration**]
-|Migrate to Semantic Knowledge Store architecture
-
-|link:01-getting-started/getting_started.adoc[**Getting Started Tutorial**]
-|5-minute introduction to ProximaDB
-|===
-
-== 📖 API Reference
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:03-reference/rest-api-specification.adoc[**REST API Specification**]
-|Complete REST API reference with examples
-
-|link:03-reference/graph_api_reference.adoc[**Graph API Reference**]
-|Graph operations and traversal API
-
-|link:03-reference/sks_technical_reference.adoc[**SKS Technical Reference**]
-|Semantic Knowledge Store API and concepts
-
-|link:03-reference/api_reference.adoc[**General API Reference**]
-|Core API concepts and common patterns
-
-|link:03-reference/configuration-reference.adoc[**Configuration Reference**]
-|Server configuration options and tuning
-|===
-
-== 🛠️ Operations & Production
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:04-operations/PRODUCTION_RUNBOOK.adoc[**Production Runbook**]
-|Operations guide for production deployments
-
-|link:04-operations/benchmark_logging_guide.adoc[**Benchmark & Logging Guide**]
-|Performance benchmarking and logging best practices
-|===
-
-== ⚡ Performance
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:performance/README.adoc[**⭐ Performance Guide - START HERE**]
-|Single source of truth for all performance documentation
-
-|- Quick reference tables (1K and 10K scale)
-|- Engine selection flowcharts
-|- Compression decision trees
-|- Validated benchmarks (October 2024)
-|===
-
-== 🏗️ Architecture
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:technical/platform_architecture.adoc[**Platform Architecture Overview**]
-|High-level system architecture and design
-
-|link:architecture/storage-layer.adoc[**Storage Layer Architecture**]
-|Storage system design and components
-
-|link:architecture/CACHE_ARCHITECTURE.adoc[**Cache Architecture**]
-|Unified caching system and cross-cache orchestration
-|===
-
-=== Storage Engines
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:storage/sst-engine-deep-dive.adoc[**SST Engine Deep Dive**]
-|Real-time OLTP with hybrid columnar format
-
-|link:storage/viper-engine-deep-dive.adoc[**VIPER Engine Deep Dive**]
-|Analytics/OLAP with columnar Parquet
-
-|link:storage/nova-engine-deep-dive.adoc[**NOVA Engine Deep Dive**]
-|Mixed workloads with progressive search
-
-|link:storage/hybrid-columnar-engines.adoc[**Hybrid Columnar Engines**]
-|Comparison of SST, VIPER, and NOVA
-
-|link:storage/columnar-storage-architecture.adoc[**Columnar Storage Architecture**]
-|ProximaBlocks format and design
-|===
-
-=== Technical Deep-Dives
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:technical/proximacodec_technical_guide.adoc[**ProximaCodec Technical Guide**]
-|Lossless f32 compression with 15 encoding schemes
-
-|link:technical/unified-quantization-guide.adoc[**Unified Quantization Guide**]
-|Binary, INT8, PQ4/8/16/32 quantization strategies
-
-|link:technical/storage_engine_layouts.adoc[**Storage Engine Layouts**]
-|On-disk formats and data structures
-
-|link:technical/graph_persistence_architecture.adoc[**Graph Persistence Architecture**]
-|Orion graph engine persistence and WAL
-
-|link:technical/gpu_acceleration.adoc[**GPU Acceleration**]
-|CUDA and Metal GPU support
-
-|link:technical/compression_guide.adoc[**Compression Guide**]
-|Compression algorithms and selection
-
-|link:technical/ai_intelligence_platform.adoc[**AI Intelligence Platform**]
-|AI-powered features and AutoML
-
-|link:technical/VECTOR_DB_FORMAT_COMPARISON.adoc[**Vector DB Format Comparison**]
-|ProximaDB vs Lance vs Nimble analysis
-
-|link:technical/SST_COMPETITIVE_COMPARISON.adoc[**SST Competitive Comparison**]
-|SST engine vs competitors
-
-|link:technical/graph_collection_service_design.adoc[**Graph Collection Service Design**]
-|Multi-graph architecture and isolation
-|===
-
-==  Security
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:06-security/README.adoc[**Security Overview**]
-|Security features and best practices
-
-|link:06-security/unified_authentication_flow.adoc[**Unified Authentication Flow**]
-|Authentication and authorization
-|===
-
-== 🔧 Development
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:08-development/BUILD_OPTIMIZATION.adoc[**Build Optimization**]
-|Cargo profiles and build performance
-
-|link:08-development/OPTIMIZATION_INFRASTRUCTURE_REUSE.adoc[**Infrastructure Reuse**]
-|Code reuse patterns and shared utilities
-
-|link:testing/IGNORED_TESTS_ANALYSIS.adoc[**Test Coverage Analysis**]
-|Test suite analysis and ignored tests
-|===
-
-== 🗺️ Roadmap & Planning
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:09-roadmap/MASTER_FEATURE_DASHBOARD.adoc[**Master Feature Dashboard**]
-|Comprehensive roadmap and feature status
-
-|link:09-roadmap/in-progress/[**In-Progress Features**]
-|Currently under development
-
-|link:09-roadmap/completed/[**Completed Features**]
-|Delivered features and milestones
-
-|link:09-roadmap/future/[**Future Features**]
-|Planned enhancements
-|===
-
-== 💼 Business & Enterprise
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:10-business/competitive_advantages.adoc[**Competitive Advantages**]
-|ProximaDB vs competitors
-
-|link:enterprise/ENTERPRISE_OVERVIEW.adoc[**Enterprise Overview**]
-|Enterprise features and deployment
-
-|link:enterprise/enterprise_deployment.adoc[**Enterprise Deployment**]
-|Large-scale deployment guide
-
-|link:enterprise/production_deployment_guide.adoc[**Production Deployment Guide**]
-|Production best practices
-|===
-
-== 🤖 AutoML & Intelligence
-
-[cols="2,5a"]
-|===
-|Document |Description
-
-|link:automl/README.adoc[**AutoML Overview**]
-|Automated machine learning features
-|===
-
-== 📂 Archive
-
-Historical and development documentation moved to archive:
-
-* link:archive/sessions/[**Development Sessions**] - Session notes and progress reports
-* link:archive/migration-guides/[**Migration Guides**] - Legacy migration documentation
-* link:archive/deprecated/[**Deprecated Features**] - Removed functionality
-
-== 🔗 External Resources
-
-* https://github.com/vjsingh1984/proximaDB[**GitHub Repository**]
-* **Rust API Docs**: Run `cargo doc --open`
-* **Python SDK**: `clients/python/README.adoc`
-* **Examples**: `clients/python/examples/README.md`
 
 ---
 
-_Last Updated: {docdate}_
+== Product & Strategy
 
-_Version: 0.1.4_
+|===
+| Doc | Purpose
+
+| link:00-product/VISION.adoc[Vision] | "The Context Database" — category definition, design principles, 3-year horizon
+| link:00-product/PRD.adoc[PRD] | MoSCoW feature requirements, quality targets, release milestones
+| link:00-product/COMPETITIVE_LANDSCAPE.adoc[Competitive Landscape] | Market sizing, competitor matrices, SWOT, positioning
+|===
+
+ProximaDB development follows four phases:
+
+|===
+| Phase | Focus | Status
+
+| **Phase 1** | Storage formats, catalog, core APIs | ✅ Complete
+| **Phase 2** | Cross-model queries, graph, observability | ✅ Complete
+| **Phase 3** | Ecosystem integration, streaming, SDKs | 🔄 In Progress
+| **Phase 4** | Time-series, event sourcing, hybrid search, framework integrations | Planned
+|===
+
+For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
+
+---
+
+== Core Concepts (Developer Focus)
+
+|===
+| Topic | Doc | Why it matters
+
+| Multi-model design | link:concepts/architecture.adoc[Architecture] | How 8 models share the data plane
+| Storage engine selection | link:concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
+| Graph engines | link:concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+| Design patterns | link:12-design/DESIGN_PATTERNS.adoc[Design Patterns] | Storage, consensus, caching, query optimization patterns
+|===
+
+---
+
+== API References
+
+|===
+| API | Doc | Notes
+
+| REST | link:api/rest.adoc[REST API] | Primary builder interface
+| Graph | link:api/graph.adoc[Graph API] | Nodes, edges, traversal
+| Configuration | link:api/configuration.adoc[Configuration] | Local and production settings
+|===
+
+---
+
+== Operate (Optional For Builders)
+
+|===
+| Topic | Doc | Focus
+
+| Deployment | link:operations/deployment.adoc[Deployment] | Local and production setup
+| Monitoring | link:operations/monitoring.adoc[Monitoring] | Metrics + health checks
+| Security | link:operations/security.adoc[Security] | Auth, TLS, RBAC
+|===
+
+---
+
+== Use Cases & Dogfooding
+
+|===
+| Doc | Purpose
+
+| link:11-usecases/USECASE_CATALOG.adoc[Use Case Catalog] | 6 industry use cases with data models, query patterns, fit scores
+| link:11-usecases/IBKRTRADING_DOGFOOD.adoc[ibkrtrading Dogfood] | Integration blueprint: replace PostgreSQL + SQLite + JSONL with ProximaDB embedded
+|===
+
+---
+
+== Quality & Technical Debt
+
+|===
+| Doc | Purpose
+
+| link:10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis] | Comprehensive gap analysis, competitive position, feature audit
+| link:10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] | TD-001 through TD-017 with priority, effort, phase alignment
+| link:10-quality/code-coverage-report.adoc[Code Coverage Report] | Module-level coverage analysis and TDD action plan
+|===
+
+---
+
+== Deep Dives (For Engine Builders)
+
+|===
+| Topic | Doc
+
+| Storage internals | link:internals/columnar-storage-architecture.adoc[Columnar Storage Architecture]
+| SST engine | link:internals/sst-engine-deep-dive.adoc[SST Deep Dive]
+| Graph internals | link:internals/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]
+|===
+
+---
+
+== Status Notes
+
+* ProximaDB is evolving quickly; experimental features are documented in each API section.
+* Internal roadmap and archived docs live under `docs/_internal/` and are not part of the public API.
+* Phase 1 + Phase 2 complete; Phase 3 ecosystem features in progress; Phase 4 planned.
+* Anchoring artifacts: `docs/00-product/` (vision, PRD, competitive), `docs/11-usecases/` (use cases, dogfood), `docs/12-design/` (design patterns).
+
+_Version 0.2.0_ | _February 2026_

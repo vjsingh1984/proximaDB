@@ -1,3 +1,5 @@
+// NOTE: This tenant access layer is not exported from `services::mod` and has no current
+// call sites. Keep implementation changes in sync with future wiring if it becomes active.
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -121,7 +123,7 @@ pub trait TenantAccessService: Send + Sync {
         shared_with_tenant_id: &str,
     ) -> Result<()>;
     async fn get_collection_owner(&self, collection_id: &str) -> Result<Option<String>>;
-    
+
     // Resource quota methods
     async fn check_resource_quota(
         &self,
@@ -155,37 +157,52 @@ pub struct InMemoryTenantAccessService {
 impl InMemoryTenantAccessService {
     pub fn new() -> Self {
         let mut tenants = HashMap::new();
-        tenants.insert("tenant1".to_string(), Tenant {
-            tenant_id: "tenant1".to_string(),
-            organization_id: "org1".to_string(),
-            name: "Tenant One".to_string(),
-            status: "active".to_string(),
-            quotas: ResourceQuotas::default(),
-        });
-        tenants.insert("tenant2".to_string(), Tenant {
-            tenant_id: "tenant2".to_string(),
-            organization_id: "org1".to_string(),
-            name: "Tenant Two".to_string(),
-            status: "active".to_string(),
-            quotas: ResourceQuotas::default(),
-        });
-        tenants.insert("tenant3".to_string(), Tenant {
-            tenant_id: "tenant3".to_string(),
-            organization_id: "org2".to_string(),
-            name: "Tenant Three".to_string(),
-            status: "active".to_string(),
-            quotas: ResourceQuotas::default(),
-        });
+        tenants.insert(
+            "tenant1".to_string(),
+            Tenant {
+                tenant_id: "tenant1".to_string(),
+                organization_id: "org1".to_string(),
+                name: "Tenant One".to_string(),
+                status: "active".to_string(),
+                quotas: ResourceQuotas::default(),
+            },
+        );
+        tenants.insert(
+            "tenant2".to_string(),
+            Tenant {
+                tenant_id: "tenant2".to_string(),
+                organization_id: "org1".to_string(),
+                name: "Tenant Two".to_string(),
+                status: "active".to_string(),
+                quotas: ResourceQuotas::default(),
+            },
+        );
+        tenants.insert(
+            "tenant3".to_string(),
+            Tenant {
+                tenant_id: "tenant3".to_string(),
+                organization_id: "org2".to_string(),
+                name: "Tenant Three".to_string(),
+                status: "active".to_string(),
+                quotas: ResourceQuotas::default(),
+            },
+        );
 
         let mut organizations = HashMap::new();
-        organizations.insert("org1".to_string(), Organization {
-            organization_id: "org1".to_string(),
-            name: "Organization Alpha".to_string(),
-        });
-        organizations.insert("org2".to_string(), Organization {
-            organization_id: "org2".to_string(),
-            name: "Organization Beta".to_string(),
-        });
+        organizations.insert(
+            "org1".to_string(),
+            Organization {
+                organization_id: "org1".to_string(),
+                name: "Organization Alpha".to_string(),
+            },
+        );
+        organizations.insert(
+            "org2".to_string(),
+            Organization {
+                organization_id: "org2".to_string(),
+                name: "Organization Beta".to_string(),
+            },
+        );
 
         Self {
             tenants: RwLock::new(tenants),
@@ -216,7 +233,10 @@ impl TenantAccessService for InMemoryTenantAccessService {
         // 1. Check if tenant is the owner
         if let Some(owner_info) = ownership.get(collection_id) {
             if owner_info.owner_tenant_id == tenant_id {
-                info!("Access granted: Tenant {} is owner of collection {}", tenant_id, collection_id);
+                info!(
+                    "Access granted: Tenant {} is owner of collection {}",
+                    tenant_id, collection_id
+                );
                 return Ok(true); // Owner always has full access
             }
         }
@@ -226,22 +246,32 @@ impl TenantAccessService for InMemoryTenantAccessService {
             for share in shares {
                 if share.shared_with_tenant_id == tenant_id {
                     if share.permissions.contains(&required_permission) {
-                        info!("Access granted: Collection {} shared with Tenant {} with {:?} permission", collection_id, tenant_id, required_permission);
+                        info!(
+                            "Access granted: Collection {} shared with Tenant {} with {:?} permission",
+                            collection_id, tenant_id, required_permission
+                        );
                         return Ok(true);
                     } else {
-                        warn!("Access denied: Collection {} shared with Tenant {} but missing {:?} permission", collection_id, tenant_id, required_permission);
+                        warn!(
+                            "Access denied: Collection {} shared with Tenant {} but missing {:?} permission",
+                            collection_id, tenant_id, required_permission
+                        );
                     }
                 }
             }
         }
 
-        info!("Access denied: Tenant {} has no access to collection {}", tenant_id, collection_id);
+        info!(
+            "Access denied: Tenant {} has no access to collection {}",
+            tenant_id, collection_id
+        );
         Ok(false)
     }
 
     async fn get_owned_collections(&self, tenant_id: &str) -> Result<Vec<String>> {
         let ownership = self.collection_ownership.read().await;
-        Ok(ownership.iter()
+        Ok(ownership
+            .iter()
             .filter(|(_, owner_info)| owner_info.owner_tenant_id == tenant_id)
             .map(|(col_id, _)| col_id.clone())
             .collect())
@@ -251,7 +281,10 @@ impl TenantAccessService for InMemoryTenantAccessService {
         let sharing = self.collection_sharing.read().await;
         let mut shared_cols = Vec::new();
         for (col_id, shares) in sharing.iter() {
-            if shares.iter().any(|share| share.shared_with_tenant_id == tenant_id) {
+            if shares
+                .iter()
+                .any(|share| share.shared_with_tenant_id == tenant_id)
+            {
                 shared_cols.push(col_id.clone());
             }
         }
@@ -264,11 +297,17 @@ impl TenantAccessService for InMemoryTenantAccessService {
         owner_tenant_id: &str,
     ) -> Result<()> {
         let mut ownership = self.collection_ownership.write().await;
-        ownership.insert(collection_id.to_string(), CollectionOwnership {
-            collection_id: collection_id.to_string(),
-            owner_tenant_id: owner_tenant_id.to_string(),
-        });
-        info!("Recorded ownership: Collection {} owned by Tenant {}", collection_id, owner_tenant_id);
+        ownership.insert(
+            collection_id.to_string(),
+            CollectionOwnership {
+                collection_id: collection_id.to_string(),
+                owner_tenant_id: owner_tenant_id.to_string(),
+            },
+        );
+        info!(
+            "Recorded ownership: Collection {} owned by Tenant {}",
+            collection_id, owner_tenant_id
+        );
         Ok(())
     }
 
@@ -280,7 +319,7 @@ impl TenantAccessService for InMemoryTenantAccessService {
     ) -> Result<()> {
         let mut sharing = self.collection_sharing.write().await;
         let shares_for_col = sharing.entry(collection_id.to_string()).or_default();
-        
+
         // Remove existing share for this tenant if it exists
         shares_for_col.retain(|s| s.shared_with_tenant_id != shared_with_tenant_id);
 
@@ -289,7 +328,10 @@ impl TenantAccessService for InMemoryTenantAccessService {
             shared_with_tenant_id: shared_with_tenant_id.to_string(),
             permissions,
         });
-        info!("Granted access: Collection {} shared with Tenant {}", collection_id, shared_with_tenant_id);
+        info!(
+            "Granted access: Collection {} shared with Tenant {}",
+            collection_id, shared_with_tenant_id
+        );
         Ok(())
     }
 
@@ -301,14 +343,19 @@ impl TenantAccessService for InMemoryTenantAccessService {
         let mut sharing = self.collection_sharing.write().await;
         if let Some(shares_for_col) = sharing.get_mut(collection_id) {
             shares_for_col.retain(|s| s.shared_with_tenant_id != shared_with_tenant_id);
-            info!("Revoked access: Collection {} no longer shared with Tenant {}", collection_id, shared_with_tenant_id);
+            info!(
+                "Revoked access: Collection {} no longer shared with Tenant {}",
+                collection_id, shared_with_tenant_id
+            );
         }
         Ok(())
     }
 
     async fn get_collection_owner(&self, collection_id: &str) -> Result<Option<String>> {
         let ownership = self.collection_ownership.read().await;
-        Ok(ownership.get(collection_id).map(|o| o.owner_tenant_id.clone()))
+        Ok(ownership
+            .get(collection_id)
+            .map(|o| o.owner_tenant_id.clone()))
     }
 
     async fn check_resource_quota(
@@ -319,13 +366,14 @@ impl TenantAccessService for InMemoryTenantAccessService {
     ) -> Result<bool> {
         let tenants = self.tenants.read().await;
         let usage_map = self.resource_usage.read().await;
-        
+
         let tenant = match tenants.get(tenant_id) {
             Some(t) => t,
             None => return Ok(false), // Tenant doesn't exist
         };
 
-        let current_usage = usage_map.get(tenant_id)
+        let current_usage = usage_map
+            .get(tenant_id)
             .cloned()
             .unwrap_or_else(|| ResourceUsage {
                 tenant_id: tenant_id.to_string(),
@@ -357,7 +405,8 @@ impl TenantAccessService for InMemoryTenantAccessService {
 
     async fn get_resource_usage(&self, tenant_id: &str) -> Result<ResourceUsage> {
         let usage_map = self.resource_usage.read().await;
-        Ok(usage_map.get(tenant_id)
+        Ok(usage_map
+            .get(tenant_id)
             .cloned()
             .unwrap_or_else(|| ResourceUsage {
                 tenant_id: tenant_id.to_string(),
@@ -368,7 +417,11 @@ impl TenantAccessService for InMemoryTenantAccessService {
     async fn update_resource_usage(&self, tenant_id: &str, usage: ResourceUsage) -> Result<()> {
         let mut usage_map = self.resource_usage.write().await;
         usage_map.insert(tenant_id.to_string(), usage);
-        info!("Updated resource usage for tenant {}: {:?}", tenant_id, usage_map.get(tenant_id));
+        info!(
+            "Updated resource usage for tenant {}: {:?}",
+            tenant_id,
+            usage_map.get(tenant_id)
+        );
         Ok(())
     }
 }

@@ -631,7 +631,6 @@ impl IndexData for LshBucket {
 #[cfg(test)]
 mod tests {
     use super::{HnswNode, StorageEngine, UniversalIndexStorage};
-    use crate::index::axis::*;
 
     #[tokio::test]
     async fn test_tier_hierarchy() {

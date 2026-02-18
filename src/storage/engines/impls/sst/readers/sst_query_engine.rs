@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! =============================================================================
 //! HIGH-LEVEL SST QUERY ENGINE (sst_query_engine.rs)
 //! =============================================================================
@@ -42,14 +43,13 @@ use tracing::{debug, error, info, trace, warn};
 
 // Performance optimizations: import commonly used types and functions for zero-cost abstractions
 // use std::hint::likely; // Unstable feature - removed for compilation
-use std::ptr;
 
 use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
@@ -106,6 +106,7 @@ pub enum SstableReadingStrategy {
 /// Leverages SharedSstFormatReader for actual file operations (eliminates code duplication)
 pub struct UnifiedSstableReader {
     // CORE READER: Delegates low-level file operations to shared infrastructure
+    #[allow(dead_code)]
     shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
     // UNIFIED CACHE: Using UnifiedCachingFilesystem for all caching needs
@@ -130,10 +131,13 @@ impl std::fmt::Debug for UnifiedSstableReader {
 /// Block cache for frequently accessed data blocks
 #[derive(Debug)]
 pub struct BlockCache {
+    #[allow(dead_code)]
     cache: Arc<
         tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<ProximaDataBlock>>>,
     >,
+    #[allow(dead_code)]
     max_size: usize,
+    #[allow(dead_code)]
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
 
@@ -142,6 +146,7 @@ pub struct BlockCache {
 pub struct IndexCache {
     indices: Arc<moka::future::Cache<String, Arc<SstableIndex>>>,
     bloom_filters: Arc<moka::future::Cache<String, Arc<SstableBloomFilter>>>,
+    #[allow(dead_code)]
     max_memory_mb: usize,
     metrics: Arc<tokio::sync::RwLock<CacheMetrics>>,
 }
@@ -156,28 +161,9 @@ pub struct CacheMetrics {
     pub memory_pressure_events: u64,
 }
 
-/// Enhanced SSTable index with metadata statistics
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SstableIndex {
-    pub entries: Vec<IndexEntry>,
-    pub metadata_stats: HashMap<String, MetadataStats>,
-    pub vector_count: usize,
-    pub min_key: String,
-    pub max_key: String,
-}
-
-/// Metadata statistics for predicate pushdown
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MetadataStats {
-    pub min_value: serde_json::Value,
-    pub max_value: serde_json::Value,
-    pub null_count: usize,
-    pub distinct_count: usize,
-    pub bloom_filter_offset: Option<u64>,
-}
+use crate::storage::engines::impls::sst::SstableIndex;
 
 /// Enhanced bloom filter supporting metadata columns
-
 /// Reading strategy for SSTable access
 #[derive(Debug, Clone)]
 pub enum ReadStrategy {
@@ -193,6 +179,7 @@ pub enum ReadStrategy {
 
 impl ReadStrategy {
     /// Check if this strategy should use block filtering
+    #[allow(dead_code)]
     fn should_filter_blocks(&self) -> bool {
         !matches!(self, ReadStrategy::CompactionDirect)
     }
@@ -294,9 +281,11 @@ pub struct BlockIterator<T> {
     reader: Box<dyn Read + Send>,
     buffer: Vec<VectorRecord>, // OPTIMIZED: Direct VectorRecord streaming
     position: usize,
+    #[allow(dead_code)]
     block_size: usize,
     total_blocks: usize,
     current_block: usize,
+    #[allow(dead_code)]
     mode: ReadMode,
     _phantom: PhantomData<T>,
 }
@@ -433,182 +422,8 @@ impl ModularBlockReader {
             .await
     }
 
-    // Progressive search is now handled at a higher level with unified quantization
-    #[allow(dead_code)]
-    async fn progressive_search_with_quantization_legacy(
-        &self,
-        query_vector: &[f32],
-        k: usize,
-        _filter: Option<&FilterExpression>,
-        distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
-        _adapter: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
-    ) -> Result<Vec<OptimizedSearchRecord>> {
-        use crate::compute::quantization::storage_engine::StorageQuantizedData;
-
-        info!(
-            "🔍 Starting progressive search with quantization for {} vectors",
-            k
-        );
-
-        // Read header and index
-        let mut reader_clone = self.clone();
-        let header = reader_clone.read_header_async().await?;
-        let index_entries = reader_clone.read_index_blocks(&header).await?;
-
-        info!("📋 Found {} blocks to search", index_entries.len());
-
-        // Stage 1: Collect quantized data from all blocks (minimal I/O)
-        let mut all_quantized_data = Vec::new();
-        let mut block_indices = Vec::new();
-
-        for (block_idx, index_entry) in index_entries.iter().enumerate() {
-            // Calculate actual block offset using data_blocks_offset if available
-            let block_offset = if index_entry.offset > 0 {
-                index_entry.offset
-            } else {
-                header.data_blocks_offset + (block_idx as u64 * 1024) // Rough estimate
-            };
-
-            // Read quantized section only (fast)
-            if let Ok(Some((pq_codes, quantization_level))) = self
-                .read_quantized_vectors_only(block_offset, index_entry.size)
-                .await
-            {
-                // Convert SST QuantizedSection to StorageQuantizedData format
-                for (record_idx, pq_code) in pq_codes.iter().enumerate() {
-                    let binary_sketch = pq_codes.get(record_idx);
-
-                    let storage_data = StorageQuantizedData {
-                        id: format!("block_{}_record_{}", block_idx, record_idx),
-                        primary: Some(crate::compute::quantization::unified::QuantizedVector {
-                            data: pq_code.clone(),
-                            metadata: Default::default(),
-                            quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(8),
-                        }),
-                        filter: binary_sketch.map(|sketch| crate::compute::quantization::unified::QuantizedVector {
-                            data: sketch.clone(),
-                            metadata: Default::default(),
-                            quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
-                        }),
-                        fast: None, // TODO: Add INT8 support
-                        dimension: query_vector.len(),
-                        metadata: Default::default(),
-                    };
-
-                    all_quantized_data.push(storage_data);
-                    block_indices.push((block_idx, record_idx));
-                }
-            }
-        }
-
-        info!(
-            "📊 Stage 1: Collected {} quantized vectors from {} blocks",
-            all_quantized_data.len(),
-            index_entries.len()
-        );
-
-        if all_quantized_data.is_empty() {
-            warn!("No quantized data found, falling back to traditional search");
-            return self
-                .traditional_search(query_vector, k, None, distance_metric)
-                .await;
-        }
-
-        // Stage 2: Progressive filtering would happen here with the unified engine
-        // For now, use all quantized data as candidates since this method is not used
-        let final_candidates = &all_quantized_data;
-
-        info!(
-            "📋 Final candidates: {} out of {} total vectors",
-            final_candidates.len(),
-            all_quantized_data.len()
-        );
-
-        // Stage 3: Load full vectors for top candidates and compute exact distances
-        // First, collect all vectors for batch processing
-        let mut loaded_vectors = Vec::new();
-        let mut indices_map = Vec::new();
-
-        for (idx, _candidate) in final_candidates.iter().enumerate().take(k) {
-            if let Some((block_idx, record_idx)) = block_indices.get(idx) {
-                // Load full vector from the specific block
-                if let Ok(full_vector) = self
-                    .load_full_vector(*block_idx, *record_idx, &index_entries)
-                    .await
-                {
-                    loaded_vectors.push(full_vector);
-                    indices_map.push((block_idx, record_idx));
-                }
-            }
-        }
-
-        // Batch compute distances using optimized method
-        let mut results = Vec::new();
-        if !loaded_vectors.is_empty() {
-            let vector_refs: Vec<&[f32]> = loaded_vectors.iter().map(|v| v.as_slice()).collect();
-            let compute =
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
-
-            // Use optimized batch distance computation
-            let distances =
-                compute.batch_distance_pooled_simd(query_vector, &vector_refs, distance_metric);
-
-            // Create results from batch distances
-            for (i, distance) in distances.into_iter().enumerate() {
-                if let Some((block_idx, record_idx)) = indices_map.get(i) {
-                    // Use normalized_score for consistency across all engines
-                    // Higher similarity = better match, VOS sorts descending
-                    results.push(
-                        OptimizedSearchRecord::new(
-                            format!("block_{}_record_{}", block_idx, record_idx),
-                            distance.normalized_score,
-                        )
-                        .with_similarity(distance.normalized_score)
-                        .add_vector(loaded_vectors[i].clone())
-                        .with_metadata(HashMap::new()),
-                    );
-                }
-            }
-        }
-
-        // Sort by distance and return top-k
-        results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
-        results.truncate(k);
-
-        info!("✅ Progressive search complete: {} results", results.len());
-
-        Ok(results)
-    }
-
-    /// Load full vector from a specific block and record index
-    async fn load_full_vector(
-        &self,
-        block_idx: usize,
-        record_idx: usize,
-        index_entries: &[IndexEntry],
-    ) -> Result<Vec<f32>> {
-        if let Some(index_entry) = index_entries.get(block_idx) {
-            // Read the full data block
-            let mut reader_clone = self.clone();
-            let data_block = reader_clone
-                .read_data_block_async(block_idx as u64, ReadMode::Direct)
-                .await?;
-
-            // Extract the specific record
-            if let Some(record) = data_block.records.get(record_idx) {
-                // TODO: Optimize - return reference or Arc
-                Ok(record.vector.clone())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Record {} not found in block {}",
-                    record_idx,
-                    block_idx
-                ))
-            }
-        } else {
-            Err(anyhow::anyhow!("Block {} not found", block_idx))
-        }
-    }
+    // NOTE: progressive_search_with_quantization_legacy and load_full_vector removed in consolidation
+    // Progressive search is now handled at a higher level with unified quantization engine
 
     /// Traditional search fallback (when no quantization is available)
     async fn traditional_search(
@@ -744,6 +559,7 @@ impl ModularBlockReader {
                 vector_count: 0,
                 min_key: String::new(),
                 max_key: String::new(),
+                bplus_tree: None,
             });
         }
 
@@ -800,48 +616,15 @@ impl ModularBlockReader {
                 )
             })?;
 
-        // Deserialize index - FIX: Read individual IndexEntry objects, not bincode
-
-        let mut cursor = std::io::Cursor::new(&index_data);
-        let mut entries = Vec::new();
-
-        // Read individual IndexEntry objects with length prefixes (as written by the writer)
-        while cursor.position() < index_data.len() as u64 {
-            // Read entry length
-            let mut len_buf = [0u8; 4];
-            if cursor.read_exact(&mut len_buf).is_err() {
-                break;
-            }
-            let entry_len = u32::from_le_bytes(len_buf) as usize;
-
-            // Read entry data
-            let mut entry_data = vec![0u8; entry_len];
-            if cursor.read_exact(&mut entry_data).is_err() {
-                break;
-            }
-
-            // Deserialize individual IndexEntry
-            match IndexEntry::deserialize(&entry_data) {
-                Ok(entry) => {
-                    entries.push(entry);
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to deserialize IndexEntry: {}", e));
-                }
-            }
-        }
-
-        // Build SstableIndex
-        let min_key = entries.first().map(|e| e.key.clone()).unwrap_or_default();
-        let max_key = entries.last().map(|e| e.key.clone()).unwrap_or_default();
-
-        let index = SstableIndex {
-            entries,
-            metadata_stats: HashMap::new(), // TODO: populate from entries if needed
-            vector_count: header.entry_count as usize,
-            min_key,
-            max_key,
-        };
+        // Deserialize index using SstableIndex::deserialize which handles the proper format
+        // (IDX1 magic header + min_key + max_key + vector_count + entries + bplus_tree)
+        let index = SstableIndex::deserialize(&index_data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize SstableIndex at offset {}: {}",
+                index_offset,
+                e
+            )
+        })?;
 
         Ok(index)
     }
@@ -881,8 +664,8 @@ impl ModularBlockReader {
         // Read index data using range read
         let index_data = self.read_range(index_offset + 4, index_size).await?;
 
-        // Deserialize index
-        let index: SstableIndex = bincode::deserialize(&index_data)?;
+        // Deserialize index using robust implementation
+        let index = SstableIndex::deserialize(&index_data)?;
 
         Ok(index)
     }
@@ -919,17 +702,30 @@ impl ModularBlockReader {
     pub async fn read_data_block_at_offset(
         &self,
         offset: u64,
-        size: usize,
+        _size: usize,
     ) -> Result<ProximaDataBlock> {
+        // SST block format: [4-byte size prefix][block data]
+        // The offset points to the size prefix, so we need to:
+        // 1. Read the 4-byte size prefix to get actual block size
+        // 2. Read the block data starting at offset+4
+
+        // Read block size from the file (first 4 bytes at offset)
+        let size_bytes = self.read_range(offset, 4).await.map_err(|e| {
+            anyhow::anyhow!("Failed to read block size at offset {}: {}", offset, e)
+        })?;
+        let block_size =
+            u32::from_le_bytes([size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]])
+                as usize;
+
         debug!(
-            "Reading hierarchical data block at offset {} with size {} for file: {}",
-            offset, size, self.file_path
+            "Reading hierarchical data block at offset {} with actual size {} for file: {}",
+            offset, block_size, self.file_path
         );
 
-        // Read the block data
-        let block_data = self.read_range(offset, size).await?;
+        // Read the block data (excluding the size prefix)
+        let block_data = self.read_range(offset + 4, block_size).await?;
 
-        // NEW: Use hierarchical deserialization with automatic compression detection
+        // Use hierarchical deserialization with automatic compression detection
         ProximaDataBlock::deserialize(&block_data, None).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to deserialize hierarchical ProximaDataBlock at offset {}: {}",
@@ -1040,6 +836,8 @@ impl ModularBlockReader {
         }
     }
 
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>> {
         match algorithm {
             CompressionAlgorithm::None => Ok(data.to_vec()),
@@ -1394,32 +1192,21 @@ impl SstDirectReader {
 
         let index_data = fs.read_range(file_path, index_offset, index_size).await?;
 
-        // Parse index entries (enhanced format with block blooms)
-        let mut index_entries = Vec::new();
-        let mut cursor = std::io::Cursor::new(index_data);
-
-        while cursor.position() < cursor.get_ref().len() as u64 {
-            // Read entry length
-            let mut len_buf = [0u8; 4];
-            if std::io::Read::read_exact(&mut cursor, &mut len_buf).is_err() {
-                break; // End of data
-            }
-            let entry_len = u32::from_le_bytes(len_buf) as usize;
-
-            // Read entry data
-            let mut entry_data = vec![0u8; entry_len];
-            std::io::Read::read_exact(&mut cursor, &mut entry_data)?;
-
-            // Deserialize enhanced index entry
-            let entry = IndexEntry::deserialize(&entry_data)?;
-            index_entries.push(entry);
-        }
+        // Deserialize using SstableIndex::deserialize which handles the proper format
+        // (IDX1 magic header + min_key + max_key + vector_count + entries + bplus_tree)
+        let index = SstableIndex::deserialize(&index_data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize SstableIndex at offset {}: {}",
+                index_offset,
+                e
+            )
+        })?;
 
         debug!(
             "✅ Loaded {} block index entries with hierarchical bloom support",
-            index_entries.len()
+            index.entries.len()
         );
-        Ok(index_entries)
+        Ok(index.entries)
     }
 
     /// Read all VectorRecords for compaction without caching (OPTIMIZED: Direct VectorRecord extraction)
@@ -1492,32 +1279,43 @@ impl UnifiedSstableReader {
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         collection: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        // Delegate to the new version with default (sqrt) block pruning
+        self.search_with_filter_and_pruning(
+            file_path,
+            query_vector,
+            filter,
+            k,
+            distance_metric,
+            collection,
+            &crate::core::search::BlockPruneConfig::default(), // sqrt mode by default
+        )
+        .await
+    }
+
+    /// Search with filter and explicit block pruning configuration
+    ///
+    /// This method uses the modular block reader with smart block selection
+    /// based on Z-order spatial codes and centroid distances.
+    pub async fn search_with_filter_and_pruning(
+        &self,
+        file_path: &str,
+        query_vector: &[f32],
+        filter: Option<FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        collection: Option<&crate::proto::proximadb_v1::Collection>,
+        block_prune: &crate::core::search::BlockPruneConfig,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         trace!(
-            "SST Reader: search_with_filter called with file_path: {}",
-            file_path
+            "SST Reader: search_with_filter_and_pruning called with file_path: {}, force_exact: {}",
+            file_path, block_prune.force_exact
         );
-        // REFACTORED: Use SharedSstFormatReader like SWIFT does
-        // No more duplicate I/O logic!
 
-        // Step 1: Determine strategy
-        let strategy = if filter.is_some() {
-            SstableReadingStrategy::SelectiveWithCache {
-                use_range_reads: true,
-                enable_bloom_filters: true,
-                enable_cache_lookup: true,
-                enable_metadata_cache: true,
-            }
-        } else {
-            SstableReadingStrategy::FullScan {
-                use_block_cache: true,
-            }
-        };
-
-        // Step 2: Create search context with correct fields
+        // Create search context
         let context = CollectionContext {
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
-            total_vectors: 0, // Will be determined during search
+            total_vectors: 0,
             metadata_columns: Vec::new(),
             level: 0,
             creation_time: chrono::Utc::now(),
@@ -1529,18 +1327,22 @@ impl UnifiedSstableReader {
             vector: Some(query_vector.to_vec()),
             filter_expression: filter.clone(),
             top_k: Some(k),
+            distance_metric: Some(distance_metric),
+            block_prune: block_prune.clone(),
             ..Default::default()
         };
 
-        // Step 3: Use apply_strategy to leverage SharedSstFormatReader
-        // This delegates all I/O to the shared infrastructure
-        let blocks = self.apply_strategy(&strategy, &params, &context).await?;
+        // Use modular search with block pruning instead of FullScan
+        // This applies Z-order/centroid-based block selection
+        let blocks = self
+            .search_optimized_strategy_modular(&context, &params)
+            .await?;
         trace!(
             "SST Reader: apply_strategy returned {} blocks",
             blocks.len()
         );
         if let Some(first_block) = blocks.first() {
-            if let Some(first_rec) = first_block.records.first() {}
+            if let Some(_first_rec) = first_block.records.first() {}
         }
 
         // Step 4: Process blocks and compute distances
@@ -1707,13 +1509,13 @@ impl UnifiedSstableReader {
     }
 
     /// Read all records from SSTable files for compaction
-    /// Delegates to the strategy selector's optimized compaction reader
+    /// Uses the working compaction strategy instead of the stub
     pub async fn read_all_records_for_compaction(
         &self,
         sstable_files: &[String],
     ) -> Result<Vec<VectorRecord>> {
-        self.strategy_selector
-            .read_all_records_for_compaction(sstable_files)
+        // Use read_with_compaction_strategy which actually reads files
+        self.read_with_compaction_strategy(sstable_files, None)
             .await
     }
 
@@ -1788,12 +1590,12 @@ impl UnifiedSstableReader {
         };
 
         // Apply bandwidth optimizer decisions if available
-        if let Some(optimizer) = bandwidth_optimizer {
+        if let Some(_optimizer) = bandwidth_optimizer {
             // Create query context for bandwidth decisions
             // TODO: Replace with UnifiedCachingFilesystem query context
             use std::collections::HashMap;
 
-            let query_context = (
+            let _query_context = (
                 params.top_k,
                 HashMap::<String, String>::new(), // metadata_filters
                 self.collection_id.clone(),
@@ -1843,12 +1645,12 @@ impl UnifiedSstableReader {
         };
 
         // Apply bandwidth optimizer decisions if available
-        if let Some(optimizer) = bandwidth_optimizer {
+        if let Some(_optimizer) = bandwidth_optimizer {
             // Create compaction query context
             use std::collections::HashMap;
 
             // TODO: Replace with UnifiedCachingFilesystem context
-            let query_context = (
+            let _query_context = (
                 self.collection_id.clone(),
                 HashMap::<String, String>::new(), // metadata_filters
                 1.0,                              // selectivity_hint for full scan
@@ -1936,7 +1738,7 @@ impl UnifiedSstableReader {
             // UnifiedCachingFilesystem handles caching internally
             // Try to get metadata (will use cache if available)
             match self.unified_filesystem.metadata(file_path).await {
-                Ok(metadata) => {
+                Ok(_metadata) => {
                     debug!("✅ Got metadata for file: {}", file_path);
                     // Convert FileMetadata to the format needed here
                     // For now, we'll need to load the file to get SSTable metadata
@@ -2085,23 +1887,6 @@ impl UnifiedSstableReader {
                         *enable_bloom_filters,
                         *enable_cache_lookup,
                         *enable_metadata_cache,
-                    )
-                    .await
-                }
-                SstableReadingStrategy::CompactionFullRead {
-                    skip_bloom_filters,
-                    skip_indexes,
-                    bypass_write_cache,
-                    use_disk_cache_if_exists,
-                    sequential_io,
-                } => {
-                    self.compaction_full_read_strategy(
-                        context,
-                        *skip_bloom_filters,
-                        *skip_indexes,
-                        *bypass_write_cache,
-                        *use_disk_cache_if_exists,
-                        *sequential_io,
                     )
                     .await
                 }
@@ -2758,7 +2543,7 @@ impl UnifiedSstableReader {
                     );
                 }
 
-                let sstable_index =
+                let _sstable_index =
                     crate::storage::cache::specialized::index_node_cache::SstableIndex {
                         file_path: file_path.clone(),
                         entries: cache_entries,
@@ -2838,9 +2623,9 @@ impl UnifiedSstableReader {
 
                 // Check each metadata condition against block statistics
                 for (column, value) in &metadata_conditions {
-                    // Check if this block might contain the value
-                    if let Some(min_val) = entry.metadata_min_values.get("min_key") {
-                        if let Some(max_val) = entry.metadata_max_values.get("max_key") {
+                    // Check if this block might contain the value using column-specific min/max
+                    if let Some(min_val) = entry.metadata_min_values.get(column) {
+                        if let Some(max_val) = entry.metadata_max_values.get(column) {
                             // Use the centralized comparison function for proper numeric handling
                             // If value is outside the min/max range, skip this block
                             if Self::compare_metadata_values(value, min_val)
@@ -2853,12 +2638,12 @@ impl UnifiedSstableReader {
                             }
                         }
                     } else {
-                        // Column not present in this block, check if there are nulls
-                        if entry.metadata_null_counts.get(column).copied().unwrap_or(0) == 0 {
-                            // No values for this column in this block
-                            should_include = false;
-                            break;
-                        }
+                        // Column not tracked in block stats - be conservative, include block
+                        // We can't reject blocks when we don't have column statistics
+                        debug!(
+                            "    ⚠️ Column '{}' not in block stats, including block conservatively",
+                            column
+                        );
                     }
                 }
 
@@ -2961,7 +2746,7 @@ impl UnifiedSstableReader {
         if let Some(block) = block.as_ref() {
             // Cache the block's vectors in central cache
             // Convert SstRecord to VectorRecord for caching
-            let vector_records: Vec<VectorRecord> = block
+            let _vector_records: Vec<VectorRecord> = block
                 .records
                 .iter()
                 .map(|r| VectorRecord {
@@ -3005,6 +2790,7 @@ impl UnifiedSstableReader {
                 vector_count: 0,
                 min_key: String::new(),
                 max_key: String::new(),
+                bplus_tree: None,
             }
         } else {
             // Load index from disk
@@ -3201,116 +2987,31 @@ impl UnifiedSstableReader {
                 .await?
         } else {
             trace!("SST Load Index: No index data (index_len = 0)");
-            vec![]
+            return Ok(SstableIndex {
+                entries: Vec::new(),
+                metadata_stats: HashMap::new(),
+                vector_count: 0,
+                min_key: header.min_key.clone(),
+                max_key: header.max_key.clone(),
+                bplus_tree: None,
+            });
         };
 
-        // Deserialize index entries using custom deserialization
-        let mut entries = Vec::new();
-        let mut cursor = std::io::Cursor::new(&index_data[..]);
-
-        while (cursor.position() as usize) < index_data.len() {
-            let mut len_buf = [0u8; 4];
-            if cursor.read_exact(&mut len_buf).is_err() {
-                break; // End of data
-            }
-            let entry_len = u32::from_le_bytes(len_buf) as usize;
-
-            let current_pos = cursor.position() as usize;
-            if current_pos + entry_len > index_data.len() {
-                break; // Invalid entry length
-            }
-
-            let entry_data = &index_data[current_pos..current_pos + entry_len];
-            match IndexEntry::deserialize(entry_data) {
-                Ok(entry) => entries.push(entry),
-                Err(e) => {
-                    warn!("Failed to deserialize index entry: {}", e);
-                    break;
-                }
-            }
-
-            cursor.set_position((current_pos + entry_len) as u64);
-        }
-
-        // Build metadata statistics from index entries
-        let mut metadata_stats = HashMap::new();
-
-        // Aggregate metadata statistics across all blocks
-        for entry in &entries {
-            for (column, min_val) in &entry.metadata_min_values {
-                let stats = metadata_stats
-                    .entry(column.clone())
-                    .or_insert(MetadataStats {
-                        min_value: min_val.clone(),
-                        max_value: min_val.clone(),
-                        null_count: 0,
-                        distinct_count: 0,
-                        bloom_filter_offset: Some(bloom_offset + 4), // Bloom filter location
-                    });
-
-                // Update min value
-                if Self::compare_metadata_values(min_val, &stats.min_value)
-                    == std::cmp::Ordering::Less
-                {
-                    stats.min_value = min_val.clone();
-                }
-            }
-
-            for (column, max_val) in &entry.metadata_max_values {
-                let stats = metadata_stats
-                    .entry(column.clone())
-                    .or_insert(MetadataStats {
-                        min_value: max_val.clone(),
-                        max_value: max_val.clone(),
-                        null_count: 0,
-                        distinct_count: 0,
-                        bloom_filter_offset: Some(bloom_offset + 4),
-                    });
-
-                // Update max value
-                if Self::compare_metadata_values(max_val, &stats.max_value)
-                    == std::cmp::Ordering::Greater
-                {
-                    stats.max_value = max_val.clone();
-                }
-            }
-
-            // Update null counts
-            for (column, null_count) in &entry.metadata_null_counts {
-                let stats = metadata_stats
-                    .entry(column.clone())
-                    .or_insert(MetadataStats {
-                        min_value: serde_json::Value::Null,
-                        max_value: serde_json::Value::Null,
-                        null_count: 0,
-                        distinct_count: 0,
-                        bloom_filter_offset: Some(bloom_offset + 4),
-                    });
-                stats.null_count += *null_count as usize;
-            }
-        }
-
-        debug!(
-            "Built metadata statistics for {} columns",
-            metadata_stats.len()
-        );
-
-        let index = SstableIndex {
-            entries,
-            metadata_stats,
-            vector_count: header.entry_count as usize,
-            min_key: header.min_key,
-            max_key: header.max_key,
-        };
-
-        // Note: We don't cache here anymore as the caller handles caching
-        // to avoid double-locking issues
+        // Robust deserialization using shared implementation which includes B+ Tree and stats
+        let index = SstableIndex::deserialize(&index_data).map_err(|e| {
+            warn!("SST Load Index: Failed to deserialize index: {}", e);
+            anyhow::anyhow!("Failed to deserialize index: {}", e)
+        })?;
 
         Ok(index)
     }
 
     /// Simple get operation for single vector retrieval
     /// This provides a lightweight interface for basic get operations
+    ///
+    /// OPTIMIZED: Uses B+ tree index for O(log n) block lookup instead of full scan.
+    /// This is critical for RAG use cases where we need to fetch full records by ID
+    /// after HNSW returns candidate IDs.
     pub async fn vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         debug!(
             "🔍 vector: Looking for vector '{}' in file '{}'",
@@ -3329,59 +3030,269 @@ impl UnifiedSstableReader {
             vector_id
         );
 
-        // Create minimal context for the operation
-        let context = CollectionContext {
-            file_path: file_path.to_string(),
-            sstable_files: vec![file_path.to_string()],
-            total_vectors: 0,
-            metadata_columns: vec![],
-            level: 0,
-            creation_time: chrono::Utc::now(),
-            io_optimization_hints: None,
-            collection: None,
-        };
+        // OPTIMIZED: Use B+ tree index for efficient block lookup
+        // Instead of loading all blocks, we:
+        // 1. Load the SSTable index with B+ tree
+        // 2. Use leaf_for_key to find candidate blocks
+        // 3. Read only those blocks
+        // 4. Search within the block for the specific ID
 
-        // Use full scan strategy for single key lookup
-        // TODO: Optimize with index-based lookup
-        let strategy = SstableReadingStrategy::FullScan {
-            use_block_cache: true,
-        };
+        // Create a temporary reader for this file
+        let mut reader = ModularBlockReader::open(self.filesystem.clone(), file_path).await?;
+        let header = reader.read_header_async().await?;
+        let index = reader.read_index(&header).await?;
 
-        // Load blocks and search for the vector
-        let blocks = self
-            .apply_strategy(&strategy, &Default::default(), &context)
-            .await?;
-        debug!("📦 Loaded {} blocks from file", blocks.len());
+        // Use B+ tree if available for O(log n) block lookup
+        if let Some(ref bplus_tree) = index.bplus_tree {
+            debug!("🌳 Using B+ tree index for efficient lookup");
 
-        // Search through blocks for the vector
-        for (block_idx, block) in blocks.iter().enumerate() {
-            debug!("  Block {}: {} records", block_idx, block.records.len());
-            for record in &block.records {
+            // Find the leaf that might contain our key
+            if let Some(leaf) = bplus_tree.leaf_for_key(vector_id) {
                 debug!(
-                    "    Checking record: id='{:?}' vs looking for '{}'",
-                    record.id, vector_id
+                    "📍 B+ tree leaf found: key range [{}, {}], {} entries starting at idx {}",
+                    leaf.start_key, leaf.end_key, leaf.len, leaf.start_idx
                 );
-                if record.id == vector_id {
-                    // Convert HashMap metadata to Vec<MetadataItem>
-                    // Already have metadata items, just clone them
-                    let metadata_items = record.metadata.clone();
 
-                    return Ok(Some(VectorRecord {
-                        id: record.id.clone(),
-                        // TODO: Optimize - use Arc to avoid clone
-                        vector: record.vector.clone(),
-                        metadata: metadata_items,
-                        timestamp: record.timestamp,
-                        updated_at: record.updated_at,
-                        expires_at: record.expires_at,
-                        version: record.version,
-                        source: None,
-                    }));
+                // Get the index entries for this leaf
+                let entries_in_leaf = &index.entries[leaf.start_idx..leaf.start_idx + leaf.len];
+
+                // Find which block(s) might contain our key
+                // Each entry represents a block with min_key = entry.key
+                for (i, entry) in entries_in_leaf.iter().enumerate() {
+                    // Check if vector_id could be in this block
+                    // Block contains keys from entry.key up to (next entry's key - 1)
+                    let block_min_key = &entry.key;
+                    let block_max_key = if i + 1 < entries_in_leaf.len() {
+                        &entries_in_leaf[i + 1].key
+                    } else {
+                        // Last block in leaf - check against leaf end_key
+                        &leaf.end_key
+                    };
+
+                    // Check if vector_id falls within this block's key range
+                    if vector_id >= block_min_key.as_str() && vector_id <= block_max_key.as_str() {
+                        debug!(
+                            "📦 Reading block at offset {} (keys: {} - {})",
+                            entry.offset, block_min_key, block_max_key
+                        );
+
+                        // Read only this specific block
+                        let block = reader
+                            .read_data_block_at_offset(entry.offset, entry.size as usize)
+                            .await?;
+
+                        // Search within the block for the exact ID
+                        for record in &block.records {
+                            if record.id == vector_id {
+                                debug!("✅ Found vector '{}' in block", vector_id);
+                                return Ok(Some(VectorRecord {
+                                    id: record.id.clone(),
+                                    vector: record.vector.clone(),
+                                    metadata: record.metadata.clone(),
+                                    timestamp: record.timestamp,
+                                    updated_at: record.updated_at,
+                                    expires_at: record.expires_at,
+                                    version: record.version,
+                                    source: None,
+                                }));
+                            }
+                        }
+
+                        debug!("❌ Vector '{}' not found in expected block", vector_id);
+                    }
+                }
+            } else {
+                debug!("❌ B+ tree has no leaf for key '{}'", vector_id);
+            }
+        } else {
+            // Fallback: No B+ tree available, use linear scan through index entries
+            debug!("⚠️ No B+ tree index, falling back to linear block scan");
+
+            // Find candidate blocks by scanning index entries
+            for (i, entry) in index.entries.iter().enumerate() {
+                let block_min_key = &entry.key;
+                let block_max_key = if i + 1 < index.entries.len() {
+                    &index.entries[i + 1].key
+                } else {
+                    &index.max_key
+                };
+
+                if vector_id >= block_min_key.as_str() && vector_id <= block_max_key.as_str() {
+                    let block = reader
+                        .read_data_block_at_offset(entry.offset, entry.size as usize)
+                        .await?;
+
+                    for record in &block.records {
+                        if record.id == vector_id {
+                            return Ok(Some(VectorRecord {
+                                id: record.id.clone(),
+                                vector: record.vector.clone(),
+                                metadata: record.metadata.clone(),
+                                timestamp: record.timestamp,
+                                updated_at: record.updated_at,
+                                expires_at: record.expires_at,
+                                version: record.version,
+                                source: None,
+                            }));
+                        }
+                    }
                 }
             }
         }
 
         Ok(None)
+    }
+
+    /// Batch get operation for multiple vector IDs
+    ///
+    /// OPTIMIZED FOR RAG: When HNSW returns multiple IDs, this method efficiently
+    /// fetches full records (including metadata) for all IDs in a single pass.
+    /// Uses B+ tree index to group IDs by block, minimizing I/O operations.
+    ///
+    /// # Arguments
+    /// * `file_path` - Path to the SSTable file
+    /// * `vector_ids` - Slice of vector IDs to fetch
+    ///
+    /// # Returns
+    /// * Vector of (id, VectorRecord) tuples for found records
+    pub async fn vectors_batch(
+        &self,
+        file_path: &str,
+        vector_ids: &[&str],
+    ) -> Result<Vec<(String, VectorRecord)>> {
+        use std::collections::HashMap;
+
+        if vector_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "🔍 vectors_batch: Looking for {} vectors in file '{}'",
+            vector_ids.len(),
+            file_path
+        );
+
+        // Step 1: Filter out IDs that definitely don't exist (bloom filter)
+        let mut candidate_ids: Vec<&str> = Vec::with_capacity(vector_ids.len());
+        for id in vector_ids {
+            if self.might_contain_key(file_path, id).await {
+                candidate_ids.push(*id);
+            } else {
+                debug!("❌ Bloom filter rejected '{}'", id);
+            }
+        }
+
+        if candidate_ids.is_empty() {
+            debug!("❌ All IDs rejected by bloom filter");
+            return Ok(Vec::new());
+        }
+
+        debug!("✅ {} IDs passed bloom filter check", candidate_ids.len());
+
+        // Step 2: Load the index with B+ tree
+        let mut reader = ModularBlockReader::open(self.filesystem.clone(), file_path).await?;
+        let header = reader.read_header_async().await?;
+        let index = reader.read_index(&header).await?;
+
+        // Step 3: Group IDs by block for efficient I/O
+        // Map: block_idx -> Vec<id>
+        let mut block_to_ids: HashMap<usize, Vec<&str>> = HashMap::new();
+
+        if let Some(ref bplus_tree) = index.bplus_tree {
+            debug!("🌳 Using B+ tree for batch block assignment");
+
+            for id in &candidate_ids {
+                if let Some(leaf) = bplus_tree.leaf_for_key(id) {
+                    let entries_in_leaf = &index.entries[leaf.start_idx..leaf.start_idx + leaf.len];
+
+                    // Find the specific block
+                    for (i, entry) in entries_in_leaf.iter().enumerate() {
+                        let block_min_key = &entry.key;
+                        let block_max_key = if i + 1 < entries_in_leaf.len() {
+                            &entries_in_leaf[i + 1].key
+                        } else {
+                            &leaf.end_key
+                        };
+
+                        if *id >= block_min_key.as_str() && *id <= block_max_key.as_str() {
+                            let block_idx = leaf.start_idx + i;
+                            block_to_ids.entry(block_idx).or_default().push(*id);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback: Linear scan to assign IDs to blocks
+            debug!("⚠️ No B+ tree, using linear assignment");
+
+            for id in &candidate_ids {
+                for (i, entry) in index.entries.iter().enumerate() {
+                    let block_min_key = &entry.key;
+                    let block_max_key = if i + 1 < index.entries.len() {
+                        &index.entries[i + 1].key
+                    } else {
+                        &index.max_key
+                    };
+
+                    if *id >= block_min_key.as_str() && *id <= block_max_key.as_str() {
+                        block_to_ids.entry(i).or_default().push(*id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        debug!("📦 IDs grouped into {} blocks", block_to_ids.len());
+
+        // Step 4: Read each block once and extract all matching records
+        let mut results: Vec<(String, VectorRecord)> = Vec::with_capacity(candidate_ids.len());
+        let id_set: std::collections::HashSet<&str> = candidate_ids.iter().copied().collect();
+
+        for (block_idx, ids_in_block) in block_to_ids {
+            if block_idx >= index.entries.len() {
+                continue;
+            }
+
+            let entry = &index.entries[block_idx];
+            let block = reader
+                .read_data_block_at_offset(entry.offset, entry.size as usize)
+                .await?;
+
+            debug!(
+                "📦 Block {}: {} records, looking for {} IDs",
+                block_idx,
+                block.records.len(),
+                ids_in_block.len()
+            );
+
+            // Scan block once, collect all matching records
+            for record in &block.records {
+                if id_set.contains(record.id.as_str()) {
+                    results.push((
+                        record.id.clone(),
+                        VectorRecord {
+                            id: record.id.clone(),
+                            vector: record.vector.clone(),
+                            metadata: record.metadata.clone(),
+                            timestamp: record.timestamp,
+                            updated_at: record.updated_at,
+                            expires_at: record.expires_at,
+                            version: record.version,
+                            source: None,
+                        },
+                    ));
+                }
+            }
+        }
+
+        info!(
+            "✅ vectors_batch: Found {}/{} vectors",
+            results.len(),
+            vector_ids.len()
+        );
+
+        Ok(results)
     }
 
     /// Check if a key might be contained using bloom filter
@@ -3622,7 +3533,7 @@ impl UnifiedSstableReader {
                 .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32));
             bitmap.insert(file_hash);
 
-            let cached_filter =
+            let _cached_filter =
                 crate::storage::cache::specialized::bitmap_filter_cache::CachedFilterResult {
                     bitmap,
                     filter_expr: format!("sstable:bloom:{}", file_path),
@@ -3778,7 +3689,7 @@ impl UnifiedSstableReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
-        trace!("SST Proxima: Reading blocks from: {}", path);
+        trace!("SST Proxima: read_proximablocks called for path: {}", path);
 
         // Get filesystem
         let scheme = if path.contains("://") {
@@ -3889,21 +3800,49 @@ impl UnifiedSstableReader {
             match ProximaDataBlock::deserialize(&block_data, collection) {
                 Ok(block) => {
                     trace!(
-                        "SST Proxima: Successfully deserialized block with {} records",
+                        "SST Proxima: Deserialized block with {} records",
                         block.records.len()
                     );
                     blocks.push(block);
                 }
                 Err(e) => {
-                    debug!("SST Proxima: Failed to deserialize block: {}", e);
+                    warn!(
+                        "SST Proxima: Failed to deserialize block at offset {}: {}",
+                        offset, e
+                    );
                     // Continue with next block
                 }
             }
 
             offset += block_len;
+
+            // Skip cache-line padding that the writer adds for SIMD alignment
+            //
+            // ## Why skip padding?
+            // The SST writer pads each block to 64-byte cache-line boundaries for:
+            // - Direct SIMD operations on mmap'd data (AVX2/AVX-512/NEON)
+            // - No runtime copy to aligned buffer needed
+            //
+            // ## Overhead Analysis (Audited December 2024)
+            // - Typical 263KB block with ~51 bytes padding = 0.019% overhead
+            // - This negligible overhead enables significant SIMD performance gains
+            //
+            // See: src/storage/engines/impls/sst/writer.rs:120-134 for writer side
+            // See: src/storage/engines/core/formats/proximablocks/mod.rs for best practices
+            const CACHE_LINE_SIZE: u64 = 64;
+            let aligned_block_len =
+                ((block_len + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let padding = aligned_block_len - block_len;
+            if padding > 0 && padding < CACHE_LINE_SIZE {
+                offset += padding;
+            }
         }
 
-        trace!("SST Proxima: Read {} total blocks", blocks.len());
+        trace!(
+            "SST Proxima: Finished reading {} blocks from {}",
+            blocks.len(),
+            path
+        );
         Ok(blocks)
     }
 
@@ -4227,7 +4166,7 @@ impl UnifiedSstableReader {
             data[offset + 2],
             data[offset + 3],
         ]) as usize;
-        offset += 4 + index_len;
+        let _offset = offset + 4 + index_len;
 
         // Convert ReadStrategy to block_filter QueryType
         let block_query_type = match search_strategy {
@@ -4439,7 +4378,7 @@ impl UnifiedSstableReader {
     async fn full_scan_strategy_modular(
         &self,
         context: &CollectionContext,
-        use_cache: bool,
+        _use_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         debug!(
             "🔍 Full scan modular strategy for {} files",
@@ -4460,7 +4399,7 @@ impl UnifiedSstableReader {
                 let entries = block_reader.read_index_blocks(&header).await?;
 
                 // Convert to cache's SstableIndex type
-                let cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
+                let _cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
                     file_path: file_path.to_string(),
                     entries: entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
                         key: e.key.clone(),
@@ -4485,6 +4424,7 @@ impl UnifiedSstableReader {
                     vector_count: entries.len(),
                     min_key: entries.first().map(|e| e.key.clone()).unwrap_or_default(),
                     max_key: entries.last().map(|e| e.key.clone()).unwrap_or_default(),
+                    bplus_tree: None,
                 }
             };
 
@@ -4552,22 +4492,27 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
     ) -> Result<Vec<ProximaDataBlock>> {
-        info!("🚀 Direct compaction modular search_strategy - zero-copy SST operations");
-
-        let direct_reader = SstDirectReader::new(self.filesystem.clone())?;
+        info!(
+            "🚀 Direct compaction modular search_strategy - zero-copy SST operations for {} files",
+            context.sstable_files.len()
+        );
 
         let mut all_sst_records = Vec::new();
 
         for file_path in &context.sstable_files {
-            // For now, use a simpler approach without streaming
-            // TODO: Implement proper async streaming
-            let mut direct_reader_clone = SstDirectReader::new(self.filesystem.clone())?;
-            let sst_stream = direct_reader_clone.read_all_for_compaction().await?;
+            debug!("📁 COMPACTION DIRECT: Opening file: {}", file_path);
+            // Use SstDirectReader::open() with the actual file path
+            let mut direct_reader =
+                SstDirectReader::open(self.filesystem.clone(), file_path).await?;
+            let sst_records = direct_reader.read_all_for_compaction().await?;
 
             // Collect all records from the iterator
-            for record in sst_stream {
-                all_sst_records.push(record);
-            }
+            debug!(
+                "📁 COMPACTION DIRECT: Read {} records from {}",
+                sst_records.len(),
+                file_path
+            );
+            all_sst_records.extend(sst_records);
         }
 
         // Convert to DataBlocks only when needed for compatibility
@@ -4578,18 +4523,16 @@ impl UnifiedSstableReader {
     }
 
     /// Search-optimized strategy using modular approach with smart caching
+    /// Uses Z-order spatial codes and centroid distances for intelligent block selection
+    /// Also applies zone map pruning when metadata filters are present
     async fn search_optimized_strategy_modular(
         &self,
         context: &CollectionContext,
         search_params: &SearchParams,
     ) -> Result<Vec<ProximaDataBlock>> {
-        debug!("🔍 Search-optimized modular search_strategy");
         let mut relevant_blocks = Vec::new();
 
         for file_path in &context.sstable_files {
-            // Skip vector cache for now - would need conversion from VectorRecord to SstRecord
-            // TODO: Consider adding a method to convert cached VectorRecords to SstRecords
-
             let mut block_reader =
                 ModularBlockReader::new(self.filesystem.clone(), file_path.clone());
 
@@ -4598,21 +4541,50 @@ impl UnifiedSstableReader {
             // Use index to find blocks with high relevance scores
             let index_blocks = block_reader.read_index_blocks(&header).await?;
 
-            // Smart block selection based on search parameters
+            // Smart block selection based on search parameters (sqrt-based pruning)
             let selected_blocks = self.select_blocks_for_search(&index_blocks, search_params);
 
-            for block_idx in selected_blocks {
-                if let Some(index_entry) = index_blocks.get(block_idx) {
-                    let data_block = block_reader
+            // Apply zone map pruning if filter expression is present
+            let filter_expr = search_params.filter_expression.as_ref();
+            let mut blocks_after_zone_map = 0usize;
+            let blocks_before_zone_map = selected_blocks.len();
+
+            for block_idx in &selected_blocks {
+                if let Some(index_entry) = index_blocks.get(*block_idx) {
+                    // Zone map pruning: skip blocks that can't contain matching values
+                    if let Some(filter) = filter_expr {
+                        if !self.should_read_block_for_filter(index_entry, filter) {
+                            continue; // Skip this block - zone map says no matches possible
+                        }
+                    }
+
+                    blocks_after_zone_map += 1;
+                    match block_reader
                         .read_data_block_at_offset(index_entry.offset, index_entry.size as usize)
-                        .await?;
+                        .await
+                    {
+                        Ok(data_block) => {
+                            relevant_blocks.push(data_block);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
 
-                    // Cache hot data for future searches
-                    // Note: Vector cache stores VectorRecords, not SstRecords
-                    // This would require conversion which we're trying to avoid
-                    // TODO: Consider adding a separate cache for SstRecords
-
-                    relevant_blocks.push(data_block);
+            // Log zone map pruning effectiveness
+            if filter_expr.is_some() && blocks_before_zone_map > 0 {
+                let pruned = blocks_before_zone_map - blocks_after_zone_map;
+                if pruned > 0 {
+                    tracing::debug!(
+                        "📊 Zone map pruning: {} → {} blocks ({} pruned, {:.1}% reduction) for {}",
+                        blocks_before_zone_map,
+                        blocks_after_zone_map,
+                        pruned,
+                        (pruned as f64 / blocks_before_zone_map as f64) * 100.0,
+                        file_path
+                    );
                 }
             }
         }
@@ -4633,11 +4605,80 @@ impl UnifiedSstableReader {
 
     fn should_read_block_for_filter(
         &self,
-        _index_entry: &IndexEntry,
-        _filter: &FilterExpression,
+        index_entry: &IndexEntry,
+        filter: &FilterExpression,
     ) -> bool {
-        // TODO: Implement block filtering based on index metadata
-        true // For now, read all blocks
+        // Zone map pruning: Check if block's metadata min/max range can contain matching values
+        // Extract equality conditions from filter expression
+        let metadata_conditions = self.extract_filter_conditions(filter);
+
+        if metadata_conditions.is_empty() {
+            // No equality conditions to check against zone maps
+            return true;
+        }
+
+        // Check each condition against block's min/max values
+        for (column, filter_value) in &metadata_conditions {
+            if let Some(min_val) = index_entry.metadata_min_values.get(column) {
+                if let Some(max_val) = index_entry.metadata_max_values.get(column) {
+                    // Use centralized comparison: if value is outside [min, max], skip block
+                    if Self::compare_metadata_values(filter_value, min_val)
+                        == std::cmp::Ordering::Less
+                        || Self::compare_metadata_values(filter_value, max_val)
+                            == std::cmp::Ordering::Greater
+                    {
+                        tracing::debug!(
+                            "🔍 Zone map pruning: block {} rejected - {} not in [{:?}, {:?}]",
+                            index_entry.block_id,
+                            filter_value,
+                            min_val,
+                            max_val
+                        );
+                        return false;
+                    }
+                }
+            }
+            // If column not tracked in block stats, be conservative and include block
+        }
+
+        true // Block might contain matching values
+    }
+
+    /// Extract simple equality conditions from a filter expression for zone map pruning
+    fn extract_filter_conditions(
+        &self,
+        filter: &FilterExpression,
+    ) -> Vec<(String, serde_json::Value)> {
+        let mut conditions = Vec::new();
+        Self::collect_equality_conditions(filter, &mut conditions);
+        conditions
+    }
+
+    fn collect_equality_conditions(
+        filter: &FilterExpression,
+        conditions: &mut Vec<(String, serde_json::Value)>,
+    ) {
+        use crate::core::search::ComparisonOperator;
+
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                if matches!(operator, ComparisonOperator::Equals) {
+                    conditions.push((field.clone(), value.clone()));
+                }
+            }
+            FilterExpression::And(exprs) => {
+                for expr in exprs {
+                    Self::collect_equality_conditions(expr, conditions);
+                }
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => {
+                // OR and NOT are too complex for simple zone map pruning
+            }
+        }
     }
 
     fn vector_records_to_data_blocks(
@@ -4696,15 +4737,1367 @@ impl UnifiedSstableReader {
         _index_blocks: &[IndexEntry],
         _params: &SearchParams,
     ) -> Vec<usize> {
-        // TODO: Implement smart block selection based on search parameters
-        // For now, select all blocks
-        (0.._index_blocks.len()).collect()
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
+            BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
+        };
+
+        // Use block centroids when available to prune blocks before decompression.
+        let query = _params
+            .vector
+            .as_ref()
+            .or_else(|| _params.query_vectors.as_ref().and_then(|v| v.first()));
+
+        let query = match query {
+            Some(q) if !q.is_empty() => q,
+            _ => {
+                // No query vector; fall back to scanning all blocks.
+                return (0.._index_blocks.len()).collect();
+            }
+        };
+
+        // Check if we should use exact mode (no pruning)
+        if _params.block_prune.force_exact {
+            return (0.._index_blocks.len()).collect();
+        }
+
+        // Convert BlockPruneConfig to PruningConfig for unified pruner
+        let prune_mode = match _params.block_prune.mode {
+            crate::core::search::BlockPruneMode::Sqrt => PruningMode::Sqrt {
+                min_blocks: _params.block_prune.min_keep.max(3),
+            },
+            crate::core::search::BlockPruneMode::Ratio => PruningMode::Ratio {
+                ratio: _params.block_prune.ratio,
+                min_blocks: _params.block_prune.min_keep.max(1),
+            },
+            crate::core::search::BlockPruneMode::Fixed(k) => PruningMode::Fixed { k },
+        };
+
+        let pruner = SpatialPruner::new(PruningConfig {
+            mode: prune_mode,
+            spatial_weight: 0.6,
+            centroid_weight: 0.4,
+            ..Default::default()
+        });
+
+        // Try to compute query's spatial code for spatial pruning (uses cached PCA model)
+        let query_code = compute_query_zorder_code(query, _index_blocks, &self.collection_id);
+
+        // Check if blocks have spatial codes
+        let has_spatial_codes = _index_blocks.iter().any(|e| e.zorder_code.is_some());
+
+        if has_spatial_codes && query_code.is_some() {
+            // Use unified SpatialPruner with spatial codes and centroids
+            let query_code = query_code.unwrap();
+
+            let blocks: Vec<BlockPruningInfo> = _index_blocks
+                .iter()
+                .enumerate()
+                .map(|(idx, entry)| {
+                    let spatial_code = entry.zorder_code.clone().unwrap_or(SpatialCode::Code64(0));
+
+                    // Get centroid (FP16 -> FP32 if available)
+                    let centroid = super::super::get_centroid_fp32(
+                        &entry.block_centroid_fp16,
+                        &entry.block_centroid,
+                    );
+
+                    BlockPruningInfo::with_centroid(idx, spatial_code, centroid)
+                })
+                .collect();
+
+            let result = pruner.select_blocks(&query_code, query, &blocks);
+            return result.selected_indices;
+        }
+
+        // Fallback: No spatial codes, use centroid-based pruning only
+        let metric = _params
+            .distance_metric
+            .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
+
+        select_blocks_by_centroid(query, _index_blocks, metric, &_params.block_prune)
+    }
+
+    fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b.iter())
+            .fold(0.0f32, |acc, (x, y)| acc + (x - y) * (x - y))
     }
 
     fn is_hot_data(&self, data_block: &ProximaDataBlock) -> bool {
         // Simple heuristic: blocks with many non-tombstone records are hot
         let active_records = data_block.records.len();
         active_records > data_block.records.len() / 2
+    }
+}
+
+// ============================================================================
+// Z-Order Pruning Helper Functions
+// ============================================================================
+
+/// Compute Z-Order code for a query vector using PCA transform.
+///
+/// This transforms the query to PCA space and encodes it with Z-Order,
+/// enabling spatial range-based block pruning.
+///
+/// # Arguments
+/// * `query` - Query vector (original dimension)
+/// * `entries` - Index entries with block centroids
+///
+/// # Returns
+/// Z-Order code for the query, or None if insufficient data
+///
+/// Compute Z-Order spatial code for query using cached PCA model.
+///
+/// PERFORMANCE: Uses cached PCA model (trained during flush/compaction) to project
+/// query vector and compute Z-Order code for spatial pruning. Falls back to None
+/// if no PCA model is available (centroid-only pruning will be used instead).
+///
+/// # Arguments
+/// * `query` - Query vector
+/// * `_entries` - Index entries (unused, kept for API compatibility)
+/// * `collection_id` - Collection ID for looking up cached PCA model
+///
+/// # Returns
+/// Z-Order spatial code if PCA model is cached, None otherwise
+fn compute_query_zorder_code(
+    query: &[f32],
+    _entries: &[IndexEntry],
+    collection_id: &str,
+) -> Option<crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_clustering::{
+        AdaptivePcaConfig, ZOrderEncoder,
+    };
+
+    // Get cached PCA model from global cache (set during flush/compaction)
+    let pca_model = super::super::core::get_collection_pca_model(collection_id)?;
+
+    // Project query vector using cached PCA model
+    let projected = pca_model.project(query).ok()?;
+
+    // Create Z-Order encoder with the same configuration used during flush
+    let config = AdaptivePcaConfig::for_vector_dim(query.len());
+    let n_dimensions = pca_model.n_components.min(config.n_components);
+    let encoder = ZOrderEncoder::new(n_dimensions, config.bits_per_dim);
+
+    // Truncate projected vector to encoder dimensions if needed
+    let coords: Vec<f32> = projected.into_iter().take(n_dimensions).collect();
+
+    // Pad with zeros if projected vector is smaller than expected
+    let coords = if coords.len() < n_dimensions {
+        let mut padded = coords;
+        padded.resize(n_dimensions, 0.0);
+        padded
+    } else {
+        coords
+    };
+
+    // Normalize coordinates to [0, 1] range for Z-Order encoding
+    let normalized: Vec<f32> = coords
+        .iter()
+        .map(|&v| {
+            // Clamp to reasonable range and normalize
+            // PCA output is typically centered around 0, map to [0, 1]
+            let clamped = v.clamp(-10.0, 10.0);
+            (clamped + 10.0) / 20.0
+        })
+        .collect();
+
+    Some(encoder.encode(&normalized))
+}
+
+/// Calculate Z-Order epsilon for pruning range.
+///
+/// The epsilon determines the search radius in Z-Order space.
+/// Blocks outside [query_code - epsilon, query_code + epsilon] are pruned.
+///
+/// # Arguments
+/// * `query_code` - Query's Z-Order code
+/// * `entries` - Index entries with Z-Order codes
+///
+/// # Returns
+/// Epsilon value (search radius in Z-Order space)
+fn calculate_zorder_epsilon(
+    query_code: &crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode,
+    entries: &[IndexEntry],
+) -> crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode {
+    use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+    // Collect all Z-Order codes
+    let codes: Vec<&SpatialCode> = entries
+        .iter()
+        .filter_map(|e| e.zorder_code.as_ref())
+        .collect();
+
+    if codes.is_empty() {
+        // No pruning if no codes - return max epsilon for the code type
+        return match query_code {
+            SpatialCode::Code64(_) => SpatialCode::Code64(u64::MAX),
+            SpatialCode::Code128(_) => SpatialCode::Code128(u128::MAX),
+            SpatialCode::Code256 { .. } => SpatialCode::Code256 {
+                low: u128::MAX,
+                high: u128::MAX,
+            },
+            SpatialCode::Code512(_) => SpatialCode::Code512(
+                crate::storage::engines::core::formats::proximablocks::spatial_encoding::U512::MAX,
+            ),
+        };
+    }
+
+    // Find min and max codes
+    let min_code = codes.iter().min().unwrap();
+    let max_code = codes.iter().max().unwrap();
+
+    // Calculate epsilon as 10% of range (built into SpatialCode::epsilon method)
+    // Min epsilon of 1000 to avoid over-pruning
+    max_code.epsilon(min_code, 10.0, 1000)
+}
+
+/// Filter index entries by Z-Order range.
+///
+/// Returns indices of blocks that fall within the Z-Order search range.
+///
+/// # Arguments
+/// * `query` - Query vector
+/// * `entries` - Index entries with Z-Order codes
+/// * `collection_id` - Collection ID for looking up cached PCA model
+///
+/// # Returns
+/// Vector of block indices within the search range
+#[allow(dead_code)] // Used in tests
+fn filter_blocks_by_zorder(
+    query: &[f32],
+    entries: &[IndexEntry],
+    collection_id: &str,
+) -> Option<Vec<usize>> {
+    // Compute query's Z-Order code using cached PCA model
+    let query_code = compute_query_zorder_code(query, entries, collection_id)?;
+
+    // Calculate pruning range
+    let epsilon = calculate_zorder_epsilon(&query_code, entries);
+    let min_code = query_code.saturating_sub(&epsilon);
+    let max_code = query_code.saturating_add(&epsilon);
+
+    // Filter blocks by Z-Order range
+    let filtered_indices: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            if let Some(code) = &entry.zorder_code {
+                code.in_range(&min_code, &max_code)
+            } else {
+                true // Include blocks without Z-Order (backward compat)
+            }
+        })
+        .map(|(idx, _)| idx)
+        .collect();
+
+    // Log pruning effectiveness
+    let pruned_percentage = if entries.len() > 0 {
+        100 - (filtered_indices.len() * 100 / entries.len())
+    } else {
+        0
+    };
+
+    debug!(
+        "🔬 SST Z-Order Pruning: {} → {} blocks ({}% pruned)",
+        entries.len(),
+        filtered_indices.len(),
+        pruned_percentage
+    );
+
+    Some(filtered_indices)
+}
+
+/// Normalize coordinates to [0, 1] range for Z-Order encoding.
+///
+/// Uses min-max normalization across all dimensions.
+#[allow(dead_code)]
+fn normalize_coords_for_zorder(coords: &[f32]) -> Vec<f32> {
+    if coords.is_empty() {
+        return Vec::new();
+    }
+
+    // Find min and max across all dimensions
+    let min_val = coords.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_val = coords.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    let range = max_val - min_val;
+
+    if range < 1e-6 {
+        // All coordinates are very similar, return middle of range
+        return vec![0.5; coords.len()];
+    }
+
+    // Normalize each coordinate to [0, 1]
+    coords
+        .iter()
+        .map(|&c| ((c - min_val) / range).clamp(0.0, 1.0))
+        .collect()
+}
+
+fn select_blocks_by_centroid(
+    query: &[f32],
+    entries: &[IndexEntry],
+    metric: crate::compute::distance_computation::DistanceMetric,
+    prune: &crate::core::search::BlockPruneConfig,
+) -> Vec<usize> {
+    if prune.force_exact {
+        return (0..entries.len()).collect();
+    }
+
+    // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
+    // For datasets with < 100 blocks, the cost of computing centroid distances
+    // and sorting exceeds the savings from pruning. At 100 blocks with sqrt mode,
+    // we'd scan 10 blocks (90% pruned) which justifies the overhead.
+    use crate::storage::engines::core::constants::pruning;
+    let min_blocks_threshold = prune
+        .min_blocks_override
+        .unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    if entries.len() < min_blocks_threshold {
+        tracing::debug!(
+            "Block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
+            entries.len(),
+            min_blocks_threshold
+        );
+        return (0..entries.len()).collect();
+    }
+
+    let mut scored = Vec::with_capacity(entries.len());
+
+    for (idx, entry) in entries.iter().enumerate() {
+        // Use FP16 centroid if available (50% storage reduction, <0.1% error)
+        // Falls back to FP32 for backward compatibility
+        let centroid =
+            super::super::get_centroid_fp32(&entry.block_centroid_fp16, &entry.block_centroid);
+
+        if centroid.len() != query.len() {
+            scored.push((f32::INFINITY, idx));
+            continue;
+        }
+        let dist = metric_distance(query, &centroid, metric);
+        scored.push((dist, idx));
+    }
+
+    if scored.is_empty() {
+        return Vec::new();
+    }
+
+    let mut keep = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => (scored.len() as f32).sqrt().ceil() as usize,
+        crate::core::search::BlockPruneMode::Ratio => {
+            let r = prune.ratio.clamp(0.0, 1.0);
+            ((scored.len() as f32) * r).ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Fixed(k) => k,
+    };
+
+    keep = keep.max(prune.min_keep);
+    if prune.max_keep > 0 {
+        keep = keep.min(prune.max_keep);
+    }
+    keep = keep.clamp(1, scored.len());
+
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut selected: Vec<usize> = scored.into_iter().take(keep).map(|(_, idx)| idx).collect();
+
+    selected.sort_unstable();
+    selected.dedup();
+    selected
+}
+
+fn metric_distance(
+    a: &[f32],
+    b: &[f32],
+    metric: crate::compute::distance_computation::DistanceMetric,
+) -> f32 {
+    // Delegate to unified distance engine to honor all metrics consistently.
+    let distance_compute = UnifiedDistanceCompute::default();
+    distance_compute.distance_with_metric(a, b, &metric)
+}
+
+#[cfg(test)]
+mod centroid_tests {
+    use super::*;
+    use crate::storage::engines::impls::sst::VectorFormat;
+
+    #[test]
+    fn selects_sqrt_top_blocks() {
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.2, 0.2],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "d".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 3,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![5.0, 5.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &crate::core::search::BlockPruneConfig::for_testing(),
+        );
+        // sqrt(4) = 2 => expect the two closest blocks by centroid: block_ids 0 and 2.
+        assert_eq!(selected, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_block_prune_none_mode_force_exact() {
+        // None mode (force_exact=true) should return ALL blocks regardless of other settings
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![5.0, 5.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: true, // None mode - disable all pruning
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.1,
+            min_keep: 1,
+            max_keep: 1,
+            min_blocks_override: Some(0), // Bypass threshold for testing
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 2, "force_exact should return ALL blocks");
+        assert_eq!(selected, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_block_prune_min_keep_override() {
+        // min_keep should override mode when mode returns fewer blocks
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1), // Mode wants 1 block
+            ratio: 0.2,
+            min_keep: 3, // But min_keep requires at least 3
+            max_keep: 0,
+            min_blocks_override: Some(0), // Bypass threshold for testing
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 3, "min_keep=3 should override Fixed(1)");
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_block_prune_max_keep_override() {
+        // max_keep should override mode when mode returns more blocks
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "d".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 3,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![3.0, 3.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.75, // Would return 3 blocks
+            min_keep: 1,
+            max_keep: 2,                  // But max_keep limits to 2
+            min_blocks_override: Some(0), // Bypass threshold for testing
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 2, "max_keep=2 should override Ratio(0.75)");
+        assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
+    }
+
+    #[test]
+    fn test_block_prune_min_max_conflict() {
+        // When min_keep > max_keep, correct order is: mode -> min_keep -> max_keep
+        // Result should respect max_keep as the final constraint
+        let query = vec![0.0f32, 0.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.1, 0.1],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+            IndexEntry {
+                key: "c".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![2.0, 2.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            },
+        ];
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Fixed(1),
+            ratio: 0.2,
+            min_keep: 5,                  // Configuration error: min_keep > max_keep
+            max_keep: 2,                  // max_keep should take precedence
+            min_blocks_override: Some(0), // Bypass threshold for testing
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        // Evaluation: Fixed(1)=1 -> max(1,5)=5 -> min(5,2)=2 -> clamp(2,1,3)=2
+        assert_eq!(
+            selected.len(),
+            2,
+            "max_keep=2 should win when min_keep=5 > max_keep=2"
+        );
+        assert_eq!(selected, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_block_prune_ratio_mode() {
+        // Ratio mode should return ratio * n blocks (rounded up)
+        let query = vec![0.0f32, 0.0];
+        let entries = (0..5)
+            .map(|i| IndexEntry {
+                key: format!("block_{}", i),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: i,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![i as f32, i as f32],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None,
+            })
+            .collect::<Vec<_>>();
+
+        let prune_config = crate::core::search::BlockPruneConfig {
+            force_exact: false,
+            mode: crate::core::search::BlockPruneMode::Ratio,
+            ratio: 0.4, // 0.4 * 5 = 2
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: Some(0), // Bypass threshold for testing
+        };
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &entries,
+            crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &prune_config,
+        );
+
+        assert_eq!(selected.len(), 2, "Ratio(0.4) of 5 blocks should be 2");
+        assert_eq!(selected, vec![0, 1], "Should return 2 closest blocks");
+    }
+
+    // ========================================================================
+    // Z-Order Pruning Tests
+    // ========================================================================
+
+    #[test]
+    fn test_compute_query_zorder_code_without_pca_model() {
+        // Test that without a cached PCA model, function returns None (graceful fallback)
+        let query = vec![1.0f32, 0.5];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode::Code64(100)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode::Code64(200)),
+            },
+        ];
+
+        // Without a cached PCA model, function returns None (falls back to centroid-only pruning)
+        let code = compute_query_zorder_code(&query, &entries, "test_collection_no_pca");
+        assert!(
+            code.is_none(),
+            "Should return None when no PCA model is cached"
+        );
+    }
+
+    #[test]
+    fn test_compute_query_zorder_code_with_pca_model() {
+        use crate::proto::proximadb_v1::VectorRecord;
+        use crate::storage::engines::impls::sst::pca_manager::EnhancedPCAModel;
+
+        // Create sample vectors to train a PCA model
+        let vectors: Vec<VectorRecord> = (0..100)
+            .map(|i| VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![(i as f32) / 100.0, (i as f32) / 50.0],
+                metadata: HashMap::new(),
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            })
+            .collect();
+
+        // Train and cache PCA model
+        let pca_model = EnhancedPCAModel::train(&vectors, 2).expect("Failed to train PCA");
+        crate::storage::engines::impls::sst::core::set_collection_pca_model(
+            "test_collection_with_pca",
+            pca_model,
+        );
+
+        // Now test with a query
+        let query = vec![1.0f32, 0.5];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode::Code64(100)),
+            },
+        ];
+
+        // With a cached PCA model, function should return Some
+        let code = compute_query_zorder_code(&query, &entries, "test_collection_with_pca");
+        assert!(
+            code.is_some(),
+            "Should compute Z-Order code when PCA model is cached"
+        );
+    }
+
+    #[test]
+    fn test_compute_query_zorder_code_empty_input() {
+        // Test with empty entries - should return None (no PCA model and empty entries)
+        let query = vec![1.0f32, 0.5];
+        let entries: Vec<IndexEntry> = vec![];
+
+        let code = compute_query_zorder_code(&query, &entries, "test_empty_entries");
+        assert!(code.is_none(), "Should return None for empty entries");
+    }
+
+    #[test]
+    fn test_calculate_zorder_epsilon() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test epsilon calculation
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(1000)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![10.0, 10.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(10000)),
+            },
+        ];
+
+        let query_code = SpatialCode::Code64(5000);
+        let epsilon = calculate_zorder_epsilon(&query_code, &entries);
+        // Epsilon should be 10% of range: (10000 - 1000) / 10 = 900, but min is 1000
+        assert_eq!(
+            epsilon,
+            SpatialCode::Code64(1000),
+            "Epsilon should be max of (10% of range, 1000)"
+        );
+    }
+
+    #[test]
+    fn test_calculate_zorder_epsilon_no_codes() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test with no Z-Order codes
+        let entries = vec![IndexEntry {
+            key: "a".into(),
+            last_key: None,
+            offset: 0,
+            size: 0,
+            block_id: 0,
+            block_offset: 0,
+            compressed: false,
+            block_centroid: vec![0.0, 0.0],
+            block_centroid_fp16: None,
+            metadata_min_values: HashMap::new(),
+            metadata_max_values: HashMap::new(),
+            metadata_null_counts: HashMap::new(),
+            block_key_bloom: None,
+            block_metadata_bloom: None,
+            vector_format: VectorFormat::Variable,
+            zorder_code: None,
+        }];
+
+        let query_code = SpatialCode::Code64(0);
+        let epsilon = calculate_zorder_epsilon(&query_code, &entries);
+        assert_eq!(
+            epsilon,
+            SpatialCode::Code64(u64::MAX),
+            "Should return MAX for no codes"
+        );
+    }
+
+    #[test]
+    fn test_filter_blocks_by_zorder_without_pca() {
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+
+        // Test Z-Order filtering without cached PCA model - should return None (graceful fallback)
+        let query = vec![1.0f32, 1.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(100)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(5000)),
+            },
+            IndexEntry {
+                key: "c".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![10.0, 10.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(10000)),
+            },
+        ];
+
+        // Without cached PCA model, filter_blocks_by_zorder returns None (falls back to centroid pruning)
+        let filtered = filter_blocks_by_zorder(&query, &entries, "test_no_pca_collection");
+        assert!(
+            filtered.is_none(),
+            "Should return None when no PCA model is cached"
+        );
+    }
+
+    #[test]
+    fn test_filter_blocks_by_zorder_with_pca() {
+        use crate::proto::proximadb_v1::VectorRecord;
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        use crate::storage::engines::impls::sst::pca_manager::EnhancedPCAModel;
+
+        // Create and cache a PCA model
+        let vectors: Vec<VectorRecord> = (0..100)
+            .map(|i| VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![(i as f32) / 100.0, (i as f32) / 50.0],
+                metadata: HashMap::new(),
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            })
+            .collect();
+
+        let pca_model = EnhancedPCAModel::train(&vectors, 2).expect("Failed to train PCA");
+        crate::storage::engines::impls::sst::core::set_collection_pca_model(
+            "test_zorder_filter_pca",
+            pca_model,
+        );
+
+        // Test Z-Order filtering with cached PCA model
+        let query = vec![1.0f32, 1.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(100)),
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(5000)),
+            },
+            IndexEntry {
+                key: "c".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 2,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![10.0, 10.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(10000)),
+            },
+            // Block without Z-Order code (backward compatibility - always included)
+            IndexEntry {
+                key: "d".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 3,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.5, 0.5],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None, // No Z-Order code - always included
+            },
+        ];
+
+        let filtered = filter_blocks_by_zorder(&query, &entries, "test_zorder_filter_pca");
+        assert!(
+            filtered.is_some(),
+            "Should return filtered indices with cached PCA model"
+        );
+
+        let indices = filtered.unwrap();
+        // Should include the block without Z-Order code for backward compatibility
+        assert!(
+            !indices.is_empty(),
+            "Should have at least some blocks selected (backward compat block)"
+        );
+        assert!(
+            indices.contains(&3),
+            "Block without Z-Order code should be included"
+        );
+    }
+
+    #[test]
+    fn test_filter_blocks_by_zorder_backward_compat_with_pca() {
+        use crate::proto::proximadb_v1::VectorRecord;
+        use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
+        use crate::storage::engines::impls::sst::pca_manager::EnhancedPCAModel;
+
+        // Create and cache a PCA model
+        let vectors: Vec<VectorRecord> = (0..100)
+            .map(|i| VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![(i as f32) / 100.0, (i as f32) / 50.0],
+                metadata: HashMap::new(),
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            })
+            .collect();
+
+        let pca_model = EnhancedPCAModel::train(&vectors, 2).expect("Failed to train PCA");
+        crate::storage::engines::impls::sst::core::set_collection_pca_model(
+            "test_backward_compat_pca",
+            pca_model,
+        );
+
+        // Test that blocks without Z-Order codes are included (backward compatibility)
+        let query = vec![1.0f32, 1.0];
+        let entries = vec![
+            IndexEntry {
+                key: "a".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 0,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![0.0, 0.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: None, // No Z-Order code
+            },
+            IndexEntry {
+                key: "b".into(),
+                last_key: None,
+                offset: 0,
+                size: 0,
+                block_id: 1,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![1.0, 1.0],
+                block_centroid_fp16: None,
+                metadata_min_values: HashMap::new(),
+                metadata_max_values: HashMap::new(),
+                metadata_null_counts: HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Variable,
+                zorder_code: Some(SpatialCode::Code64(5000)),
+            },
+        ];
+
+        let filtered = filter_blocks_by_zorder(&query, &entries, "test_backward_compat_pca");
+        assert!(
+            filtered.is_some(),
+            "Should handle mix of coded/non-coded blocks"
+        );
+
+        let indices = filtered.unwrap();
+        // Block without code should be included
+        assert!(
+            indices.contains(&0),
+            "Should include block without Z-Order code"
+        );
+    }
+
+    #[test]
+    fn test_normalize_coords_for_zorder() {
+        // Test normalization to [0, 1]
+        let coords = vec![-10.0f32, 0.0, 10.0, 20.0];
+        let normalized = normalize_coords_for_zorder(&coords);
+
+        assert_eq!(normalized.len(), coords.len());
+
+        // All values should be in [0, 1]
+        for &val in &normalized {
+            assert!(val >= 0.0 && val <= 1.0, "Value {} not in [0, 1]", val);
+        }
+
+        // Min should map to 0.0, max to 1.0
+        assert!((normalized[0] - 0.0).abs() < 1e-5, "Min should map to 0.0");
+        assert!((normalized[3] - 1.0).abs() < 1e-5, "Max should map to 1.0");
+    }
+
+    #[test]
+    fn test_normalize_coords_for_zorder_constant() {
+        // Test with all same values
+        let coords = vec![5.0f32, 5.0, 5.0];
+        let normalized = normalize_coords_for_zorder(&coords);
+
+        // Should return middle of range (0.5)
+        for &val in &normalized {
+            assert!(
+                (val - 0.5).abs() < 1e-5,
+                "Constant coords should map to 0.5"
+            );
+        }
     }
 }
 
@@ -4909,12 +6302,11 @@ impl IndexCache {
         match pressure_level {
             MemoryPressure::Low => {
                 // Reduce TTL to encourage natural eviction
-                // This would require rebuilding cache - for now just invalidate 10%
+                // This would require rebuilding cache - for now just invalidate all
+                // (simplified approach - in production would remove specific entries)
                 let current_size = self.indices.entry_count();
-                let to_remove = (current_size as f64 * 0.1) as usize;
-                for _ in 0..to_remove {
+                if current_size > 0 {
                     self.indices.invalidate_all();
-                    break; // Simplified - in production would remove specific entries
                 }
             }
             MemoryPressure::Medium => {
@@ -4990,6 +6382,7 @@ impl Default for ReaderConfig {
 }
 
 // Helper function to convert JSON value to string for comparison
+#[allow(dead_code)]
 fn json_value_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s.clone(),

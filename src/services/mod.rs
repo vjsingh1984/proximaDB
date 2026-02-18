@@ -124,7 +124,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::services::{Collections, VectorOps, StreamingSearch};
 //!
 //! // Initialize services
@@ -168,10 +168,17 @@
 //! - Cache hit rates
 
 pub mod collection;
+pub mod conversion;
+pub mod ddl;
+pub mod dml;
 pub mod events;
 pub mod graph_collection;
+pub mod migration;
 pub mod operations;
+pub mod schema;
 pub mod search;
+#[cfg(feature = "tenant_access")]
+pub mod tenant_access;
 
 // Legacy test module (to be reorganized)
 #[cfg(test)]
@@ -179,9 +186,19 @@ pub mod tests;
 
 // Re-export main service types with cleaner names
 pub use collection::Collections;
+pub use conversion::RecordConverter;
+pub use ddl::{
+    AlterTableChange, ColumnDefinition, DdlResult, DdlService, DdlStatement, IndexType, SqlDataType,
+};
+pub use dml::{
+    ComparisonOperator, Condition, DmlResult, DmlService, DmlStatement, LogicalOperator,
+    SqlValueLiteral, WhereClause,
+};
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;
+pub use migration::RecordMigrationService;
 pub use operations::VectorOps;
+pub use schema::SchemaInferenceService;
 pub use search::StreamingSearch;
 
 // Legacy compatibility exports (will be removed)

@@ -13,7 +13,7 @@ mod tests {
     use crate::index::axis::index_factory::IndexFactory;
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use crate::proto::proximadb_v1::VectorRecord;
-    use tracing::{debug, error, info};
+    use tracing::{debug, info};
 
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {
@@ -74,7 +74,7 @@ mod tests {
                 train_size: 1000,
             };
 
-            let spec =
+            let _spec =
                 IndexSpecification::new(Data::DenseVector { dimension: 128 }, algorithm.clone());
 
             // Calculate theoretical compression ratio
@@ -171,7 +171,7 @@ mod tests {
         let dimension = 768; // Common embedding dimension
 
         for count in vector_counts {
-            let algorithm = IndexAlgorithm::PQ {
+            let _algorithm = IndexAlgorithm::PQ {
                 m: 48, // 768 / 16 = 48 subquantizers
                 nbits: 8,
                 train_size: 10000,

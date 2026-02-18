@@ -31,7 +31,7 @@ pub struct AutomatedInsightEngine {
 /// Business insights generator for strategic intelligence
 pub struct BusinessInsightsGenerator {
     /// Strategic insight templates by industry
-    strategic_templates: Arc<DashMap<String, StrategicInsightTemplate>>,
+    _strategic_templates: Arc<DashMap<String, StrategicInsightTemplate>>,
 
     /// Operational insight analyzer
     operational_analyzer: Arc<OperationalInsightAnalyzer>,
@@ -135,8 +135,8 @@ impl AutomatedInsightEngine {
     /// Generate executive strategic insights for C-level intelligence
     pub async fn generate_executive_strategic_insights(
         &self,
-        tenant_id: &str,
-        strategic_focus: &StrategicFocus,
+        _tenant_id: &str,
+        _strategic_focus: &StrategicFocus,
         executive_context: &ExecutiveUserContext,
     ) -> Result<ExecutiveStrategicInsights> {
         // Generate high-level strategic insights for executives
@@ -275,7 +275,7 @@ impl AutomatedInsightEngine {
 impl BusinessInsightsGenerator {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            strategic_templates: Arc::new(DashMap::new()),
+            _strategic_templates: Arc::new(DashMap::new()),
             operational_analyzer: Arc::new(OperationalInsightAnalyzer::new()?),
             financial_calculator: Arc::new(FinancialInsightCalculator::new()?),
             competitive_analyzer: Arc::new(CompetitiveIntelligenceAnalyzer::new()?),
@@ -286,7 +286,7 @@ impl BusinessInsightsGenerator {
     pub async fn generate_strategic_insights(
         &self,
         business_data: &BusinessIntelligenceData,
-        strategic_context: &StrategicContext,
+        _strategic_context: &StrategicContext,
         executive_context: &ExecutiveUserContext,
     ) -> Result<StrategicBusinessInsights> {
         // Generate financial insights
@@ -341,9 +341,9 @@ impl BusinessInsightsGenerator {
 
     async fn generate_strategic_recommendations(
         &self,
-        financial: &FinancialInsights,
-        operational: &OperationalInsights,
-        competitive: &CompetitiveInsights,
+        _financial: &FinancialInsights,
+        _operational: &OperationalInsights,
+        _competitive: &CompetitiveInsights,
         executive_context: &ExecutiveUserContext,
     ) -> Result<Vec<StrategicRecommendation>> {
         let mut recommendations = Vec::new();
@@ -870,7 +870,7 @@ mod tests {
     #[tokio::test]
     async fn test_business_insights_generator_creation() {
         let insights_generator = BusinessInsightsGenerator::new().await.unwrap();
-        assert!(insights_generator.strategic_templates.is_empty());
+        assert!(insights_generator._strategic_templates.is_empty());
     }
 
     #[test]

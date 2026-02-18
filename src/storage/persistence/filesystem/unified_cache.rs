@@ -18,6 +18,7 @@ pub struct UnifiedMetadataCache {
     cache: Arc<DashMap<String, Arc<CachedMetadata>>>,
 
     /// Configuration
+    #[allow(dead_code)]
     max_entries: usize,
     max_memory_mb: usize,
     default_ttl: Duration,
@@ -60,6 +61,7 @@ pub struct CacheStatistics {
     hits: std::sync::atomic::AtomicU64,
     misses: std::sync::atomic::AtomicU64,
     evictions: std::sync::atomic::AtomicU64,
+    #[allow(dead_code)]
     insertions: std::sync::atomic::AtomicU64,
 }
 

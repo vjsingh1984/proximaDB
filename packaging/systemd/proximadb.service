@@ -1,0 +1,29 @@
+[Unit]
+Description=ProximaDB Vector Database Server
+Documentation=https://github.com/vjsingh1984/proximadb
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proximadb
+Group=proximadb
+ExecStart=/usr/bin/proximadb-server --config /etc/proximadb/config.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/proximadb /var/log/proximadb
+PrivateTmp=true
+NoNewPrivileges=true
+
+# Environment
+Environment=RUST_LOG=info
+WorkingDirectory=/var/lib/proximadb
+
+[Install]
+WantedBy=multi-user.target

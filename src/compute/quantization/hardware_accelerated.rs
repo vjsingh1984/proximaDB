@@ -78,7 +78,22 @@ impl AcceleratedQuantization {
 
     /// Quantize to 8-bit with hardware acceleration
     pub fn quantize_u8_accelerated(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
-        match self.backend {
+        let caps = get_hardware_capabilities();
+        let use_gpu_backend = matches!(
+            self.backend,
+            HardwareBackend::CUDA
+                | HardwareBackend::ROCm
+                | HardwareBackend::MPS
+                | HardwareBackend::OpenCL
+        ) && caps.should_use_gpu_batch(values.len());
+
+        let backend = if use_gpu_backend {
+            self.backend
+        } else {
+            Self::select_cpu_backend(&caps)
+        };
+
+        match backend {
             HardwareBackend::AVX512 => self.quantize_u8_avx2(values), // Use AVX2 for now, AVX512 requires unstable
             HardwareBackend::AVX2 => self.quantize_u8_avx2(values),
             HardwareBackend::SSE => self.quantize_u8_sse(values),
@@ -108,7 +123,7 @@ impl AcceleratedQuantization {
         let max = values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let range = if max > min { max - min } else { 1.0 };
 
-        let mut packed = Vec::with_capacity((values.len() + 1) / 2);
+        let mut packed = Vec::with_capacity(values.len().div_ceil(2));
         let mut packed_byte = 0u8;
         let mut is_high_nibble = true;
 
@@ -209,6 +224,7 @@ impl AcceleratedQuantization {
 
     /// AVX-512 implementation
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[allow(dead_code)]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         // AVX512 requires unstable features, use AVX2 implementation instead
         self.quantize_u8_avx2(values)
@@ -476,6 +492,7 @@ impl AcceleratedQuantization {
     }
 
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[allow(dead_code)]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
     }

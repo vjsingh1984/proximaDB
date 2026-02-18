@@ -12,7 +12,6 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use super::helpers;
-use super::helpers::ToWireFormat;
 
 // ===== Core wire format encoding functions =====
 
@@ -97,9 +96,9 @@ fn encode_dictionary_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 3. Store dictionary + codes
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [num_unique:4 bytes][dictionary: value*][codes: varint*]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

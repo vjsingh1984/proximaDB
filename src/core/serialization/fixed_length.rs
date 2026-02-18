@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_fixed_vector_creation() {
-        let data = vec![1.0, 2.0, 3.0, 4.0];
+        let _data = [1.0, 2.0, 3.0, 4.0];
         let vector = Vector64::new(vec![0.0; 64]).unwrap();
         assert_eq!(vector.dimension(), 64);
         assert_eq!(vector.data().len(), 64);

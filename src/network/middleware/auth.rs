@@ -63,18 +63,18 @@ pub struct AuthErrorResponse {
 
 /// Authentication layer for Axum
 pub struct AuthLayer {
-    config: AuthConfig,
+    _config: AuthConfig,
 }
 
 impl AuthLayer {
     pub fn new(config: AuthConfig) -> Self {
-        Self { config }
+        Self { _config: config }
     }
 
     /// Create a disabled authentication layer (all requests pass through)
     pub fn disabled() -> Self {
         Self {
-            config: AuthConfig {
+            _config: AuthConfig {
                 enabled: false,
                 ..Default::default()
             },
@@ -84,7 +84,7 @@ impl AuthLayer {
     /// Create an authentication layer with basic API key support
     pub fn with_api_keys(api_keys: HashMap<String, UserInfo>) -> Self {
         Self {
-            config: AuthConfig {
+            _config: AuthConfig {
                 enabled: true,
                 api_keys,
                 require_auth_for_health: false,

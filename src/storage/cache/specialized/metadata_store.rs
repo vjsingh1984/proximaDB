@@ -57,7 +57,7 @@ impl MetadataStore {
         // This would require adding a clear method to the BaseCache trait
         // As a workaround, we could track keys separately or add the method later
         // Reset metrics at least
-        self.base.metrics().reset();
+        self.base.metrics().reset().await;
         Ok(())
     }
 

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
@@ -28,25 +28,37 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{MetadataProvider, UnifiedMetricsCollector};
 
 /// Protobuf operation for incremental collection storage
+///
+/// Represents a single metadata operation in the WAL (Write-Ahead Log).
 #[derive(Clone, Message)]
 pub struct ProtoIncrementalOperation {
+    /// Sequence number for ordering
     #[prost(uint64, tag = "1")]
     pub sequence: u64,
+    /// Unix timestamp
     #[prost(int64, tag = "2")]
     pub timestamp: i64,
+    /// Operation type (ProtoOperationType as i32)
     #[prost(int32, tag = "3")]
-    pub operation_type: i32, // ProtoOperationType as i32
+    pub operation_type: i32,
+    /// Collection identifier
     #[prost(string, tag = "4")]
     pub collection_id: String,
+    /// Collection data (if applicable)
     #[prost(message, optional, tag = "5")]
     pub collection_data: Option<Collection>,
 }
 
 /// Operation types for protobuf storage
+///
+/// Defines the type of metadata operation being performed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProtoOperationType {
+    /// Create a new collection
     Create = 1,
+    /// Update an existing collection
     Update = 2,
+    /// Delete a collection
     Delete = 3,
 }
 use crate::storage::traits::InternalCollectionProvider;
@@ -55,6 +67,8 @@ use crate::storage::transaction_coordinator::{
 };
 
 /// Configuration for filestore metadata backend
+///
+/// Defines storage and behavior settings for the metadata backend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UniversalMetadataConfig {
     /// Storage URL (file://, s3://, gcs://, adls://)
@@ -79,12 +93,15 @@ pub struct UniversalMetadataConfig {
     pub temp_dir: Option<String>,
 }
 
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
+#[allow(dead_code)]
 fn default_snapshot_threshold() -> u64 {
     1000
 }
+#[allow(dead_code)]
 fn default_keep_snapshots() -> usize {
     3
 }
@@ -104,32 +121,51 @@ impl Default for UniversalMetadataConfig {
 }
 
 /// Operation type for WAL-style logging
+///
+/// Defines the type of operation for write-ahead logging.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OperationType {
+    /// Create a new collection
     Create,
+    /// Update an existing collection
     Update,
+    /// Delete a collection
     Delete,
 }
 
 /// Incremental operation for WAL
+///
+/// Represents a single operation in the write-ahead log.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IncrementalOperation {
+    /// Sequence number
     pub sequence: u64,
+    /// Unix timestamp
     pub timestamp: i64,
+    /// Type of operation
     pub operation_type: OperationType,
+    /// Collection identifier
     pub collection_id: String,
+    /// Collection data (if applicable)
     pub collection_data: Option<Collection>,
 }
 
 /// Prepared write data for atomic operations
+///
+/// Holds data for an atomic write operation that can be committed or rolled back.
 #[derive(Debug)]
 struct PreparedWrite {
+    /// Temporary file path
     temp_path: PathBuf,
+    /// Final file path
     final_path: PathBuf,
+    /// Data to write
     data: Vec<u8>,
 }
 
 /// Filestore metadata backend implementation
+///
+/// A cloud-optimized metadata backend with WAL support, snapshots, and atomic operations.
 pub struct UniversalMetadataBackend {
     /// Configuration
     config: UniversalMetadataConfig,
@@ -159,7 +195,7 @@ pub struct UniversalMetadataBackend {
     atomic_coordinator: Arc<TransactionCoordinator>,
 
     /// Optional unified metrics collector (injected)
-    metrics_collector: Option<UnifiedMetricsCollector>,
+    _metrics_collector: Option<UnifiedMetricsCollector>,
 }
 
 impl UniversalMetadataBackend {
@@ -172,12 +208,12 @@ impl UniversalMetadataBackend {
             "🏗️ Initializing Filestore metadata backend: {}",
             config.storage_url
         );
-        info!("📁 DEBUG: Raw storage URL: '{}'", config.storage_url);
+        debug!("📁 DEBUG: Raw storage URL: '{}'", config.storage_url);
 
         // Parse base path from URL
         let base_path = Self::parse_base_path(&config.storage_url)?;
-        info!("📁 DEBUG: Parsed base_path: {:?}", base_path);
-        info!("📁 DEBUG: Base path as string: {}", base_path.display());
+        debug!("📁 DEBUG: Parsed base_path: {:?}", base_path);
+        debug!("📁 DEBUG: Base path as string: {}", base_path.display());
 
         // Proto-first architecture - no schema needed
 
@@ -201,7 +237,7 @@ impl UniversalMetadataBackend {
             ops_since_snapshot: AtomicU64::new(0),
             atomic_operations_enabled: true,
             atomic_coordinator,
-            metrics_collector: None, // Metrics are optional and injected
+            _metrics_collector: None, // Metrics are optional and injected
         };
 
         // Initialize storage directories
@@ -266,7 +302,7 @@ impl UniversalMetadataBackend {
             ops_since_snapshot: AtomicU64::new(0),
             atomic_operations_enabled: false, // Disabled for testing
             atomic_coordinator,
-            metrics_collector: None, // Metrics are optional
+            _metrics_collector: None, // Metrics are optional
         };
 
         // Initialize storage directories
@@ -325,29 +361,29 @@ impl UniversalMetadataBackend {
         ];
 
         for dir_url in &dirs {
-            info!("📁 DEBUG: Checking/creating directory: {}", dir_url);
+            debug!("📁 DEBUG: Checking/creating directory: {}", dir_url);
             if !fs.exists(dir_url).await? {
-                info!("📁 DEBUG: Creating directory via filesystem: {}", dir_url);
+                debug!("📁 DEBUG: Creating directory via filesystem: {}", dir_url);
                 fs.create_dir_all(dir_url)
                     .await
                     .with_context(|| format!("Failed to create directory: {}", dir_url))?;
-                info!("📁 Created directory: {}", dir_url);
+                debug!("📁 Created directory: {}", dir_url);
             } else {
-                info!("📁 DEBUG: Directory already exists: {}", dir_url);
+                debug!("📁 DEBUG: Directory already exists: {}", dir_url);
             }
         }
 
-        info!("📂 Storage directories initialized");
+        debug!("📂 Storage directories initialized");
         Ok(())
     }
 
     /// Recover collections from storage
     async fn recover_from_storage(&self) -> Result<u64> {
-        info!("🔄 Starting metadata recovery");
+        debug!("🔄 Starting metadata recovery");
 
         // Try to recover from latest snapshot first
         if let Ok(snapshot_sequence) = self.recover_from_snapshot().await {
-            info!(
+            debug!(
                 "📸 Recovered from snapshot, sequence: {}",
                 snapshot_sequence
             );
@@ -358,19 +394,19 @@ impl UniversalMetadataBackend {
             // Check if we should create a checkpoint after recovery
             // TODO: Temporarily disabled to debug startup hang
             // self.maybe_checkpoint_at_restart().await?;
-            info!("⏭️ Skipping checkpoint at restart to debug startup issue");
+            debug!("⏭️ Skipping checkpoint at restart to debug startup issue");
 
             return Ok(final_sequence);
         }
 
         // Fallback to full recovery from operations
-        info!("📜 No snapshot found, performing full recovery");
+        debug!("📜 No snapshot found, performing full recovery");
         let max_sequence = self.recover_from_operations().await?;
 
         // Check if we should create a checkpoint after recovery
         // TODO: Temporarily disabled to debug startup hang
         // self.maybe_checkpoint_at_restart().await?;
-        info!("⏭️ Skipping checkpoint at restart to debug startup issue");
+        debug!("⏭️ Skipping checkpoint at restart to debug startup issue");
 
         Ok(max_sequence)
     }
@@ -425,7 +461,7 @@ impl UniversalMetadataBackend {
             count += 1;
         }
 
-        info!(
+        debug!(
             "📦 Loaded {} collections from snapshot, rebuilding indexes...",
             count
         );
@@ -439,7 +475,7 @@ impl UniversalMetadataBackend {
             self.index.upsert_collection(record);
         }
 
-        info!(
+        debug!(
             "✅ Rebuilt indexes with {} collections from snapshot",
             count
         );
@@ -454,7 +490,7 @@ impl UniversalMetadataBackend {
         let entries = match fs.list(&ops_dir.to_string_lossy()).await {
             Ok(entries) => entries,
             Err(_) => {
-                info!("📋 No operations directory found");
+                debug!("📋 No operations directory found");
                 return Ok(0);
             }
         };
@@ -475,7 +511,7 @@ impl UniversalMetadataBackend {
             }
         }
 
-        info!("📜 Recovery completed, max sequence: {}", max_sequence);
+        debug!("📜 Recovery completed, max sequence: {}", max_sequence);
         Ok(max_sequence)
     }
 
@@ -519,7 +555,7 @@ impl UniversalMetadataBackend {
             self.sequence.store(sequence, Ordering::SeqCst);
         }
 
-        info!("📈 Applied {} incremental operations", ops_count);
+        debug!("📈 Applied {} incremental operations", ops_count);
         Ok(())
     }
 
@@ -570,52 +606,52 @@ impl UniversalMetadataBackend {
 
     /// Atomic write operation using TransactionCoordinator for ACID guarantees
     async fn atomic_persist_operation(&self, operation: &IncrementalOperation) -> Result<()> {
-        eprintln!(
+        trace!(
             "🔍 DEBUG: atomic_persist_operation() called for seq={}",
             operation.sequence
         );
-        eprintln!(
+        trace!(
             "🔍 DEBUG: atomic_operations_enabled = {}",
             self.atomic_operations_enabled
         );
 
         if !self.atomic_operations_enabled {
-            eprintln!("🔍 DEBUG: Using simple persist (atomic disabled)");
+            trace!("DEBUG: Using simple persist (atomic disabled)");
             return self.execute_simple_persist(operation).await;
         }
 
-        eprintln!("🔍 DEBUG: Using atomic coordinator");
+        trace!("DEBUG: Using atomic coordinator");
 
         // Use the atomic coordinator with simple atomic operations
         let coordinator = self.atomic_coordinator.clone();
 
-        info!(
+        debug!(
             "🔒 Starting atomic operation for seq={}",
             operation.sequence
         );
-        info!("📁 Filestore base_path: {}", self.base_path.display());
-        info!("📁 Config storage_url: {}", self.config.storage_url);
-        info!(
+        debug!("📁 Filestore base_path: {}", self.base_path.display());
+        debug!("📁 Config storage_url: {}", self.config.storage_url);
+        debug!(
             "📁 Current working directory: {:?}",
             std::env::current_dir()?
         );
 
         // Prepare the write data
         let prepared_data = self.prepare_filestore_write(operation).await?;
-        info!("📋 Prepared write data:");
-        info!("    temp_path: {}", prepared_data.temp_path.display());
-        info!("    final_path: {}", prepared_data.final_path.display());
-        info!("    data size: {} bytes", prepared_data.data.len());
+        debug!("📋 Prepared write data:");
+        debug!("    temp_path: {}", prepared_data.temp_path.display());
+        debug!("    final_path: {}", prepared_data.final_path.display());
+        debug!("    data size: {} bytes", prepared_data.data.len());
 
         // Create staging config for atomic operation
         // The base_url should point to the current directory where files will be stored
         let base_url = format!("{}/current", self.config.storage_url.trim_end_matches('/'));
-        info!("📁 DEBUG: Creating staging config:");
-        info!(
+        debug!("📁 DEBUG: Creating staging config:");
+        debug!(
             "📁 DEBUG:   self.config.storage_url = '{}'",
             self.config.storage_url
         );
-        info!("📁 DEBUG:   Computed base_url = '{}'", base_url);
+        debug!("📁 DEBUG:   Computed base_url = '{}'", base_url);
 
         let staging_config = StagingConfig {
             base_url: base_url.clone(),
@@ -628,33 +664,33 @@ impl UniversalMetadataBackend {
             ..Default::default()
         };
 
-        info!("📁 Staging config:");
-        info!("    base_url: {}", staging_config.base_url);
-        info!(
+        debug!("📁 Staging config:");
+        debug!("    base_url: {}", staging_config.base_url);
+        debug!(
             "    custom_staging_dir: {:?}",
             staging_config.custom_staging_dir
         );
-        info!("    operation_type: {:?}", staging_config.operation_type);
-        info!(
+        debug!("    operation_type: {:?}", staging_config.operation_type);
+        debug!(
             "📁 DEBUG: Expected staging path: {}/{}/<operation_id>",
             base_url, "__staging"
         );
 
         // Begin atomic operation
-        eprintln!("🔍 DEBUG: About to call begin_atomic_operation()");
+        trace!("DEBUG: About to call begin_atomic_operation()");
         let op_metadata = coordinator.begin_atomic_operation(&staging_config).await?;
-        eprintln!(
+        trace!(
             "🔍 DEBUG: begin_atomic_operation() SUCCESS - operation_id={}",
             op_metadata.operation_id
         );
 
         // Write to staging
-        info!("📝 Writing to staging:");
-        info!("    staging_url: {}", op_metadata.staging_url);
-        info!("    filename: op_{:016}.oplog", operation.sequence);
-        info!("    operation_id: {}", op_metadata.operation_id);
+        debug!("📝 Writing to staging:");
+        debug!("    staging_url: {}", op_metadata.staging_url);
+        debug!("    filename: op_{:016}.oplog", operation.sequence);
+        debug!("    operation_id: {}", op_metadata.operation_id);
 
-        eprintln!("🔍 DEBUG: About to call write_to_staging()");
+        trace!("DEBUG: About to call write_to_staging()");
         match coordinator
             .write_to_staging(
                 &op_metadata.operation_id,
@@ -664,8 +700,8 @@ impl UniversalMetadataBackend {
             .await
         {
             Ok(_) => {
-                eprintln!("🔍 DEBUG: write_to_staging() SUCCESS");
-                info!("✅ Write to staging successful");
+                trace!("DEBUG: write_to_staging() SUCCESS");
+                debug!("✅ Write to staging successful");
                 // Update in-memory state atomically before finalizing disk write
                 match operation.operation_type {
                     OperationType::Create | OperationType::Update => {
@@ -681,8 +717,8 @@ impl UniversalMetadataBackend {
                 }
 
                 // Finalize the atomic operation (moves from staging to final)
-                info!("🔄 Starting finalize operation...");
-                eprintln!(
+                debug!("🔄 Starting finalize operation...");
+                trace!(
                     "🔍 DEBUG: About to call finalize_atomic_operation() with operation_id={}",
                     op_metadata.operation_id
                 );
@@ -691,13 +727,13 @@ impl UniversalMetadataBackend {
                     .await
                 {
                     Ok(_) => {
-                        eprintln!("🔍 DEBUG: finalize_atomic_operation() SUCCESS");
+                        trace!("DEBUG: finalize_atomic_operation() SUCCESS");
                         self.check_snapshot_trigger().await?;
-                        info!(
+                        debug!(
                             "✅ Atomic operation completed for seq={}",
                             operation.sequence
                         );
-                        eprintln!(
+                        trace!(
                             "🔍 DEBUG: Atomic operation FULLY COMPLETED for seq={}",
                             operation.sequence
                         );
@@ -705,7 +741,7 @@ impl UniversalMetadataBackend {
                     }
                     Err(e) => {
                         // Rollback in-memory state on disk finalization failure
-                        eprintln!("❌ DEBUG: finalize_atomic_operation() FAILED: {}", e);
+                        trace!("DEBUG ERROR: finalize_atomic_operation() FAILED: {}", e);
                         error!("❌ Failed to finalize atomic operation: {}", e);
                         // Note: In production, we'd implement proper rollback of in-memory state
                         Err(e)
@@ -713,7 +749,7 @@ impl UniversalMetadataBackend {
                 }
             }
             Err(e) => {
-                eprintln!("❌ DEBUG: write_to_staging() FAILED: {}", e);
+                trace!("DEBUG ERROR: write_to_staging() FAILED: {}", e);
                 // Abort the operation on write failure
                 let abort_result = coordinator
                     .abort_atomic_operation(
@@ -774,12 +810,12 @@ impl UniversalMetadataBackend {
 
         // Create operation filename with sequence
         let filename = format!("op_{:016}.oplog", operation.sequence);
-        let op_path = ops_dir.join(&filename);
+        let op_path = ops_dir.join(filename.as_str());
 
         // Create staging directory if it doesn't exist for simple operations
         let staging_dir = self.base_path.join("staging");
         std::fs::create_dir_all(&staging_dir).ok();
-        let temp_path = staging_dir.join(&format!("temp_{}", filename));
+        let temp_path = staging_dir.join(format!("temp_{}", filename));
 
         // Serialize operation to Avro
         // Serialize operation log entry as JSON for simplicity
@@ -806,6 +842,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Execute atomic write across memtable, secondary index, and filestore
+    #[allow(dead_code)]
     async fn execute_atomic_write(
         &self,
         operation: &IncrementalOperation,
@@ -860,6 +897,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Check if we should create a checkpoint at restart
+    #[allow(dead_code)]
     async fn maybe_checkpoint_at_restart(&self) -> Result<()> {
         // Count operation files in the current directory
         let fs = self.get_fs()?;
@@ -880,11 +918,11 @@ impl UniversalMetadataBackend {
             .count();
 
         if op_count == 0 {
-            info!("📋 No operation files found, skipping checkpoint at restart");
+            debug!("📋 No operation files found, skipping checkpoint at restart");
             return Ok(());
         }
 
-        info!(
+        debug!(
             "🔄 Found {} operation files at restart, creating checkpoint",
             op_count
         );
@@ -903,7 +941,7 @@ impl UniversalMetadataBackend {
         if let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
             match manager.create_snapshot(&self.index, &*fs).await {
                 Ok(_) => {
-                    info!("✅ Checkpoint created successfully at restart");
+                    debug!("✅ Checkpoint created successfully at restart");
 
                     // Clean up old operation files after successful snapshot
                     self.cleanup_operation_files().await?;
@@ -922,6 +960,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Clean up operation files after successful snapshot
+    #[allow(dead_code)]
     async fn cleanup_operation_files(&self) -> Result<()> {
         let fs = self.get_fs()?;
         let ops_dir = self.base_path.join("current");
@@ -976,7 +1015,7 @@ impl UniversalMetadataBackend {
         }
 
         if archived > 0 {
-            info!(
+            debug!(
                 "📦 Archived {} operation files to archive/{}",
                 archived, archive_subdir
             );
@@ -998,7 +1037,7 @@ impl UniversalMetadataBackend {
 
     /// Delete a collection (CRUD operation)
     pub async fn delete_collection(&self, collection_id: &str) -> Result<()> {
-        info!("🗑️ Deleting collection: {}", collection_id);
+        debug!("🗑️ Deleting collection: {}", collection_id);
 
         // Check if collection exists
         if self.index.get_by_name(collection_id).is_none() {
@@ -1022,7 +1061,7 @@ impl UniversalMetadataBackend {
             self.index.remove_collection(&uuid);
         }
 
-        info!("✅ Collection deleted: {}", collection_id);
+        debug!("✅ Collection deleted: {}", collection_id);
         Ok(())
     }
 
@@ -1071,6 +1110,7 @@ impl UniversalMetadataBackend {
     }
 
     /// Convert protobuf collection to core Collection for fast in-memory index
+    #[allow(dead_code)]
     fn convert_proto_to_core(&self, proto: &Collection) -> Collection {
         // Proto Collection is already the core type - no conversion needed
         proto.clone()
@@ -1177,8 +1217,8 @@ impl UniversalMetadataBackend {
         self.execute_atomic_write(operation, prepared_data).await
     }
     */
-
     /// Serialize record to bytes for rollback
+    #[allow(dead_code)]
     fn serialize_record(&self, record: &Collection) -> Result<Vec<u8>> {
         // Proto-first: serialize directly to protobuf
         let mut buf = Vec::new();
@@ -1292,7 +1332,7 @@ impl UniversalMetadataBackend {
             .await
             .context("Failed to finalize checkpoint operation")?;
 
-        info!("📸 Created checkpoint at sequence {}", sequence);
+        debug!("📸 Created checkpoint at sequence {}", sequence);
 
         // Clean up old snapshots
         self.cleanup_old_snapshots(&checkpoint_dir, self.config.keep_snapshots)
@@ -1310,7 +1350,7 @@ impl UniversalMetadataBackend {
 
         // Check if checkpoint exists
         if !fs.exists(&checkpoint_link.to_string_lossy()).await? {
-            info!("📋 No checkpoint found, will use regular snapshot");
+            debug!("📋 No checkpoint found, will use regular snapshot");
             return Ok((0, false));
         }
 
@@ -1322,7 +1362,7 @@ impl UniversalMetadataBackend {
         // Parse sequence from checkpoint filename
         let sequence = self.parse_checkpoint_sequence(&checkpoint_path)?;
 
-        info!("📸 Found checkpoint at sequence {}", sequence);
+        debug!("📸 Found checkpoint at sequence {}", sequence);
 
         // Load checkpoint into memory
         let checkpoint_data = fs
@@ -1438,8 +1478,9 @@ impl UniversalMetadataBackend {
 
             // Fallback: scan primary memtable if secondary index fails
             // This handles cases where secondary index is inconsistent or corrupted
-            warn!(
-                "🔍 Secondary index lookup failed for '{}', falling back to primary memtable scan",
+            // Normal behavior when index not yet built - not a warning
+            debug!(
+                "Secondary index lookup failed for '{}', using primary scan",
                 identifier
             );
             self.fallback_scan_by_name(identifier)
@@ -1541,7 +1582,9 @@ impl MetadataProvider for UniversalMetadataBackend {
 
 /// Snapshot manager for periodic state persistence
 struct SnapshotManager {
+    #[allow(dead_code)]
     threshold: u64,
+    #[allow(dead_code)]
     keep_count: usize,
     base_path: PathBuf,
 }
@@ -1560,7 +1603,7 @@ impl SnapshotManager {
         index: &SingleCollectionIndex,
         fs: &dyn crate::storage::persistence::filesystem::FileSystem,
     ) -> Result<()> {
-        info!("📸 Creating snapshot");
+        debug!("📸 Creating snapshot");
         let start = std::time::Instant::now();
 
         let snapshot_dir = self.base_path.join("current");
@@ -1768,6 +1811,10 @@ mod tests {
             owner: Some("test".to_string()),
             storage_config: None,
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         // Create a proto collection
@@ -1810,7 +1857,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats, IndexingAlgorithm};
+    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -1858,6 +1905,10 @@ mod integration_tests {
                 owner: Some("test_user".to_string()),
                 storage_config: None,
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -1942,6 +1993,10 @@ mod integration_tests {
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,

@@ -20,7 +20,6 @@
 //! Includes multi-batch sorting strategies and compression optimization.
 
 use anyhow::Result;
-use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use tracing::{debug, info};
 
@@ -239,8 +238,6 @@ impl Default for FlushOptimizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
     #[tokio::test]
     async fn test_simple_sort() {
         let optimizer = FlushOptimizer::new();

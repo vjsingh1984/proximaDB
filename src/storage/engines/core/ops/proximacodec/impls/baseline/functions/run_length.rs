@@ -99,9 +99,9 @@ fn encode_rle_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 2. Store as (run_length:u32, value:f32) pairs
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [num_runs:4 bytes]([run_length:4 bytes][value:4 bytes])*
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

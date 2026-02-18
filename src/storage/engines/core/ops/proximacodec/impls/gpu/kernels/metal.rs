@@ -239,7 +239,7 @@ impl MetalContext {
 /// ) {
 ///     output[gid] = (int64_t)(input[gid] - base);
 /// }
-/// ```
+/// ```text
 pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     trace!(
         "🔧 [Metal] Delta encode: {} values, base={}",
@@ -311,7 +311,7 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 /// ) {
 ///     output[gid] = (float)input[gid] + base;
 /// }
-/// ```
+/// ```text
 pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     trace!(
         "🔧 [Metal] Delta decode: {} deltas, base={}",
@@ -388,7 +388,7 @@ pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 ///
 ///     atomic_fetch_or_explicit(&output[byte_offset], packed << bit_in_byte, memory_order_relaxed);
 /// }
-/// ```
+/// ```text
 pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!(
         "🔧 [Metal] BitPacked encode: {} values, {}b/val",
@@ -798,7 +798,7 @@ pub fn metal_frame_of_reference_decode_f32(
 ///     int n = as_type<int>(input[gid]);
 ///     output[gid] = (n << 1) ^ (n >> 31);
 /// }
-/// ```
+/// ```text
 pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!(
         "🔧 [Metal] Zigzag encode: {} values, {}b/val",

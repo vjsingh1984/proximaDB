@@ -26,6 +26,7 @@ use async_trait::async_trait;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::unified_scan_strategy::{ScanIterator, ScanStatistics};
+use super::VectorSerializer;
 
 /// Configuration for Arrow IPC scanning
 #[derive(Debug, Clone)]
@@ -427,18 +428,9 @@ fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
 }
 
 /// Deserialize vector from binary format
+/// NOTE: Now using shared VectorSerializer from core/formats/vector_serialization.rs
 fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
-        return Err(anyhow::anyhow!("Invalid vector binary data"));
-    }
-    
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|chunk| {
-            let bytes: [u8; 4] = chunk.try_into().unwrap();
-            f32::from_le_bytes(bytes)
-        })
-        .collect())
+    VectorSerializer::deserialize_raw(bytes)
 }
 
 /// Deserialize metadata from Arrow array

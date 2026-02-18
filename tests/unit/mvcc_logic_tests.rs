@@ -2,8 +2,7 @@
 //!
 //! Tests the core MVCC version resolution logic independently of storage engines
 
-use proximadb::proto::proximadb_v1::{SearchVectorRecord, SqlValue};
-use serde_json::json;
+use proximadb::proto::proximadb_v1::SearchVectorRecord;
 use std::collections::HashMap;
 
 /// Test helper to create a SearchVectorRecord with specific ID, version, and timestamp

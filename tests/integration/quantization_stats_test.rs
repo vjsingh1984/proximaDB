@@ -236,6 +236,8 @@ async fn run_quantization_test(
         search_params,
         collection,
         metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+        user_context: None,
+        tenant_context: None,
     };
 
     let search_start = Instant::now();

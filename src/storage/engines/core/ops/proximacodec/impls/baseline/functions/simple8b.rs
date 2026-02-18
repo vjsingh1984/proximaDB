@@ -11,7 +11,6 @@
 use anyhow::Result;
 
 use super::helpers;
-use super::helpers::ToWireFormat;
 
 /// Simple8b selector modes
 /// Each mode packs different number of values with different bit widths
@@ -58,9 +57,9 @@ fn encode_simple8b_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
 /// 3. Choose optimal selector for each batch
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [word_count:4 bytes][64-bit words with selector:4 bits + data:60 bits]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode
@@ -93,7 +92,7 @@ fn encode_u64_internal(values: &[u64]) -> Result<Vec<u8>> {
     while pos < values.len() {
         // Find best selector for remaining values
         let remaining = &values[pos..];
-        let (selector, count, word) = pack_word(remaining)?;
+        let (_selector, count, word) = pack_word(remaining)?;
 
         words.push(word);
         pos += count;

@@ -411,6 +411,7 @@ impl NovaMetadata {
 /// NOVA metadata serializer
 pub struct NovaMetadataSerializer {
     /// Filesystem interface for reading files
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 }
 
@@ -490,6 +491,7 @@ impl NovaMetadataSerializer {
     }
 
     /// Extract metadata from NOVA file
+    #[allow(dead_code)]
     async fn extract_metadata(
         &self,
         file_path: &str,
@@ -1096,7 +1098,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_columnar_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
@@ -1126,7 +1128,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_similarity_search_optimization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(FilesystemFactory::create_default().await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());
 

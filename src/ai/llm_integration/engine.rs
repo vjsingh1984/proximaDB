@@ -9,10 +9,8 @@ use super::providers::{
     LLMClient, OllamaClient, OpenAIClient, VLLMClient,
 };
 use super::types::{
-    FinishReason, LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse,
-    TokenUsage,
+    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
 };
-use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -423,6 +421,8 @@ impl std::fmt::Display for LLMProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::llm_integration::types::FinishReason;
+    use chrono::Utc;
 
     #[test]
     fn test_llm_request_creation() {

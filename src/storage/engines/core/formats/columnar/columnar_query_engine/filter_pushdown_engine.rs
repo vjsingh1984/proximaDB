@@ -4,14 +4,10 @@
 //! for Parquet filter pushdown, enabling efficient query execution.
 
 use anyhow::{Result, anyhow};
-use arrow::compute::SortColumn;
-use arrow::datatypes::{DataType, Field, Schema};
-use parquet::arrow::arrow_reader::RowSelection;
+use arrow::datatypes::Schema;
 use parquet::file::metadata::RowGroupMetaData;
-use parquet::file::statistics::Statistics;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 // Use the columnar module's MetadataFilter, not the proto one
 use crate::storage::engines::core::formats::columnar::{FilterCondition, MetadataFilter};
@@ -66,11 +62,11 @@ impl PredicateBuilder {
             }
 
             if !predicates.is_empty() {
-                let filter_logic = match filter.logic {
+                let _filter_logic = match filter.logic {
                     crate::storage::engines::core::formats::columnar::FilterLogic::And => " AND ",
                     crate::storage::engines::core::formats::columnar::FilterLogic::Or => " OR ",
                 };
-                let group = format!("({})", predicates.join(filter_logic));
+                let group = format!("({})", predicates.join(" AND "));
                 filter_groups.push(group);
             }
         }
@@ -88,24 +84,24 @@ impl PredicateBuilder {
         let predicate = match condition {
             FilterCondition::Equals(field, value) => {
                 let value_str = self.format_value(value)?;
-                format!("{} = {}", field, value_str)
+                format!("{field} = {value_str}")
             }
             FilterCondition::Range(field, min, max) => {
                 let min_str = self.format_value(min)?;
                 let max_str = self.format_value(max)?;
-                format!("{} >= {} AND {} <= {}", field, min_str, field, max_str)
+                format!("{field} >= {min_str} AND {field} <= {max_str}")
             }
             FilterCondition::In(field, values) => {
                 let value_strs: Result<Vec<String>> =
                     values.iter().map(|v| self.format_value(v)).collect();
                 let values_list = value_strs?.join(", ");
-                format!("{} IN ({})", field, values_list)
+                format!("{field} IN ({values_list})")
             }
             FilterCondition::IsNull(field) => {
-                format!("{} IS NULL", field)
+                format!("{field} IS NULL")
             }
             FilterCondition::IsNotNull(field) => {
-                format!("{} IS NOT NULL", field)
+                format!("{field} IS NOT NULL")
             }
         };
 
@@ -115,11 +111,11 @@ impl PredicateBuilder {
     /// Format a serde_json::Value for SQL
     fn format_value(&self, value: &serde_json::Value) -> Result<String> {
         match value {
-            serde_json::Value::String(s) => Ok(format!("'{}'", s)),
+            serde_json::Value::String(s) => Ok(format!("'{s}'")),
             serde_json::Value::Number(n) => Ok(n.to_string()),
             serde_json::Value::Bool(b) => Ok(b.to_string()),
             serde_json::Value::Null => Ok("NULL".to_string()),
-            _ => Err(anyhow!("Unsupported value type: {:?}", value)),
+            _ => Err(anyhow!("Unsupported value type: {value:?}")),
         }
     }
 
@@ -143,7 +139,7 @@ impl PredicateBuilder {
     }
 
     /// Evaluate filters against row group statistics
-    pub fn evaluate_row_group(&self, metadata: &RowGroupMetaData) -> bool {
+    pub fn evaluate_row_group(&self, __metadata: &RowGroupMetaData) -> bool {
         // This would check row group statistics to see if it can be skipped
         // For now, return true to read all row groups
         true
@@ -187,13 +183,10 @@ impl FilterPushdown {
     }
 
     /// Check if a filter can be pushed down
-    fn can_push_filter(&self, filter: &MetadataFilter) -> bool {
+    fn can_push_filter(&self, _filter: &MetadataFilter) -> bool {
         // Check if filter uses only supported operations
-        // Check if filter uses only supported operations
-        for condition in &filter.conditions {
-            // FilterCondition enum already validated, so just return true
-            // All enum variants are supported for pushdown
-        }
+        // All FilterCondition enum variants are supported for pushdown
+        // FilterCondition enum already validated
         true
     }
 
@@ -225,7 +218,7 @@ impl FilterPushdown {
     }
 
     /// Check if row group matches filters based on statistics
-    fn row_group_matches(&self, filters: &[MetadataFilter], rg: &RowGroupMetaData) -> bool {
+    fn row_group_matches(&self, __filters: &[MetadataFilter], __rg: &RowGroupMetaData) -> bool {
         // This would check column statistics (min/max) against filters
         // For now, return true to read all row groups
         true

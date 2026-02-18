@@ -4,7 +4,10 @@
 //! including compression, encoding, and optimization settings.
 
 use crate::proto::proximadb_v1::QuantizationConfig;
-use parquet::basic::{Compression, Encoding};
+use crate::storage::engines::core::formats::columnar::constants::{
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
+};
+use parquet::basic::Compression;
 
 /// Comprehensive configuration for Parquet writers
 #[derive(Debug, Clone)]
@@ -172,8 +175,8 @@ impl ParquetWriterConfig {
 impl Default for ParquetWriterConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 10000,
-            page_size: 1024,
+            row_group_size: DEFAULT_ROW_GROUP_SIZE,
+            page_size: DEFAULT_PAGE_SIZE,
             write_batch_size: 1000,
             compression: Compression::SNAPPY,
             compression_level: None,

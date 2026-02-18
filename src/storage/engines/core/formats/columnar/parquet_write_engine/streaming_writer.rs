@@ -3,19 +3,15 @@
 //! This module provides streaming write capabilities for Parquet files,
 //! optimized for large datasets with batch processing and row group management.
 
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use anyhow::{Context, Result, anyhow};
-use arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array,
-};
+use crate::storage::persistence::filesystem::FilesystemFactory;
+use anyhow::{Result, anyhow};
+use arrow::array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
-use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::ColumnarFilterableSpec;
@@ -24,7 +20,6 @@ use crate::storage::engines::core::formats::columnar::{
 };
 
 use super::{
-    implicit_id_generator::IdLessLookup,
     schema_builder::{ParquetSchemaBuilder, create_writer_properties},
     writer_config::ParquetWriterConfig,
     writer_statistics::StreamingParquetWriterStats,
@@ -41,9 +36,11 @@ pub struct StreamingParquetWriter {
     total_records_written: u64,
 
     /// Custom ID bloom filters per row group (supplements Parquet native filters)
+    #[allow(dead_code)]
     id_bloom_filters: Vec<crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
 
     /// Metadata bloom filters for other columns
+    #[allow(dead_code)]
     metadata_bloom_filters:
         HashMap<String, crate::storage::engines::core::formats::columnar::id_index::BloomFilter>,
 
@@ -62,6 +59,7 @@ pub struct StreamingParquetWriter {
     metadata_collector: Option<Box<dyn MetadataCollector>>,
 
     /// Filesystem factory for cloud storage support
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 }
 
@@ -349,7 +347,7 @@ impl StreamingParquetWriter {
         // Add filterable column arrays if specified
         if !self.filterable_columns.is_empty() {
             use crate::storage::engines::core::formats::columnar::schema::FilterableData;
-            use arrow_array::{BooleanArray, Float64Array, Int32Array, Int64Array};
+            use arrow_array::{BooleanArray, Float64Array, Int64Array};
 
             debug!(
                 "Writing {} filterable columns for {} records",
@@ -486,7 +484,6 @@ impl StreamingParquetWriter {
         // Extra metadata - Create a Map array matching the schema
         // The schema expects a struct with "key" and "value" fields
         use arrow_array::{MapArray, StructArray};
-        use arrow_buffer::NullBuffer;
 
         // Create struct array for the entries
         let key_field = Field::new("key", DataType::Utf8, false);
@@ -680,7 +677,7 @@ impl StreamingParquetWriter {
     fn update_bloom_filters(&mut self, records: &[VectorRecord]) -> Result<()> {
         // Ensure we have a bloom filter for current row group
         while self.id_bloom_filters.len() <= self.current_row_group {
-            let estimated_items = self.config.bloom_filter_ndv.max(100000);
+            let _estimated_items = self.config.bloom_filter_ndv.max(100000);
             // BloomFilter::new expects different parameters
             // Using default configuration for now
             let bloom =

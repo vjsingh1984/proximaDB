@@ -1,8 +1,173 @@
-// Custom serde implementations for protobuf oneof types ONLY
+// Custom serde implementations for protobuf types
+// Handles oneof types and SDK compatibility for complex types like QuantizationConfig
 use crate::proto::proximadb_v1::{PropertyValue, property_value::Value as PropertyValueVariant};
+use crate::proto::proximadb_v1::{QuantizationConfig, QuantizationLevel};
 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlValueVariant};
 use crate::utils::encoding::{base64_decode, base64_encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+// ============================================================================
+// QuantizationConfig - SDK Compatibility Shim
+// ============================================================================
+//
+// The Python SDK sends flat quantization config:
+// {
+//   "enabled": true,
+//   "type": "product",  // or "binary", "scalar"
+//   "bits": 16,
+//   "num_subvectors": 16,
+//   "bits_per_subvector": 8,
+//   "bits_per_vector": 128
+// }
+//
+// But the proto expects nested custom_levels:
+// {
+//   "enabled": true,
+//   "strategy": 2,
+//   "custom_levels": [
+//     {"level_id": "...", "type": 1, "bits": 16, "num_subvectors": 16}
+//   ]
+// }
+//
+// This custom deserializer accepts BOTH formats for backward compatibility.
+
+impl<'de> Deserialize<'de> for QuantizationConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use crate::proto::proximadb_v1::quantization_config::Strategy;
+        use crate::proto::proximadb_v1::quantization_level::QuantizationType;
+
+        // Helper struct that accepts both proto and SDK fields
+        #[derive(serde::Deserialize)]
+        struct QuantizationConfigHelper {
+            // Standard proto fields
+            enabled: Option<bool>,
+            strategy: Option<i32>,
+            #[serde(default)]
+            custom_levels: Vec<QuantizationLevel>,
+            enable_progressive_search: Option<bool>,
+            binary_filter_selectivity: Option<f32>,
+            int8_ranking_selectivity: Option<f32>,
+            pq_ranking_selectivity: Option<f32>,
+            training_sample_size: Option<u32>,
+            quality_threshold: Option<f32>,
+            enable_adaptive_training: Option<bool>,
+            optimize_for_storage: Option<bool>,
+            optimize_for_memory: Option<bool>,
+            enable_simd_acceleration: Option<bool>,
+            enable_binary: Option<bool>,
+            enable_int8: Option<bool>,
+            enable_pq: Option<bool>,
+            pq_segments: Option<u32>,
+            pq_bits: Option<u32>,
+            pq_codebooks: Option<u32>,
+            binary_threshold: Option<f32>,
+            int8_threshold: Option<f32>,
+            pq_threshold: Option<f32>,
+
+            // SDK compatibility fields (flat structure)
+            #[serde(alias = "type")]
+            quantization_type: Option<String>,
+            bits: Option<u32>,
+            num_subvectors: Option<u32>,
+            bits_per_subvector: Option<u32>,
+            bits_per_vector: Option<u32>,
+        }
+
+        let helper = QuantizationConfigHelper::deserialize(deserializer)?;
+
+        // Determine custom_levels: use proto format if provided, else construct from SDK fields
+        let custom_levels = if !helper.custom_levels.is_empty() {
+            // Proto format - use as-is
+            helper.custom_levels
+        } else if helper.quantization_type.is_some()
+            || helper.bits.is_some()
+            || helper.num_subvectors.is_some()
+        {
+            // SDK format - construct custom_levels from flat fields
+            let quant_type_str = helper.quantization_type.as_deref().unwrap_or("none");
+            let quant_type = match quant_type_str.to_lowercase().as_str() {
+                "binary" => QuantizationType::Binary as i32,
+                "int8" | "scalar" => QuantizationType::Scalar as i32,
+                "product" | "pq" => QuantizationType::Product as i32,
+                "uniform" => QuantizationType::Uniform as i32,
+                "none" => QuantizationType::None as i32,
+                _ => QuantizationType::None as i32,
+            };
+
+            let bits = helper
+                .bits
+                .or(helper.bits_per_subvector)
+                .or(helper.bits_per_vector)
+                .unwrap_or(8);
+
+            let num_subvectors = helper.num_subvectors.unwrap_or(
+                if quant_type == QuantizationType::Product as i32 {
+                    16
+                } else {
+                    1
+                },
+            );
+
+            vec![QuantizationLevel {
+                level_id: format!("sdk_level_{}", quant_type_str),
+                r#type: quant_type,
+                bits,
+                num_subvectors,
+                adaptive_subvectors: false,
+                scale: 1.0,
+                offset: 0.0,
+                clamp_values: true,
+                threshold: 0.0,
+                sign_based: false,
+                enable_in_storage: true,
+                enable_in_index: true,
+                search_priority: 0,
+                min_recall: 0.95,
+                enable_validation: true,
+            }]
+        } else {
+            // No quantization levels specified
+            vec![]
+        };
+
+        // Determine strategy based on custom_levels or explicit strategy
+        let strategy = helper.strategy.or_else(|| {
+            if !custom_levels.is_empty() {
+                Some(Strategy::CustomLevels as i32)
+            } else {
+                Some(Strategy::SmartDefaults as i32)
+            }
+        });
+
+        Ok(QuantizationConfig {
+            enabled: helper.enabled,
+            strategy,
+            custom_levels,
+            enable_progressive_search: helper.enable_progressive_search,
+            binary_filter_selectivity: helper.binary_filter_selectivity,
+            int8_ranking_selectivity: helper.int8_ranking_selectivity,
+            pq_ranking_selectivity: helper.pq_ranking_selectivity,
+            training_sample_size: helper.training_sample_size,
+            quality_threshold: helper.quality_threshold,
+            enable_adaptive_training: helper.enable_adaptive_training,
+            optimize_for_storage: helper.optimize_for_storage,
+            optimize_for_memory: helper.optimize_for_memory,
+            enable_simd_acceleration: helper.enable_simd_acceleration,
+            enable_binary: helper.enable_binary,
+            enable_int8: helper.enable_int8,
+            enable_pq: helper.enable_pq,
+            pq_segments: helper.pq_segments,
+            pq_bits: helper.pq_bits,
+            pq_codebooks: helper.pq_codebooks,
+            binary_threshold: helper.binary_threshold,
+            int8_threshold: helper.int8_threshold,
+            pq_threshold: helper.pq_threshold,
+        })
+    }
+}
 impl Serialize for SqlValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -49,43 +214,141 @@ impl<'de> Deserialize<'de> for SqlValue {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct SqlValueHelper {
-            string_value: Option<String>,
-            number_value: Option<f64>,
-            bool_value: Option<bool>,
-            int64_value: Option<i64>,
-            bytes_value: Option<String>, // base64 encoded
-            null_value: Option<serde_json::Value>,
-            array_value: Option<crate::proto::proximadb_v1::SqlArray>,
-            object_value: Option<crate::proto::proximadb_v1::SqlObject>,
-        }
+        // First, deserialize as a raw JSON value to handle both formats
+        let json_value = serde_json::Value::deserialize(deserializer)?;
 
-        let helper = SqlValueHelper::deserialize(deserializer)?;
+        // Convert JSON value to SqlValue
+        // Supports BOTH:
+        // 1. Proto format: {"string_value": "test"}, {"number_value": 42}
+        // 2. Simple format: "test", 42, true, null (MVP-friendly)
+        let value = match &json_value {
+            // Handle simple primitive types directly (MVP-friendly format)
+            serde_json::Value::String(s) => Some(SqlValueVariant::StringValue(s.clone())),
+            serde_json::Value::Bool(b) => Some(SqlValueVariant::BoolValue(*b)),
+            serde_json::Value::Null => Some(SqlValueVariant::NullValue(0)),
+            serde_json::Value::Number(n) => {
+                // Prefer integer if it fits, otherwise use float
+                if let Some(i) = n.as_i64() {
+                    Some(SqlValueVariant::Int64Value(i))
+                } else if let Some(f) = n.as_f64() {
+                    Some(SqlValueVariant::NumberValue(f))
+                } else {
+                    None
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                // Convert JSON array to SqlArray
+                let values: Vec<SqlValue> =
+                    arr.iter().filter_map(|v| json_to_sql_value(v)).collect();
+                Some(SqlValueVariant::ArrayValue(
+                    crate::proto::proximadb_v1::SqlArray { values },
+                ))
+            }
+            serde_json::Value::Object(obj) => {
+                // Check for proto-style wrapped values first
+                if let Some(v) = obj.get("string_value") {
+                    if let Some(s) = v.as_str() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::StringValue(s.to_string())),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("number_value") {
+                    if let Some(f) = v.as_f64() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::NumberValue(f)),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("bool_value") {
+                    if let Some(b) = v.as_bool() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::BoolValue(b)),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("int64_value") {
+                    if let Some(i) = v.as_i64() {
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::Int64Value(i)),
+                        });
+                    }
+                }
+                if let Some(v) = obj.get("bytes_value") {
+                    if let Some(s) = v.as_str() {
+                        let bytes = base64_decode(s).map_err(serde::de::Error::custom)?;
+                        return Ok(SqlValue {
+                            value: Some(SqlValueVariant::BytesValue(bytes)),
+                        });
+                    }
+                }
+                if obj.contains_key("null_value") {
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::NullValue(0)),
+                    });
+                }
+                if let Some(v) = obj.get("array_value") {
+                    let arr: crate::proto::proximadb_v1::SqlArray =
+                        serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)?;
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::ArrayValue(arr)),
+                    });
+                }
+                if let Some(v) = obj.get("object_value") {
+                    let object: crate::proto::proximadb_v1::SqlObject =
+                        serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)?;
+                    return Ok(SqlValue {
+                        value: Some(SqlValueVariant::ObjectValue(object)),
+                    });
+                }
 
-        let value = if let Some(v) = helper.string_value {
-            Some(SqlValueVariant::StringValue(v))
-        } else if let Some(v) = helper.number_value {
-            Some(SqlValueVariant::NumberValue(v))
-        } else if let Some(v) = helper.bool_value {
-            Some(SqlValueVariant::BoolValue(v))
-        } else if let Some(v) = helper.int64_value {
-            Some(SqlValueVariant::Int64Value(v))
-        } else if let Some(v) = helper.bytes_value {
-            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
-            Some(SqlValueVariant::BytesValue(bytes))
-        } else if helper.null_value.is_some() {
-            Some(SqlValueVariant::NullValue(0)) // prost_types::NullValue
-        } else if let Some(v) = helper.array_value {
-            Some(SqlValueVariant::ArrayValue(v))
-        } else if let Some(v) = helper.object_value {
-            Some(SqlValueVariant::ObjectValue(v))
-        } else {
-            None
+                // Treat as a generic object (MVP-friendly nested object)
+                let fields: std::collections::HashMap<String, SqlValue> = obj
+                    .iter()
+                    .filter_map(|(k, v)| json_to_sql_value(v).map(|sv| (k.clone(), sv)))
+                    .collect();
+                Some(SqlValueVariant::ObjectValue(
+                    crate::proto::proximadb_v1::SqlObject { fields },
+                ))
+            }
         };
 
         Ok(SqlValue { value })
     }
+}
+
+/// Helper function to convert serde_json::Value to SqlValue
+fn json_to_sql_value(json: &serde_json::Value) -> Option<SqlValue> {
+    let value = match json {
+        serde_json::Value::String(s) => Some(SqlValueVariant::StringValue(s.clone())),
+        serde_json::Value::Bool(b) => Some(SqlValueVariant::BoolValue(*b)),
+        serde_json::Value::Null => Some(SqlValueVariant::NullValue(0)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(SqlValueVariant::Int64Value(i))
+            } else if let Some(f) = n.as_f64() {
+                Some(SqlValueVariant::NumberValue(f))
+            } else {
+                None
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            let values: Vec<SqlValue> = arr.iter().filter_map(json_to_sql_value).collect();
+            Some(SqlValueVariant::ArrayValue(
+                crate::proto::proximadb_v1::SqlArray { values },
+            ))
+        }
+        serde_json::Value::Object(obj) => {
+            let fields: std::collections::HashMap<String, SqlValue> = obj
+                .iter()
+                .filter_map(|(k, v)| json_to_sql_value(v).map(|sv| (k.clone(), sv)))
+                .collect();
+            Some(SqlValueVariant::ObjectValue(
+                crate::proto::proximadb_v1::SqlObject { fields },
+            ))
+        }
+    };
+    value.map(|v| SqlValue { value: Some(v) })
 }
 impl Serialize for PropertyValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -104,8 +367,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -115,8 +384,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -126,8 +401,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &Some(v))?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -137,8 +418,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &Some(v))?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -148,8 +435,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &Some(base64_encode(v)))?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -160,7 +453,10 @@ impl Serialize for PropertyValue {
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
                 state.serialize_field("array_value", &Some(v))?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -170,7 +466,10 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
                 state.serialize_field("object_value", &Some(v))?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
@@ -181,8 +480,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &Some(&v.values))?;
                 state.serialize_field("null_value", &None::<serde_json::Value>)?;
             }
@@ -192,8 +497,14 @@ impl Serialize for PropertyValue {
                 state.serialize_field("double_value", &None::<f64>)?;
                 state.serialize_field("bool_value", &None::<bool>)?;
                 state.serialize_field("bytes_value", &None::<String>)?;
-                state.serialize_field("array_value", &None::<crate::proto::proximadb_v1::PropertyArray>)?;
-                state.serialize_field("object_value", &None::<crate::proto::proximadb_v1::PropertyObject>)?;
+                state.serialize_field(
+                    "array_value",
+                    &None::<crate::proto::proximadb_v1::PropertyArray>,
+                )?;
+                state.serialize_field(
+                    "object_value",
+                    &None::<crate::proto::proximadb_v1::PropertyObject>,
+                )?;
                 state.serialize_field("vector_value", &None::<Vec<f32>>)?;
                 state.serialize_field("null_value", &Some(serde_json::Value::Null))?;
             }
@@ -217,6 +528,7 @@ impl<'de> Deserialize<'de> for PropertyValue {
             array_value: Option<crate::proto::proximadb_v1::PropertyArray>,
             object_value: Option<crate::proto::proximadb_v1::PropertyObject>,
             vector_value: Option<Vec<f32>>,
+            #[allow(dead_code)]
             null_value: Option<serde_json::Value>,
         }
 
@@ -446,6 +758,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataValue {
             int_value: Option<i64>,
             double_value: Option<f64>,
             bool_value: Option<bool>,
+            #[allow(dead_code)]
             null_value: Option<serde_json::Value>,
         }
 
@@ -483,6 +796,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::FilterClause {
             int_value: Option<i64>,
             double_value: Option<f64>,
             bool_value: Option<bool>,
+            #[allow(dead_code)]
             null_value: Option<serde_json::Value>,
         }
 
@@ -530,8 +844,7 @@ impl Serialize for Node {
         state.serialize_field("labels", &self.labels)?;
 
         // Sort HashMap keys for deterministic bincode serialization
-        let sorted_properties: std::collections::BTreeMap<_, _> =
-            self.properties.iter().collect();
+        let sorted_properties: std::collections::BTreeMap<_, _> = self.properties.iter().collect();
         state.serialize_field("properties", &sorted_properties)?;
 
         state.serialize_field("embedding", &self.embedding)?;
@@ -582,8 +895,7 @@ impl Serialize for Edge {
         state.serialize_field("edge_type", &self.edge_type)?;
 
         // Sort HashMap keys for deterministic bincode serialization
-        let sorted_properties: std::collections::BTreeMap<_, _> =
-            self.properties.iter().collect();
+        let sorted_properties: std::collections::BTreeMap<_, _> = self.properties.iter().collect();
         state.serialize_field("properties", &sorted_properties)?;
 
         state.serialize_field("weight", &self.weight)?;

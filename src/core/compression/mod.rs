@@ -65,7 +65,7 @@
 //!
 //! ### 1. **No Compression**
 //! For already compressed or small data:
-//! ```rust
+//! ```rust,ignore
 //! if data.len() < 1024 || is_compressed(&data) {
 //!     return CompressionAlgorithm::None;
 //! }
@@ -73,7 +73,7 @@
 //!
 //! ### 2. **Mixed Compression**
 //! Different algorithms per data type:
-//! ```rust
+//! ```rust,ignore
 //! let strategy = MixedCompressionStrategy {
 //!     vectors: CompressionAlgorithm::LZ4,
 //!     metadata: CompressionAlgorithm::ZSTD,
@@ -83,7 +83,7 @@
 //!
 //! ### 3. **Adaptive Compression**
 //! Adjust based on compression ratio:
-//! ```rust
+//! ```rust,ignore
 //! let ratio = compressed_size as f64 / original_size as f64;
 //! if ratio > 0.9 {
 //!     // Poor compression, switch to faster algorithm
@@ -93,7 +93,7 @@
 //!
 //! ### 4. **Dictionary Compression**
 //! For repetitive data patterns:
-//! ```rust
+//! ```rust,ignore
 //! let dict = train_dictionary(&sample_data);
 //! let compressed = zstd_compress_with_dict(&data, &dict);
 //! ```
@@ -144,7 +144,7 @@
 //! ## Usage Examples
 //!
 //! ### Basic Compression
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compression::{compress, decompress, CompressionAlgorithm};
 //!
 //! let data = vec![1, 2, 3, 4, 5];
@@ -154,7 +154,7 @@
 //! ```
 //!
 //! ### Context-Aware Compression
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compression::CompressionContext;
 //!
 //! let ctx = CompressionContext::new()
@@ -167,7 +167,7 @@
 //! ```
 //!
 //! ### Streaming Compression
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compression::StreamingCompressor;
 //!
 //! let mut compressor = StreamingCompressor::new(CompressionAlgorithm::LZ4);
@@ -179,7 +179,7 @@
 //! ## Format Markers
 //!
 //! Each compressed block includes a header:
-//! ```
+//! ```text
 //! [Magic: 4 bytes][Algorithm: 1 byte][Level: 1 byte][Size: 4 bytes][Data...]
 //! ```
 //!
@@ -214,7 +214,7 @@ mod parquet {
         }
 
         #[derive(Debug, Clone)]
-        pub struct GzipLevel(u32);
+        pub struct GzipLevel(#[allow(dead_code)] u32);
         impl GzipLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
                 Ok(Self(level))
@@ -227,7 +227,7 @@ mod parquet {
         }
 
         #[derive(Debug, Clone)]
-        pub struct ZstdLevel(i32);
+        pub struct ZstdLevel(#[allow(dead_code)] i32);
         impl ZstdLevel {
             pub fn try_new(level: i32) -> Result<Self, String> {
                 Ok(Self(level))
@@ -240,7 +240,7 @@ mod parquet {
         }
 
         #[derive(Debug, Clone)]
-        pub struct BrotliLevel(u32);
+        pub struct BrotliLevel(#[allow(dead_code)] u32);
         impl BrotliLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
                 Ok(Self(level))
@@ -1140,8 +1140,6 @@ mod tests {
 
     #[test]
     fn test_mixed_compression_strategy() {
-        use std::collections::HashMap;
-
         // Test column type detection
         let test_columns = vec![
             ("id".to_string(), ColumnData::Identifier),

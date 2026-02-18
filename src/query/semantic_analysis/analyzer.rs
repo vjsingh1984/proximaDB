@@ -402,8 +402,8 @@ impl Analyzer {
                 Expr::SksSimilar {
                     field,
                     query,
-                    metric,
-                    threshold,
+                    metric: _,
+                    threshold: _,
                 } => {
                     // Semantic analysis for SKS_SIMILAR
                     // field is a String (field name), query is an Expr
@@ -434,8 +434,8 @@ impl Analyzer {
                 }
                 Expr::SksFollow {
                     start,
-                    edge,
-                    max_depth,
+                    edge: _,
+                    max_depth: _,
                 } => {
                     // Semantic analysis for SKS_FOLLOW
                     let start_type = self.analyze_expr(start, scope).await?;
@@ -452,8 +452,8 @@ impl Analyzer {
                 }
                 Expr::SksAssemble {
                     context_items,
-                    strategy,
-                    max_size,
+                    strategy: _,
+                    max_size: _,
                 } => {
                     // Semantic analysis for SKS_ASSEMBLE
                     for item in context_items {

@@ -43,9 +43,13 @@ pub mod isolated_sst_engine_test;
 // WAL recovery integration tests - Moved to unit test in src/storage/engine.rs
 // See test_recover_from_wal_method_compiles() for validation
 
-// Persistence and recovery integration tests - DEFERRED (requires ProximaDB API updates)
-// TODO: Update tests to use current ProximaDB high-level API (graph methods moved to services)
-// Graph persistence test draft added in persistence_recovery_integration_test.rs:568-736
+// Persistence and recovery integration tests - DEFERRED
+// These tests use an older API that no longer exists on ProximaDB (create_collection,
+// insert_vectors, search_vectors, list_collections). Need to be updated to use the
+// current services-based API before re-enabling.
+// For now, persistence is validated via:
+//   - tests/graph_persistence_service_test.rs (graph WAL persistence)
+//   - tests/wal_path_correctness_test.rs (WAL path verification)
 // pub mod persistence_recovery_integration_test;
 
 // gRPC integration tests
@@ -129,5 +133,12 @@ pub mod early_termination_test;
 pub mod quantization_stats_test;
 pub mod sst_quantization_blocks_test;
 pub mod sst_quantization_comprehensive_test; // Comprehensive quantization coverage
+
+// Query facade integration tests - REST/gRPC parity validation
+pub mod query_facade;
+
+// SQL frontend integration tests
+// Note: sql_frontend module only contains unified_query_tests.rs which needs a mod.rs
+// TODO: Add mod.rs to sql_frontend directory when tests are ready
 
 // Middleware integration tests are at this level since they cross-cut concerns

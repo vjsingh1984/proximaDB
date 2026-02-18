@@ -4,26 +4,29 @@ ProximaDB Python SDK Test Configuration
 Shared fixtures and configuration for all test modules
 """
 
-import pytest
 import logging
-import time
-import sys
+
+# import sys  # Removed - using editable install
 import os
-from typing import Generator, Dict, Any
+import time
+from typing import Any, Dict, Generator
 
-# Add the SDK source to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+import pytest
 
-from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb import CollectionConfig, DistanceMetric
-from proximadb import ProximaDBError
-
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    ProximaDBClient,
+    ProximaDBError,
+    connect_grpc,
+    connect_rest,
+)
 
 # Configure logging for tests
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 # Test configuration
@@ -33,7 +36,7 @@ TEST_CONFIG = {
     "default_timeout": 30.0,
     "max_retry_attempts": 3,
     "test_collection_prefix": "pytest_",
-    "cleanup_on_failure": True
+    "cleanup_on_failure": True,
 }
 
 
@@ -48,41 +51,51 @@ def verify_server_running(test_config):
     """Verify ProximaDB server is running before tests"""
     try:
         rest_client = connect_rest(test_config["rest_endpoint"])
-        
+
         # Try to connect and get health status
         try:
             health = rest_client.health()
             logging.info(f"✅ ProximaDB REST server is healthy: {health}")
         except Exception as e:
-            logging.warning(f"⚠️ Health check failed, but server appears to be running: {e}")
-        
+            logging.warning(
+                f"⚠️ Health check failed, but server appears to be running: {e}"
+            )
+
         # Try basic operation
         collections = rest_client.list_collections()
-        logging.info(f"✅ ProximaDB server responding - found {len(collections)} collections")
-        
+        logging.info(
+            f"✅ ProximaDB server responding - found {len(collections)} collections"
+        )
+
         return True
-        
+
     except Exception as e:
-        pytest.fail(f"❌ ProximaDB server not accessible at {test_config['rest_endpoint']}: {e}")
+        pytest.fail(
+            f"❌ ProximaDB server not accessible at {test_config['rest_endpoint']}: {e}"
+        )
 
 
 @pytest.fixture(scope="class")
-def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
+def rest_client(
+    verify_server_running, test_config
+) -> Generator[ProximaDBClient, None, None]:
     """Shared REST client fixture for test classes"""
     client = connect_rest(test_config["rest_endpoint"])
     yield client
-    
-    if hasattr(client, 'close'):
+
+    if hasattr(client, "close"):
         client.close()
 
 
 @pytest.fixture(scope="class")
-def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
+def grpc_client(
+    verify_server_running, test_config
+) -> Generator[ProximaDBClient, None, None]:
     """Shared gRPC client fixture for test classes"""
     client = connect_grpc(test_config["grpc_endpoint"])
     yield client
-    
-    if hasattr(client, 'close'):
+
+    if hasattr(client, "close"):
         client.close()
 
 
@@ -90,7 +103,9 @@ def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 def unique_collection_name(test_config) -> str:
     """Generate unique collection name for each test"""
     timestamp = int(time.time())  # Millisecond precision
-    test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
+    test_name = (
+        os.environ.get("PYTEST_CURRENT_TEST", "unknown").split("::")[-1].split("[")[0]
+    )
     return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
 
 
@@ -98,10 +113,10 @@ def unique_collection_name(test_config) -> str:
 def basic_collection_config() -> CollectionConfig:
     """Basic collection configuration for tests"""
     return CollectionConfig(
-            name="test_collection",
-            dimension=128,
+        name="test_collection",
+        dimension=128,
         distance_metric="cosine",
-        description="Test collection created by pytest"
+        description="Test collection created by pytest",
     )
 
 
@@ -109,20 +124,22 @@ def basic_collection_config() -> CollectionConfig:
 def advanced_collection_config() -> CollectionConfig:
     """Advanced collection configuration for tests"""
     return CollectionConfig(
-            name="test_collection",
-            dimension=384,
+        name="test_collection",
+        dimension=384,
         distance_metric="cosine",
         description="Advanced test collection with BERT dimensions",
-        storage_engine=StorageEngine.VIPER
+        storage_engine=StorageEngine.VIPER,
     )
 
 
 @pytest.fixture
 def test_collection(rest_client, unique_collection_name, basic_collection_config):
     """Create and manage a test collection with automatic cleanup"""
-    collection = rest_client.create_collection(unique_collection_name, basic_collection_config)
+    collection = rest_client.create_collection(
+        unique_collection_name, basic_collection_config
+    )
     yield collection
-    
+
     # Cleanup
     try:
         rest_client.delete_collection(unique_collection_name)
@@ -133,28 +150,31 @@ def test_collection(rest_client, unique_collection_name, basic_collection_config
 
 class TestCollectionManager:
     """Helper class for managing test collections"""
-    
+
     def __init__(self, client: ProximaDBClient, config: Dict[str, Any]):
         self.client = client
         self.config = config
         self.created_collections = []
-    
-    def create_test_collection(self, name_suffix: str = "", config: CollectionConfig = None) -> str:
+
+    def create_test_collection(
+        self, name_suffix: str = "", config: CollectionConfig = None
+    ) -> str:
         """Create a test collection with automatic tracking"""
         if config is None:
             config = CollectionConfig(
-            name="test_collection",
-            dimension=128,
-            distance_metric="cosine")
-        
+                name="test_collection", dimension=128, distance_metric="cosine"
+            )
+
         timestamp = int(time.time())
-        collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
-        
+        collection_name = (
+            f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
+        )
+
         collection = self.client.create_collection(collection_name, config)
         self.created_collections.append(collection_name)
-        
+
         return collection_name
-    
+
     def cleanup_all(self):
         """Clean up all created collections"""
         for collection_name in self.created_collections:
@@ -163,7 +183,7 @@ class TestCollectionManager:
                 logging.debug(f"Cleaned up collection: {collection_name}")
             except Exception as e:
                 logging.warning(f"Failed to cleanup {collection_name}: {e}")
-        
+
         self.created_collections.clear()
 
 
@@ -172,7 +192,7 @@ def collection_manager(rest_client, test_config):
     """Collection manager fixture with automatic cleanup"""
     manager = TestCollectionManager(rest_client, test_config)
     yield manager
-    
+
     # Cleanup all collections created by this manager
     manager.cleanup_all()
 
@@ -184,7 +204,8 @@ def pytest_configure(config):
         "markers", "slow: marks tests as slow (may take > 10 seconds)"
     )
     config.addinivalue_line(
-        "markers", "integration: marks tests as integration tests requiring running server"
+        "markers",
+        "integration: marks tests as integration tests requiring running server",
     )
     config.addinivalue_line(
         "markers", "storage: marks tests related to storage layer functionality"
@@ -204,17 +225,21 @@ def pytest_collection_modifyitems(config, items):
         # Add integration marker to all tests by default
         if not any(marker.name == "unit" for marker in item.iter_markers()):
             item.add_marker(pytest.mark.integration)
-        
+
         # Mark slow tests
         if "large" in item.name or "stress" in item.name or "compaction" in item.name:
             item.add_marker(pytest.mark.slow)
-        
+
         # Mark storage tests
         if "storage" in item.name or "wal" in item.name or "flush" in item.name:
             item.add_marker(pytest.mark.storage)
-        
+
         # Mark search tests
-        if "search" in item.name or "similarity" in item.name or "proximity" in item.name:
+        if (
+            "search" in item.name
+            or "similarity" in item.name
+            or "proximity" in item.name
+        ):
             item.add_marker(pytest.mark.search)
 
 
@@ -234,40 +259,45 @@ def configure_test_endpoints(request):
     """Configure test endpoints from command line options"""
     rest_endpoint = request.config.getoption("--rest-endpoint")
     grpc_endpoint = request.config.getoption("--grpc-endpoint")
-    
+
     TEST_CONFIG["rest_endpoint"] = rest_endpoint
     TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
-    
+
     logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
 
 
 # Exception handling helpers
 class ProximaDBTestError(Exception):
     """Custom exception for test-specific errors"""
+
     pass
 
 
 def assert_proximadb_error(exc_info, expected_message_fragment: str = None):
     """Helper to assert ProximaDB errors with optional message checking"""
-    assert issubclass(exc_info.type, ProximaDBError), f"Expected ProximaDBError, got {exc_info.type}"
-    
+    assert issubclass(
+        exc_info.type, ProximaDBError
+    ), f"Expected ProximaDBError, got {exc_info.type}"
+
     if expected_message_fragment:
-        assert expected_message_fragment.lower() in str(exc_info.value).lower(), \
-            f"Expected '{expected_message_fragment}' in error message: {exc_info.value}"
+        assert (
+            expected_message_fragment.lower() in str(exc_info.value).lower()
+        ), f"Expected '{expected_message_fragment}' in error message: {exc_info.value}"
 
 
 # Performance measurement helpers
 @pytest.fixture
 def performance_monitor():
     """Fixture for monitoring test performance"""
+
     class PerformanceMonitor:
         def __init__(self):
             self.timings = {}
             self.start_times = {}
-        
+
         def start_timer(self, operation: str):
             self.start_times[operation] = time.time()
-        
+
         def end_timer(self, operation: str) -> float:
             if operation in self.start_times:
                 duration = time.time() - self.start_times[operation]
@@ -275,15 +305,17 @@ def performance_monitor():
                 del self.start_times[operation]
                 return duration
             return 0.0
-        
+
         def get_timings(self) -> Dict[str, float]:
             return self.timings.copy()
-        
+
         def assert_performance(self, operation: str, max_seconds: float):
             assert operation in self.timings, f"No timing recorded for {operation}"
             actual = self.timings[operation]
-            assert actual <= max_seconds, f"{operation} took {actual:.3f}s, expected <= {max_seconds}s"
-    
+            assert (
+                actual <= max_seconds
+            ), f"{operation} took {actual:.3f}s, expected <= {max_seconds}s"
+
     return PerformanceMonitor()
 
 
@@ -291,6 +323,7 @@ def performance_monitor():
 def generate_test_vectors(count: int, dimension: int) -> list:
     """Generate test vectors for use in tests"""
     from ..embedding_utils import embed_many
+
     return embed_many(count, dimension)
 
 
@@ -298,7 +331,7 @@ def generate_test_metadata(count: int, categories: list = None) -> list:
     """Generate test metadata for use in tests"""
     if categories is None:
         categories = ["technology", "science", "healthcare", "education", "business"]
-    
+
     metadata_list = []
     for i in range(count):
         metadata = {
@@ -306,8 +339,8 @@ def generate_test_metadata(count: int, categories: list = None) -> list:
             "category": categories[i % len(categories)],
             "importance": (i % 10) + 1,
             "test_timestamp": time.time(),
-            "test_generated": True
+            "test_generated": True,
         }
         metadata_list.append(metadata)
-    
+
     return metadata_list

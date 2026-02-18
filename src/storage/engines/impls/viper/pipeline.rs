@@ -26,9 +26,6 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
 // Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, StreamingParquetWriter, map_core_to_parquet_compression,
-};
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -59,6 +56,7 @@ pub struct ViperPipeline {
     stats: Arc<RwLock<ViperPipelineStats>>,
 
     /// Filesystem interface
+    #[allow(dead_code)]
     filesystem: Arc<FilesystemFactory>,
 }
 
@@ -288,10 +286,10 @@ pub trait VectorProcessor {
 /// Schema adapter for record conversion
 pub struct SchemaAdapter {
     /// Schema cache
-    schema_cache: Arc<RwLock<HashMap<String, Arc<Schema>>>>,
+    _schema_cache: Arc<RwLock<HashMap<String, Arc<Schema>>>>,
 
     /// Schema generation strategies
-    strategies: HashMap<String, Box<dyn SchemaGenerationStrategy>>,
+    _strategies: HashMap<String, Box<dyn SchemaGenerationStrategy>>,
 }
 
 /// Schema generation strategy trait
@@ -320,7 +318,7 @@ pub struct ParquetFlusher {
     stats: Arc<RwLock<FlushingStats>>,
 
     /// Writer pool for concurrent operations
-    writer_pool: Arc<WriterPool>,
+    _writer_pool: Arc<WriterPool>,
 }
 
 /// Flushing statistics
@@ -336,13 +334,13 @@ pub struct FlushingStats {
 /// Writer pool for managing parquet writers
 pub struct WriterPool {
     /// Available writers
-    writers: Arc<Mutex<Vec<DefaultParquetWriter>>>,
+    _writers: Arc<Mutex<Vec<DefaultParquetWriter>>>,
 
     /// Pool configuration
-    pool_size: usize,
+    _pool_size: usize,
 
     /// Writer factory
-    writer_factory: Arc<DefaultParquetWriterFactory>,
+    _writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
 // TODO: ParquetWriter and ParquetWriterFactory types need to be implemented
@@ -388,6 +386,7 @@ pub struct CompactionEngine {
     active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
 
     /// ML optimization model
+    #[allow(dead_code)]
     optimization_model: Arc<RwLock<Option<CompactionOptimizationModel>>>,
 
     /// Background worker handles
@@ -913,6 +912,7 @@ impl VectorRecordProcessor {
     }
 
     /// Advanced cluster-then-sort implementation
+    #[allow(dead_code)]
     async fn cluster_then_sort_records(
         &self,
         records: &mut [VectorRecord],
@@ -961,6 +961,7 @@ impl VectorRecordProcessor {
     }
 
     /// ML-based vector clustering using K-means algorithm
+    #[allow(dead_code)]
     async fn simple_vector_clustering(
         &self,
         records: &[VectorRecord],
@@ -1295,6 +1296,7 @@ impl VectorRecordProcessor {
     }
 
     /// Recursive helper for applying sorting strategies
+    #[allow(dead_code)]
     async fn apply_sorting_strategy(
         &self,
         records: &mut [VectorRecord],
@@ -1707,6 +1709,7 @@ impl VectorRecordProcessor {
     }
 
     /// Collect statistics during postprocessing for monitoring and optimization
+    #[allow(dead_code)]
     async fn collect_postprocessing_statistics(&self, batch: &RecordBatch) -> Result<()> {
         let stats_collection_start = Instant::now();
 
@@ -1764,7 +1767,9 @@ struct SortAnalysis {
 struct ColumnOptimization {
     run_length_potential: f32,
     dictionary_potential: f32,
+    #[allow(dead_code)]
     compression_potential: f32,
+    #[allow(dead_code)]
     recommended_encoding: RecommendedEncoding,
 }
 
@@ -2004,9 +2009,9 @@ impl ParquetFlusher {
     ) -> Result<Self> {
         Ok(Self {
             config,
-            filesystem,
+            filesystem: filesystem,
             stats: Arc::new(RwLock::new(FlushingStats::default())),
-            writer_pool,
+            _writer_pool: writer_pool,
         })
     }
 
@@ -3518,8 +3523,8 @@ impl CompactionEngine {
 impl SchemaAdapter {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            schema_cache: Arc::new(RwLock::new(HashMap::new())),
-            strategies: HashMap::new(),
+            _schema_cache: Arc::new(RwLock::new(HashMap::new())),
+            _strategies: HashMap::new(),
         })
     }
 
@@ -3536,9 +3541,9 @@ impl SchemaAdapter {
 impl WriterPool {
     async fn new(_pool_size: usize, _factory: Arc<DefaultParquetWriterFactory>) -> Result<Self> {
         Ok(Self {
-            writers: Arc::new(Mutex::new(Vec::new())),
-            pool_size: _pool_size,
-            writer_factory: _factory,
+            _writers: Arc::new(Mutex::new(Vec::new())),
+            _pool_size: _pool_size,
+            _writer_factory: _factory,
         })
     }
 }

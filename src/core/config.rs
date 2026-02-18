@@ -1,4 +1,5 @@
 use crate::network::NetworkConfig;
+use crate::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
@@ -12,14 +13,20 @@ pub struct Config {
     pub monitoring: MonitoringConfig,
     pub network: Option<NetworkConfig>,
     pub tls: Option<TlsConfig>,
+    #[allow(dead_code)]
     pub hardware: Option<HardwareConfig>,
     pub sks: Option<SksConfig>,
+    /// Unified security configuration (optional)
+    pub security: Option<SecurityConfig>,
     /// Global cache runtime configuration (optional)
     pub cache: Option<CacheRuntimeConfig>,
     /// Graph runtime configuration (optional)
     pub graph: Option<GraphRuntimeConfig>,
     /// Hybrid query runtime configuration (optional)
     pub hybrid: Option<HybridRuntimeConfig>,
+    /// Query processing configuration (including RL planner)
+    #[serde(default)]
+    pub query: Option<QueryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,14 +64,17 @@ pub struct HardwareConfig {
     pub gpu_min_batch_size: usize,
 }
 
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn default_gpu_min_vector_size() -> usize {
     64
 }
 
+#[allow(dead_code)]
 fn default_gpu_min_batch_size() -> usize {
     100
 }
@@ -124,30 +134,37 @@ pub struct SksConfig {
     pub storage_backend: String,
 }
 
+#[allow(dead_code)]
 fn default_false_sks() -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn default_max_embedding_versions() -> usize {
     10
 }
 
+#[allow(dead_code)]
 fn default_max_traversal_depth() -> usize {
     5
 }
 
+#[allow(dead_code)]
 fn default_entity_cache_mb() -> usize {
     256
 }
 
+#[allow(dead_code)]
 fn default_relations_cache_mb() -> usize {
     128
 }
 
+#[allow(dead_code)]
 fn default_embedding_model() -> String {
     "openai/text-embedding-3-large".to_string()
 }
 
+#[allow(dead_code)]
 fn default_sks_backend() -> String {
     "sst".to_string()
 }
@@ -183,9 +200,11 @@ impl Default for Config {
             tls: None,
             hardware: Some(HardwareConfig::default()),
             sks: None, // SKS disabled by default
+            security: None,
             cache: None,
             graph: Some(GraphRuntimeConfig::default()),
             hybrid: Some(HybridRuntimeConfig::default()),
+            query: None, // Uses default RL planner settings when None
         }
     }
 }
@@ -370,6 +389,19 @@ pub struct GraphRuntimeConfig {
     pub prefetch_budget: usize,
     /// Select graph engine ("ORION"|"PULSAR"|"QUASAR")
     pub engine: String,
+    /// Embedding storage mode: "none" (default), "cold", "memory"
+    /// - "none": No embeddings stored (pure graph, best performance)
+    /// - "cold": Embeddings in vector engine (SST/HELIX/VIPER)
+    /// - "memory": Embeddings cached in memory (for SKS-heavy workloads)
+    #[serde(default = "default_embedding_mode")]
+    pub embedding_mode: String,
+    /// Vector engine for cold tier embeddings (only if embedding_mode = "cold")
+    /// Options: "sst", "helix", "viper"
+    #[serde(default = "default_embedding_engine")]
+    pub embedding_engine: String,
+    /// Memory cache size in MB for embeddings (only if embedding_mode = "memory")
+    #[serde(default)]
+    pub embedding_memory_cache_mb: Option<usize>,
 }
 
 impl Default for GraphRuntimeConfig {
@@ -378,12 +410,23 @@ impl Default for GraphRuntimeConfig {
             enable_prefetch: true,
             prefetch_budget: 8,
             engine: default_graph_engine(),
+            embedding_mode: default_embedding_mode(),
+            embedding_engine: default_embedding_engine(),
+            embedding_memory_cache_mb: None,
         }
     }
 }
 
 fn default_graph_engine() -> String {
     "ORION".to_string()
+}
+
+fn default_embedding_mode() -> String {
+    "none".to_string()
+}
+
+fn default_embedding_engine() -> String {
+    "sst".to_string()
 }
 
 /// Hybrid query runtime configuration
@@ -423,6 +466,7 @@ impl Default for StorageConfig {
             metadata_url: "file://./metadata".to_string(),
             assignment_config: AssignmentConfig::default(),
             wal_config: WriteBufferUserConfig::default(),
+            prune_mode: None,
             mmap_enabled: true,
             sst_config: Some(SstConfig::default()),
             viper_config: Some(ViperConfig::default()),
@@ -430,6 +474,7 @@ impl Default for StorageConfig {
             bloom_filter_config: Some(BloomFilterConfig::default()),
             compaction_config: CompactionConfig::default(),
             filesystem_config: FilesystemOptimizationConfig::default(),
+            optimization: OptimizationConfig::default(),
         }
     }
 }
@@ -458,6 +503,10 @@ pub struct StorageConfig {
     /// Write buffer configuration (global memtable settings)
     pub wal_config: WriteBufferUserConfig,
 
+    /// Search pruning configuration
+    #[serde(default)]
+    pub prune_mode: Option<PruneModeConfig>,
+
     /// Storage engine configurations
     pub mmap_enabled: bool,
     pub sst_config: Option<SstConfig>,
@@ -471,6 +520,32 @@ pub struct StorageConfig {
 
     /// Filesystem optimization settings
     pub filesystem_config: FilesystemOptimizationConfig,
+
+    /// Performance optimization settings
+    #[serde(default)]
+    pub optimization: OptimizationConfig,
+}
+
+/// Configuration for search pruning, allowing for simple or advanced setup.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum PruneModeConfig {
+    Simple(String),
+    Advanced(AdvancedPruneConfig),
+}
+
+/// Advanced configuration for search pruning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AdvancedPruneConfig {
+    #[serde(default = "default_prune_type")]
+    pub r#type: String,
+    pub min_keep: Option<usize>,
+    pub max_keep: Option<usize>,
+    pub ratio: Option<f32>,
+}
+
+fn default_prune_type() -> String {
+    "sqrt".to_string()
 }
 
 /// Storage location configuration
@@ -486,6 +561,7 @@ pub struct StorageLocation {
     pub tags: Vec<String>,
 }
 
+#[allow(dead_code)]
 fn default_weight() -> u32 {
     1
 }
@@ -522,6 +598,71 @@ impl Default for AssignmentConfig {
         Self {
             strategy: default_assignment_strategy(),
             affinity: default_affinity(),
+        }
+    }
+}
+
+/// Performance optimization configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationConfig {
+    /// Enable memory-mapped I/O for large files (40-60% faster reads)
+    #[serde(default = "default_enable_mmap")]
+    pub enable_mmap: bool,
+
+    /// Enable zone map pruning to skip irrelevant blocks (30-50% faster search)
+    #[serde(default = "default_enable_zone_map_pruning")]
+    pub enable_zone_map_pruning: bool,
+
+    /// Enable AXIS indexes for approximate nearest neighbor search
+    #[serde(default = "default_enable_axis_indexes")]
+    pub enable_axis_indexes: bool,
+
+    /// Default index type for new collections: flat, hnsw, ivf, lsh
+    #[serde(default = "default_index_type")]
+    pub default_index_type: String,
+
+    /// Enable progressive quantization search (Binary → INT8 → FP32)
+    #[serde(default = "default_enable_progressive_search")]
+    pub enable_progressive_search: bool,
+
+    /// Enable block-level bloom filters for metadata filtering
+    #[serde(default = "default_enable_bloom_filters")]
+    pub enable_bloom_filters: bool,
+}
+
+fn default_enable_mmap() -> bool {
+    true
+}
+
+fn default_enable_zone_map_pruning() -> bool {
+    true
+}
+
+fn default_enable_axis_indexes() -> bool {
+    true
+}
+
+fn default_index_type() -> String {
+    "hnsw".to_string()
+}
+
+fn default_enable_progressive_search() -> bool {
+    true
+}
+
+fn default_enable_bloom_filters() -> bool {
+    true
+}
+
+impl Default for OptimizationConfig {
+    fn default() -> Self {
+        Self {
+            enable_mmap: default_enable_mmap(),
+            enable_zone_map_pruning: default_enable_zone_map_pruning(),
+            enable_axis_indexes: default_enable_axis_indexes(),
+            default_index_type: default_index_type(),
+            enable_progressive_search: default_enable_progressive_search(),
+            enable_bloom_filters: default_enable_bloom_filters(),
         }
     }
 }
@@ -943,6 +1084,41 @@ pub struct SstConfig {
     /// See: docs/performance/encoding_strategies.adoc for detailed guide
     #[serde(default = "default_vector_encoding_strategy")]
     pub vector_encoding_strategy: String,
+
+    /// Block storage format: Controls how blocks are serialized to disk
+    ///
+    /// # Available Formats:
+    ///
+    /// * `"ProximaBlocks"` (DEFAULT) - ProximaDB's native block format
+    ///   - Optimized for vector workloads with cache-line alignment
+    ///   - B+ tree index for O(log n) ID lookups
+    ///   - Supports quantization and compression
+    ///   - Best for: Production vector databases
+    ///
+    /// * `"ArrowBlock"` - Arrow IPC based storage format
+    ///   - Standard Arrow IPC files (compatible with PyArrow, DuckDB, Polars)
+    ///   - Zero-copy reads via memory mapping
+    ///   - Sidecar B+ tree index file (.idx)
+    ///   - Best for: Interoperability with Arrow ecosystem
+    ///
+    /// # Configuration Example:
+    ///
+    /// ```toml
+    /// [storage.sst_config]
+    /// # Use Arrow IPC format for interoperability
+    /// block_format = "ArrowBlock"
+    ///
+    /// # Use ProximaBlocks for production (default)
+    /// block_format = "ProximaBlocks"
+    /// ```
+    ///
+    /// Default: ProximaBlocks
+    #[serde(default = "default_block_format")]
+    pub block_format: String,
+}
+
+fn default_block_format() -> String {
+    "ProximaBlocks".to_string()
 }
 
 /// VIPER (columnar storage) engine configuration
@@ -972,7 +1148,7 @@ pub struct ViperConfig {
 impl Default for ViperConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 100_000,
+            row_group_size: 65536,           // ~32MB row groups for 128D vectors
             compression: "zstd".to_string(), // ZSTD for better compression
             compression_level: 3,            // Balanced speed/compression
             enable_statistics: true,
@@ -982,6 +1158,7 @@ impl Default for ViperConfig {
         }
     }
 }
+#[allow(dead_code)]
 fn default_compression_level() -> i32 {
     3 // Balanced compression level
 }
@@ -1000,7 +1177,7 @@ impl Default for SstConfig {
             level_count: 7,
             compaction_threshold: 5,
             compaction_config: None, // Use common config by default
-            block_size_kb: 1024, // 1MB default - balanced for random access and sequential scans
+            block_size_kb: 256, // 256KB default - optimized for low-latency random access on NVMe
             compaction_strategy: "leveled".to_string(),
             compression: "lz4".to_string(), // LZ4 default - 7% faster than no compression (measured)
             compression_level: 3,           // LZ4 compression level
@@ -1018,6 +1195,7 @@ impl Default for SstConfig {
                 crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
+            block_format: default_block_format(),
         }
     }
 }
@@ -1160,16 +1338,84 @@ pub struct ApiConfig {
 
     /// Compression level 1-9 for gzip, 1-11 for brotli (default: 6)
     pub compression_level: i32,
+
+    // ============================================================
+    // Unified Port Architecture (Phase 14)
+    // ============================================================
+    /// Enable unified port mode (REST + gRPC + Arrow Flight on single port)
+    /// When enabled, `unified_port` is used; individual ports are ignored.
+    /// Default: false (legacy multi-port mode for backward compatibility)
+    #[serde(default)]
+    pub unified_mode: bool,
+
+    /// Unified port for all HTTP-based protocols (REST, gRPC, Arrow Flight)
+    /// Only used when `unified_mode = true`
+    /// Default: 5678
+    #[serde(default = "default_unified_port")]
+    pub unified_port: u16,
+
+    /// Arrow Flight port (used when unified_mode = false)
+    /// Default: 5680
+    #[serde(default = "default_arrow_flight_port")]
+    pub arrow_flight_port: u16,
+
+    /// Enable REST protocol in unified mode
+    /// Default: true
+    #[serde(default = "default_true_api")]
+    pub enable_rest: bool,
+
+    /// Enable gRPC protocol in unified mode
+    /// Default: true
+    #[serde(default = "default_true_api")]
+    pub enable_grpc: bool,
+
+    /// Enable Arrow Flight protocol in unified mode
+    /// Default: true
+    #[serde(default = "default_true_api")]
+    pub enable_arrow_flight: bool,
+
+    /// HTTP/2 max concurrent streams (for gRPC and Arrow Flight)
+    /// Default: 1000
+    #[serde(default = "default_http2_max_concurrent_streams")]
+    pub http2_max_concurrent_streams: u32,
+
+    /// Maximum connections for unified server
+    /// Default: 10000
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
 }
 
+fn default_unified_port() -> u16 {
+    5678
+}
+
+fn default_arrow_flight_port() -> u16 {
+    5680
+}
+
+fn default_true_api() -> bool {
+    true
+}
+
+fn default_http2_max_concurrent_streams() -> u32 {
+    1000
+}
+
+fn default_max_connections() -> usize {
+    10000
+}
+
+#[allow(dead_code)]
 fn default_false() -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn default_compression_algorithm() -> String {
     "gzip".to_string()
 }
 
+#[allow(dead_code)]
 fn default_compression_level_api() -> i32 {
     6
 }
@@ -1187,10 +1433,20 @@ impl Default for ApiConfig {
             compression_algorithm: "gzip".to_string(),
             compression_level: 6,
             ttl_sweep_interval_seconds: 900,
+            // Unified port settings (Phase 14)
+            unified_mode: false, // Legacy multi-port mode by default
+            unified_port: 5678,
+            arrow_flight_port: 5680,
+            enable_rest: true,
+            enable_grpc: true,
+            enable_arrow_flight: true,
+            http2_max_concurrent_streams: 1000,
+            max_connections: 10000,
         }
     }
 }
 
+#[allow(dead_code)]
 fn default_ttl_sweep_interval() -> u64 {
     900
 }
@@ -1277,33 +1533,43 @@ impl Default for WalStorageConfig {
 }
 
 // Helper functions for serde defaults
+#[allow(dead_code)]
 fn default_collection_affinity() -> bool {
     true
 }
+#[allow(dead_code)]
 fn default_memory_flush_size() -> usize {
     2 * 1024 * 1024 // 2MB - reduced for faster recovery as per CLAUDE.md
 }
+#[allow(dead_code)]
 fn default_global_flush_threshold() -> usize {
     4 * 1024 * 1024 * 1024 // 4GB - recommended for global memory threshold
 }
+#[allow(dead_code)]
 fn default_strategy_type() -> Option<String> {
     None
 }
+#[allow(dead_code)]
 fn default_memtable_type() -> Option<String> {
     None
 }
+#[allow(dead_code)]
 fn default_sync_mode() -> Option<String> {
     None
 }
+#[allow(dead_code)]
 fn default_batch_threshold() -> Option<usize> {
     None
 }
+#[allow(dead_code)]
 fn default_write_buffer_size_mb() -> Option<usize> {
     None
 }
+#[allow(dead_code)]
 fn default_concurrent_flushes() -> Option<usize> {
     None
 }
+#[allow(dead_code)]
 fn default_global_shrink_factor() -> Option<f64> {
     Some(0.4) // 40% shrink factor - recommended for global threshold management
 }
@@ -1335,5 +1601,120 @@ impl MonitoringConfig {
     /// Get dashboard refresh interval, ensuring it's at least 15 seconds
     pub fn dashboard_refresh_interval(&self) -> u64 {
         self.dashboard_refresh_interval_seconds.max(15)
+    }
+}
+
+/// Query processing configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueryConfig {
+    /// RL-based adaptive query planner configuration
+    #[serde(default)]
+    pub rl_planner: RLPlannerConfig,
+}
+
+/// RL-based Adaptive Query Planner Configuration
+///
+/// Controls how the reinforcement learning query planner learns and selects
+/// optimal execution paths across storage engines, indexes, and quantization strategies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RLPlannerConfig {
+    /// Enable RL-based planning (false = use static heuristics)
+    #[serde(default = "default_rl_enabled")]
+    pub enabled: bool,
+
+    /// Use Thompson Sampling (true) or epsilon-greedy (false) for action selection
+    #[serde(default = "default_thompson_sampling")]
+    pub thompson_sampling: bool,
+
+    /// Exploration rate for epsilon-greedy fallback (0.0 - 1.0)
+    #[serde(default = "default_exploration_rate")]
+    pub exploration_rate: f32,
+
+    /// Size of experience replay buffer for batch learning
+    #[serde(default = "default_experience_buffer_size")]
+    pub experience_buffer_size: usize,
+
+    /// Number of experiences before batch policy update
+    #[serde(default = "default_batch_update_interval")]
+    pub batch_update_interval: usize,
+
+    /// Log all query executions to JSONL for offline analysis
+    #[serde(default = "default_log_all_executions")]
+    pub log_all_executions: bool,
+
+    /// Path for execution logs (JSONL format) - None for no file logging
+    #[serde(default)]
+    pub log_path: Option<String>,
+
+    /// Default optimization goal: MinLatency, MaxRecall, MaxThroughput, Balanced
+    #[serde(default = "default_optimization_goal")]
+    pub default_goal: String,
+}
+
+fn default_rl_enabled() -> bool {
+    true
+}
+
+fn default_thompson_sampling() -> bool {
+    true
+}
+
+fn default_exploration_rate() -> f32 {
+    0.1
+}
+
+fn default_experience_buffer_size() -> usize {
+    10_000
+}
+
+fn default_batch_update_interval() -> usize {
+    100
+}
+
+fn default_log_all_executions() -> bool {
+    true
+}
+
+fn default_optimization_goal() -> String {
+    "Balanced".to_string()
+}
+
+impl Default for RLPlannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            thompson_sampling: true,
+            exploration_rate: 0.1,
+            experience_buffer_size: 10_000,
+            batch_update_interval: 100,
+            log_all_executions: true,
+            log_path: None,
+            default_goal: "Balanced".to_string(),
+        }
+    }
+}
+
+impl RLPlannerConfig {
+    /// Convert to the RL planner module's config type
+    pub fn to_rl_planner_config(&self) -> crate::query::rl_planner::RLPlannerConfig {
+        use crate::query::rl_planner::OptimizationGoal;
+
+        let goal = match self.default_goal.to_lowercase().as_str() {
+            "minlatency" | "min_latency" => OptimizationGoal::MinLatency,
+            "maxrecall" | "max_recall" => OptimizationGoal::MaxRecall,
+            "maxthroughput" | "max_throughput" => OptimizationGoal::MaxThroughput,
+            _ => OptimizationGoal::Balanced,
+        };
+
+        crate::query::rl_planner::RLPlannerConfig {
+            enabled: self.enabled,
+            exploration_rate: self.exploration_rate,
+            thompson_sampling: self.thompson_sampling,
+            experience_buffer_size: self.experience_buffer_size,
+            batch_update_interval: self.batch_update_interval,
+            log_all_executions: self.log_all_executions,
+            log_path: self.log_path.clone(),
+            default_goal: goal,
+        }
     }
 }

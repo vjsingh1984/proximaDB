@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 pub mod access_pattern;
+pub mod document;
 pub mod engine;
 pub mod filesystem;
 pub mod graph;
@@ -17,6 +18,7 @@ pub mod system;
 pub mod tests;
 
 pub use access_pattern::AccessPatternMetricsCollector;
+pub use document::DocumentMetricsCollector;
 pub use engine::{EngineComparison, EngineMetricsCollector, EngineStatistics, OperationTimer};
 pub use filesystem::FilesystemMetricsCollector;
 pub use graph::{GraphMetricsCollector, PulsarMetricsCollector, QuasarMetricsCollector};

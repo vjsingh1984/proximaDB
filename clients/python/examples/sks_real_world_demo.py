@@ -32,6 +32,7 @@ from typing import List, Dict, Any
 import numpy as np
 
 from proximadb import ProximaDBClient, VectorRecord
+from proximadb.filters import MetadataFilter, FilterClause, ComparisonOp, LogicalOp
 
 
 # ============================================================================
@@ -462,36 +463,40 @@ def demo_6_metadata_filtering(client: ProximaDBClient, collection: str, dimensio
     query_vector = np.random.randn(dimension).astype(np.float32)
     query_vector = query_vector / np.linalg.norm(query_vector)
 
-    # Search with metadata
+    # Define the server-side metadata filter
+    filter_expression = MetadataFilter(
+        clauses=[
+            FilterClause(
+                field="category",
+                op=ComparisonOp.EQ,
+                string_value="NLP"
+            ),
+            FilterClause(
+                field="year",
+                op=ComparisonOp.GTE,
+                int_value=2018
+            )
+        ],
+        op=LogicalOp.AND
+    )
+
+    # Search with metadata filter
     results = client.search(
         collection_id=collection,
         vector=query_vector.tolist(),
         top_k=10,
-        include_metadata=True
+        include_metadata=True,
+        filter_expression=filter_expression # Apply server-side filter
     )
 
-    # Helper to extract value from proto-wrapped metadata
-    def get_value(meta, key, default=None):
-        value = meta.get(key, default)
-        if isinstance(value, dict):
-            return value.get('string_value') or value.get('int64_value') or default
-        return value
+    print(f"✓ Found {len(results)} NLP papers from 2018+ (server-side filtered):\n")
 
-    # Filter results by metadata (client-side for demo)
-    nlp_papers_2018_plus = [
-        r for r in results
-        if r.metadata and
-        get_value(r.metadata, "category") == "NLP" and
-        int(get_value(r.metadata, "year", 0)) >= 2018
-    ]
-
-    print(f"✓ Found {len(nlp_papers_2018_plus)} NLP papers from 2018+:\n")
-
-    for i, result in enumerate(nlp_papers_2018_plus):
+    # No client-side filtering needed, results are already filtered
+    for i, result in enumerate(results):
         metadata = result.metadata
-        title = get_value(metadata, 'title', 'Unknown')
-        year = get_value(metadata, 'year', 'N/A')
-        authors = get_value(metadata, 'authors', 'Unknown')
+        title = metadata.get('title', {}).get('string_value', 'Unknown')
+        year = metadata.get('year', {}).get('int64_value', 'N/A')
+        authors = metadata.get('authors', {}).get('string_value', 'Unknown')
 
         print(f"  {i+1}. {title}")
         print(f"     Year: {year}")

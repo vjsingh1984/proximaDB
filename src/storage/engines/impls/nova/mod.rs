@@ -19,7 +19,7 @@
 //! NOVA excels in analytical and research scenarios requiring advanced optimization:
 //!
 //! ### ✅ **Financial Analytics Platforms**
-//! ```rust
+//! ```rust,ignore
 //! // Risk analysis with complex multi-dimensional filtering
 //! let market_embeddings = load_financial_vectors(); // 1024D market signals
 //! nova_engine.flush_with_hierarchy(market_embeddings).await; // SuperBlock statistics
@@ -31,7 +31,7 @@
 //! ```
 //!
 //! ### ✅ **Scientific Research Workloads**
-//! ```rust
+//! ```rust,ignore
 //! // Genomics research with hierarchical data analysis
 //! let protein_embeddings = load_protein_sequences(); // 2048D protein structures
 //! nova_engine.enable_streaming_mode(true).await; // Memory-efficient processing
@@ -43,7 +43,7 @@
 //! ```
 //!
 //! ### ✅ **Large-Scale Data Mining**
-//! ```rust
+//! ```rust,ignore
 //! // Document analysis with cost-based optimization
 //! let document_embeddings = load_document_corpus(); // 10M+ documents
 //! nova_engine.build_cost_model(&workload_patterns).await; // Learn query patterns
@@ -133,6 +133,7 @@
 pub mod batch_operations;
 pub mod columnar_search;
 pub mod engine;
+pub mod extraction;
 pub mod optimized_operations;
 pub mod progressive_refinement;
 pub mod quantized_columns;
@@ -144,6 +145,7 @@ pub mod operations;
 pub mod hierarchical_cache;
 pub mod hierarchical_stats;
 pub mod progressive_search;
+pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod streaming_processor;
 pub mod streaming_search;
 pub mod zone_maps;
@@ -229,6 +231,7 @@ pub struct NovaFile {
 }
 
 /// Main NOVA operations trait with streaming optimizations
+#[allow(async_fn_in_trait)]
 pub trait NovaOperations {
     /// Streaming progressive search with all optimizations
     async fn search_streaming(
@@ -408,7 +411,7 @@ pub fn estimate_row_group_memory(row_group: &RowGroupMetaData, schema: &Schema) 
     let mut total = 0;
 
     for (idx, column) in row_group.columns().iter().enumerate() {
-        let field = &schema.fields()[idx];
+        let _field = &schema.fields()[idx];
         let uncompressed_size = column.uncompressed_size() as usize;
 
         // Add overhead for Arrow arrays

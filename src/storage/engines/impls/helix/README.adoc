@@ -685,7 +685,7 @@ max_search_threads = 4              # CPU cores / 2
 block_cache_size_mb = 1024          # 1GB cache (default)
 
 # Quantization
-storage_quantization = false        # Disable by default
+storage_quantization = true         # Progressive quantization (Binary → INT8 → FP32)
 ----
 
 === Collection Configuration
@@ -1188,4 +1188,4 @@ pca_retrain_interval_hours = 48     # Less frequent training
 * Locality-Sensitive Hashing (LSH): Alternative locality-preserving technique
 
 ---
-_Last updated: January 2025 (v0.1.4)_
+_Last updated: December 2025 (v0.2.0)_

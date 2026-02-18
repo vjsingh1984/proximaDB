@@ -50,7 +50,7 @@ struct HuggingFaceResponse {
 #[derive(Debug, Deserialize)]
 struct HuggingFaceErrorResponse {
     error: String,
-    warnings: Option<Vec<String>>,
+    _warnings: Option<Vec<String>>,
 }
 
 impl HuggingFaceClient {
@@ -132,7 +132,7 @@ impl LLMClient for HuggingFaceClient {
 
         let response = self
             .client
-            .post(&self.get_api_url())
+            .post(self.get_api_url())
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
             .json(&hf_request)
@@ -232,7 +232,7 @@ impl LLMClient for HuggingFaceClient {
 
         let response = self
             .client
-            .post(&self.get_api_url())
+            .post(self.get_api_url())
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
             .json(&test_request)

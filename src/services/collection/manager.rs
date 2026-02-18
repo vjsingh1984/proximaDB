@@ -149,6 +149,14 @@ impl CollectionService {
         self
     }
 
+    /// Get storage configuration
+    ///
+    /// Returns the storage configuration for accessing storage locations.
+    /// Used by Arrow Flight service to find .arrow files.
+    pub fn storage_config(&self) -> &StorageConfig {
+        &self.storage_config
+    }
+
     /// Create collection - single method for all handlers (REST, gRPC, etc)
     /// Takes native types directly, no proto/avro conversions needed
     /// NOW WITH MULTI-TENANT SUPPORT
@@ -167,7 +175,7 @@ impl CollectionService {
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         // NEW: Tenant validation for get operations
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // Validate tenant ownership of collection
                 // TODO: Implement get_collection_tenant method
@@ -182,7 +190,7 @@ impl CollectionService {
                 }
 
                 // RBAC permission validation
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
                     // TODO: Implement check_permission method
                     let permission_result = crate::storage::tenant::rbac::PermissionResult {
                         allowed: true,
@@ -218,7 +226,7 @@ impl CollectionService {
         debug!("🗑️ Deleting collection: {}", collection_name);
 
         // NEW: Tenant validation for delete operations
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // Validate tenant ownership
                 // TODO: Implement get_collection_tenant method
@@ -235,7 +243,7 @@ impl CollectionService {
                 }
 
                 // RBAC permission validation (delete requires admin or owner permissions)
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
                     // TODO: Implement check_permission method
                     let permission_result = crate::storage::tenant::rbac::PermissionResult {
                         allowed: true,
@@ -282,7 +290,7 @@ impl CollectionService {
         let start_time = std::time::Instant::now();
 
         // NEW: Multi-tenant validation if tenant manager is available
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // Step 1: Validate tenant access and resource limits
                 // TODO: Implement check_collection_creation_limits method
@@ -299,7 +307,7 @@ impl CollectionService {
                 }
 
                 // Step 2: RBAC permission validation if enforcer is available
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
                     // TODO: Implement check_permission method
                     let permission_result = crate::storage::tenant::rbac::PermissionResult {
                         allowed: true,
@@ -412,6 +420,36 @@ impl CollectionService {
                     });
                 }
             }
+        }
+
+        // Add default HNSW index configuration if not provided
+        // This enables AXIS indexes for accelerated vector search
+        if enriched_config.index_configs.is_empty() {
+            use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm};
+
+            let default_hnsw_config = IndexConfig {
+                index_name: format!("{}_default_hnsw", config.name),
+                algorithm: IndexingAlgorithm::Hnsw as i32,
+                enabled: Some(true),
+                is_primary: Some(true),
+                hnsw_config: Some(HnswConfig {
+                    m: Some(16),                // Balanced connectivity
+                    ef_construction: Some(200), // Good build quality
+                    ef_search: Some(50),        // Fast search with good recall
+                    max_partition_size: Some(100_000),
+                    adaptive_parameters: Some(true),
+                    use_simd: Some(true),
+                    memory_limit_mb: Some(512),
+                    lazy_loading: Some(false),
+                }),
+                ..Default::default()
+            };
+
+            enriched_config.index_configs.push(default_hnsw_config);
+            info!(
+                "📊 Created default HNSW index for collection '{}' (dimension: {})",
+                config.name, config.dimension
+            );
         }
 
         // Validate compression algorithm is supported by the storage engine
@@ -539,11 +577,18 @@ impl CollectionService {
                 .clone()
         };
 
-        // Create storage directories
+        // Create storage directories (tenant-isolated if multi-tenant mode)
+        let tenant_id = tenant_context.map(|ctx| ctx.tenant_id.as_str());
         let _storage_created = self
-            .create_storage_directories(&base_location, &enriched_config.name, &uuid)
+            .create_storage_directories(&base_location, &enriched_config.name, &uuid, tenant_id)
             .await
             .context("Failed to create storage directories")?;
+
+        // Build tenant-prefixed base location for storage assignment
+        let tenant_base_location = match tenant_id {
+            Some(tid) => StoragePath::tenant_root_path(&base_location, tid),
+            None => base_location.clone(),
+        };
 
         // Create proto collection with stats and storage assignment
         let proto_collection = Collection {
@@ -557,11 +602,11 @@ impl CollectionService {
             created_at: now,
             updated_at: now,
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
-                primary_path: base_location.clone(),
+                primary_path: tenant_base_location.clone(),
                 backup_paths: vec![],
                 engine: config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
                 engine_config: std::collections::HashMap::new(),
-                base_location: base_location.clone(),
+                base_location: tenant_base_location.clone(), // Tenant-prefixed path
                 assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
         };
@@ -644,7 +689,6 @@ impl CollectionService {
     }
 
     /// Convert Collection to core Collection - direct proto to core mapping
-
     /// Get IndexConfig for a collection by name or UUID with caching
     pub async fn native_index_config(
         &self,
@@ -1246,6 +1290,7 @@ impl CollectionService {
     }
 
     /// Validate collection configuration
+    #[allow(dead_code)]
     fn validate_collection_config(&self, config: &CollectionConfig) -> Result<()> {
         if config.name.is_empty() {
             return Err(anyhow::anyhow!("Collection name cannot be empty"));
@@ -1257,7 +1302,7 @@ impl CollectionService {
             ));
         }
 
-        if config.dimension <= 0 {
+        if config.dimension == 0 {
             return Err(anyhow::anyhow!("Dimension must be positive"));
         }
 
@@ -1280,23 +1325,36 @@ impl CollectionService {
     }
 
     /// Create storage directories for a new collection
+    ///
+    /// For multi-tenant deployments, paths are isolated under `{base}/tenants/{tenant_id}/`.
     async fn create_storage_directories(
         &self,
         base_location: &str,
         collection_name: &str,
         collection_uuid: &str,
+        tenant_id: Option<&str>,
     ) -> Result<Vec<StorageComponentType>> {
+        let tenant_info = tenant_id.unwrap_or("(default)");
         info!(
-            "🏗️ Creating storage directories for collection {} (UUID: {}) at base: {}",
-            collection_name, collection_uuid, base_location
+            "🏗️ Creating storage directories for collection {} (UUID: {}, tenant: {}) at base: {}",
+            collection_name, collection_uuid, tenant_info, base_location
         );
 
         let mut created_components = Vec::new();
 
-        // Build paths under base location using StoragePath utility
-        let write_buffer_dir = StoragePath::collection_wal_path(base_location, &collection_uuid);
-        let data_dir = StoragePath::collection_data_path(base_location, &collection_uuid);
-        let indexes_dir = StoragePath::collection_index_path(base_location, &collection_uuid);
+        // Build paths under base location using StoragePath utility (tenant-aware)
+        let write_buffer_dir =
+            StoragePath::collection_wal_path_with_tenant(base_location, tenant_id, collection_uuid);
+        let data_dir = StoragePath::collection_data_path_with_tenant(
+            base_location,
+            tenant_id,
+            collection_uuid,
+        );
+        let indexes_dir = StoragePath::collection_index_path_with_tenant(
+            base_location,
+            tenant_id,
+            collection_uuid,
+        );
 
         // Create directories
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(base_location) {
@@ -1307,7 +1365,7 @@ impl CollectionService {
                     write_buffer_dir, e
                 );
             } else {
-                info!("✅ Created WAL storage directory: {}", write_buffer_dir);
+                debug!("Created WAL storage directory: {}", write_buffer_dir);
                 created_components.push(StorageComponentType::Wal);
             }
 
@@ -1315,7 +1373,7 @@ impl CollectionService {
             if let Err(e) = filesystem.create_dir_all(&data_dir).await {
                 warn!("⚠️ Failed to create data directory {}: {}", data_dir, e);
             } else {
-                info!("✅ Created data storage directory: {}", data_dir);
+                debug!("Created data storage directory: {}", data_dir);
                 created_components.push(StorageComponentType::Storage);
             }
 
@@ -1323,7 +1381,7 @@ impl CollectionService {
             if let Err(e) = filesystem.create_dir_all(&indexes_dir).await {
                 warn!("⚠️ Failed to create index directory {}: {}", indexes_dir, e);
             } else {
-                info!("✅ Created index storage directory: {}", indexes_dir);
+                debug!("Created index storage directory: {}", indexes_dir);
                 created_components.push(StorageComponentType::Index);
             }
         } else {
@@ -1664,6 +1722,10 @@ mod tests {
             tags: vec![],
             owner: Some("test".to_string()),
             embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         // Test create with valid config
@@ -1791,6 +1853,10 @@ mod tests {
                 owner: Some("test".to_string()),
                 embedding_models: vec![],
                 storage_config: None,
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             };
 
             let result = service.create_collection(&config).await.unwrap();

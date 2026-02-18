@@ -151,12 +151,15 @@ pub struct EngineBenchmarkResults {
 /// Main benchmarking executor for storage engines
 pub struct StorageEngineBenchmark {
     /// Configuration for benchmarks
+    #[allow(dead_code)]
     config: BenchmarkConfig,
 
     /// Hardware profile detected
+    #[allow(dead_code)]
     hardware_profile: HardwareProfile,
 
     /// Storage profile detected
+    #[allow(dead_code)]
     storage_profile: StorageProfile,
 }
 
@@ -418,6 +421,8 @@ impl StorageEngineBenchmark {
                 has_quantization: enable_quantization,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         }
     }
 
@@ -646,7 +651,7 @@ pub mod engine_specific {
 impl SearchCostEstimator {
     pub fn update_from_benchmarks(&mut self, results: &EngineBenchmarkResults) {
         // Update direct search times
-        for (category, _stats) in &results.direct_search_stats {
+        for (_category, _stats) in &results.direct_search_stats {
             // TODO: Need to add insert_direct_stats method to SearchCostEstimator
             // self.insert_direct_stats(category.clone(), stats.clone());
         }

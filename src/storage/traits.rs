@@ -43,13 +43,28 @@
 //! - **Index Layer**: AXIS engine coordinates with storage for vector retrieval
 //! - **Compaction**: Background processes use this trait for maintenance operations
 
+use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
+use crate::security::unified_rbac::{TenantContext, UnifiedUserContext};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+// Re-export decomposed traits from trait_components module for ISP compliance
+// Users can import from either `storage::traits` or `storage::trait_components`
+pub use crate::storage::trait_components::{
+    StorageCompactor, StorageIdentity, StorageLifecycle, StorageMetrics, StorageReader,
+    StorageScan, StorageWriter,
+};
+
+// Import capabilities for OCP-compliant delegation
+use crate::storage::trait_components::capabilities::CapabilityFactory;
+
+// Import StorageEngineType for OCP-compliant engine type dispatch
+use crate::index::axis::eventlog::StorageEngineType;
 
 /// Performance tier hint for storage engines
 ///
@@ -66,7 +81,7 @@ use std::sync::Arc;
 /// - **Archive**: Glacier/Archive with maximum compression (ZSTD level 19)
 ///
 /// ## Usage Example:
-/// ```rust
+/// ```rust,ignore
 /// // Mark frequently accessed data as hot
 /// engine.set_tier(collection_id, PerformanceTier::Hot)?;
 ///
@@ -271,7 +286,7 @@ impl UnifiedMetricsCollector {
     /// This ensures metrics never impact production performance.
     ///
     /// ## Usage:
-    /// ```rust
+    /// ```rust,ignore
     /// let start = Instant::now();
     /// let result = do_operation()?;
     /// metrics.record(
@@ -364,6 +379,7 @@ struct MetricsData {
     latencies_ms: std::collections::VecDeque<u64>,
     cache_hits: u64,
     cache_misses: u64,
+    #[allow(dead_code)]
     started_at: chrono::DateTime<chrono::Utc>,
     last_reset: chrono::DateTime<chrono::Utc>,
 }
@@ -546,6 +562,26 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn engine_version(&self) -> &'static str;
     fn strategy(&self) -> StorageEngineStrategy;
 
+    /// Get the storage engine type for AXIS indexing and event logging
+    ///
+    /// This method eliminates the need for string matching on engine_name(),
+    /// following the Open/Closed Principle. Each engine provides its type
+    /// directly, so adding new engines doesn't require modifying dispatch code.
+    ///
+    /// Default implementation maps from strategy() for backward compatibility.
+    fn engine_type(&self) -> StorageEngineType {
+        match self.strategy() {
+            StorageEngineStrategy::Sst => StorageEngineType::SST,
+            StorageEngineStrategy::Viper => StorageEngineType::VIPER,
+            StorageEngineStrategy::Helix => StorageEngineType::HELIX,
+            StorageEngineStrategy::Nova => StorageEngineType::NOVA,
+            StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
+            StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
+            // Default to SST for any unknown engines
+            _ => StorageEngineType::SST,
+        }
+    }
+
     /// Core flush operation - engine-specific implementation (required)
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult>;
 
@@ -614,7 +650,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         &self,
         _collection_id: &str,
         _strategy: crate::storage::unified_scan_strategy::ScanStrategy,
-        collection_config: Option<&Collection>,
+        _collection_config: Option<&Collection>,
     ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
         // Default implementation - engines should override with their specific implementation
         Err(anyhow::anyhow!(
@@ -624,108 +660,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 
     /// Get scan capabilities for this engine
-    /// Each engine reports its specific optimization capabilities
+    ///
+    /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
+    /// Each engine's capabilities are defined in `trait_components::capabilities`.
     fn scan_capabilities(&self) -> crate::storage::unified_scan_strategy::ScanCapabilities {
-        use crate::storage::unified_scan_strategy::ScanCapabilities;
-
-        match self.strategy() {
-            StorageEngineStrategy::Sst => ScanCapabilities {
-                // SST capabilities
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: true,
-                supports_block_cache: true,
-                supports_range_scans: true,
-                supports_index_scans: true,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-            StorageEngineStrategy::Viper => ScanCapabilities {
-                // VIPER capabilities
-                supports_predicate_pushdown: true,
-                supports_column_projection: true,
-                supports_row_group_pruning: true,
-                supports_parallel_column_evaluation: true,
-                supports_bloom_filters: false,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: false,
-                supports_zone_maps: true,
-                supports_streaming: true,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-            StorageEngineStrategy::Nova => ScanCapabilities {
-                // NOVA capabilities
-                supports_predicate_pushdown: true,
-                supports_column_projection: true,
-                supports_row_group_pruning: true,
-                supports_parallel_column_evaluation: true,
-                supports_bloom_filters: false,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: true,
-                supports_zone_maps: true,
-                supports_streaming: true,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-            StorageEngineStrategy::Raptor => ScanCapabilities {
-                // RAPTOR capabilities
-                supports_predicate_pushdown: true,
-                supports_column_projection: true,
-                supports_row_group_pruning: true,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: true,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: true,
-                supports_tier_aware_scanning: true,
-                supports_consolidated_reading: true,
-            },
-            StorageEngineStrategy::Swift => ScanCapabilities {
-                // SWIFT capabilities - hierarchical superblock architecture
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: true,
-                supports_block_cache: true,
-                supports_range_scans: true,
-                supports_index_scans: true,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: true,
-                supports_consolidated_reading: false,
-            },
-            _ => ScanCapabilities {
-                // Default minimal capabilities
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: false,
-                supports_block_cache: false,
-                supports_range_scans: false,
-                supports_index_scans: false,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: false,
-                supports_consolidated_reading: false,
-            },
-        }
+        // OCP: Delegate to CapabilityFactory instead of hardcoded match
+        CapabilityFactory::create(self.strategy()).scan_capabilities()
     }
 
     // =============================================================================
@@ -741,32 +681,22 @@ pub trait UnifiedStorageEngine: Send + Sync {
     ///
     /// Determines whether the storage engine supports collection-level operations
     /// such as per-collection flush, compaction, and configuration.
+    ///
+    /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
     fn supports_collection_level_operations(&self) -> bool {
-        match self.strategy() {
-            StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
-            StorageEngineStrategy::Sst => false,  // SST operates on entire tree
-            StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
-            StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
-            StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
-            StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
-            StorageEngineStrategy::Helix => true, // HELIX supports collection-level ops
-        }
+        // OCP: Delegate to CapabilityFactory instead of hardcoded match
+        CapabilityFactory::create(self.strategy()).supports_collection_level_operations()
     }
 
     /// Determines whether the storage engine supports atomic operations
     ///
     /// Atomic operations guarantee that either all changes are applied
     /// or none are applied, preventing partial updates.
+    ///
+    /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
     fn supports_atomic_operations(&self) -> bool {
-        match self.strategy() {
-            StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
-            StorageEngineStrategy::Sst => false,  // SST has eventual consistency
-            StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
-            StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
-            StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
-            StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
-            StorageEngineStrategy::Helix => true, // HELIX provides atomic guarantees
-        }
+        // OCP: Delegate to CapabilityFactory instead of hardcoded match
+        CapabilityFactory::create(self.strategy()).supports_atomic_operations()
     }
 
     fn supports_background_operations(&self) -> bool {
@@ -987,19 +917,64 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
             match self.compact(compact_params).await {
                 Ok(_) => result.compaction_triggered = true,
-                Err(e) => tracing::warn!("⚠️ Post-flush compaction failed: {}", e),
+                Err(e) => {
+                    let collection_info = params
+                        .collection_id
+                        .as_ref()
+                        .map(|id| format!(" for collection {}", id))
+                        .unwrap_or_default();
+                    tracing::error!(
+                        "⚠️ Post-flush compaction failed{}: {}. Data is safe but \
+                         storage may be suboptimal. Consider triggering manual compaction.",
+                        collection_info,
+                        e
+                    );
+                    result.compaction_error = Some(e.to_string());
+                    // Note: Compaction failure after flush is non-fatal - data integrity is preserved.
+                    // The caller can inspect result.compaction_error and decide whether to retry.
+                }
             }
         }
 
-        // 🚀 INDEX UPDATES: Delegate to AXIS indexing service for proper configuration handling
+        // 🚀 INDEX UPDATES: Notify EventLog for AXIS indexing service
         if result.success {
             if let Some(collection_id) = &params.collection_id {
-                tracing::debug!(
-                    "🔄 Flush successful for collection: {} - AXIS will handle index updates",
-                    collection_id
-                );
-                // NOTE: Index updates are now handled by AXIS indexing service based on collection IndexConfig
-                // The flush coordinator will notify AXIS about new vectors to index
+                // Notify EventLog so AXIS consumer can build indexes asynchronously
+                if let Some(event_log) = crate::services::events::log::event_log_service() {
+                    // Use engine_type() method (OCP-compliant - no string matching)
+                    let storage_engine_type = self.engine_type();
+
+                    let vector_count = result.entries_flushed.unwrap_or(0) as usize;
+                    // Use file_paths from FlushResult for AXIS index building
+                    if let Err(e) = event_log
+                        .notify_flush(
+                            collection_id,
+                            result.file_paths.clone(),
+                            vector_count,
+                            false, // has_quantized - TODO: pass from params
+                            true,  // has_fp32
+                            storage_engine_type,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "⚠️ Failed to notify EventLog about flush for '{}': {}",
+                            collection_id,
+                            e
+                        );
+                    } else {
+                        tracing::info!(
+                            "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
+                            collection_id,
+                            vector_count
+                        );
+                    }
+                } else {
+                    tracing::debug!(
+                        "🔄 Flush successful for collection: {} - EventLog not initialized",
+                        collection_id
+                    );
+                }
             }
         }
 
@@ -1502,6 +1477,14 @@ pub struct StorageQueryContext {
     /// Additional context that might be needed during search
     /// (can be extended without breaking existing code)
     pub metadata: StorageQueryMetadata,
+
+    /// User context for RBAC authorization checks
+    /// Optional for backward compatibility with existing code
+    pub user_context: Option<UnifiedUserContext>,
+
+    /// Tenant context for multi-tenant operations
+    /// Optional for backward compatibility with existing code
+    pub tenant_context: Option<TenantContext>,
 }
 
 /// Parsed quantization configuration for efficient progressive search
@@ -1683,6 +1666,35 @@ impl StorageQueryContext {
         let config = collection.config.as_ref();
         let storage_assignment = collection.storage_assignment.as_ref();
 
+        // Use proto enum for OCP-compliant storage engine mapping
+        let storage_strategy = config
+            .and_then(|c| c.storage_engine)
+            .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
+            .map(|engine| match engine {
+                crate::proto::proximadb_v1::StorageEngine::Viper => StorageEngineStrategy::Viper,
+                crate::proto::proximadb_v1::StorageEngine::Sst => StorageEngineStrategy::Sst,
+                crate::proto::proximadb_v1::StorageEngine::Nova => StorageEngineStrategy::Nova,
+                crate::proto::proximadb_v1::StorageEngine::Helix => StorageEngineStrategy::Helix,
+                crate::proto::proximadb_v1::StorageEngine::Swift => StorageEngineStrategy::Swift,
+                crate::proto::proximadb_v1::StorageEngine::Raptor => StorageEngineStrategy::Raptor,
+                _ => StorageEngineStrategy::Sst, // Default to SST for unknown engines
+            })
+            .unwrap_or(StorageEngineStrategy::Sst);
+
+        let mut adjusted_params = (*search_params).clone();
+        if matches!(
+            storage_strategy,
+            StorageEngineStrategy::Viper
+                | StorageEngineStrategy::Nova
+                | StorageEngineStrategy::Raptor
+        ) {
+            adjusted_params.block_prune.force_exact = true;
+            adjusted_params.block_prune.mode = BlockPruneMode::Sqrt;
+            adjusted_params.block_prune.ratio = 0.0;
+            adjusted_params.block_prune.min_keep = 0;
+            adjusted_params.block_prune.max_keep = 0;
+        }
+
         let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone(),
             use_axis_indexes: config
@@ -1704,16 +1716,7 @@ impl StorageQueryContext {
                     _ => crate::compute::distance_computation::DistanceMetric::Cosine,
                 })
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
-            storage_strategy: config
-                .map(|c| match c.storage_engine {
-                    Some(0) => StorageEngineStrategy::Viper,  // VIPER
-                    Some(1) => StorageEngineStrategy::Sst,    // SST
-                    Some(2) => StorageEngineStrategy::Nova,   // NOVA
-                    Some(3) => StorageEngineStrategy::Swift,  // SWIFT
-                    Some(4) => StorageEngineStrategy::Raptor, // RAPTOR
-                    _ => StorageEngineStrategy::Viper,
-                })
-                .unwrap_or(StorageEngineStrategy::Viper),
+            storage_strategy,
             storage_path: storage_assignment
                 .map(|sa| sa.base_location.clone())
                 .unwrap_or_else(|| "./data".to_string()),
@@ -1737,9 +1740,11 @@ impl StorageQueryContext {
         };
 
         Self {
-            search_params,
+            search_params: Arc::new(adjusted_params),
             collection,
             metadata,
+            user_context: None,
+            tenant_context: None,
         }
     }
 
@@ -1856,9 +1861,10 @@ impl StorageQueryContext {
         self.metadata.quantization_enabled
     }
 
-    /// Get collection ID (pre-computed)
+    /// Get collection ID from the collection object directly
+    /// This is more reliable than the metadata cache which may not be initialized
     pub fn collection_id(&self) -> &str {
-        &self.metadata.collection_id
+        &self.collection.id
     }
 
     /// Get storage URL from collection's storage assignment
@@ -1900,6 +1906,9 @@ pub struct FlushResult {
     /// Number of files/segments created
     pub files_created: Option<u64>,
 
+    /// Actual file paths created (for AXIS index building)
+    pub file_paths: Vec<String>,
+
     /// Duration of the operation
     pub duration_ms: Option<u64>,
 
@@ -1911,6 +1920,9 @@ pub struct FlushResult {
 
     /// Whether compaction was triggered as a result
     pub compaction_triggered: bool,
+
+    /// Error message if post-flush compaction failed (for observability and retry scheduling)
+    pub compaction_error: Option<String>,
 
     /// Batch IDs that were successfully flushed (for WAL cleanup coordination)
     pub flushed_batch_ids: Vec<crate::storage::persistence::write_ahead_log::BatchId>,
@@ -1986,6 +1998,265 @@ pub struct EngineStatistics {
 
     /// Engine-specific metrics
     pub engine_specific: HashMap<String, serde_json::Value>,
+}
+
+// =============================================================================
+// MULTI-MODEL STORAGE TRAITS (SOLID: Interface Segregation Principle)
+// =============================================================================
+// These traits extend the storage system to support multiple data models:
+// - Documents (MongoDB-like JSON)
+// - Observability (logs, metrics, traces)
+// - Graph (already supported via existing GraphOperationsService)
+// - Vector (already supported via UnifiedStorageEngine)
+
+/// Document storage operations trait (ISP: focused interface for document operations)
+///
+/// This trait provides MongoDB-like document storage capabilities.
+/// Implementations should use the underlying storage engine (SST recommended)
+/// with JSON path indexing and document-optimized block formats.
+#[async_trait]
+pub trait DocumentStorageOperations: Send + Sync {
+    /// Insert a document into a collection
+    async fn insert_document(
+        &self,
+        collection: &str,
+        id: &str,
+        document: crate::proto::proximadb_v1::SqlObject,
+        indexed_paths: Vec<String>,
+    ) -> Result<DocumentRecord>;
+
+    /// Get a document by ID
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>>;
+
+    /// Query documents with filter
+    async fn query_documents(
+        &self,
+        collection: &str,
+        filter: Option<crate::proto::proximadb_v1::DocumentFilter>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DocumentRecord>>;
+
+    /// Update a document with operations
+    async fn update_document(
+        &self,
+        collection: &str,
+        id: &str,
+        updates: Vec<crate::proto::proximadb_v1::DocumentUpdate>,
+    ) -> Result<DocumentRecord>;
+
+    /// Delete a document
+    async fn delete_document(&self, collection: &str, id: &str) -> Result<bool>;
+
+    /// Create a document collection with indexes
+    async fn create_document_collection(
+        &self,
+        config: crate::proto::proximadb_v1::DocumentCollectionConfig,
+    ) -> Result<String>;
+
+    /// List document collections
+    async fn list_document_collections(&self) -> Result<Vec<DocumentCollectionInfo>>;
+}
+
+/// Document record returned from storage
+#[derive(Debug, Clone)]
+pub struct DocumentRecord {
+    pub id: String,
+    pub document: crate::proto::proximadb_v1::SqlObject,
+    pub version: u64,
+    pub created_at_ns: i64,
+    pub updated_at_ns: i64,
+}
+
+/// Document collection info for listing
+#[derive(Debug, Clone)]
+pub struct DocumentCollectionInfo {
+    pub name: String,
+    pub document_count: u64,
+    pub storage_size_bytes: u64,
+    pub indexes: Vec<crate::proto::proximadb_v1::IndexDefinition>,
+}
+
+/// Observability storage operations trait (ISP: focused interface for observability)
+///
+/// This trait provides Cloud SIEM-like capabilities for logs, metrics, and traces.
+/// Implementations should use time-partitioned storage with hot/warm/cold tiering.
+#[async_trait]
+pub trait ObservabilityStorageOperations: Send + Sync {
+    /// Ingest logs in bulk
+    async fn ingest_logs(
+        &self,
+        namespace: &str,
+        logs: Vec<crate::proto::proximadb_v1::LogEntry>,
+    ) -> Result<IngestResult>;
+
+    /// Ingest metrics in bulk
+    async fn ingest_metrics(
+        &self,
+        namespace: &str,
+        metrics: Vec<crate::proto::proximadb_v1::MetricSample>,
+    ) -> Result<IngestResult>;
+
+    /// Ingest traces
+    async fn ingest_traces(
+        &self,
+        namespace: &str,
+        traces: Vec<crate::proto::proximadb_v1::TraceData>,
+    ) -> Result<IngestResult>;
+
+    /// Query logs with time range and filters
+    async fn query_logs(
+        &self,
+        namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        filter: Option<crate::proto::proximadb_v1::LogFilter>,
+        limit: u32,
+    ) -> Result<LogQueryResult>;
+
+    /// Aggregate metrics with PromQL-like semantics
+    async fn aggregate_metrics(
+        &self,
+        namespace: &str,
+        params: MetricAggregationParams,
+    ) -> Result<MetricAggregationResult>;
+
+    /// Query traces by trace ID or filters
+    async fn query_traces(
+        &self,
+        namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        trace_id: Option<String>,
+        service: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<crate::proto::proximadb_v1::TraceData>>;
+
+    /// Create an observability namespace with retention config
+    async fn create_namespace(
+        &self,
+        config: crate::proto::proximadb_v1::ObservabilityNamespaceConfig,
+    ) -> Result<String>;
+
+    /// List observability namespaces
+    async fn list_namespaces(&self) -> Result<Vec<NamespaceInfo>>;
+}
+
+/// Ingest result for bulk operations
+#[derive(Debug, Clone, Default)]
+pub struct IngestResult {
+    pub ingested: u64,
+    pub failed: u64,
+    pub errors: Vec<String>,
+    pub processing_time_ms: u64,
+}
+
+/// Log query result
+#[derive(Debug, Clone)]
+pub struct LogQueryResult {
+    pub logs: Vec<crate::proto::proximadb_v1::LogEntry>,
+    pub next_cursor: Option<String>,
+    pub total_matched: u64,
+    pub query_time_ms: u64,
+}
+
+/// Metric aggregation parameters
+#[derive(Debug, Clone)]
+pub struct MetricAggregationParams {
+    pub metric_name: String,
+    pub start_time_ns: i64,
+    pub end_time_ns: i64,
+    pub aggregation: crate::proto::proximadb_v1::MetricAggregation,
+    pub step_seconds: u32,
+    pub label_filters: HashMap<String, String>,
+    pub group_by: Vec<String>,
+}
+
+/// Metric aggregation result
+#[derive(Debug, Clone)]
+pub struct MetricAggregationResult {
+    pub series: Vec<TimeSeriesData>,
+    pub query_time_ms: u64,
+}
+
+/// Time series data point
+#[derive(Debug, Clone)]
+pub struct TimeSeriesData {
+    pub labels: HashMap<String, String>,
+    pub points: Vec<DataPointValue>,
+}
+
+/// Individual data point
+#[derive(Debug, Clone)]
+pub struct DataPointValue {
+    pub timestamp_ns: i64,
+    pub value: f64,
+}
+
+/// Namespace info for listing
+#[derive(Debug, Clone)]
+pub struct NamespaceInfo {
+    pub name: String,
+    pub log_count: u64,
+    pub metric_count: u64,
+    pub trace_count: u64,
+    pub retention_config: Option<crate::proto::proximadb_v1::RetentionConfig>,
+}
+
+/// Unified multi-model storage trait combining all data model operations
+///
+/// This trait follows the Composite pattern, aggregating specialized storage
+/// traits into a single interface for engines that support multiple data models.
+///
+/// **SOLID Principles Applied:**
+/// - **S (Single Responsibility)**: Each sub-trait handles one data model
+/// - **O (Open/Closed)**: New data models can be added via new traits
+/// - **L (Liskov Substitution)**: Any implementing engine works as UnifiedStorageEngine
+/// - **I (Interface Segregation)**: Clients can depend on specific sub-traits
+/// - **D (Dependency Inversion)**: Higher layers depend on these abstractions
+///
+/// Engines can implement this trait to provide multi-model storage capabilities
+/// on top of their vector storage foundation.
+#[async_trait]
+pub trait MultiModelStorage:
+    UnifiedStorageEngine + DocumentStorageOperations + ObservabilityStorageOperations
+{
+    /// Check which data models are supported by this engine
+    fn supported_models(&self) -> Vec<DataModel> {
+        vec![
+            DataModel::Vector,        // Always supported via UnifiedStorageEngine
+            DataModel::Document,      // Via DocumentStorageOperations
+            DataModel::Observability, // Via ObservabilityStorageOperations
+        ]
+    }
+
+    /// Get unified storage statistics across all models
+    async fn get_multi_model_stats(&self) -> Result<MultiModelStats> {
+        Ok(MultiModelStats::default())
+    }
+}
+
+/// Supported data models
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataModel {
+    Vector,
+    Document,
+    Graph,
+    Observability,
+    Relational,
+}
+
+/// Unified statistics across all data models
+#[derive(Debug, Clone, Default)]
+pub struct MultiModelStats {
+    pub vector_count: u64,
+    pub document_count: u64,
+    pub log_count: u64,
+    pub metric_count: u64,
+    pub trace_count: u64,
+    pub graph_node_count: u64,
+    pub graph_edge_count: u64,
+    pub total_storage_bytes: u64,
 }
 
 /// Engine health status
@@ -2169,10 +2440,12 @@ impl Default for FlushResult {
             entries_flushed: None,
             bytes_written: None,
             files_created: None,
+            file_paths: Vec::new(),
             duration_ms: None,
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: vec![],
         }
     }

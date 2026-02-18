@@ -30,6 +30,7 @@ pub struct PrefetchEngine {
 
 /// Prefetch request
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PrefetchRequest {
     path: String,
     priority: PrefetchPriority,
@@ -38,6 +39,7 @@ struct PrefetchRequest {
 
 /// Prefetch priority
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[allow(dead_code)]
 enum PrefetchPriority {
     High = 3,
     Medium = 2,
@@ -46,6 +48,7 @@ enum PrefetchPriority {
 
 /// Prefetch status
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum PrefetchStatus {
     InProgress,
     Completed,

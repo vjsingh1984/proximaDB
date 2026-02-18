@@ -37,7 +37,7 @@ pub struct NaturalLanguageBusinessIntelligenceAPI {
 /// Natural language query processor for enterprise business intelligence
 pub struct NaturalLanguageQueryProcessor {
     /// Query parsing with business context
-    query_parser: Arc<BusinessContextQueryParser>,
+    _query_parser: Arc<BusinessContextQueryParser>,
 
     /// Intent classification for enterprise queries
     intent_classifier: Arc<EnterpriseIntentClassifier>,
@@ -52,7 +52,7 @@ pub struct NaturalLanguageQueryProcessor {
 /// Business intelligence translator for natural language to structured queries
 pub struct BusinessIntelligenceTranslator {
     /// Translation rules by business domain
-    domain_translation_rules: Arc<DashMap<String, DomainTranslationRules>>,
+    _domain_translation_rules: Arc<DashMap<String, DomainTranslationRules>>,
 
     /// Regulatory compliance translator
     compliance_translator: Arc<ComplianceQueryTranslator>,
@@ -61,7 +61,7 @@ pub struct BusinessIntelligenceTranslator {
     cross_domain_composer: Arc<CrossDomainQueryComposer>,
 
     /// Performance optimizer for translated queries
-    query_optimizer: Arc<TranslatedQueryOptimizer>,
+    _query_optimizer: Arc<TranslatedQueryOptimizer>,
 }
 
 impl NaturalLanguageBusinessIntelligenceAPI {
@@ -150,7 +150,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             conversation_metadata: ConversationMetadata {
                 query_complexity: parsed_query.complexity_analysis.complexity_score,
                 processing_time_ms: 2400, // Target <3 seconds
-                confidence_score: confidence_score,
+                confidence_score,
                 business_relevance: 0.94,
             },
             generated_at: Utc::now(),
@@ -230,7 +230,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
         _tenant_id: &str,
         _structured_query: &StructuredBusinessQuery,
         _business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<DomainIntelligenceResult> {
         // Execute structured query with Release 1 domain intelligence
         // This integrates with existing DomainKnowledgeGraph implementation
@@ -303,7 +303,7 @@ impl NaturalLanguageQueryProcessor {
         &self,
         question: &str,
         business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<ParsedEnterpriseQuery> {
         // Parse query with business context understanding
         let business_entities = self
@@ -328,7 +328,7 @@ impl NaturalLanguageQueryProcessor {
             original_question: question.to_string(),
             business_entities,
             business_intent,
-            complexity_analysis: complexity_analysis,
+            complexity_analysis,
             regulatory_requirements: self.extract_regulatory_requirements(business_context),
             cross_domain_requirements: self.identify_cross_domain_requirements(&primary_intent),
         })
@@ -373,7 +373,7 @@ impl BusinessIntelligenceTranslator {
         &self,
         parsed_query: &ParsedEnterpriseQuery,
         business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<StructuredBusinessQuery> {
         // Apply domain-specific translation rules
         let domain_query = self
@@ -762,7 +762,7 @@ pub struct QueryPerformanceRequirements {
 impl NaturalLanguageQueryProcessor {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            query_parser: Arc::new(BusinessContextQueryParser::new()?),
+            _query_parser: Arc::new(BusinessContextQueryParser::new()?),
             intent_classifier: Arc::new(EnterpriseIntentClassifier::new()?),
             entity_extractor: Arc::new(RegulatoryAwareEntityExtractor::new()?),
             complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new()?),
@@ -773,10 +773,10 @@ impl NaturalLanguageQueryProcessor {
 impl BusinessIntelligenceTranslator {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            domain_translation_rules: Arc::new(DashMap::new()),
+            _domain_translation_rules: Arc::new(DashMap::new()),
             compliance_translator: Arc::new(ComplianceQueryTranslator::new()?),
             cross_domain_composer: Arc::new(CrossDomainQueryComposer::new()?),
-            query_optimizer: Arc::new(TranslatedQueryOptimizer::new()?),
+            _query_optimizer: Arc::new(TranslatedQueryOptimizer::new()?),
         })
     }
 }
@@ -823,7 +823,7 @@ impl EnterpriseResponseValidator {
         &self,
         _response_text: &str,
         _business_context: &BusinessContext,
-        user_context: &EnterpriseUserContext,
+        _user_context: &EnterpriseUserContext,
     ) -> Result<ValidatedEnterpriseResponse> {
         Ok(ValidatedEnterpriseResponse {
             response_text: "Validated enterprise response".to_string(),
@@ -977,7 +977,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let nl_api = NaturalLanguageBusinessIntelligenceAPI::new(ai_foundation)
+        let _nl_api = NaturalLanguageBusinessIntelligenceAPI::new(ai_foundation)
             .await
             .unwrap();
         // Basic validation that NL API was created
@@ -1028,12 +1028,12 @@ mod tests {
     #[test]
     fn test_query_type_classification() {
         let risk_query = QueryType::RiskAnalysis;
-        let customer_query = QueryType::CustomerAnalysis;
-        let clinical_query = QueryType::ClinicalAnalysis;
+        let _customer_query = QueryType::CustomerAnalysis;
+        let _clinical_query = QueryType::ClinicalAnalysis;
 
         assert!(matches!(risk_query, QueryType::RiskAnalysis));
-        assert!(matches!(customer_query, QueryType::CustomerAnalysis));
-        assert!(matches!(clinical_query, QueryType::ClinicalAnalysis));
+        assert!(matches!(_customer_query, QueryType::CustomerAnalysis));
+        assert!(matches!(_clinical_query, QueryType::ClinicalAnalysis));
     }
 
     #[test]

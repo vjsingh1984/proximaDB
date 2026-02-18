@@ -29,6 +29,7 @@ pub struct IndexMemoryTracker {
     max_memory_bytes: usize,
 
     /// LRU eviction queue (collection_id, last_access_time)
+    #[allow(dead_code)]
     eviction_queue: Arc<RwLock<Vec<(String, std::time::Instant)>>>,
 }
 

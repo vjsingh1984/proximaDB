@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::storage::BatchId;
 use crate::storage::persistence::write_ahead_log::{
@@ -84,11 +84,12 @@ impl Clone for RecoveryManager {
     }
 }
 
+#[allow(dead_code)]
 impl RecoveryManager {
     /// Create a new recovery manager with direct-to-storage recovery
     pub fn new(
         config: crate::storage::persistence::write_ahead_log::config::WALConfig,
-        wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
+        _wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Self {
@@ -110,7 +111,10 @@ impl RecoveryManager {
             disk_manager,
             storage_engines: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             flush_coordinator: Arc::new(WALFlushCoordinator::new()), // Flush coordinator is internal to recovery
-            recovery_mode: RecoveryMode::DirectToStorage,
+            // CRITICAL FIX: Use ViaMemtable for startup recovery since storage engines aren't initialized yet
+            // This recovers vectors to memtable where they're immediately searchable
+            // Can be flushed to storage later when engines are ready
+            recovery_mode: RecoveryMode::ViaMemtable,
             stats: Arc::new(tokio::sync::RwLock::new(RecoveryStats::default())),
             metadata_provider,
         }
@@ -163,7 +167,7 @@ impl RecoveryManager {
             .context("Failed to start recovery phase")?;
 
         // Use global manifest for proper LSN ordering
-        info!("🔍 DEBUG: Getting active entries from global manifest...");
+        trace!("🔍 : Getting active entries from global manifest...");
         let all_entries =
             crate::storage::persistence::write_ahead_log::manifest::get_active_entries().await;
         info!(
@@ -193,7 +197,7 @@ impl RecoveryManager {
         }
 
         // Group by collection for organized recovery
-        let mut collections_to_recover: std::collections::HashSet<String> = all_entries
+        let collections_to_recover: std::collections::HashSet<String> = all_entries
             .iter()
             .map(|e| e.collection_id.clone())
             .collect();
@@ -336,6 +340,11 @@ impl RecoveryManager {
     /// Recover a specific collection (public API)
     /// Returns RecoveryStats with detailed recovery information
     pub async fn recover_collection(&self, collection_id: &str) -> Result<RecoveryStats> {
+        eprintln!(
+            "🔍 DEBUG: RecoveryManager::recover_collection() called for: {}",
+            collection_id
+        );
+
         let (vectors_recovered, files_recovered) = Self::recover_collection_internal(
             collection_id,
             self.disk_manager.clone(),
@@ -346,6 +355,11 @@ impl RecoveryManager {
             self.metadata_provider.clone(),
         )
         .await?;
+
+        eprintln!(
+            "✅ DEBUG: recover_collection_internal returned: {} vectors, {} files",
+            vectors_recovered, files_recovered
+        );
 
         // Update global stats
         if vectors_recovered > 0 {
@@ -403,14 +417,33 @@ impl RecoveryManager {
         progress_callback: Option<RecoveryProgressCallback>,
         metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<(u64, u64)> {
+        eprintln!(
+            "🔍 DEBUG: recover_collection_internal() for collection: {}",
+            collection_id
+        );
         info!(
             "🔄 Recovering collection: {} (mode: {:?})",
             collection_id, recovery_mode
         );
 
         if recovery_mode == RecoveryMode::DirectToStorage {
+            eprintln!("🔍 DEBUG: Recovery mode is DirectToStorage, checking storage engine");
             let engines = storage_engines.read().await;
+            eprintln!(
+                "🔍 DEBUG: Total storage engines registered: {}",
+                engines.len()
+            );
+            eprintln!(
+                "🔍 DEBUG: Looking for engine for collection: {}",
+                collection_id
+            );
+
             if !engines.contains_key(collection_id) {
+                eprintln!(
+                    "⚠️ DEBUG: No storage engine registered for {}. Available engines: {:?}",
+                    collection_id,
+                    engines.keys().collect::<Vec<_>>()
+                );
                 warn!(
                     "⏭️ Skipping recovery for collection {}: No storage engine registered. \
                     Collection will be initialized fresh if accessed.",
@@ -419,20 +452,46 @@ impl RecoveryManager {
                 // Return 0 vectors recovered instead of error - allows graceful degradation
                 return Ok((0, 0));
             }
+            eprintln!("✅ DEBUG: Storage engine found for {}", collection_id);
         }
 
         // Get entries from global manifest
+        eprintln!(
+            "🔍 DEBUG: Getting WAL entries from global manifest for {}",
+            collection_id
+        );
         let entries =
             crate::storage::persistence::write_ahead_log::manifest::get_collection_entries(
                 collection_id,
             )
             .await;
+        eprintln!(
+            "🔍 DEBUG: Found {} WAL entries for {}",
+            entries.len(),
+            collection_id
+        );
+
         let mut vectors_recovered = 0u64;
         let mut files_recovered = 0u64;
 
+        eprintln!(
+            "🔍 DEBUG: Starting WAL entry recovery loop for {} entries",
+            entries.len()
+        );
+
         for (idx, e) in entries.iter().enumerate() {
+            eprintln!(
+                "🔍 DEBUG: Processing WAL entry {}/{}: batch_id={}, lsn={}, size={}",
+                idx + 1,
+                entries.len(),
+                e.batch_id,
+                e.global_lsn,
+                e.size_bytes
+            );
+
             // Use full_url() from manifest entry (includes storage_url + file_path)
             let file_url = e.full_url();
+            eprintln!("🔍 DEBUG: WAL file URL: {}", file_url);
 
             // Convert string format to SerializationFormat
             let format = match e.format.as_str() {
@@ -441,8 +500,9 @@ impl RecoveryManager {
                 "avro" => SerializationFormat::Avro,
                 _ => SerializationFormat::ProtocolBuffers, // Default fallback
             };
+            eprintln!("🔍 DEBUG: Format: {:?}", format);
 
-            let mut file_info = WalFileInfo {
+            let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
                 batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
                 file_url: file_url.clone(),
@@ -455,18 +515,31 @@ impl RecoveryManager {
                 e.batch_id, file_url, e.global_lsn, e.size_bytes
             );
 
+            eprintln!("🔍 DEBUG: Reading batch from disk...");
             match disk_manager.read_batch(&file_info).await {
                 Ok(data) => {
+                    eprintln!("✅ DEBUG: Read {} bytes from WAL file", data.len());
+                    eprintln!("🔍 DEBUG: Validating checksum...");
                     let checksum = crate::utils::checksum::Crc32::checksum(&data);
                     if checksum != e.checksum_crc32 {
+                        eprintln!(
+                            "❌ DEBUG: Checksum mismatch! Expected: {}, Got: {}",
+                            e.checksum_crc32, checksum
+                        );
                         warn!("Checksum mismatch for {}, skipping", file_info.file_url);
                         continue;
                     }
+                    eprintln!("✅ DEBUG: Checksum valid");
+
+                    eprintln!("🔍 DEBUG: Deserializing {} bytes...", data.len());
                     let serializer = SerializerFactory::create(file_info.format);
                     let vectors = serializer
                         .deserialize_batch(&data)
                         .context("Failed to deserialize WAL data")?;
                     let count = vectors.len() as u64;
+                    eprintln!("✅ DEBUG: Deserialized {} vectors from WAL file", count);
+
+                    eprintln!("🔍 DEBUG: Flushing {} vectors to storage...", count);
                     let result = Self::flush_recovered_vectors(
                         &file_info,
                         vectors,
@@ -477,6 +550,8 @@ impl RecoveryManager {
                         &metadata_provider,
                     )
                     .await?;
+                    eprintln!("🔍 DEBUG: Flush result: success={}", result.success);
+
                     if result.success {
                         files_recovered += 1;
                         vectors_recovered += count;
@@ -813,8 +888,8 @@ pub struct ParallelRecoveryManager {
 impl ParallelRecoveryManager {
     /// Create a new parallel recovery manager
     pub fn new(
-        disk_manager: Arc<WriteAheadLogDiskManager>,
-        flush_coordinator: Arc<WALFlushCoordinator>,
+        _disk_manager: Arc<WriteAheadLogDiskManager>,
+        _flush_coordinator: Arc<WALFlushCoordinator>,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         num_workers: Option<usize>,
     ) -> Self {
@@ -1052,7 +1127,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_manager_direct_to_storage() {
-        let (disk_manager, flush_coordinator, mut recovery_manager, temp_dir) =
+        let (disk_manager, _flush_coordinator, recovery_manager, temp_dir) =
             create_test_managers().await;
         let collection_id = "test_collection";
 
@@ -1135,7 +1210,6 @@ mod tests {
 
     // Mock storage engine for testing
     fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageEngine> {
-        use crate::services::collection::manager::CollectionService;
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use crate::storage::traits::{
             CompactionParameters, CompactionResult, FlushParameters, FlushResult,
@@ -1174,10 +1248,12 @@ mod tests {
                     entries_flushed: Some(params.vector_records.len() as u64),
                     bytes_written: Some(params.vector_records.len() as u64 * 256),
                     files_created: Some(1),
+                    file_paths: vec![],
                     duration_ms: Some(10),
                     completed_at: chrono::Utc::now(),
                     engine_metrics: HashMap::new(),
                     compaction_triggered: false,
+                    compaction_error: None,
                     flushed_batch_ids: params.batch_ids.clone(),
                 })
             }

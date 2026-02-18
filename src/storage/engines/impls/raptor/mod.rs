@@ -1,24 +1,27 @@
-//! # RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
+//! # RAPTOR Engine - EXPERIMENTAL
 //!
-//! ## 🏆 PRODUCTION-READY ADAPTIVE ENGINE - COMPREHENSIVE IMPLEMENTATION
+//! **WARNING**: This engine is experimental and NOT production-ready.
+//! It has 35+ TODO items and incomplete implementations.
+//! Use SST, VIPER, or HELIX for production workloads.
 //!
-//! RAPTOR is ProximaDB's **sophisticated adaptive storage engine** featuring the innovative Matrix Trinity architecture for intelligent workload optimization.
+//! ## RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
 //!
-//! ### ✅ **ENTERPRISE ADAPTIVE CAPABILITIES:**
-//! 1. **Matrix Trinity Architecture**: Revolutionary P²+K²+P×K matrix system for optimal search navigation
-//! 2. **Workload Adaptation**: Real-time optimization based on query patterns and data distribution
+//! RAPTOR is ProximaDB's adaptive storage engine featuring the Matrix Trinity architecture for intelligent workload optimization.
+//!
+//! ### Adaptive Capabilities (experimental):
+//! 1. **Matrix Trinity Architecture**: P²+K²+P×K matrix system for search navigation
+//! 2. **Workload Adaptation**: Optimization based on query patterns and data distribution
 //! 3. **Smart Resource Management**: Adaptive row group sizing and memory-efficient operations
-//! 4. **Intelligent Compaction**: Advanced consolidation with pattern-aware optimization
-//! 5. **Production Validation**: 17+ comprehensive implementation modules with battle-tested algorithms
+//! 4. **Intelligent Compaction**: Consolidation with pattern-aware optimization
 //!
-//! **STATUS**: ✅ **PRODUCTION-READY** - Advanced adaptive engine optimized for dynamic workloads
+//! **STATUS**: EXPERIMENTAL - Not recommended for production use
 //!
 //! ## 🎯 OPTIMAL USE CASES
 //!
 //! RAPTOR excels in dynamic environments requiring workload adaptation:
 //!
 //! ### ✅ **Dynamic Recommendation Systems**
-//! ```rust
+//! ```rust,ignore
 //! // E-commerce platforms with changing user preferences
 //! let user_embeddings = load_user_behavior_vectors(); // 512D user profiles
 //! raptor_engine.flush_with_adaptation(user_embeddings).await; // Adapts to usage patterns
@@ -26,7 +29,7 @@
 //! ```
 //!
 //! ### ✅ **Multi-Tenant SaaS Platforms**
-//! ```rust
+//! ```rust,ignore
 //! // Different tenants with varying query patterns
 //! for tenant_batch in tenant_data_batches {
 //!     raptor_engine.configure_adaptive_params(&tenant_batch.tenant_id,
@@ -36,7 +39,7 @@
 //! ```
 //!
 //! ### ✅ **Research and Development Workloads**
-//! ```rust
+//! ```rust,ignore
 //! // Experimental datasets with unknown query patterns
 //! let research_vectors = load_experimental_embeddings(); // Variable dimensions
 //! raptor_engine.enable_adaptive_mode(true).await; // Learn optimal parameters
@@ -90,14 +93,16 @@ pub mod adaptive_pxk;
 pub mod consolidated_compactor;
 pub mod consolidated_reader;
 pub mod engine;
+pub mod extraction;
 pub mod matrix_builder;
 // metadata_serializer removed - functionality consolidated into unified_metadata_serializer
 pub mod unified_metadata_serializer;
 pub mod writer;
 // ivf_manager removed - obsolete with Matrix Trinity (P² + K² + P×K)
 pub mod artus_bloom;
+pub mod progressive_stages;
 pub mod rowgroup_manager;
-pub mod smart_rowgroup_sizing;
+pub mod smart_rowgroup_sizing; // ISP-compliant progressive search stages
 
 // Re-export commonly used types from common module
 pub use common::{
@@ -138,7 +143,7 @@ pub use common::{
 // Export consolidated modules instead of deprecated ones
 pub use config::{AccuracyLevel, CompactionConfig, CompressionStrategy, PxKStrategy, RaptorConfig};
 pub use consolidated_compactor::RaptorCompactor;
-pub use consolidated_reader::RaptorReader; // Use consolidated reader
+pub use consolidated_reader::{IntraRowgroupMatrix, RaptorReader}; // Use consolidated reader
 pub use engine::RaptorEngine;
 pub use writer::RaptorWriter; // Use consolidated compactor
 // IvfManager removed - Matrix Trinity handles clustering via centroids

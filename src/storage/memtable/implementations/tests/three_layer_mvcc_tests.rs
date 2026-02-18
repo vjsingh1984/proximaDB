@@ -5,7 +5,6 @@
 
 use super::super::global_partitioned::GlobalPartitionedMemtable;
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::write_ahead_log::BatchId;
@@ -34,12 +33,12 @@ fn create_vector_record(
 
 /// Helper function to create a WAL batch
 fn create_wal_batch(
-    collection_id: &str,
+    _collection_id: &str,
     sequence: u64,
     vectors: Vec<VectorRecord>,
 ) -> WALVectorBatch {
     let vector_count = vectors.len() as u64;
-    let end_sequence = if vector_count > 0 {
+    let _end_sequence = if vector_count > 0 {
         sequence + vector_count - 1
     } else {
         sequence

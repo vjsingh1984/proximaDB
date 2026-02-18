@@ -8,13 +8,13 @@
 //! AVX2/AVX512 on x86_64) and falls back to scalar if SIMD is unavailable.
 
 use anyhow::Result;
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::storage::engines::core::ops::proximacodec::simd::{
-    get_simd_backend, simd_bitpack_decode_f32, simd_delta_decode_f32,
+    get_simd_backend, simd_bitpack_decode_f32,
 };
 use crate::storage::engines::core::ops::proximacodec::traits::RawDecoder;
-use crate::storage::engines::core::ops::proximacodec::types::{ProximaScheme, TypeId};
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 /// SIMD-accelerated decoder
 ///

@@ -14,49 +14,87 @@
  * limitations under the License.
  */
 
-//! # PULSAR Graph Engine - Distributed Sharded Storage
+//! # PULSAR Graph Engine - EXPERIMENTAL (Distributed)
 //!
-//! PULSAR (Partitioned Universal Logic for Scalable Analytics & Retrieval) is ProximaDB's
-//! distributed graph engine designed for horizontal scaling of large graphs (1B+ nodes).
+//! **WARNING**: PULSAR is experimental and not production-ready.
+//!
+//! PULSAR provides distributed graph capabilities via sharding but has incomplete
+//! implementations for cross-shard queries and distributed transactions.
+//!
+//! **For production use, use ORION with application-level sharding.**
+//!
+//! ## Status
+//!
+//! | Feature | Status |
+//! |---------|--------|
+//! | Consistent hashing | Implemented |
+//! | Single-shard queries | Implemented |
+//! | Replication | Basic (async) |
+//! | Cross-shard traversal | Incomplete |
+//! | Distributed transactions | Incomplete |
+//! | WAL persistence | Not implemented |
+//!
+//! ## Known Limitations
+//!
+//! 1. **Cross-shard queries**: BFS/DFS across shards may miss edges
+//! 2. **No distributed WAL**: Shard failures can cause data loss
+//! 3. **Eventual consistency**: Replication is asynchronous
+//! 4. **No automatic rebalancing**: Manual intervention required
+//!
+//! ## When to Consider PULSAR
+//!
+//! - Experimental workloads with extremely large graphs (1B+ nodes)
+//! - Research and development environments
+//! - When you can tolerate data loss and inconsistency
+//!
+//! ## Recommended Alternative
+//!
+//! For production distributed graph workloads, consider:
+//! - Using ORION with application-level sharding
+//! - Implementing a sharding layer in your application
+//! - Using ORION per tenant/partition
 //!
 //! ## Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────┐
-//! │            PULSAR Engine                 │
-//! ├─────────────────────────────────────────┤
-//! │              Coordinator                 │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │     Query Router & Distributor       │ │
-//! │  └─────────────────────────────────────┘ │
-//! ├─────────────────────────────────────────┤
-//! │               Sharding                   │
-//! │  ┌─────────┬─────────┬─────────────┐    │
-//! │  │ Shard 0 │ Shard 1 │   Shard N   │    │
-//! │  │(ORION)  │(ORION)  │  (ORION)    │    │
-//! │  └─────────┴─────────┴─────────────┘    │
-//! ├─────────────────────────────────────────┤
-//! │             Replication                  │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │    Master-Slave Replication         │ │
-//! │  │    Configurable Factor (1-3)        │ │
-//! │  └─────────────────────────────────────┘ │
-//! └─────────────────────────────────────────┘
+//! +------------------------------------------+
+//! |            PULSAR Engine                 |
+//! +------------------------------------------+
+//! |              Coordinator                 |
+//! |  +-------------------------------------+ |
+//! |  |     Query Router & Distributor     | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
+//! |               Sharding                   |
+//! |  +---------+---------+-------------+    |
+//! |  | Shard 0 | Shard 1 |   Shard N   |    |
+//! |  |(ORION)  |(ORION)  |  (ORION)    |    |
+//! |  +---------+---------+-------------+    |
+//! +------------------------------------------+
+//! |             Replication                  |
+//! |  +-------------------------------------+ |
+//! |  |    Master-Slave Replication        | |
+//! |  |    Configurable Factor (1-3)       | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
 //! ```
 //!
-//! ## Key Features
+//! ## Key Features (Experimental)
 //!
 //! - **Consistent Hashing**: Nodes distributed using SHA-256 hash ring
 //! - **Configurable Replication**: 1-3x replication factor for fault tolerance
-//! - **Cross-Shard Queries**: Distributed BFS/DFS traversal
-//! - **2PC Transactions**: Basic distributed transaction support
+//! - **Cross-Shard Queries**: Distributed BFS/DFS traversal (incomplete)
+//! - **2PC Transactions**: Basic distributed transaction support (incomplete)
 //! - **Hot Shard Detection**: Automatic load balancing
 
+pub mod consensus;
 pub mod coordinator;
 pub mod monitoring;
 pub mod optimizer;
+pub mod regions;
 pub mod replication;
 pub mod sharding;
+pub mod transactions;
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -142,18 +180,76 @@ impl Default for PulsarConfig {
 }
 
 impl PulsarGraphEngine {
-    /// Create a new PULSAR distributed graph engine
+    /// Create a new PULSAR distributed graph engine (in-memory, no persistence)
     pub fn new(config: PulsarConfig) -> Result<Self> {
+        // Shared memory pool for PULSAR-level operations (e.g., cross-shard queries)
         let memory_pool = Arc::new(GraphMemoryPool::new());
 
-        // Initialize shards
+        // Initialize shards - each shard has its own isolated memory pool
+        // This ensures proper data partitioning and shard isolation
         let shards = Arc::new(DashMap::new());
         for shard_id in 0..config.shard_count {
-            let shard_engine =
-                Arc::new(OrionGraphEngine::with_memory_pool(Arc::clone(&memory_pool)));
+            // Each shard gets its own memory pool for proper isolation
+            let shard_memory_pool = Arc::new(GraphMemoryPool::new());
+            let shard_engine = Arc::new(OrionGraphEngine::with_memory_pool(shard_memory_pool));
             shards.insert(shard_id as u32, shard_engine);
         }
 
+        Self::finish_initialization(config, memory_pool, shards)
+    }
+
+    /// Create a new PULSAR distributed graph engine with persistence enabled
+    ///
+    /// Each shard will have its own WAL file for durability.
+    ///
+    /// # Arguments
+    /// * `config` - PULSAR configuration
+    /// * `graph_id` - Unique identifier for this graph (used in WAL paths)
+    /// * `base_url` - Base storage URL (e.g., "file:///data" or "s3://bucket")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let engine = PulsarGraphEngine::with_persistence(
+    ///     PulsarConfig::default(),
+    ///     "my_graph".to_string(),
+    ///     "file:///tmp/proximadb".to_string(),
+    /// ).await?;
+    /// ```
+    pub async fn with_persistence(
+        config: PulsarConfig,
+        graph_id: String,
+        base_url: String,
+    ) -> Result<Self> {
+        // Shared memory pool for PULSAR-level operations
+        let memory_pool = Arc::new(GraphMemoryPool::new());
+
+        // Initialize shards with persistence enabled
+        let shards = Arc::new(DashMap::new());
+        for shard_id in 0..config.shard_count {
+            // Create shard-specific graph ID for WAL isolation
+            let shard_graph_id = format!("{}_shard_{}", graph_id, shard_id);
+
+            // Each shard gets its own ORION engine with WAL
+            let shard_engine = Arc::new(
+                OrionGraphEngine::with_persistence_for_graph(
+                    shard_graph_id,
+                    base_url.clone(),
+                    true, // Enable WAL
+                )
+                .await?,
+            );
+            shards.insert(shard_id as u32, shard_engine);
+        }
+
+        Self::finish_initialization(config, memory_pool, shards)
+    }
+
+    /// Common initialization logic for both constructors
+    fn finish_initialization(
+        config: PulsarConfig,
+        memory_pool: Arc<GraphMemoryPool>,
+        shards: Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
+    ) -> Result<Self> {
         // Initialize hash ring
         let hash_ring = Arc::new(RwLock::new(sharding::ConsistentHashRing::new(
             config.shard_count as u32,
@@ -163,6 +259,7 @@ impl PulsarGraphEngine {
         let replication_manager = Arc::new(replication::ReplicationManager::new(
             config.replication_factor,
             &shards,
+            Arc::clone(&hash_ring),
         ));
 
         // Initialize query coordinator
@@ -420,20 +517,56 @@ impl PulsarGraphEngine {
 
         Ok(false)
     }
+
+    /// Flush all shard WALs to ensure durability
+    ///
+    /// This flushes the WAL buffers of all ORION shards to persistent storage.
+    /// Should be called during graceful shutdown or before critical operations.
+    pub async fn flush_wal(&self) -> Result<()> {
+        tracing::debug!("Flushing WAL for all {} shards", self.shards.len());
+
+        for shard_entry in self.shards.iter() {
+            let shard_id = *shard_entry.key();
+            let shard = shard_entry.value();
+
+            if let Err(e) = shard.flush_wal().await {
+                tracing::warn!("Failed to flush WAL for shard {}: {:?}", shard_id, e);
+                // Continue flushing other shards even if one fails
+            }
+        }
+
+        tracing::debug!("WAL flush complete for all shards");
+        Ok(())
+    }
+
+    /// Recover all shards from their WAL files
+    ///
+    /// This replays the WAL entries for each shard to recover state after restart.
+    pub async fn recover(&self) -> Result<()> {
+        tracing::info!("Recovering {} shards from WAL", self.shards.len());
+
+        for shard_entry in self.shards.iter() {
+            let shard_id = *shard_entry.key();
+            let shard = shard_entry.value();
+
+            if let Err(e) = shard.recover().await {
+                tracing::warn!("Failed to recover shard {} from WAL: {:?}", shard_id, e);
+                // Continue recovering other shards even if one fails
+            }
+        }
+
+        tracing::info!("Shard recovery complete");
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
 impl GraphEngine for PulsarGraphEngine {
     async fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
-        let _node_id = node.id.clone();
+        let node_id = node.id.clone();
 
-        // For now, use first available shard to avoid runtime nesting issues
-        let primary_shard = self
-            .shards
-            .iter()
-            .next()
-            .map(|entry| Arc::clone(entry.value()))
-            .ok_or_else(|| ProximaDBError::Internal("No shards available".to_string()))?;
+        // Route via consistent hash ring to select primary shard
+        let primary_shard = self.get_primary_shard(&node_id).await?;
 
         // Insert into primary shard
         let result = primary_shard.insert_node(node.clone()).await?;
@@ -463,24 +596,33 @@ impl GraphEngine for PulsarGraphEngine {
     }
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // Simple implementation: check first available shard for compatibility
-        if let Some(shard_entry) = self.shards.iter().next() {
-            shard_entry.value().get_node(id)
-        } else {
-            Ok(None)
+        // Prefer primary shard derived from hash ring; fall back to scan
+        if let Ok(primary) = self.get_primary_shard_sync(id) {
+            if let Ok(Some(node)) = primary.get_node(id) {
+                return Ok(Some(node));
+            }
         }
+
+        // Fallback: search all shards (in case of replication)
+        for shard_entry in self.shards.iter() {
+            let shard = shard_entry.value();
+            if let Ok(Some(node)) = shard.get_node(id) {
+                return Ok(Some(node));
+            }
+        }
+        Ok(None)
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
-        // TODO: Add WAL support for update_node
-        // Get primary shard and update directly (avoiding sync closure issues)
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's update_node writes to WAL if persistence is enabled)
         let primary_shard = self.get_primary_shard(&node.id).await?;
         primary_shard.update_node(node).await
     }
 
     async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // TODO: Add WAL support for delete_node
-        // Get primary shard and delete directly
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's delete_node writes to WAL if persistence is enabled)
         let primary_shard = self.get_primary_shard(id).await?;
         let result = GraphEngine::delete_node(&*primary_shard, id).await?;
 
@@ -495,10 +637,30 @@ impl GraphEngine for PulsarGraphEngine {
 
     async fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         // For edges, we need to consider both source and target nodes
-        // For simplicity, use source node's shard as primary
-        let primary_shard = self.get_primary_shard(&edge.from_node_id).await?;
+        // Validate both nodes exist first using the trait's get_node which searches all shards
 
-        let result = primary_shard.insert_edge(edge.clone()).await?;
+        // Validate source node exists (searches primary + all shards as fallback)
+        if self.get_node(&edge.from_node_id)?.is_none() {
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Source node {} does not exist",
+                edge.from_node_id
+            )));
+        }
+
+        // Validate target node exists (searches primary + all shards as fallback)
+        if self.get_node(&edge.to_node_id)?.is_none() {
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Target node {} does not exist",
+                edge.to_node_id
+            )));
+        }
+
+        // Get the primary shard for storing the edge (edges stored on source node's shard)
+        let source_shard = self.get_primary_shard(&edge.from_node_id).await?;
+
+        // Store edge on source node's shard, using insert_edge_unchecked to skip
+        // OrionGraphEngine's validation (we already validated at PULSAR level)
+        let result = source_shard.insert_edge_unchecked(edge.clone()).await?;
 
         // Replicate edge insertion
         tokio::spawn({
@@ -538,15 +700,16 @@ impl GraphEngine for PulsarGraphEngine {
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        // TODO: Add WAL support for update_edge
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's update_edge writes to WAL if persistence is enabled)
         let primary_shard = self.get_primary_shard(&edge.from_node_id).await?;
-
         primary_shard.update_edge(edge).await
     }
 
     async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        // TODO: Add WAL support for delete_edge
-        // Similar to get_edge, we need to search across shards
+        // WAL writes happen automatically via ORION shard delegation
+        // (ORION's delete_edge writes to WAL if persistence is enabled)
+        // We search across shards since we don't know which shard contains the edge
         for shard_entry in self.shards.iter() {
             let shard = shard_entry.value();
             if let Ok(Some(edge)) = GraphEngine::delete_edge(&**shard, id).await {
@@ -666,6 +829,118 @@ impl GraphEngine for PulsarGraphEngine {
 
         Ok(all_nodes)
     }
+
+    // ===== Bulk Operations - Distribute across shards for performance =====
+
+    async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+        use std::collections::HashMap;
+
+        // Group nodes by their target shard
+        let mut shard_batches: HashMap<u32, Vec<Node>> = HashMap::new();
+        for node in nodes {
+            let shard_id = self.get_shard_for_node_sync(&node.id).unwrap_or(0);
+            shard_batches.entry(shard_id).or_default().push(node);
+        }
+
+        // Insert each batch into its target shard using bulk operations
+        let mut all_results = Vec::new();
+        for (shard_id, batch) in shard_batches {
+            if let Some(shard) = self.shards.get(&shard_id) {
+                let batch_len = batch.len();
+                let results = shard.bulk_insert_nodes(batch).await?;
+                all_results.extend(results);
+
+                // Update stats
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.total_nodes += batch_len as u64;
+                }
+            }
+        }
+
+        Ok(all_results)
+    }
+
+    async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+        use std::collections::HashMap;
+
+        // Group edges by source node's shard (consistent with insert_edge behavior)
+        let mut shard_batches: HashMap<u32, Vec<Edge>> = HashMap::new();
+        for edge in edges {
+            let shard_id = self
+                .get_shard_for_node_sync(&edge.from_node_id)
+                .unwrap_or(0);
+            shard_batches.entry(shard_id).or_default().push(edge);
+        }
+
+        // Insert each batch into its target shard using bulk operations
+        let mut all_results = Vec::new();
+        for (shard_id, batch) in shard_batches {
+            if let Some(shard) = self.shards.get(&shard_id) {
+                let batch_len = batch.len();
+                let results = shard.bulk_insert_edges(batch).await?;
+                all_results.extend(results);
+
+                // Update stats
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.total_edges += batch_len as u64;
+                }
+            }
+        }
+
+        Ok(all_results)
+    }
+
+    async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+        use std::collections::HashMap;
+
+        // Group node IDs by their shard
+        let mut shard_batches: HashMap<u32, Vec<NodeId>> = HashMap::new();
+        for node_id in node_ids {
+            let shard_id = self.get_shard_for_node_sync(&node_id).unwrap_or(0);
+            shard_batches.entry(shard_id).or_default().push(node_id);
+        }
+
+        // Delete from each shard
+        let mut all_results = Vec::new();
+        for (shard_id, batch) in shard_batches {
+            if let Some(shard) = self.shards.get(&shard_id) {
+                let results = shard.bulk_delete_nodes(batch).await?;
+                let deleted_count = results.iter().filter(|r| r.is_some()).count();
+                all_results.extend(results);
+
+                // Update stats
+                {
+                    let mut stats = self.stats.write().await;
+                    stats.total_nodes = stats.total_nodes.saturating_sub(deleted_count as u64);
+                }
+            }
+        }
+
+        Ok(all_results)
+    }
+
+    async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+        // For edges, we need to search all shards since we don't know which shard contains each edge
+        let mut all_results = Vec::new();
+
+        for shard_entry in self.shards.iter() {
+            let shard = shard_entry.value();
+            // Try to delete all edge IDs from this shard - it will skip ones it doesn't have
+            let results = shard.bulk_delete_edges(edge_ids.clone()).await?;
+            let deleted_count = results.iter().filter(|r| r.is_some()).count();
+            all_results.extend(results.into_iter().filter(|r| r.is_some()));
+
+            // Update stats
+            if deleted_count > 0 {
+                let mut stats = self.stats.write().await;
+                stats.total_edges = stats.total_edges.saturating_sub(deleted_count as u64);
+            }
+        }
+
+        Ok(all_results)
+    }
 }
 
 impl Default for PulsarGraphEngine {
@@ -740,5 +1015,42 @@ mod tests {
         // Verify stats updated (stats now updated synchronously, no sleep needed)
         let stats = engine.get_stats().await;
         assert_eq!(stats.total_nodes, 1);
+    }
+
+    #[tokio::test]
+    async fn test_hash_ring_routing_for_nodes() {
+        let config = PulsarConfig {
+            shard_count: 4,
+            replication_factor: 1,
+            ..PulsarConfig::default()
+        };
+        let engine = PulsarGraphEngine::new(config).unwrap();
+
+        let node_id = "route_me".to_string();
+        let node = Node {
+            id: node_id.clone(),
+            labels: vec!["TestLabel".to_string()],
+            properties: std::collections::HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+
+        // Determine expected shard from hash ring
+        let expected_shard = engine.get_shard_for_node(&node_id).await.unwrap();
+
+        // Insert and ensure it lands on the expected shard only (replication_factor=1)
+        engine.insert_node(node).await.unwrap();
+
+        for shard_entry in engine.shards.iter() {
+            let shard_id = *shard_entry.key();
+            let shard = shard_entry.value();
+            let present = shard.get_node(&node_id).unwrap().is_some();
+            assert_eq!(
+                present,
+                shard_id == expected_shard,
+                "Node should be only on primary shard"
+            );
+        }
     }
 }

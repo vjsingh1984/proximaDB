@@ -34,10 +34,9 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
-use crate::graph::{Edge, EdgeId, Node, NodeId, PropertyValue, Value as PropertyValueEnum};
+use crate::graph::{Edge, Node, PropertyValue};
 use crate::proto::proximadb_v1::{
-    property_value, sql_value, typed_field, EmbeddingVersion, Entity, Modality, Provenance,
-    Relation, SqlValue, TemporalInfo, TypedField, TypedMetadata,
+    EmbeddingVersion, Entity, Relation, SqlValue, property_value, sql_value,
 };
 
 /// Special property keys for storing SKS metadata in Orion nodes
@@ -75,6 +74,7 @@ impl EntityNodeMapper {
 
         // Store flexible metadata (convert SqlValue to PropertyValue)
         if !entity.flexible_metadata.is_empty() {
+            // Store JSON blob for backward compatibility and full restoration
             let flexible_json = serde_json::to_string(&entity.flexible_metadata)
                 .context("Failed to serialize flexible_metadata")?;
             properties.insert(
@@ -83,6 +83,31 @@ impl EntityNodeMapper {
                     value: Some(property_value::Value::StringValue(flexible_json)),
                 },
             );
+
+            // Also store individual fields as direct node properties for efficient filtering
+            // This enables matches_metadata_filter to work without deserializing JSON
+            for (key, sql_value) in &entity.flexible_metadata {
+                if let Some(ref value) = sql_value.value {
+                    let prop_value = match value {
+                        sql_value::Value::StringValue(s) => {
+                            Some(property_value::Value::StringValue(s.clone()))
+                        }
+                        sql_value::Value::NumberValue(n) => {
+                            Some(property_value::Value::DoubleValue(*n))
+                        }
+                        sql_value::Value::Int64Value(i) => {
+                            Some(property_value::Value::IntValue(*i))
+                        }
+                        sql_value::Value::BoolValue(b) => {
+                            Some(property_value::Value::BoolValue(*b))
+                        }
+                        _ => None, // Skip unsupported types
+                    };
+                    if let Some(pv) = prop_value {
+                        properties.insert(key.clone(), PropertyValue { value: Some(pv) });
+                    }
+                }
+            }
         }
 
         // Store provenance
@@ -162,26 +187,21 @@ impl EntityNodeMapper {
         }
 
         // Extract typed metadata
-        let typed_metadata =
-            if let Some(metadata_prop) = node.properties.get(TYPED_METADATA_KEY) {
-                if let Some(property_value::Value::StringValue(json)) = &metadata_prop.value {
-                    Some(
-                        serde_json::from_str(json)
-                            .context("Failed to deserialize typed_metadata")?,
-                    )
-                } else {
-                    None
-                }
+        let typed_metadata = if let Some(metadata_prop) = node.properties.get(TYPED_METADATA_KEY) {
+            if let Some(property_value::Value::StringValue(json)) = &metadata_prop.value {
+                Some(serde_json::from_str(json).context("Failed to deserialize typed_metadata")?)
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // Extract flexible metadata
         let flexible_metadata =
             if let Some(flexible_prop) = node.properties.get(FLEXIBLE_METADATA_KEY) {
                 if let Some(property_value::Value::StringValue(json)) = &flexible_prop.value {
-                    serde_json::from_str(json)
-                        .context("Failed to deserialize flexible_metadata")?
+                    serde_json::from_str(json).context("Failed to deserialize flexible_metadata")?
                 } else {
                     HashMap::new()
                 }
@@ -192,9 +212,7 @@ impl EntityNodeMapper {
         // Extract provenance
         let provenance = if let Some(provenance_prop) = node.properties.get(PROVENANCE_KEY) {
             if let Some(property_value::Value::StringValue(json)) = &provenance_prop.value {
-                Some(
-                    serde_json::from_str(json).context("Failed to deserialize provenance")?,
-                )
+                Some(serde_json::from_str(json).context("Failed to deserialize provenance")?)
             } else {
                 None
             }
@@ -308,6 +326,7 @@ impl RelationEdgeMapper {
 // Helper Functions: SqlValue ↔ PropertyValue Conversion
 // ============================================================================
 
+#[allow(dead_code)]
 fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
     let value = match &sql_value.value {
         Some(sql_value::Value::StringValue(s)) => {
@@ -335,6 +354,7 @@ fn sql_value_to_property_value(sql_value: &SqlValue) -> Result<PropertyValue> {
     Ok(PropertyValue { value })
 }
 
+#[allow(dead_code)]
 fn property_value_to_sql_value(prop_value: &PropertyValue) -> Result<SqlValue> {
     let value = match &prop_value.value {
         Some(property_value::Value::StringValue(s)) => {
@@ -359,6 +379,8 @@ fn property_value_to_sql_value(prop_value: &PropertyValue) -> Result<SqlValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::Modality;
+    use crate::proto::proximadb_v1::{TypedField, TypedMetadata, typed_field};
 
     #[test]
     fn test_entity_node_round_trip() {

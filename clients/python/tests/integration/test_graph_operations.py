@@ -5,14 +5,15 @@ Tests comprehensive graph operations (nodes, edges, traversal, queries) via both
 REST and gRPC protocols using the Python SDK.
 """
 
-import pytest
+import logging
 import time
 import uuid
-import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
-from proximadb import ProximaDBClient
-from proximadb.exceptions import ProximaDBError
+import pytest
+
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.exceptions import ProximaDBError
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +45,7 @@ class TestGraphOperationsSDK:
         node_id = f"node_{uuid.uuid4().hex[:8]}"
 
         result = client.create_node(
-            node_id=node_id,
-            labels=["Person"],
-            properties={"name": "Alice", "age": 30}
+            node_id=node_id, labels=["Person"], properties={"name": "Alice", "age": 30}
         )
 
         assert result is not None
@@ -63,8 +62,8 @@ class TestGraphOperationsSDK:
                 "name": "Bob",
                 "age": 35,
                 "department": "Engineering",
-                "salary": 120000.50
-            }
+                "salary": 120000.50,
+            },
         )
 
         assert result is not None
@@ -82,8 +81,8 @@ class TestGraphOperationsSDK:
                 "int_prop": 42,
                 "float_prop": 3.14159,
                 "bool_prop": True,
-                "null_prop": None
-            }
+                "null_prop": None,
+            },
         )
 
         assert result is not None
@@ -105,7 +104,7 @@ class TestGraphOperationsSDK:
             from_node_id=node1_id,
             to_node_id=node2_id,
             edge_type="KNOWS",
-            properties={"since": 2020}
+            properties={"since": 2020},
         )
 
         assert result is not None
@@ -126,7 +125,7 @@ class TestGraphOperationsSDK:
             to_node_id=node2_id,
             edge_type="ROAD",
             properties={"distance_km": 4500, "highway": "I-80"},
-            weight=4500.0
+            weight=4500.0,
         )
 
         assert result is not None
@@ -148,10 +147,12 @@ class TestGraphOperationsSDK:
                 edge_id=edge_id,
                 from_node_id=node1_id,
                 to_node_id=node2_id,
-                edge_type=edge_type
+                edge_type=edge_type,
             )
 
-        logger.info(f"Created {len(edge_types)} edges between {node1_id} and {node2_id}")
+        logger.info(
+            f"Created {len(edge_types)} edges between {node1_id} and {node2_id}"
+        )
 
     def test_query_nodes_by_label(self, client, graph_id):
         """Test querying nodes by label"""
@@ -161,7 +162,7 @@ class TestGraphOperationsSDK:
             client.create_node(
                 node_id=node_id,
                 labels=["Person"],
-                properties={"name": f"Person{i}", "age": 20 + i}
+                properties={"name": f"Person{i}", "age": 20 + i},
             )
 
         # Query by label
@@ -180,14 +181,12 @@ class TestGraphOperationsSDK:
             client.create_node(
                 node_id=node_id,
                 labels=["Employee"],
-                properties={"department": "Engineering", "level": i + 1}
+                properties={"department": "Engineering", "level": i + 1},
             )
 
         # Query by properties
         result = client.query_nodes(
-            labels=["Employee"],
-            properties={"department": "Engineering"},
-            limit=10
+            labels=["Employee"], properties={"department": "Engineering"}, limit=10
         )
 
         assert result is not None
@@ -200,9 +199,7 @@ class TestGraphOperationsSDK:
         for i in range(10):
             node_id = f"test_{uuid.uuid4().hex[:8]}"
             client.create_node(
-                node_id=node_id,
-                labels=["TestLabel"],
-                properties={"index": i}
+                node_id=node_id, labels=["TestLabel"], properties={"index": i}
             )
 
         # Query with pagination
@@ -213,7 +210,9 @@ class TestGraphOperationsSDK:
         assert page2 is not None
         assert "nodes" in page1
         assert "nodes" in page2
-        logger.info(f"Pagination test: page1={len(page1['nodes'])}, page2={len(page2['nodes'])}")
+        logger.info(
+            f"Pagination test: page1={len(page1['nodes'])}, page2={len(page2['nodes'])}"
+        )
 
     def test_traverse_graph_bfs(self, client, graph_id):
         """Test BFS graph traversal"""
@@ -225,20 +224,28 @@ class TestGraphOperationsSDK:
         node_d = f"node_d_{uuid.uuid4().hex[:8]}"
 
         # Create nodes
-        for node_id, name in [(node_a, "A"), (node_b, "B"), (node_c, "C"), (node_d, "D")]:
+        for node_id, name in [
+            (node_a, "A"),
+            (node_b, "B"),
+            (node_c, "C"),
+            (node_d, "D"),
+        ]:
             client.create_node(node_id, labels=["Node"], properties={"name": name})
 
         # Create edges
-        client.create_edge(f"edge_ab_{uuid.uuid4().hex[:8]}", node_a, node_b, "CONNECTS")
-        client.create_edge(f"edge_bc_{uuid.uuid4().hex[:8]}", node_b, node_c, "CONNECTS")
-        client.create_edge(f"edge_ad_{uuid.uuid4().hex[:8]}", node_a, node_d, "CONNECTS")
+        client.create_edge(
+            f"edge_ab_{uuid.uuid4().hex[:8]}", node_a, node_b, "CONNECTS"
+        )
+        client.create_edge(
+            f"edge_bc_{uuid.uuid4().hex[:8]}", node_b, node_c, "CONNECTS"
+        )
+        client.create_edge(
+            f"edge_ad_{uuid.uuid4().hex[:8]}", node_a, node_d, "CONNECTS"
+        )
 
         # Traverse from node A
         result = client.traverse_graph(
-            start_node_id=node_a,
-            max_depth=2,
-            algorithm="BFS",
-            limit=10
+            start_node_id=node_a, max_depth=2, algorithm="BFS", limit=10
         )
 
         assert result is not None
@@ -252,20 +259,19 @@ class TestGraphOperationsSDK:
         nodes = []
         for i, name in enumerate(["A", "B", "C", "D"]):
             node_id = f"node_{name}_{uuid.uuid4().hex[:8]}"
-            client.create_node(node_id, labels=["Node"], properties={"name": name, "depth": i})
+            client.create_node(
+                node_id, labels=["Node"], properties={"name": name, "depth": i}
+            )
             nodes.append(node_id)
 
         # Create edges
         for i in range(len(nodes) - 1):
             edge_id = f"edge_{i}_{uuid.uuid4().hex[:8]}"
-            client.create_edge(edge_id, nodes[i], nodes[i+1], "NEXT")
+            client.create_edge(edge_id, nodes[i], nodes[i + 1], "NEXT")
 
         # Traverse with DFS
         result = client.traverse_graph(
-            start_node_id=nodes[0],
-            max_depth=3,
-            algorithm="DFS",
-            limit=10
+            start_node_id=nodes[0], max_depth=3, algorithm="DFS", limit=10
         )
 
         assert result is not None
@@ -285,14 +291,13 @@ class TestGraphOperationsSDK:
 
         # Create different edge types
         client.create_edge(f"edge_knows_{uuid.uuid4().hex[:8]}", node1, node2, "KNOWS")
-        client.create_edge(f"edge_works_{uuid.uuid4().hex[:8]}", node1, node3, "WORKS_WITH")
+        client.create_edge(
+            f"edge_works_{uuid.uuid4().hex[:8]}", node1, node3, "WORKS_WITH"
+        )
 
         # Traverse only KNOWS edges
         result = client.traverse_graph(
-            start_node_id=node1,
-            max_depth=1,
-            edge_types=["KNOWS"],
-            algorithm="BFS"
+            start_node_id=node1, max_depth=1, edge_types=["KNOWS"], algorithm="BFS"
         )
 
         assert result is not None
@@ -306,19 +311,22 @@ class TestGraphOperationsSDK:
         person2 = f"person_{uuid.uuid4().hex[:8]}"
 
         client.create_node(person1, labels=["Person"], properties={"name": "Alice"})
-        client.create_node(company1, labels=["Company"], properties={"name": "TechCorp"})
+        client.create_node(
+            company1, labels=["Company"], properties={"name": "TechCorp"}
+        )
         client.create_node(person2, labels=["Person"], properties={"name": "Bob"})
 
         # Create edges
-        client.create_edge(f"edge1_{uuid.uuid4().hex[:8]}", person1, company1, "WORKS_AT")
-        client.create_edge(f"edge2_{uuid.uuid4().hex[:8]}", company1, person2, "EMPLOYS")
+        client.create_edge(
+            f"edge1_{uuid.uuid4().hex[:8]}", person1, company1, "WORKS_AT"
+        )
+        client.create_edge(
+            f"edge2_{uuid.uuid4().hex[:8]}", company1, person2, "EMPLOYS"
+        )
 
         # Traverse only Person nodes
         result = client.traverse_graph(
-            start_node_id=person1,
-            max_depth=2,
-            node_labels=["Person"],
-            algorithm="BFS"
+            start_node_id=person1, max_depth=2, node_labels=["Person"], algorithm="BFS"
         )
 
         assert result is not None
@@ -335,14 +343,13 @@ class TestGraphOperationsSDK:
 
         # Create edges
         for i in range(len(nodes) - 1):
-            client.create_edge(f"chain_edge_{i}_{uuid.uuid4().hex[:8]}", nodes[i], nodes[i+1], "NEXT")
+            client.create_edge(
+                f"chain_edge_{i}_{uuid.uuid4().hex[:8]}", nodes[i], nodes[i + 1], "NEXT"
+            )
 
         # Traverse with max_depth=2 (should get nodes 0, 1, 2)
         result = client.traverse_graph(
-            start_node_id=nodes[0],
-            max_depth=2,
-            algorithm="BFS",
-            limit=10
+            start_node_id=nodes[0], max_depth=2, algorithm="BFS", limit=10
         )
 
         assert result is not None
@@ -359,20 +366,21 @@ class TestGraphOperationsSDK:
         for i in range(10):
             spoke = f"spoke_{i}_{uuid.uuid4().hex[:8]}"
             client.create_node(spoke, labels=["Spoke"], properties={"index": i})
-            client.create_edge(f"spoke_edge_{i}_{uuid.uuid4().hex[:8]}", center, spoke, "CONNECTS")
+            client.create_edge(
+                f"spoke_edge_{i}_{uuid.uuid4().hex[:8]}", center, spoke, "CONNECTS"
+            )
 
         # Traverse with limit=5
         result = client.traverse_graph(
-            start_node_id=center,
-            max_depth=1,
-            algorithm="BFS",
-            limit=5
+            start_node_id=center, max_depth=1, algorithm="BFS", limit=5
         )
 
         assert result is not None
         assert "nodes" in result
         assert len(result["nodes"]) <= 5
-        logger.info(f"Limited traversal returned {len(result['nodes'])} nodes (limit=5)")
+        logger.info(
+            f"Limited traversal returned {len(result['nodes'])} nodes (limit=5)"
+        )
 
 
 class TestGraphOperationsPerformance:
@@ -398,13 +406,15 @@ class TestGraphOperationsPerformance:
             rest_client.create_node(
                 node_id=node_id,
                 labels=["BulkTest"],
-                properties={"index": i, "batch": "test"}
+                properties={"index": i, "batch": "test"},
             )
 
         elapsed = time.time() - start_time
         throughput = node_count / elapsed
 
-        logger.info(f"Created {node_count} nodes in {elapsed:.2f}s ({throughput:.1f} nodes/sec)")
+        logger.info(
+            f"Created {node_count} nodes in {elapsed:.2f}s ({throughput:.1f} nodes/sec)"
+        )
         assert throughput > 5  # Expect at least 5 nodes per second
 
     def test_bulk_edge_creation(self, rest_client):
@@ -413,7 +423,9 @@ class TestGraphOperationsPerformance:
         nodes = []
         for i in range(20):
             node_id = f"edge_test_{i}_{uuid.uuid4().hex[:8]}"
-            rest_client.create_node(node_id, labels=["EdgeTest"], properties={"index": i})
+            rest_client.create_node(
+                node_id, labels=["EdgeTest"], properties={"index": i}
+            )
             nodes.append(node_id)
 
         # Create edges
@@ -425,15 +437,17 @@ class TestGraphOperationsPerformance:
             rest_client.create_edge(
                 edge_id=edge_id,
                 from_node_id=nodes[i],
-                to_node_id=nodes[i+1],
-                edge_type="CONNECTS"
+                to_node_id=nodes[i + 1],
+                edge_type="CONNECTS",
             )
             edge_count += 1
 
         elapsed = time.time() - start_time
         throughput = edge_count / elapsed
 
-        logger.info(f"Created {edge_count} edges in {elapsed:.2f}s ({throughput:.1f} edges/sec)")
+        logger.info(
+            f"Created {edge_count} edges in {elapsed:.2f}s ({throughput:.1f} edges/sec)"
+        )
         assert throughput > 5  # Expect at least 5 edges per second
 
     @pytest.mark.parametrize("protocol", ["rest", "grpc"])
@@ -452,13 +466,15 @@ class TestGraphOperationsPerformance:
             client.create_node(
                 node_id=node_id,
                 labels=["PerfTest"],
-                properties={"protocol": protocol, "index": i}
+                properties={"protocol": protocol, "index": i},
             )
 
         elapsed = time.time() - start_time
         throughput = node_count / elapsed
 
-        logger.info(f"{protocol.upper()}: Created {node_count} nodes in {elapsed:.2f}s ({throughput:.1f} nodes/sec)")
+        logger.info(
+            f"{protocol.upper()}: Created {node_count} nodes in {elapsed:.2f}s ({throughput:.1f} nodes/sec)"
+        )
         assert elapsed < 10  # Should complete within 10 seconds
 
 
@@ -476,9 +492,7 @@ class TestGraphOperationsEdgeCases:
 
         try:
             result = client.create_node(
-                node_id=node_id,
-                labels=[],  # Empty labels
-                properties={"test": "value"}
+                node_id=node_id, labels=[], properties={"test": "value"}  # Empty labels
             )
             # If successful, that's valid behavior
             logger.info("Creating node with empty labels succeeded")
@@ -491,9 +505,7 @@ class TestGraphOperationsEdgeCases:
         node_id = f"empty_props_{uuid.uuid4().hex[:8]}"
 
         result = client.create_node(
-            node_id=node_id,
-            labels=["Test"],
-            properties={}  # Empty properties
+            node_id=node_id, labels=["Test"], properties={}  # Empty properties
         )
 
         assert result is not None
@@ -505,7 +517,7 @@ class TestGraphOperationsEdgeCases:
 
         result = client.create_node(
             node_id=node_id,
-            labels=["Test"]
+            labels=["Test"],
             # No properties parameter
         )
 
@@ -523,9 +535,11 @@ class TestGraphOperationsEdgeCases:
                 edge_id=edge_id,
                 from_node_id=fake_node1,
                 to_node_id=fake_node2,
-                edge_type="TEST"
+                edge_type="TEST",
             )
-            logger.info("Creating edge with nonexistent nodes succeeded (server may create nodes)")
+            logger.info(
+                "Creating edge with nonexistent nodes succeeded (server may create nodes)"
+            )
         except ProximaDBError as e:
             logger.info(f"Creating edge with nonexistent nodes failed (expected): {e}")
 
@@ -535,9 +549,7 @@ class TestGraphOperationsEdgeCases:
 
         try:
             result = client.traverse_graph(
-                start_node_id=fake_node,
-                max_depth=1,
-                algorithm="BFS"
+                start_node_id=fake_node, max_depth=1, algorithm="BFS"
             )
             # May return empty results
             assert result is not None
@@ -547,10 +559,7 @@ class TestGraphOperationsEdgeCases:
 
     def test_query_nodes_nonexistent_label(self, client):
         """Test querying with a label that doesn't exist"""
-        result = client.query_nodes(
-            labels=["NonexistentLabel123456"],
-            limit=10
-        )
+        result = client.query_nodes(labels=["NonexistentLabel123456"], limit=10)
 
         assert result is not None
         assert "nodes" in result
@@ -563,9 +572,7 @@ class TestGraphOperationsEdgeCases:
         client.create_node(node_id, labels=["Test"], properties={"name": "Start"})
 
         result = client.traverse_graph(
-            start_node_id=node_id,
-            max_depth=0,
-            algorithm="BFS"
+            start_node_id=node_id, max_depth=0, algorithm="BFS"
         )
 
         assert result is not None
@@ -579,7 +586,7 @@ class TestGraphOperationsEdgeCases:
         result = client.create_node(
             node_id=node_id,
             labels=["LargeTest"],
-            properties={"large_field": large_text, "size": len(large_text)}
+            properties={"large_field": large_text, "size": len(large_text)},
         )
 
         assert result is not None

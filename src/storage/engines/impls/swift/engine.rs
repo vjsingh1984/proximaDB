@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // Universal performance optimization imports - UniversalIOConfig removed as unused
 // VectorMemoryPool now managed by universal optimizer
@@ -22,6 +22,10 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::index::axis::management::manager::{
+    FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
@@ -35,12 +39,41 @@ use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use crate::core::compression::StandardCompression;
 
-use super::{SwiftFile, optimized_operations::OptimizedSwiftOperations, progressive_search};
+use super::{SwiftFile, optimized_operations::OptimizedSwiftOperations};
 
 // Import Proxima structures for SWIFT's hierarchical operations
 use crate::storage::engines::core::formats::proximablocks::SuperBlock;
 
 // SWIFT-specific optimization structures removed - now using universal module
+
+// ============================================================================
+// GLOBAL PCA MODEL CACHE FOR SWIFT
+// ============================================================================
+// Similar to SST's PCA caching - trained during flush, reused during search
+// to eliminate per-query PCA training overhead (40ms+)
+lazy_static::lazy_static! {
+    static ref SWIFT_GLOBAL_PCA_MODEL_CACHE: std::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>> =
+        std::sync::RwLock::new(std::collections::HashMap::new());
+}
+
+/// Set PCA model for a collection in the global cache (called after flush/compaction)
+pub fn set_collection_pca_model(collection_id: &str, model: super::pca_manager::EnhancedPCAModel) {
+    if let Ok(mut cache) = SWIFT_GLOBAL_PCA_MODEL_CACHE.write() {
+        cache.insert(collection_id.to_string(), model);
+        tracing::debug!("[SWIFT] Cached PCA model for collection: {}", collection_id);
+    }
+}
+
+/// Get PCA model for a collection from the global cache (called during search)
+pub fn get_collection_pca_model(
+    collection_id: &str,
+) -> Option<super::pca_manager::EnhancedPCAModel> {
+    if let Ok(cache) = SWIFT_GLOBAL_PCA_MODEL_CACHE.read() {
+        cache.get(collection_id).cloned()
+    } else {
+        None
+    }
+}
 
 /// SWIFT Engine - Storage With Instant Fast Traversal
 ///
@@ -88,6 +121,7 @@ pub struct SwiftEngine {
     /// - Hierarchical index navigation
     ///
     /// Critical for achieving sub-millisecond latencies
+    #[allow(dead_code)]
     optimized_ops: Arc<OptimizedSwiftOperations>,
 
     /// **Engine Statistics** (RwLock for concurrent access)
@@ -132,6 +166,7 @@ pub struct SwiftEngine {
     /// - ZSTD (best compression when latency allows)
     ///
     /// Vectors use Proxima encoding, not general compression
+    #[allow(dead_code)]
     compression_provider: StandardCompression,
 
     /// **Storage Quantization Engine** (Collection-Aware)
@@ -201,8 +236,24 @@ pub struct SwiftEngine {
     ///
     /// Shared singleton across all distance operations
     distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+
+    /// **PCA Model Cache** (Per-Collection)
+    ///
+    /// Cached PCA models for Z-Order spatial encoding:
+    /// - Key: collection_id
+    /// - Value: Trained PCA model for that collection
+    /// - Trained during flush, reused during search
+    /// - Eliminates per-query PCA training overhead (40ms+ saved)
+    ///
+    /// Models are persisted to `{collection_dir}/__model/pca_model.bin`
+    pca_model_cache: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
+        >,
+    >,
 }
 
+#[allow(dead_code)]
 impl SwiftEngine {
     /// Create a new SWIFT engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
@@ -312,6 +363,8 @@ impl SwiftEngine {
             // Service dependencies
             axis_manager,
             distance_engine,
+            // PCA model cache for Z-Order spatial encoding
+            pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -490,10 +543,17 @@ impl SwiftEngine {
         let centroids: Vec<Vec<f32>> = superblocks
             .iter()
             .map(|sb| {
-                sb.centroid
-                    .as_ref()
-                    .map(|c| c.clone())
-                    .unwrap_or_else(|| vec![0.0; query.len()])
+                // Use FP16 centroid if available (50% storage reduction),
+                // fallback to FP32 centroid, or use zero vector
+                if let Some(ref fp16_centroid) = sb.centroid_fp16 {
+                    // Convert FP16 to FP32 for distance computation
+                    crate::storage::engines::impls::sst::fp16_to_fp32(fp16_centroid)
+                } else {
+                    sb.centroid
+                        .as_ref()
+                        .map(|c| c.clone())
+                        .unwrap_or_else(|| vec![0.0; query.len()])
+                }
             })
             .collect();
 
@@ -641,6 +701,262 @@ impl SwiftEngine {
     ) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
         &self.fallback_quantization_engine
     }
+
+    // =========================================================================
+    // AXIS Manager Integration (for HNSW/IVF index operations)
+    // =========================================================================
+
+    /// Get the AXIS manager for HNSW/IVF index operations
+    ///
+    /// Returns the AXIS manager if available, enabling:
+    /// - HNSW-based approximate nearest neighbor search
+    /// - IVF partition pruning
+    /// - Hybrid vector + metadata queries
+    pub fn axis_manager(
+        &self,
+    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+        self.axis_manager.as_ref()
+    }
+
+    /// Convert FilterExpression to AXIS MetadataFilter format
+    ///
+    /// This helper converts our internal FilterExpression type to AXIS's
+    /// MetadataFilter format for hybrid vector + metadata queries.
+    fn convert_filter_to_axis(filter_expression: Option<&FilterExpression>) -> Vec<MetadataFilter> {
+        let Some(filter) = filter_expression else {
+            return Vec::new();
+        };
+
+        // Convert filter expressions to AXIS metadata filters
+        let mut axis_filters = Vec::new();
+
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                // Convert ComparisonOperator to AXIS FilterOperator
+                let axis_operator = match operator {
+                    ComparisonOperator::Equals => FilterOperator::Equals,
+                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
+                    ComparisonOperator::LessThan => FilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
+                    ComparisonOperator::In => FilterOperator::In,
+                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                    _ => {
+                        debug!(
+                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            operator
+                        );
+                        return axis_filters;
+                    }
+                };
+
+                axis_filters.push(MetadataFilter {
+                    field: field.clone(),
+                    operator: axis_operator,
+                    value: value.clone(),
+                });
+            }
+            FilterExpression::And(filters) => {
+                for f in filters {
+                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                }
+            }
+            FilterExpression::Or(_) | FilterExpression::Not(_) => {
+                // OR and NOT are not directly supported by AXIS, will use post-filtering
+                debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+            }
+        }
+
+        axis_filters
+    }
+
+    // =========================================================================
+    // PCA Model Caching Methods (for Z-Order spatial encoding)
+    // =========================================================================
+
+    /// Get the PCA model cache for read access during search
+    pub fn pca_model_cache(
+        &self,
+    ) -> &Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
+        >,
+    > {
+        &self.pca_model_cache
+    }
+
+    /// Construct the PCA model file path for a collection
+    /// Path: {collection_data_dir}/__model/pca_model.bin
+    fn get_pca_model_path(&self, collection_data_dir: &str) -> String {
+        format!("{}/__model/pca_model.bin", collection_data_dir)
+    }
+
+    /// Get cached PCA model for a collection (if available)
+    ///
+    /// Returns the in-memory cached model, or loads from disk if not in cache.
+    pub async fn get_pca_model(
+        &self,
+        collection_id: &str,
+        collection_data_dir: &str,
+    ) -> Option<super::pca_manager::EnhancedPCAModel> {
+        // First check in-memory cache
+        {
+            let cache = self.pca_model_cache.read().await;
+            if let Some(model) = cache.get(collection_id) {
+                return Some(model.clone());
+            }
+        }
+
+        // Try to load from disk
+        if let Ok(Some(model)) = self.load_pca_model(collection_data_dir).await {
+            // Cache it for future use
+            {
+                let mut cache = self.pca_model_cache.write().await;
+                cache.insert(collection_id.to_string(), model.clone());
+            }
+            return Some(model);
+        }
+
+        None
+    }
+
+    /// Load PCA model from filesystem for a collection
+    pub async fn load_pca_model(
+        &self,
+        collection_data_dir: &str,
+    ) -> Result<Option<super::pca_manager::EnhancedPCAModel>> {
+        let model_path = self.get_pca_model_path(collection_data_dir);
+
+        let filesystem = self
+            .filesystem
+            .get_filesystem(collection_data_dir)
+            .map_err(|e| anyhow!("Failed to get filesystem: {}", e))?;
+
+        match filesystem.exists(&model_path).await {
+            Ok(true) => {
+                let data = filesystem
+                    .read(&model_path)
+                    .await
+                    .map_err(|e| anyhow!("Failed to read PCA model: {}", e))?;
+
+                let model: super::pca_manager::EnhancedPCAModel = bincode::deserialize(&data)
+                    .map_err(|e| anyhow!("Failed to deserialize PCA model: {}", e))?;
+
+                info!(
+                    "[SWIFT] Loaded persisted PCA model for collection (version: {}, {} components)",
+                    model.version, model.n_components
+                );
+                Ok(Some(model))
+            }
+            Ok(false) => {
+                tracing::debug!("[SWIFT] No persisted PCA model found at {}", model_path);
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::debug!("[SWIFT] Error checking PCA model at {}: {}", model_path, e);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Save PCA model to filesystem for a collection
+    pub async fn save_pca_model(
+        &self,
+        collection_data_dir: &str,
+        model: &super::pca_manager::EnhancedPCAModel,
+    ) -> Result<()> {
+        let model_path = self.get_pca_model_path(collection_data_dir);
+
+        let filesystem = self
+            .filesystem
+            .get_filesystem(collection_data_dir)
+            .map_err(|e| anyhow!("Failed to get filesystem: {}", e))?;
+
+        // Ensure __model directory exists
+        let model_dir = format!("{}/__model", collection_data_dir);
+        filesystem
+            .create_dir_all(&model_dir)
+            .await
+            .map_err(|e| anyhow!("Failed to create __model directory: {}", e))?;
+
+        // Serialize model with bincode
+        let data = bincode::serialize(model)
+            .map_err(|e| anyhow!("Failed to serialize PCA model: {}", e))?;
+
+        filesystem
+            .write(&model_path, &data, None)
+            .await
+            .map_err(|e| anyhow!("Failed to write PCA model: {}", e))?;
+
+        info!(
+            "[SWIFT] Persisted PCA model for collection at {} ({} components)",
+            model_path, model.n_components
+        );
+        Ok(())
+    }
+
+    /// Train PCA model from vectors and cache it
+    ///
+    /// This should be called during flush when we have new vectors.
+    /// The model is trained using adaptive dimensions based on vector dimensionality.
+    pub async fn train_and_cache_pca_model(
+        &self,
+        collection_id: &str,
+        collection_data_dir: &str,
+        vectors: &[crate::proto::proximadb_v1::VectorRecord],
+    ) -> Result<()> {
+        use super::pca_manager::AdaptivePcaConfig;
+
+        if vectors.is_empty() {
+            return Ok(());
+        }
+
+        let vector_dim = vectors[0].vector.len();
+        if vector_dim == 0 {
+            return Ok(());
+        }
+
+        // Use adaptive configuration for optimal PCA dimensions
+        let pca_config = AdaptivePcaConfig::for_vector_dim(vector_dim);
+        let n_components = pca_config.n_components;
+
+        // Need at least n_components samples for training
+        if vectors.len() < n_components {
+            tracing::debug!(
+                "[SWIFT] Not enough vectors ({}) for PCA training (need at least {})",
+                vectors.len(),
+                n_components
+            );
+            return Ok(());
+        }
+
+        info!(
+            "[SWIFT] Training PCA model: {} vectors → {} components (from {}-dim)",
+            vectors.len(),
+            n_components,
+            vector_dim
+        );
+
+        // Train PCA model
+        let model = super::pca_manager::EnhancedPCAModel::train(vectors, n_components)
+            .map_err(|e| anyhow!("Failed to train PCA model: {}", e))?;
+
+        // Save to disk
+        self.save_pca_model(collection_data_dir, &model).await?;
+
+        // Cache in memory
+        {
+            let mut cache = self.pca_model_cache.write().await;
+            cache.insert(collection_id.to_string(), model);
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -746,29 +1062,24 @@ impl UnifiedStorageEngine for SwiftEngine {
             .build_blocks_from_records_with_compression(records.clone(), compression_config)?;
 
         // Get storage path from collection config (always present)
-        // UnifiedCachingFilesystem will handle cloud storage transparently
-        let storage_path = params
-            .collection_config
-            .as_ref()
-            .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
-            .ok_or_else(|| {
-                anyhow!(
-                    "SWIFT: Collection '{}' has no storage assignment",
-                    collection_id
-                )
-            })?;
+        // Use standard trait method to get data directory (consistent with HELIX pattern)
+        let data_dir = self.get_data_dir_from_flush_params(params)?;
 
-        // Storage path already includes collection ID
-        let collection_path = storage_path.clone();
-        let fs = self.filesystem.get_filesystem("file://")?;
-        fs.create_dir_all(&collection_path).await?;
+        // Create directory using tokio::fs for async compatibility
+        // This handles local paths correctly without requiring URL scheme
+        tokio::fs::create_dir_all(&data_dir).await.map_err(|e| {
+            anyhow!(
+                "SWIFT: Failed to create data directory '{}': {}",
+                data_dir,
+                e
+            )
+        })?;
 
         // Generate filename using FilenameCodec for consistency with compaction framework
         use crate::storage::common::compaction_orchestrator::FilenameCodec;
         let codec = FilenameCodec::new();
         let swift_filename = codec.generate(0, "swift"); // Level 0 for flush
-        let filename = format!("{}/{}", collection_path, swift_filename);
+        let filename = format!("{}/{}", data_dir, swift_filename);
 
         // Actually write the SWIFT file to disk using filesystem factory (SST pattern)
         let bytes_written = swift_file
@@ -781,8 +1092,32 @@ impl UnifiedStorageEngine for SwiftEngine {
         );
 
         // Update global statistics file
-        self.update_global_stats(&collection_id, collection_path.as_str())
+        self.update_global_stats(&collection_id, data_dir.as_str())
             .await?;
+
+        // Train/update PCA model for Z-Order spatial encoding
+        // This is done after flush to ensure collection-level PCA model is up-to-date
+        if params.vector_records.len() >= 100 {
+            // Only train with enough samples
+            match self
+                .train_and_cache_pca_model(&collection_id, &data_dir, &params.vector_records)
+                .await
+            {
+                Ok(()) => {
+                    // Also update the global cache for search access
+                    if let Some(model) = self.get_pca_model(&collection_id, &data_dir).await {
+                        set_collection_pca_model(&collection_id, model);
+                    }
+                }
+                Err(e) => {
+                    // Log but don't fail flush - PCA is an optimization
+                    tracing::warn!(
+                        "[SWIFT] Failed to train PCA model during flush: {}. Z-Order pruning may be less effective.",
+                        e
+                    );
+                }
+            }
+        }
 
         // Notify EventLog service about the flush
         // This allows AXIS to asynchronously index the flushed data
@@ -829,10 +1164,12 @@ impl UnifiedStorageEngine for SwiftEngine {
             entries_flushed: Some(records.len() as u64),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
+            file_paths: vec![filename.clone()],
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: vec![], // TODO: Track batch IDs when integrating with WAL
         })
     }
@@ -984,7 +1321,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         );
 
         // Construct data directory from base_path and collection_id
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let _data_dir = StoragePath::collection_data_path(base_path, &collection_id);
 
         // TODO: Load actual SST files from data_dir
         // For now, return None as placeholder
@@ -998,7 +1335,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        let search_start = std::time::Instant::now();
+        let _search_start = std::time::Instant::now();
 
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();
@@ -1008,7 +1345,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .ok_or_else(|| anyhow!("No query vector in context"))?;
         let top_k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
-        let dimension = ctx.dimension();
+        let _dimension = ctx.dimension();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
         let _search_params = ctx.search_params.custom_hints.clone();
         let mut timer = self.start_operation_timer("search");
@@ -1031,7 +1368,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         // 5. **Predictive prefetching**: Uses access patterns for zero-copy operations
         //
         // Implementation pattern:
-        // ```rust
+        // ```rust,ignore
         // let axis_manager = self.get_axis_manager().await?;
         // let cost_estimator = self.get_cost_estimator().await?;
         //
@@ -1056,92 +1393,241 @@ impl UnifiedStorageEngine for SwiftEngine {
         //
         // Current blocker: Service infrastructure for AXIS and cost estimation
         //
-        // Check if orchestration should be used based on context metadata
-        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
+        // Determine search strategy based on context
+        // Use orchestration if:
+        // 1. AXIS indexes are explicitly configured, OR
+        // 2. Quantization is enabled, OR
+        // 3. AXIS manager is available (for collections built after AXIS became available)
+        let has_axis_manager = self.axis_manager().is_some();
+        let use_orchestration =
+            ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
+
+        if has_axis_manager {
+            debug!("🔍 SWIFT: AXIS manager is available for HNSW/IVF search");
+        }
 
         if use_orchestration {
-            info!(
-                "🎯 SWIFT: Orchestration requested - using direct Proxima search until AdvancedSearchOptimizer integrated"
-            );
-            // TODO: Implement proper orchestration when the API is ready
-            // For now, fall back to direct search
-            return self
-                .fallback_to_direct_search(
-                    ctx,
-                    collection_id,
-                    storage_path,
-                    query_vector,
+            // ========================================================================
+            // PHASE 1A: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF)
+            // ========================================================================
+            if let Some(axis_manager) = self.axis_manager() {
+                info!(
+                    "🔗 SWIFT: AXIS manager available, attempting HNSW index search for collection {}",
+                    collection_id
+                );
+
+                // Convert filter expression to AXIS metadata filters
+                let axis_filters = Self::convert_filter_to_axis(filter_expression);
+
+                // Build hybrid query for AXIS
+                let hybrid_query = HybridQuery {
+                    collection_id: collection_id.to_string(),
+                    vector_query: Some(VectorQuery::Dense {
+                        vector: query_vector.to_vec(),
+                        similarity_threshold: 0.0, // Return all results up to k
+                    }),
+                    metadata_filters: axis_filters,
+                    id_filters: Vec::new(),
                     top_k,
-                    distance_metric,
-                    filter_expression,
-                )
-                .await;
+                    include_expired: false,
+                };
+
+                // Execute AXIS query (HNSW or IVF based on index type)
+                let axis_start = std::time::Instant::now();
+                match axis_manager.query(hybrid_query).await {
+                    Ok(axis_results) => {
+                        let axis_duration = axis_start.elapsed();
+                        info!(
+                            "✅ SWIFT: AXIS HNSW search completed in {:?} - found {} candidates",
+                            axis_duration,
+                            axis_results.results.len()
+                        );
+
+                        // Convert AXIS results to OptimizedSearchRecord
+                        let results: Vec<OptimizedSearchRecord> = axis_results
+                            .results
+                            .into_iter()
+                            .take(top_k)
+                            .map(|scored| OptimizedSearchRecord {
+                                id: scored.vector_id.to_string(),
+                                vector_id: Some(scored.vector_id.to_string()),
+                                score: scored.similarity,
+                                similarity: Some(scored.similarity),
+                                vector: None, // AXIS doesn't return vectors by default
+                                ..Default::default()
+                            })
+                            .collect();
+
+                        // If we got results, return them
+                        if !results.is_empty() {
+                            return Ok(results);
+                        }
+
+                        info!(
+                            "⚠️ SWIFT: AXIS returned no results, falling back to block-pruned search"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "⚠️ SWIFT: AXIS query failed ({}), falling back to block-pruned search",
+                            e
+                        );
+                    }
+                }
+            }
+
+            // ========================================================================
+            // PHASE 1B: BLOCK-PRUNED SEARCH (FALLBACK)
+            // ========================================================================
+            info!("🎯 SWIFT: Using progressive search with block pruning (quantization available)");
+
+            // Load files and use progressive search with block pruning
+            let files = self
+                .load_collection_files(collection_id, storage_path, Some(&*ctx.collection))
+                .await?;
+
+            let prune_config = crate::core::search::BlockPruneConfig::default();
+            // TODO: Convert FilterExpression to MetadataFilter for SWIFT-specific filtering
+            // For now, pass None and filter results after progressive search
+            let swift_filter: Option<super::MetadataFilter> = None;
+
+            let mut all_results = Vec::new();
+            for swift_file in files.iter() {
+                let file_results = swift_file
+                    .search_without_index(query_vector, top_k, swift_filter.clone(), &prune_config)
+                    .await?;
+                // Apply filter expression after progressive search if provided
+                let filtered_results = if let Some(filter_expr) = filter_expression {
+                    file_results
+                        .into_iter()
+                        .filter(|record| {
+                            crate::core::search::sql_value_filter::evaluate_filter(
+                                filter_expr,
+                                &record.metadata,
+                            )
+                        })
+                        .collect()
+                } else {
+                    file_results
+                };
+                all_results.extend(filtered_results);
+            }
+
+            // Sort and take top_k from all results
+            all_results.sort_by(|a, b| {
+                let dist_a: f32 = self
+                    .distance_engine
+                    .calculate_distance(query_vector, &a.vector, &distance_metric)
+                    .normalized_score;
+                let dist_b: f32 = self
+                    .distance_engine
+                    .calculate_distance(query_vector, &b.vector, &distance_metric)
+                    .normalized_score;
+                dist_b
+                    .partial_cmp(&dist_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            all_results.truncate(top_k);
+
+            // Convert to OptimizedSearchRecord
+            let results: Vec<OptimizedSearchRecord> = all_results
+                .into_iter()
+                .map(|record| {
+                    let distance_result = self.distance_engine.calculate_distance(
+                        query_vector,
+                        &record.vector,
+                        &distance_metric,
+                    );
+                    OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
+                        .with_similarity(distance_result.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(record.metadata.clone())
+                })
+                .collect();
+
+            info!(
+                "🎯 SWIFT progressive search found {} results",
+                results.len()
+            );
+            return Ok(results);
         }
 
         // ========================================================================
-        // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
+        // PHASE 2: BLOCK-PRUNED SEARCH (ALWAYS ENABLED FOR PERFORMANCE)
         // ========================================================================
+        //
+        // Uses search_without_index which applies block pruning based on block-level
+        // metadata (min/max vectors) to skip irrelevant blocks. This improves
+        // performance even without explicit quantization/AXIS configuration.
 
-        info!("🔍 SWIFT: Using current unified search implementation (orchestration disabled)");
+        info!("🔍 SWIFT: Using block-pruned search implementation");
 
         // Load files from storage
         let files = self
             .load_collection_files(collection_id, storage_path, Some(&*ctx.collection))
             .await?;
 
-        // Use bounded priority queue for efficient top-k selection
-        let mut priority_queue = BoundedPriorityQueue::new(top_k);
+        // Use default pruning config for block-level optimization
+        let prune_config = crate::core::search::BlockPruneConfig::default();
+        let swift_filter: Option<super::MetadataFilter> = None;
 
-        // Search each SWIFT file by iterating through superblocks and blocks
+        let mut all_results = Vec::new();
         for swift_file in files.iter() {
-            // Iterate through all superblocks -> blocks -> records
-            for superblock in &swift_file.superblocks {
-                for block in &superblock.blocks {
-                    for record in &block.records {
-                        // Apply metadata filter if present
-                        if let Some(filter_expr) = filter_expression {
-                            let matches = crate::core::search::sql_value_filter::evaluate_filter(
-                                filter_expr,
-                                &record.metadata,
-                            );
-                            if !matches {
-                                continue; // Skip records that don't match filter
-                            }
-                        }
+            // Use search_without_index which applies block pruning
+            let file_results = swift_file
+                .search_without_index(query_vector, top_k, swift_filter.clone(), &prune_config)
+                .await?;
 
-                        // Compute actual distance using distance engine
-                        let distance_result = self.distance_engine.calculate_distance(
-                            query_vector,
-                            &record.vector,
-                            &distance_metric,
-                        );
-
-                        let id = if record.id.is_empty() {
-                            format!("unknown_{:?}", record.timestamp)
-                        } else {
-                            record.id.clone()
-                        };
-
-                        let mut search_record =
-                            OptimizedSearchRecord::new(id, distance_result.normalized_score)
-                                .with_similarity(distance_result.normalized_score)
-                                .add_vector(record.vector.clone())
-                                .with_metadata(record.metadata.clone());
-
-                        if let Some(version) = record.version {
-                            search_record = search_record
-                                .with_version_info(version, record.timestamp.unwrap_or(0));
-                        }
-
-                        // Try to insert into bounded queue - only keeps top-k
-                        priority_queue.try_insert(search_record);
-                    }
-                }
-            }
+            // Apply filter expression after block-pruned search if provided
+            let filtered_results = if let Some(filter_expr) = filter_expression {
+                let filtered: Vec<_> = file_results
+                    .into_iter()
+                    .filter(|record| {
+                        crate::core::search::sql_value_filter::evaluate_filter(
+                            filter_expr,
+                            &record.metadata,
+                        )
+                    })
+                    .collect();
+                filtered
+            } else {
+                file_results
+            };
+            all_results.extend(filtered_results);
         }
 
-        // Get sorted results from bounded queue
-        let search_results: Vec<OptimizedSearchRecord> = priority_queue.into_sorted_vec();
+        // Sort and take top_k from all results
+        all_results.sort_by(|a, b| {
+            let dist_a: f32 = self
+                .distance_engine
+                .calculate_distance(query_vector, &a.vector, &distance_metric)
+                .normalized_score;
+            let dist_b: f32 = self
+                .distance_engine
+                .calculate_distance(query_vector, &b.vector, &distance_metric)
+                .normalized_score;
+            dist_b
+                .partial_cmp(&dist_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_results.truncate(top_k);
+
+        // Convert to OptimizedSearchRecord
+        let search_results: Vec<OptimizedSearchRecord> = all_results
+            .into_iter()
+            .map(|record| {
+                let distance_result = self.distance_engine.calculate_distance(
+                    query_vector,
+                    &record.vector,
+                    &distance_metric,
+                );
+                OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
+                    .with_similarity(distance_result.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(record.metadata.clone())
+            })
+            .collect();
+
         let results_len = search_results.len();
 
         // Track bytes processed for metrics
@@ -1287,7 +1773,9 @@ impl SwiftEngine {
     // Removed unnecessary helper methods - engines already have these components as fields
     // Distance and quantization engines are accessed directly from struct fields
 
-    /// Fallback to direct search when orchestration fails
+    /// Fallback to direct search when orchestration is not available
+    /// This is the expected path until AXIS/orchestration is fully integrated for SWIFT
+    #[allow(dead_code)]
     async fn fallback_to_direct_search(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
@@ -1298,7 +1786,8 @@ impl SwiftEngine {
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         _filter_expression: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        tracing::warn!("🔄 SWIFT: Falling back to direct search implementation");
+        // Debug level since this is expected behavior until orchestration is fully integrated
+        tracing::debug!("🔍 SWIFT: Using direct search (orchestration pending integration)");
 
         // Use the existing search implementation
         // Load files from storage
@@ -1372,7 +1861,7 @@ mod tests {
     async fn test_swift_engine_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Need to create distance engine and axis manager for new()
-        let distance_engine = Arc::new(
+        let _distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
@@ -1386,7 +1875,7 @@ mod tests {
     async fn test_swift_feature_support() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Need to create distance engine and axis manager for new()
-        let distance_engine = Arc::new(
+        let _distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),

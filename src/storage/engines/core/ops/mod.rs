@@ -62,9 +62,18 @@ pub mod proximacodec;
 /// - unified_proxima_simd.obsolete/
 // pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
 // pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
-
 /// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
+
+/// SIMD-accelerated decode pipeline for the Native Compute Engine
+///
+/// Provides hardware-accelerated decoding operations:
+/// - BitPacked integer decoding (AVX2/NEON/Scalar)
+/// - Delta encoding with SIMD prefix sum
+/// - Fused quantization decode (Binary/INT4/INT8 -> FP32)
+///
+/// Usage: `use crate::storage::engines::core::ops::simd_decode::*;`
+pub mod simd_decode;
 
 /// Common utility function for estimating vector record size in bytes
 ///
@@ -573,6 +582,7 @@ pub struct PerformanceProfile {
 }
 
 /// Universal engine operations trait
+#[allow(async_fn_in_trait)]
 pub trait UniversalEngineOperations {
     /// Core CRUD operations
     async fn insert_vectors(&self, vectors: Vec<VectorRecord>) -> Result<Vec<String>>;

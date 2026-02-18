@@ -20,9 +20,11 @@ use crate::storage::persistence::filesystem::{FileOptions, FilesystemFactory};
 /// Metrics persistence layer with cross-cloud support
 pub struct MetricsPersistenceLayer {
     /// Filesystem factory for cross-cloud storage operations
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Base path for metrics storage
+    #[allow(dead_code)]
     base_path: String,
 
     /// Configuration

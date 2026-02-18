@@ -1,0 +1,143 @@
+= ProximaDB Roadmap Documentation
+:toc: left
+:toclevels: 2
+:icons: font
+:last-updated: December 2025
+
+[.lead]
+**Vision-aligned roadmap with phase-based organization and feature tracking**
+
+== Key Documents
+
+|===
+| Document | Purpose | Status
+
+| link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] | **Start here** - Vision-aligned phase planning | ✅ Authoritative
+| link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | All 135 features with status by phase | ✅ Current
+| link:CURRENT_ROADMAP.adoc[Current Roadmap] | Quarterly focus areas | ✅ Current
+| link:../DOCUMENTATION_STATUS.adoc[Documentation Status] | All docs with phase and status | ✅ Current
+|===
+
+== Vision Phase Alignment
+
+Features are organized into three phases from the link:../../concepts/vision.adoc[Vision Document]:
+
+|===
+| Phase | Focus | Status | Features
+
+| **Phase 1** | Format & Catalog Contract (MVP) | ✅ Complete | 40 features
+| **Phase 2** | Cross-Model Query & Indexing | ✅ Complete | 43 features
+| **Phase 3** | Ecosystem Integration | 🔄 In Progress | 42 features
+|===
+
+== Status Overview
+
+=== Phase 1: Format & Catalog (Foundation) ✅
+
+* ✅ 6 storage engines (SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR)
+* ✅ Unified WAL with crash recovery
+* ✅ REST + gRPC + Arrow Flight APIs
+* ✅ PostgreSQL wire protocol
+* ✅ AXIS index framework (HNSW, IVF, LSH, Annoy)
+* ✅ Quantization (Binary, INT8, PQ)
+* ✅ DataFusion TableProvider integration
+
+=== Phase 2: Cross-Model Query (Differentiation) ✅
+
+* ✅ ORION graph engine with WAL persistence
+* ✅ Document store with JSON path queries
+* ✅ Observability store (logs + metrics)
+* ✅ FederatedQueryContext for cross-model SQL
+* ✅ VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY functions
+* ✅ Cross-model LATERAL joins
+* ✅ Multi-modal search with reranking
+
+=== Phase 3: Ecosystem Integration (Scale) 🔄
+
+* 🔄 PULSAR/QUASAR distributed graph engines
+* 🔄 External catalog integration (Iceberg, Delta Lake, Glue)
+* 📅 Streaming infrastructure
+* 📅 CDC connectors
+* 📅 Multi-language SDKs (Go, Java, Node.js)
+* 📅 Trino/Spark compute adapters
+
+== Directory Structure
+
+```
+roadmap/
+├── STRATEGIC_ROADMAP.adoc     # Vision-aligned (authoritative)
+├── MASTER_FEATURE_DASHBOARD.adoc
+├── CURRENT_ROADMAP.adoc
+├── README.adoc                 # This file
+├── completed/                  # Completed feature docs
+│   ├── 01-storage-engines.adoc
+│   ├── 02-index-algorithms.adoc
+│   ├── 079-108 (documentation)
+│   └── ...
+├── in-progress/               # Active work
+│   └── 076-multi-modal-search.adoc
+├── future/                    # P3 feature specs
+│   ├── 109-cross-modal-reranking.adoc
+│   └── 110-unified-query-language.adoc
+├── specifications/            # Detailed specs for P3
+│   ├── 111-streaming
+│   ├── 112-cdc
+│   └── 114-121-sdks
+└── implementation/           # Implementation guides
+    ├── active/               # Current quarter
+    ├── completed/            # Finished implementations
+    └── archive/              # Historical plans
+```
+
+== Status Legend
+
+|===
+| Symbol | Meaning
+
+| ✅ | Complete - Production ready
+| 🔄 | In Progress - Active development
+| 📅 | Planned - Scheduled for future phase
+| 💡 | Nice to Have - Optional/opportunistic
+| 🚫 | Out of Scope - Not aligned with vision
+| ⚠️ | Obsolete - Superseded or deprecated
+|===
+
+== MVP Definition
+
+ProximaDB v1.0 MVP includes all Phase 1 and Phase 2 features:
+
+* **96% complete** (80 of 83 MVP features)
+* All storage engines, indexes, quantization
+* Full cross-model query support
+* Graph, document, observability stores
+* Python SDK
+
+Phase 3 features are post-MVP enhancements.
+
+== Quick Navigation
+
+=== By Status
+* link:completed/[✅ Completed Features] - Phase 1 + Phase 2
+* link:in-progress/[🔄 In Progress] - Active P3 work
+* link:future/[📅 Future Features] - P3 specifications
+
+=== By Category
+* link:completed/01-storage-engines.adoc[Storage Engines]
+* link:completed/02-index-algorithms.adoc[Index Algorithms]
+* link:completed/036-039-graph-database.adoc[Graph Database]
+* link:specifications/[P3 Specifications]
+
+=== Implementation Guides
+* link:implementation/active/[Active Quarter]
+* link:implementation/completed/[Completed Implementations]
+
+== Contributing
+
+* **Feature Requests**: Submit via GitHub Issues
+* **Phase 3 Priorities**: See link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap]
+* **Documentation Updates**: Follow link:../DOCUMENTATION_STATUS.adoc[Documentation Status]
+
+---
+
+_Last Updated_: December 30, 2025 +
+_Version_: 0.2.0

@@ -52,12 +52,15 @@ pub struct RateLimitConfig {
 }
 
 // Default functions for serde
+#[allow(dead_code)]
 fn default_requests_per_minute() -> u32 {
     1000
 }
+#[allow(dead_code)]
 fn default_burst_size() -> u32 {
     100
 }
+#[allow(dead_code)]
 fn default_true() -> bool {
     true
 }
@@ -65,12 +68,50 @@ fn default_true() -> bool {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            enabled: false, // Disabled by default for demo and testing
+            enabled: true, // Enabled by default for security
             requests_per_minute: 1000,
             burst_size: 100,
             by_ip: true,
             limit_health_endpoints: false,
             global_requests_per_minute: None,
+        }
+    }
+}
+
+impl RateLimitConfig {
+    /// Create a disabled rate limit configuration.
+    ///
+    /// **WARNING**: Only use for development/testing. Production should always
+    /// have rate limiting enabled to prevent abuse.
+    pub fn disabled() -> Self {
+        tracing::warn!("🚨 Rate limiting is DISABLED. This is a security risk in production!");
+        Self {
+            enabled: false,
+            ..Default::default()
+        }
+    }
+
+    /// Create a production rate limit configuration with specified limits.
+    pub fn production(requests_per_minute: u32, burst_size: u32) -> Self {
+        Self {
+            enabled: true,
+            requests_per_minute,
+            burst_size,
+            by_ip: true,
+            limit_health_endpoints: false,
+            global_requests_per_minute: Some(requests_per_minute * 10), // Global limit
+        }
+    }
+
+    /// Create a high-throughput rate limit configuration.
+    pub fn high_throughput() -> Self {
+        Self {
+            enabled: true,
+            requests_per_minute: 10000,
+            burst_size: 1000,
+            by_ip: true,
+            limit_health_endpoints: false,
+            global_requests_per_minute: Some(100000),
         }
     }
 }
@@ -165,13 +206,13 @@ pub struct RateLimitErrorResponse {
 
 /// Rate limiting layer for Axum
 pub struct RateLimitLayer {
-    state: Arc<RateLimitState>,
+    _state: Arc<RateLimitState>,
 }
 
 impl RateLimitLayer {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            state: Arc::new(RateLimitState::new(config.to_middleware_config())),
+            _state: Arc::new(RateLimitState::new(config.to_middleware_config())),
         }
     }
 
@@ -328,10 +369,34 @@ mod tests {
     #[test]
     fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
-        assert!(!config.enabled);
+        // Default is now enabled for security
+        assert!(config.enabled);
         assert_eq!(config.burst_size, 100);
         assert_eq!(config.requests_per_minute, 1000);
         assert!(!config.limit_health_endpoints);
         assert!(config.global_requests_per_minute.is_none());
+    }
+
+    #[test]
+    fn test_rate_limit_config_disabled() {
+        let config = RateLimitConfig::disabled();
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn test_rate_limit_config_production() {
+        let config = RateLimitConfig::production(5000, 500);
+        assert!(config.enabled);
+        assert_eq!(config.requests_per_minute, 5000);
+        assert_eq!(config.burst_size, 500);
+        assert!(config.global_requests_per_minute.is_some());
+    }
+
+    #[test]
+    fn test_rate_limit_config_high_throughput() {
+        let config = RateLimitConfig::high_throughput();
+        assert!(config.enabled);
+        assert_eq!(config.requests_per_minute, 10000);
+        assert_eq!(config.burst_size, 1000);
     }
 }

@@ -258,7 +258,7 @@ impl StreamingRowGroupProcessor {
                     .await
                     .map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
-                let memory_reservation = {
+                let _memory_reservation = {
                     let mut tracker = memory_tracker.write().await;
                     tracker.reserve_memory(
                         &format!("rg_{}", task.row_group_id),
@@ -318,7 +318,7 @@ impl StreamingRowGroupProcessor {
             match stage {
                 ProcessingStage::BloomFilter => {
                     // Quick existence check - for now, pass all through
-                    if let Some(stats) = enhanced_stats {
+                    if let Some(_stats) = enhanced_stats {
                         // Would check bloom filters here
                         records_processed += task.metadata.num_rows() as usize;
                     }
@@ -528,6 +528,7 @@ impl StreamingRowGroupProcessor {
 /// Task for processing a row group
 struct RowGroupTask {
     row_group_id: u32,
+    #[allow(dead_code)]
     priority: u32,
     metadata: RowGroupMetaData,
     estimated_memory: usize,
@@ -577,6 +578,7 @@ impl MemoryTracker {
         usage_ratio > threshold
     }
 
+    #[allow(dead_code)]
     fn get_memory_stats(&self) -> (usize, usize, usize) {
         (self.current_usage, self.max_usage, self.peak_usage)
     }
@@ -585,8 +587,6 @@ impl MemoryTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::impls::nova::hierarchical_stats::*;
-    #[test]
     fn test_streaming_config_defaults() {
         let config = StreamingConfig::default();
         assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);

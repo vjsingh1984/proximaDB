@@ -22,6 +22,67 @@ impl super::GraphOperationsService {
         engine.get_neighbors(node_id, None)
     }
 
+    /// Query nodes by a single label (convenience method)
+    ///
+    /// Returns all nodes that have the specified label in the graph.
+    pub async fn query_nodes_by_label(
+        &self,
+        graph_id: &str,
+        label: &str,
+    ) -> Result<Vec<Arc<Node>>> {
+        let query = NodeQuery {
+            graph_id: graph_id.to_string(),
+            labels: vec![label.to_string()],
+            filters: vec![],
+            offset: None,
+            limit: None,
+            continuation_token: None,
+        };
+        self.query_nodes(graph_id, query).await
+    }
+
+    /// Query nodes by properties with optional label filter (convenience method)
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to query
+    /// * `label` - Optional label to filter by
+    /// * `property_filters` - List of (property_name, value) pairs for equality matching
+    pub async fn query_nodes_by_properties(
+        &self,
+        graph_id: &str,
+        label: Option<&str>,
+        property_filters: &[(String, String)],
+    ) -> Result<Vec<Arc<Node>>> {
+        use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+
+        // Build property filters
+        let filters: Vec<PropertyFilter> = property_filters
+            .iter()
+            .map(|(key, value)| PropertyFilter {
+                key: key.clone(),
+                operator: PropertyFilterOperator::Equals.into(),
+                value: Some(PropertyValue {
+                    value: Some(
+                        crate::proto::proximadb_v1::property_value::Value::StringValue(
+                            value.clone(),
+                        ),
+                    ),
+                }),
+            })
+            .collect();
+
+        let query = NodeQuery {
+            graph_id: graph_id.to_string(),
+            labels: label.map(|l| vec![l.to_string()]).unwrap_or_default(),
+            filters,
+            offset: None,
+            limit: None,
+            continuation_token: None,
+        };
+
+        self.query_nodes(graph_id, query).await
+    }
+
     /// Query nodes by labels and properties
     pub async fn query_nodes(&self, graph_id: &str, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
@@ -59,7 +120,11 @@ impl super::GraphOperationsService {
                     // Look up index for this property
                     if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key)
                     {
-                        let key = super::index_key_for_value(filter.value.as_ref().unwrap());
+                        // Safely handle missing filter value
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            continue; // Skip filter if value is missing
+                        };
+                        let key = super::index_key_for_value(filter_val);
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -77,80 +142,103 @@ impl super::GraphOperationsService {
                     }
                 }
                 Op::StartsWith => {
-                    if let Some(prefix) =
-                        super::extract_string_from_value(filter.value.as_ref().unwrap())
-                    {
-                        if let Some(map_lock) =
+                    // Safely handle missing filter value
+                    let Some(filter_val) = filter.value.as_ref() else {
+                        continue; // Skip filter if value is missing
+                    };
+                    if let Some(prefix) = super::extract_string_from_value(filter_val)
+                        && let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
+                    {
+                        // Handle poisoned lock gracefully
+                        let Ok(map) = map_lock.read() else {
+                            tracing::warn!(
+                                "Poisoned lock in node_property_str_ordered for key {}",
+                                filter.key
+                            );
+                            continue;
+                        };
+                        let mut matched = HashSet::new();
+                        for (_k, ids) in map
+                            .range(prefix.to_string()..)
+                            .take_while(|(k, _)| k.starts_with(prefix))
                         {
-                            let map = map_lock.read().unwrap();
-                            let mut matched = HashSet::new();
-                            for (k, ids) in map
-                                .range(prefix.to_string()..)
-                                .take_while(|(k, _)| k.starts_with(prefix))
-                            {
-                                matched.extend(ids.iter().cloned());
-                            }
-                            candidates = candidates
-                                .into_iter()
-                                .filter(|id| matched.contains(id))
-                                .collect();
+                            matched.extend(ids.iter().cloned());
                         }
+                        candidates = candidates
+                            .into_iter()
+                            .filter(|id| matched.contains(id))
+                            .collect();
                     }
                 }
                 Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
+                    // Safely handle missing filter value
+                    let Some(filter_val) = filter.value.as_ref() else {
+                        continue; // Skip filter if value is missing
+                    };
                     // Prefer numeric range if value numeric, else fallback to string ordered
-                    if let Some(num) =
-                        super::extract_number_from_value(filter.value.as_ref().unwrap())
-                    {
-                        if let Some(map_lock) =
+                    if let Some(num) = super::extract_number_from_value(filter_val)
+                        && let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
-                        {
-                            let map = map_lock.read().unwrap();
-                            let mut matched = HashSet::new();
-                            match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
-                                Op::GreaterThan => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) > num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
+                    {
+                        // Handle poisoned lock gracefully
+                        let Ok(map) = map_lock.read() else {
+                            tracing::warn!(
+                                "Poisoned lock in node_property_num_indexes for key {}",
+                                filter.key
+                            );
+                            continue;
+                        };
+                        let mut matched = HashSet::new();
+                        match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                            Op::GreaterThan => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) > num {
+                                        matched.extend(ids.iter().cloned());
                                     }
                                 }
-                                Op::GreaterEqual => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) >= num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
-                                    }
-                                }
-                                Op::LessThan => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) < num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
-                                    }
-                                }
-                                Op::LessEqual => {
-                                    for (k, ids) in map.iter() {
-                                        if (*k as f64) <= num {
-                                            matched.extend(ids.iter().cloned());
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
-                            candidates = candidates
-                                .into_iter()
-                                .filter(|id| matched.contains(id))
-                                .collect();
+                            Op::GreaterEqual => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) >= num {
+                                        matched.extend(ids.iter().cloned());
+                                    }
+                                }
+                            }
+                            Op::LessThan => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) < num {
+                                        matched.extend(ids.iter().cloned());
+                                    }
+                                }
+                            }
+                            Op::LessEqual => {
+                                for (k, ids) in map.iter() {
+                                    if (*k as f64) <= num {
+                                        matched.extend(ids.iter().cloned());
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
+                        candidates = candidates
+                            .into_iter()
+                            .filter(|id| matched.contains(id))
+                            .collect();
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        let map = map_lock.read().unwrap();
+                        // Handle poisoned lock gracefully
+                        let Ok(map) = map_lock.read() else {
+                            tracing::warn!(
+                                "Poisoned lock in node_property_str_ordered for key {} (string fallback)",
+                                filter.key
+                            );
+                            continue;
+                        };
                         let mut matched = HashSet::new();
-                        let s = super::extract_string_from_value(filter.value.as_ref().unwrap())
-                            .unwrap_or("");
+                        // filter_val was already validated at the start of this Op branch
+                        let s = super::extract_string_from_value(filter_val).unwrap_or("");
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
                                 for (_k, ids) in map.range((
@@ -206,34 +294,28 @@ impl super::GraphOperationsService {
                     for filter in &query.filters {
                         use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                         let prop_val_opt = node.properties.get(&filter.key);
+
+                        // Safely get filter value - if missing, filter fails
+                        let Some(filter_val) = filter.value.as_ref() else {
+                            pass_all = false;
+                            break;
+                        };
+
                         let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::Equals => match prop_val_opt {
-                                Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                                Some(v) => v.value == filter_val.value,
                                 None => false,
                             },
                             Op::NotEquals => match prop_val_opt {
-                                Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                                Some(v) => v.value != filter_val.value,
                                 None => true,
                             },
-                            Op::GreaterThan => {
-                                super::cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
-                            }
-                            Op::GreaterEqual => {
-                                super::cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
-                            }
-                            Op::LessThan => {
-                                super::cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
-                            }
-                            Op::LessEqual => {
-                                super::cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
-                            }
-                            Op::StartsWith => super::prop_starts_with(
-                                prop_val_opt,
-                                filter.value.as_ref().unwrap(),
-                            ),
-                            Op::Contains => {
-                                super::prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
-                            }
+                            Op::GreaterThan => super::cmp_prop_gt(prop_val_opt, filter_val),
+                            Op::GreaterEqual => super::cmp_prop_ge(prop_val_opt, filter_val),
+                            Op::LessThan => super::cmp_prop_lt(prop_val_opt, filter_val),
+                            Op::LessEqual => super::cmp_prop_le(prop_val_opt, filter_val),
+                            Op::StartsWith => super::prop_starts_with(prop_val_opt, filter_val),
+                            Op::Contains => super::prop_contains(prop_val_opt, filter_val),
                             _ => false,
                         };
                         if !pass {
@@ -260,7 +342,11 @@ impl super::GraphOperationsService {
     }
     /// Create a new node
     pub async fn create_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
-        tracing::debug!("GraphOperationsService::create_node called for graph: {}, node: {}", graph_id, node.id);
+        tracing::debug!(
+            "GraphOperationsService::create_node called for graph: {}, node: {}",
+            graph_id,
+            node.id
+        );
 
         if !self.graph_enabled() {
             return Err(crate::core::error::ProximaDBError::InvalidInput(
@@ -345,7 +431,9 @@ impl super::GraphOperationsService {
             edge_ids.insert(e.id.clone());
         }
         for eid in edge_ids.into_iter() {
-            if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await? {
+            if let Some(edge) =
+                crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await?
+            {
                 self.stats_edges
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {

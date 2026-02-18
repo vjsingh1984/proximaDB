@@ -39,7 +39,7 @@ pub struct ViperFactory {
     processor_registry: HashMap<String, Box<dyn ProcessorFactory>>,
 
     /// Configuration builder cache
-    builder_cache: HashMap<String, ViperConfigurationBuilder>,
+    _builder_cache: HashMap<String, ViperConfigurationBuilder>,
 }
 
 /// Complete VIPER configuration
@@ -324,8 +324,11 @@ pub struct ViperSchemaStrategy {
 
 /// Time-series optimized schema strategy
 pub struct TimeSeriesSchemaStrategy {
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     config: ViperSchemaConfig,
+    #[allow(dead_code)]
     time_precision: TimePrecision,
 }
 
@@ -346,13 +349,17 @@ pub struct StandardVectorProcessor {
 
 /// Time-series optimized processor
 pub struct TimeSeriesVectorProcessor {
+    #[allow(dead_code)]
     config: ViperProcessingConfig,
+    #[allow(dead_code)]
     time_window_seconds: u64,
 }
 
 /// Similarity-based processor for clustering
 pub struct SimilarityVectorProcessor {
+    #[allow(dead_code)]
     config: ViperProcessingConfig,
+    #[allow(dead_code)]
     cluster_threshold: f32,
 }
 
@@ -365,7 +372,7 @@ impl ViperFactory {
             default_config: ViperConfiguration::default(),
             strategy_registry: HashMap::new(),
             processor_registry: HashMap::new(),
-            builder_cache: HashMap::new(),
+            _builder_cache: HashMap::new(),
         };
 
         factory.register_default_strategies();
@@ -667,7 +674,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
 
         // Dynamic filterable metadata columns
         for field in &self.filterable_fields {
-            fields.push(Field::new(&format!("meta_{}", field), DataType::Utf8, true));
+            fields.push(Field::new(format!("meta_{}", field), DataType::Utf8, true));
         }
 
         // Extra metadata as Map type

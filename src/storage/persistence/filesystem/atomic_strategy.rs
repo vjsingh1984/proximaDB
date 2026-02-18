@@ -205,6 +205,7 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
 
 /// Same-mount temp executor - robust for local filesystems
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SameMountTempExecutor {
     temp_suffix: String,
     config: AtomicWriteConfig,
@@ -363,6 +364,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
 }
 
 /// Cloud-optimized executor - local staging + cloud flush
+#[allow(dead_code)]
 pub struct CloudOptimizedExecutor {
     local_temp_dir: PathBuf,
     compression: bool,
@@ -452,10 +454,13 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         }
 
         // Cleanup local temp file
-        local_fs
-            .delete(&local_temp_path.to_string_lossy())
-            .await
-            .ok();
+        if let Err(e) = local_fs.delete(&local_temp_path.to_string_lossy()).await {
+            tracing::warn!(
+                "Failed to cleanup local temp file {:?}: {}",
+                local_temp_path,
+                e
+            );
+        }
 
         Ok(())
     }

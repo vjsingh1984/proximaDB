@@ -27,7 +27,9 @@ struct CachedPlan {
 
 /// Cost-based execution planner for unified query optimization with unified caching
 pub struct ExecutionPlanner {
+    #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
+    #[allow(dead_code)]
     graph_service: Arc<GraphOperationsService>,
     cost_model: CostModel,
     params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>, // for decoding $1 vectors when not substituted
@@ -709,6 +711,7 @@ impl ExecutionPlanner {
         }
     }
 
+    #[allow(dead_code)]
     fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> {
         Self::extract_join_keys_static(expr)
     }
@@ -915,7 +918,7 @@ impl ExecutionPlanner {
     }
 
     fn generate_projections(&self, select: &Select) -> Vec<ProjectionTransform> {
-        let mut transforms = Vec::new();
+        let transforms = Vec::new();
         // Note: We no longer need ExtractMetadata transformations because
         // the executor already creates fields with "metadata." prefix
         // matching the SELECT clause column names.
@@ -1104,6 +1107,7 @@ struct QueryAnalysis {
 struct SksSimilarArgs {
     pub query: Expr,
     pub metric: Option<String>,
+    #[allow(dead_code)]
     pub threshold: Option<f64>,
 }
 
@@ -1419,8 +1423,6 @@ mod planner_tests {
     #[tokio::test]
     async fn test_query_plan_caching() {
         use crate::graph::GraphOperationsService;
-        use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 
         // Create mock services (simplified for testing)
         let _graph_service = Arc::new(GraphOperationsService::new());
@@ -1431,7 +1433,6 @@ mod planner_tests {
     #[tokio::test]
     async fn test_set_operation_planning() {
         use crate::graph::GraphOperationsService;
-        use crate::services::operations::vectors::VectorOperationsService;
 
         // Create simple test planner
         let _graph_service = Arc::new(GraphOperationsService::new());
@@ -1442,7 +1443,6 @@ mod planner_tests {
     #[tokio::test]
     async fn test_cache_key_generation() {
         use crate::graph::GraphOperationsService;
-        use crate::services::operations::vectors::VectorOperationsService;
 
         let _graph_service = Arc::new(GraphOperationsService::new());
         // Skip test - requires complex VectorOperationsService setup

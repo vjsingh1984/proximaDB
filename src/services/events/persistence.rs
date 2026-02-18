@@ -11,10 +11,9 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::index::axis::eventlog::{EventType, IndexEvent, StorageEngineType};
+use crate::index::axis::eventlog::IndexEvent;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence
@@ -50,6 +49,8 @@ struct PersistentEvent {
 
 impl EventLogWAL {
     /// Create new EventLog WAL
+    ///
+    /// Initializes the WAL directory and creates the current WAL file if it doesn't exist.
     pub async fn new(
         wal_dir: impl AsRef<Path>,
         filesystem_factory: Arc<FilesystemFactory>,
@@ -80,6 +81,9 @@ impl EventLogWAL {
     }
 
     /// Persist an event to WAL
+    ///
+    /// Serializes the event and appends it to the current WAL file.
+    /// Automatically rotates the WAL file if size exceeds max_file_size.
     pub async fn persist_event(&mut self, event: &IndexEvent) -> Result<()> {
         let persistent_event = PersistentEvent {
             event: event.clone(),
@@ -129,6 +133,9 @@ impl EventLogWAL {
     }
 
     /// Mark an event as acknowledged in WAL
+    ///
+    /// Marks an event as acknowledged by adding its ID to the acknowledgment file.
+    /// Acknowledged events are excluded from recovery.
     pub async fn acknowledge_event(&mut self, event_id: &str) -> Result<()> {
         // In a production system, we would:
         // 1. Maintain an index of event positions in WAL
@@ -163,6 +170,9 @@ impl EventLogWAL {
     }
 
     /// Recover pending events from WAL
+    ///
+    /// Reads all WAL files and returns events that have not been acknowledged.
+    /// This is used during crash recovery to replay pending events.
     pub async fn recover_pending_events(&self) -> Result<Vec<IndexEvent>> {
         let mut pending_events = Vec::new();
 
@@ -268,6 +278,9 @@ impl EventLogWAL {
     }
 
     /// Rotate WAL file
+    ///
+    /// Rotates the current WAL file by renaming it with a timestamp suffix
+    /// and creating a new empty current file.
     async fn rotate_wal(&mut self) -> Result<()> {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let rotated_file = self.wal_dir.join(format!("eventlog_wal_{}.bin", timestamp));
@@ -297,6 +310,9 @@ impl EventLogWAL {
     }
 
     /// Compact WAL by removing acknowledged events
+    ///
+    /// Removes all acknowledged events from the WAL and rewrites only pending events.
+    /// This should be called periodically to prevent WAL files from growing too large.
     pub async fn compact(&mut self) -> Result<()> {
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
         let ack_file_str = ack_file
@@ -304,7 +320,7 @@ impl EventLogWAL {
             .ok_or_else(|| anyhow::anyhow!("Invalid ack file path: {:?}", ack_file))?;
         let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        let acknowledged_ids = if filesystem.exists(ack_file_str).await? {
+        let _acknowledged_ids = if filesystem.exists(ack_file_str).await? {
             let content_bytes = filesystem.read(ack_file_str).await?;
             let content = String::from_utf8(content_bytes).unwrap_or_default();
             content
@@ -351,6 +367,9 @@ impl EventLogWAL {
 }
 
 /// Background compaction task for EventLog WAL
+///
+/// Starts a background task that periodically compacts the WAL to remove
+/// acknowledged events. The task runs every hour by default.
 pub async fn start_wal_compaction_task(
     wal: Arc<tokio::sync::Mutex<EventLogWAL>>,
     shutdown: tokio::sync::watch::Receiver<bool>,
@@ -382,6 +401,7 @@ pub async fn start_wal_compaction_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::axis::eventlog::{EventType, StorageEngineType};
     use tempfile::TempDir;
 
     #[tokio::test]

@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::time::{Duration, interval};
 use tracing::{debug, info, warn};
 
-use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 
@@ -214,7 +214,7 @@ impl CacheWarmer {
             .get_popular_keys(top_count, min_access_count);
         let mut warmed_count = 0u64;
 
-        for (cache_key, access_count) in access_patterns {
+        for (cache_key, _access_count) in access_patterns {
             // Parse cache key: "vector:collection_id:vector_id" (consistent format across all engines)
             if let Some((collection_id, vector_id)) = self.parse_vector_cache_key(&cache_key) {
                 // Check if already cached in VectorCache (not QueryCache)
@@ -358,14 +358,14 @@ impl CacheWarmer {
     ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
         // TODO: Get base_path from collection metadata service
         // For now, use default path
-        let base_path = "/data/collections";
+        let _base_path = "/data/collections";
         engine
-            .vector_by_id(collection_id, base_path, vector_id)
+            .vector_by_id(collection_id, _base_path, vector_id)
             .await
     }
 
     /// Helper: Warm specific collection
-    async fn warm_collection(&self, collection_id: &str, max_vectors: usize) -> Result<u64> {
+    async fn warm_collection(&self, __collection_id: &str, __max_vectors: usize) -> Result<u64> {
         // TODO: Implement collection warming by:
         // 1. List all vectors in collection
         // 2. Load up to max_vectors

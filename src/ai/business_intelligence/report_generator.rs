@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 /// Report generator for business intelligence
 pub struct ReportGenerator {
-    llm_engine: Arc<LLMIntegrationEngine>,
+    _llm_engine: Arc<LLMIntegrationEngine>,
 }
 
 /// Executive report structure
@@ -32,7 +32,9 @@ pub enum ReportFormat {
 
 impl ReportGenerator {
     pub async fn new(llm_engine: Arc<LLMIntegrationEngine>) -> Result<Self> {
-        Ok(Self { llm_engine })
+        Ok(Self {
+            _llm_engine: llm_engine,
+        })
     }
 }
 

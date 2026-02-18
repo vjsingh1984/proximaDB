@@ -53,8 +53,10 @@ struct WalWriteRequest {
 #[derive(Clone)]
 struct CachedAssignment {
     storage_url: String,
+    #[allow(dead_code)]
     collection_wal_dir: String,
     logs_dir: String,
+    #[allow(dead_code)]
     cached_at: Instant,
 }
 
@@ -67,7 +69,7 @@ enum FlushReason {
 }
 
 #[derive(Default, Clone)]
-struct WalWriterMetrics {
+pub struct WalWriterMetrics {
     // Basic counters
     total_writes: u64,
     total_bytes_written: u64,
@@ -389,66 +391,53 @@ impl OptimizedWriteBufferWriter {
                 .insert(assignment.logs_dir.clone(), Instant::now());
         }
 
-        // TODO: Restore when OptimizedFormat is available
-        // Group requests by format for efficient serialization
-        // let mut format_groups: HashMap<OptimizedFormat, Vec<WalWriteRequest>> = HashMap::new();
-        // for request in requests {
-        //     format_groups.entry(request.format.clone()).or_default().push(request);
-        // }
+        // Collect all vectors and response channels
+        let mut all_vectors = Vec::new();
+        let mut all_sequences = Vec::new();
+        let mut response_txs = Vec::new();
 
-        // TODO: Restore format group processing when OptimizedFormat is available
-        // Process each format group
-        /* for (format, group_requests) in format_groups {
-            // Combine all vectors and sequences
-            let mut all_vectors = Vec::new();
-            let mut all_sequences = Vec::new();
-            let mut response_txs = Vec::new();
+        for request in requests {
+            all_vectors.extend(request.vectors);
+            all_sequences.extend(request.sequences);
+            response_txs.push(request.response_tx);
+        }
 
-            for request in group_requests {
-                all_vectors.extend_from_slice(&request.vectors);
-                all_sequences.extend_from_slice(&request.sequences);
-                response_txs.push(request.response_tx);
+        // Write combined batch
+        let result = Self::write_combined_batch(
+            collection_id,
+            &all_vectors,
+            &all_sequences,
+            &assignment,
+            filesystem_factory,
+            config,
+            metrics,
+        )
+        .await;
+
+        match &result {
+            Ok(wal_path) => {
+                debug!("Successfully wrote batch to: {}", wal_path);
             }
+            Err(e) => {
+                error!("Failed to write batch: {}", e);
+                metrics.write().await.write_errors += 1;
+            }
+        }
 
-            // Write combined batch
-            let result = Self::write_combined_batch(
-                collection_id,
-                &all_vectors,
-                &all_sequences,
-                &format,
-                &assignment,
-                filesystem_factory,
-                config,
-                metrics
-            ).await;
-
-            match &result {
-                Ok(wal_path) => {
-                    debug!("Successfully wrote batch to: {}", wal_path);
-                }
-                Err(e) => {
-                    error!("Failed to write batch: {}", e);
-                    metrics.write().await.write_errors += 1;
+        // Send responses to all requests in this batch
+        match result {
+            Ok(wal_path) => {
+                for tx in response_txs {
+                    let _ = tx.send(Ok(wal_path.clone()));
                 }
             }
-
-            // Send responses to all requests in this group
-            match result {
-                Ok(wal_path) => {
-                    for tx in response_txs {
-                        let _ = tx.send(Ok(wal_path.clone()));
-                    }
-                }
-                Err(e) => {
-                    for tx in response_txs {
-                        let _ = tx.send(Err(anyhow::anyhow!("WAL write failed: {}", e)));
-                    }
+            Err(e) => {
+                for tx in response_txs {
+                    let _ = tx.send(Err(anyhow::anyhow!("WAL write failed: {}", e)));
                 }
             }
         }
-        */
 
-        // Temporary implementation - just return success for now
         Ok(())
     }
 
@@ -546,8 +535,9 @@ impl OptimizedWriteBufferWriter {
     }
 
     /// Optimized serialization
+    #[allow(dead_code)]
     fn serialize_vectors_optimized(
-        vectors: &[VectorRecord],
+        _vectors: &[VectorRecord],
         // TODO: Restore when OptimizedFormat is available
         // format: &OptimizedFormat,
     ) -> Result<Vec<u8>> {

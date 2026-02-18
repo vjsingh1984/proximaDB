@@ -15,12 +15,8 @@ use std::sync::Arc;
 use crate::compute::quantization::{
     global_cache::{GlobalQuantizationCache, QuantizationCacheKey},
     storage_engine::StorageQuantizationEngine,
-    unified::{
-        Codebook, CodebookData, CodebookStore, InMemoryCodebookStore, QuantizationLevel,
-        UnifiedQuantizationEngine,
-    },
+    unified::{Codebook, CodebookData, QuantizationLevel, UnifiedQuantizationEngine},
 };
-use crate::storage::engines::core::formats::columnar::constants::*;
 
 /// Codebook metadata stored at file level
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,7 +180,7 @@ impl CodebookSerializer {
     /// Extract codebook metadata from UnifiedQuantizationEngine
     pub async fn extract_from_engine(
         &self,
-        engine: &UnifiedQuantizationEngine,
+        _engine: &UnifiedQuantizationEngine,
         collection_id: &str,
     ) -> Result<QuantizationCodebookMetadata> {
         let mut metadata = QuantizationCodebookMetadata {
@@ -226,7 +222,7 @@ impl CodebookSerializer {
                 for subvectors in [8, 16, 32] {
                     let pq_key = QuantizationCacheKey::pq(collection_id, bits, subvectors);
                     if let Some(codebook) = cache.get_codebook(&pq_key).await {
-                        let key = format!("pq{}_{}", bits, subvectors);
+                        let key = format!("pq{bits}_{subvectors}");
                         metadata
                             .pq_codebooks
                             .insert(key, self.convert_to_pq_codebook(&codebook)?);
@@ -245,7 +241,7 @@ impl CodebookSerializer {
                         // Extract PQ parameters from ID
                         // Format: {collection_id}_pq_{bits}_{subvectors}
                         if let Some(codebook) = engine.get_cached_codebook(&codebook_id) {
-                            let key = codebook_id.replace(&format!("{}_", collection_id), "");
+                            let key = codebook_id.replace(&format!("{collection_id}_"), "");
                             metadata
                                 .pq_codebooks
                                 .insert(key, self.convert_cached_to_pq_codebook(&codebook)?);
@@ -392,7 +388,7 @@ impl CodebookSerializer {
             let key = format!("pq{}_{}", bits, subvectors);
 
             // Create empty PQ codebook structure
-            let subvector_dim = (dimension + subvectors as usize - 1) / subvectors as usize;
+            let subvector_dim = dimension.div_ceil(subvectors as usize);
             let num_centroids = 1 << bits;
 
             metadata.pq_codebooks.insert(

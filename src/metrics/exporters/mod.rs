@@ -114,9 +114,13 @@ pub struct CollectionMetrics {
 /// Cache system metrics
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CacheMetrics {
+    #[allow(dead_code)]
     pub hit_rate: f64,
+    #[allow(dead_code)]
     pub evictions_per_second: f64,
+    #[allow(dead_code)]
     pub memory_used_bytes: u64,
+    #[allow(dead_code)]
     pub entries_count: u64,
 }
 

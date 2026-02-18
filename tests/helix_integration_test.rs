@@ -19,7 +19,7 @@ mod helix_integration_tests {
         CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
         StorageQueryMetadata, UnifiedStorageEngine,
     };
-    use rand::{Rng, SeedableRng};
+
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -30,7 +30,6 @@ mod helix_integration_tests {
     /// This ensures tests always start with fresh data
     fn cleanup_old_helix_test_files() {
         use std::fs;
-        use std::path::Path;
 
         // Clean /tmp directory
         if let Ok(entries) = fs::read_dir("/tmp") {
@@ -175,6 +174,8 @@ mod helix_integration_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -291,6 +292,8 @@ mod helix_integration_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -437,6 +440,8 @@ mod helix_integration_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -682,6 +687,8 @@ mod helix_integration_tests {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -798,6 +805,8 @@ mod helix_integration_tests {
             search_params,
             collection: Arc::new(collection_config),
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -914,6 +923,8 @@ mod helix_integration_tests {
             search_params,
             collection: Arc::new(collection_config),
             metadata: StorageQueryMetadata::default(),
+            user_context: None,
+            tenant_context: None,
         };
 
         let results = engine.search_vectors_unified(&ctx).await.unwrap();

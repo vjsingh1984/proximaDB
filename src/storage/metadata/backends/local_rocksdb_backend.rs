@@ -226,7 +226,7 @@ impl LocalRocksDbBackend {
             .context("Failed to open RocksDB with transactions")?;
 
             *self.db.write().await = Some(Arc::new(db));
-            info!("✅ RocksDB initialized with transaction support");
+            debug!("✅ RocksDB initialized with transaction support");
         } else {
             let db = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(
                 &db_opts,
@@ -236,7 +236,7 @@ impl LocalRocksDbBackend {
             .context("Failed to open RocksDB")?;
 
             *self.regular_db.write().await = Some(Arc::new(db));
-            info!("✅ RocksDB initialized without transaction support");
+            debug!("✅ RocksDB initialized without transaction support");
         }
 
         Ok(())
@@ -366,7 +366,7 @@ impl LocalRocksDbBackend {
                 txn.commit()?;
                 self.update_stats(StatOp::Write(data_len)).await;
 
-                info!("✅ Upserted collection {} ({}) via proto", name, uuid);
+                debug!("✅ Upserted collection {} ({}) via proto", name, uuid);
                 Ok(())
             }
             DbHandle::Regular(db) => {
@@ -393,7 +393,7 @@ impl LocalRocksDbBackend {
                 db.write(batch)?;
                 self.update_stats(StatOp::Write(data_len)).await;
 
-                info!("✅ Upserted collection {} ({}) via proto", name, uuid);
+                debug!("✅ Upserted collection {} ({}) via proto", name, uuid);
                 Ok(())
             }
         }
@@ -639,7 +639,7 @@ impl LocalRocksDbBackend {
                     .as_ref()
                     .map(|c| c.name.clone())
                     .unwrap_or_else(|| record.id.clone());
-                info!("✅ Upserted collection {} ({})", name, record.id);
+                debug!("✅ Upserted collection {} ({})", name, record.id);
             }
             DbHandle::Regular(db) => {
                 let mut batch = WriteBatch::default();
@@ -776,7 +776,7 @@ impl LocalRocksDbBackend {
                     let backup_dir =
                         backup_path.join(format!("backup_{}", chrono::Utc::now().timestamp()));
                     checkpoint.create_checkpoint(&backup_dir)?;
-                    info!("✅ Created RocksDB backup at: {:?}", backup_dir);
+                    debug!("✅ Created RocksDB backup at: {:?}", backup_dir);
                 }
             }
 
@@ -813,7 +813,7 @@ impl LocalRocksDbBackend {
                 tokio::fs::remove_dir_all(backup)
                     .await
                     .context("Failed to remove old backup")?;
-                info!("🗑️ Removed old backup: {:?}", backup);
+                debug!("🗑️ Removed old backup: {:?}", backup);
             }
         }
 
@@ -900,7 +900,7 @@ impl LocalRocksDbBackend {
                     txn.commit()?;
                     self.update_stats(StatOp::Delete).await;
 
-                    info!("🗑️ Deleted collection {} ({})", name, uuid);
+                    debug!("🗑️ Deleted collection {} ({})", name, uuid);
                     Ok(true)
                 }
                 DbHandle::Regular(db) => {
@@ -932,7 +932,7 @@ impl LocalRocksDbBackend {
                     db.write(batch)?;
                     self.update_stats(StatOp::Delete).await;
 
-                    info!("🗑️ Deleted collection {} ({})", name, uuid);
+                    debug!("🗑️ Deleted collection {} ({})", name, uuid);
                     Ok(true)
                 }
             }

@@ -289,7 +289,7 @@ pub async fn search_entities(
     }
 
     // Handle text query by converting to embedding
-    let query_vector = if let Some(text) = request.query_text {
+    let query_vector = if let Some(_text) = request.query_text {
         // TODO: Implement text-to-embedding conversion
         // This would use an embedding service
         warn!("Text query not yet implemented, using vector query");

@@ -3,14 +3,11 @@
 //! Integrates quantization codebook metadata storage into SST's ProximaBlock format.
 //! Codebooks are stored in the footer for efficient file-level access.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bytes::{Bytes, BytesMut};
-use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::quantization::{
-    storage_engine::StorageQuantizationEngine, unified::UnifiedQuantizationEngine,
-};
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, ProximaBlockFooter, QuantizationCodebookMetadata,
 };
@@ -57,7 +54,7 @@ impl SstCodebookManager {
             let codebook_offset = current_offset;
             let codebook_bytes = self.serializer.serialize_for_footer(&metadata)?;
             buffer.extend_from_slice(&codebook_bytes);
-            current_offset += codebook_bytes.len() as u64;
+            let _current_offset = current_offset + codebook_bytes.len() as u64;
             (Some(codebook_offset), Some(codebook_bytes.len() as u64))
         } else {
             (None, None)

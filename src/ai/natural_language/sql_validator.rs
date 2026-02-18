@@ -14,7 +14,7 @@ use tracing::{debug, error};
 #[derive(Debug, Clone)]
 pub struct SQLValidator {
     config: SQLValidatorConfig,
-    allowed_functions: HashSet<String>,
+    _allowed_functions: HashSet<String>,
     forbidden_patterns: Vec<String>,
 }
 
@@ -131,7 +131,7 @@ impl SQLValidator {
 
         Ok(Self {
             config,
-            allowed_functions,
+            _allowed_functions: allowed_functions,
             forbidden_patterns,
         })
     }
@@ -299,12 +299,28 @@ impl SQLValidator {
         }
 
         // Add result limiting if not present
-        if sanitized_query.limit.is_none() {
-            use sqlparser::ast::Expr;
-            sanitized_query.limit = Some(Expr::Value(sqlparser::ast::Value::Number(
-                self.config.max_result_limit.to_string(),
-                false,
-            )));
+        // In sqlparser 0.59, LimitClause is an enum
+        let has_limit = if let Some(lc) = &sanitized_query.limit_clause {
+            match lc {
+                sqlparser::ast::LimitClause::LimitOffset { limit, .. } => limit.is_some(),
+                sqlparser::ast::LimitClause::OffsetCommaLimit { .. } => true,
+            }
+        } else {
+            false
+        };
+
+        if !has_limit {
+            use sqlparser::ast::{Expr, LimitClause, Value, ValueWithSpan};
+            use sqlparser::tokenizer::Span;
+
+            sanitized_query.limit_clause = Some(LimitClause::LimitOffset {
+                limit: Some(Expr::Value(ValueWithSpan {
+                    value: Value::Number(self.config.max_result_limit.to_string(), false),
+                    span: Span::empty(),
+                })),
+                offset: None,
+                limit_by: vec![],
+            });
         }
 
         Ok(sanitized_query)
@@ -418,7 +434,7 @@ mod tests {
     async fn test_sql_validator_creation() {
         let validator = SQLValidator::new().await.unwrap();
         assert!(validator.config.enable_strict_validation);
-        assert!(!validator.allowed_functions.is_empty());
+        assert!(!validator._allowed_functions.is_empty());
     }
 
     #[tokio::test]
@@ -472,7 +488,7 @@ mod tests {
     fn test_tenant_isolation_verification() {
         let validator = SQLValidator {
             config: SQLValidatorConfig::default(),
-            allowed_functions: HashSet::new(),
+            _allowed_functions: HashSet::new(),
             forbidden_patterns: vec![],
         };
 
@@ -500,7 +516,7 @@ mod tests {
                 max_result_limit: 1000,
                 ..Default::default()
             },
-            allowed_functions: HashSet::new(),
+            _allowed_functions: HashSet::new(),
             forbidden_patterns: vec![],
         };
 

@@ -39,6 +39,7 @@ pub struct AvroSerializationStrategy {
     storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
 
     /// Flush coordinator
+    #[allow(dead_code)]
     flush_coordinator: Arc<WALFlushCoordinator>,
 
     /// Configuration
@@ -166,7 +167,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
-        base_location: &str,
+        _base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors (Avro format)",
@@ -329,10 +330,12 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
+                file_paths: vec![],
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(),
             });
         }
@@ -395,10 +398,12 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
+            file_paths: flush_result.file_paths.clone(),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
+            compaction_error: None,
             flushed_batch_ids: batch_ids,
         })
     }
@@ -614,10 +619,12 @@ impl AvroSerializationStrategy {
             entries_flushed: Some(total_vectors),
             bytes_written: Some(total_bytes),
             files_created: Some(0),
+            file_paths: vec![],
             duration_ms: Some(total_duration),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: Vec::new(),
         })
     }

@@ -1,11 +1,56 @@
+# ProximaDB Cargo Build Configuration
+# Optimized for parallel compilation on multi-core systems
+
+[build]
+# Use 60% of CPU cores for compilation (6 of 10 cores)
+# Leaves headroom for other tasks and reduces thermal throttling
+jobs = 6
+
+# Enable parallel code generation within each crate
+# This splits crates into multiple codegen units for parallel LLVM processing
+rustflags = ["-C", "codegen-units=10"]
+
 [env]
+# Run tests sequentially for integration tests that share resources
 RUST_TEST_THREADS = "1"
 
+[registries.crates-io]
+# Use sparse protocol for faster dependency resolution (2-3x faster)
+protocol = "sparse"
+
+# NOTE: Profile settings ([profile.*]) must be in Cargo.toml, not here
+# See Cargo.toml for: release-fast, dev, test, bench profiles
+
+# Aliases for common operations
 [alias]
+# Run tests sequentially (for integration tests)
 test-seq = "test --all -- --nocapture"
-test-sst = "test unit_tests::storage -- --nocapture" 
+
+# Storage-specific test suites
+test-sst = "test unit_tests::storage -- --nocapture"
 test-atomic = "test unit_tests::storage::sst_atomic_operations_test -- --nocapture"
 test-viper = "test unit_tests::storage::viper -- --nocapture"
 test-batch = "test unit_tests::storage::write_buffer -- --nocapture"
+
+# Coverage testing
 test-coverage = "tarpaulin --config tarpaulin.toml"
 test-coverage-safe = "tarpaulin --skip-clean --timeout 600 --avoid-cfg-tarpaulin --engine llvm --lib --jobs 20 --release"
+
+# Fast check (syntax only, no codegen)
+check-fast = "check --all-targets --jobs 6"
+
+# Parallel test run (for unit tests that don't share state)
+test-parallel = "test --lib --jobs 6 -- --test-threads=3"
+
+[target.aarch64-apple-darwin]
+# Apple Silicon specific optimizations
+rustflags = [
+    "-C", "codegen-units=10",
+    "-C", "target-cpu=native",
+]
+
+[target.x86_64-unknown-linux-gnu]
+# Linux x86_64 optimizations - use mold linker if available
+# Uncomment if mold is installed: linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "codegen-units=10"]

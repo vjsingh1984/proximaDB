@@ -72,7 +72,7 @@ impl RocmContext {
 ///         output[idx] = (int64_t)(input[idx] - base);
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn rocm_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     trace!(
         "🔧 [ROCm] Delta encode: {} values, base={}",
@@ -104,7 +104,7 @@ pub fn rocm_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 ///         output[idx] = (float)input[idx] + base;
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn rocm_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     trace!(
         "🔧 [ROCm] Delta decode: {} deltas, base={}",
@@ -148,7 +148,7 @@ pub fn rocm_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 ///         atomicOr(&output[byte_offset], packed << bit_in_byte);
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn rocm_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!(
         "🔧 [ROCm] BitPacked encode: {} values, {}b/val",
@@ -364,7 +364,7 @@ pub fn rocm_frame_of_reference_decode_f32(
 ///         output[idx] = (val << 1) ^ (val >> 31);
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn rocm_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!(
         "🔧 [ROCm] Zigzag encode: {} values, {}b/val",

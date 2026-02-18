@@ -76,36 +76,60 @@ use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{Edge, Node};
 use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
 
+// Import canonical types for consistent API responses
+use crate::graph::canonical::{
+    BatchResults, CanonicalEdge, CanonicalNode, CanonicalPath, ErrorCode, GraphError,
+    GraphResponse, QueryResults, ShortestPathResult, TraversalResults, TraversalStats,
+};
+
 /// REST-compatible TraversalRequest wrapper for JSON deserialization
 #[derive(Debug, serde::Deserialize)]
-struct RestTraversalRequest {
+pub struct RestTraversalRequest {
+    /// Starting node ID for the traversal
     start_node_id: String,
+    /// Maximum depth to traverse
     max_depth: u32,
+    /// Edge types to follow (empty means all types)
     edge_types: Vec<String>,
+    /// Node labels to filter (empty means all labels)
     node_labels: Vec<String>,
-    return_path: bool,
+    /// Whether to return the full path
+    _return_path: bool,
+    /// Traversal algorithm (bfs, dfs, parallel_bfs)
     algorithm: String,
 }
 
 /// REST-compatible NodeQuery wrapper for JSON deserialization
 #[derive(Debug, Clone, serde::Deserialize)]
-struct RestNodeQuery {
+pub struct RestNodeQuery {
+    /// Node labels to filter by
     labels: Vec<String>,
+    /// Property filters as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Maximum number of results to return
     limit: u32,
+    /// Offset for pagination
     offset: Option<u32>,
+    /// Token for continuing a previous query
     continuation_token: Option<String>,
 }
 
 /// REST-compatible EdgeQuery wrapper for JSON deserialization
 #[derive(Debug, Clone, serde::Deserialize)]
-struct RestEdgeQuery {
+pub struct RestEdgeQuery {
+    /// Edge type to filter by
     edge_type: String,
+    /// Optional source node ID
     from_node_id: Option<String>,
+    /// Optional target node ID
     to_node_id: Option<String>,
+    /// Property filters as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Maximum number of results to return
     limit: u32,
+    /// Offset for pagination
     offset: Option<u32>,
+    /// Token for continuing a previous query
     continuation_token: Option<String>,
 }
 
@@ -221,21 +245,31 @@ struct RestEmbeddingVersion {
 
 /// REST input for creating/updating nodes
 #[derive(Debug, Deserialize)]
-struct RestNodeInput {
+pub struct RestNodeInput {
+    /// Unique node identifier
     id: String,
+    /// Node labels (e.g., Person, Organization)
     labels: Vec<String>,
+    /// Node properties as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Optional embedding vector with version info
     embedding: Option<RestEmbeddingVersionInput>,
 }
 
 /// REST input for creating/updating edges
 #[derive(Debug, Deserialize)]
-struct RestEdgeInput {
+pub struct RestEdgeInput {
+    /// Unique edge identifier
     id: String,
+    /// Source node ID
     from_node_id: String,
+    /// Target node ID
     to_node_id: String,
+    /// Edge type (e.g., KNOWS, WORKS_FOR)
     edge_type: String,
+    /// Edge properties as key-value pairs
     properties: HashMap<String, serde_json::Value>,
+    /// Optional edge weight for weighted algorithms
     weight: Option<f64>,
 }
 
@@ -297,70 +331,43 @@ struct RestEdgeTypeStats {
     count: u64,
 }
 
-/// Graph API error response
-#[derive(Debug, Serialize)]
-struct GraphErrorResponse {
-    error: String,
-    message: String,
-    code: String,
-}
-
-/// Success response wrapper
-#[derive(Debug, Serialize)]
-struct GraphSuccessResponse<T> {
-    success: bool,
-    data: T,
-}
-
-/// Batch operation response
-#[derive(Debug, Serialize)]
-struct GraphBatchResponse<T> {
-    success: bool,
-    created_count: usize,
-    failed_count: usize,
-    results: Vec<T>,
-    errors: Vec<String>,
-}
-
-/// Query response with optional pagination token
-#[derive(Debug, Serialize)]
-struct GraphQueryResponse<T> {
-    success: bool,
-    data: T,
-    next_token: Option<String>,
-}
-
-/// Query parameters for pagination
-#[derive(Debug, Deserialize)]
-struct PaginationQuery {
-    offset: Option<usize>,
-    limit: Option<usize>,
-}
+// NOTE: Legacy response types have been replaced with canonical types from
+// crate::graph::canonical. The following types are now deprecated:
+// - GraphErrorResponse -> use GraphError from canonical
+// - GraphSuccessResponse -> use GraphResponse::success() from canonical
+// - GraphBatchResponse -> use BatchResults from canonical
+// - GraphQueryResponse -> use QueryResults from canonical
 
 /// Create node request
 #[derive(Debug, Deserialize)]
-struct CreateNodeRequest {
+pub struct CreateNodeRequest {
+    /// Node data to create
     node: RestNodeInput,
 }
 
 /// Create edge request
 #[derive(Debug, Deserialize)]
-struct CreateEdgeRequest {
+pub struct CreateEdgeRequest {
+    /// Edge data to create
     edge: RestEdgeInput,
 }
 
 /// Batch create nodes request
 #[derive(Debug, Deserialize)]
-struct BatchCreateNodesRequest {
+pub struct BatchCreateNodesRequest {
+    /// Nodes to create
     nodes: Vec<RestNodeInput>,
-    if_exists: Option<String>, // "update" | "skip" | "error"
+    /// Conflict resolution strategy: "update", "skip", or "error"
+    if_exists: Option<String>,
 }
 
 /// Batch create edges request
 #[derive(Debug, Deserialize)]
-struct BatchCreateEdgesRequest {
+pub struct BatchCreateEdgesRequest {
+    /// Edges to create
     edges: Vec<RestEdgeInput>,
-    if_exists: Option<String>, // "update" | "skip" | "error"
+    /// Conflict resolution strategy: "update", "skip", or "error"
+    if_exists: Option<String>,
 }
 
 // Conversion functions
@@ -532,7 +539,7 @@ fn convert_properties_to_json(
                     serde_json::Value::Array(
                         arr.values
                             .iter()
-                            .map(|v| convert_property_value_to_json(v))
+                            .map(convert_property_value_to_json)
                             .collect(),
                     )
                 }
@@ -685,6 +692,8 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/:graph_id/shortest_path", post(shortest_path))
         .route("/graphs/:graph_id/query/nodes", post(query_nodes))
         .route("/graphs/:graph_id/query/edges", post(query_edges))
+        // Declarative graph query (Cypher)
+        .route("/graphs/:graph_id/query", post(execute_graph_query))
         // Multi-graph batch operations
         .route("/graphs/:graph_id/nodes/batch", post(batch_create_nodes))
         .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
@@ -734,22 +743,19 @@ pub async fn create_node(
     {
         Ok(node) => {
             info!("Successfully created node: {}", node.id);
-            let rest_node = RestNode::from(&*node);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_node,
-            })
-            .into_response()
+            let canonical_node = CanonicalNode::from_proto(&node);
+            (
+                StatusCode::CREATED,
+                Json(GraphResponse::success(canonical_node)),
+            )
+                .into_response()
         }
         Err(err) => {
             error!("Failed to create node: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "creation_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_NODE_CREATE_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalNode>::error(graph_error)),
             )
                 .into_response()
         }
@@ -771,34 +777,24 @@ pub async fn get_node(
     {
         Ok(Some(node)) => {
             info!("Successfully retrieved node: {}", node_id);
-            let rest_node = RestNode::from(&*node);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_node,
-            })
-            .into_response()
+            let canonical_node = CanonicalNode::from_proto(&node);
+            Json(GraphResponse::success(canonical_node)).into_response()
         }
         Ok(None) => {
             warn!("Node not found: {}", node_id);
+            let graph_error = GraphError::not_found("Node", &node_id);
             (
                 StatusCode::NOT_FOUND,
-                Json(GraphErrorResponse {
-                    error: "not_found".to_string(),
-                    message: format!("Node '{}' not found", node_id),
-                    code: "GRAPH_NODE_NOT_FOUND".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalNode>::error(graph_error)),
             )
                 .into_response()
         }
         Err(err) => {
             error!("Failed to get node {}: {}", node_id, err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: "retrieval_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_NODE_GET_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalNode>::error(graph_error)),
             )
                 .into_response()
         }
@@ -827,22 +823,15 @@ pub async fn update_node(
     {
         Ok(updated_node) => {
             info!("Successfully updated node: {}", node_id);
-            let rest_node = RestNode::from(&*updated_node);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_node,
-            })
-            .into_response()
+            let canonical_node = CanonicalNode::from_proto(&updated_node);
+            Json(GraphResponse::success(canonical_node)).into_response()
         }
         Err(err) => {
             error!("Failed to update node {}: {}", node_id, err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "update_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_NODE_UPDATE_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalNode>::error(graph_error)),
             )
                 .into_response()
         }
@@ -864,34 +853,24 @@ pub async fn delete_node(
     {
         Ok(Some(deleted_node)) => {
             info!("Successfully deleted node: {}", node_id);
-            let rest_node = RestNode::from(&*deleted_node);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_node,
-            })
-            .into_response()
+            let canonical_node = CanonicalNode::from_proto(&deleted_node);
+            Json(GraphResponse::success(canonical_node)).into_response()
         }
         Ok(None) => {
             warn!("Node not found for deletion: {}", node_id);
+            let graph_error = GraphError::not_found("Node", &node_id);
             (
                 StatusCode::NOT_FOUND,
-                Json(GraphErrorResponse {
-                    error: "not_found".to_string(),
-                    message: format!("Node '{}' not found", node_id),
-                    code: "GRAPH_NODE_NOT_FOUND".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalNode>::error(graph_error)),
             )
                 .into_response()
         }
         Err(err) => {
             error!("Failed to delete node {}: {}", node_id, err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: "deletion_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_NODE_DELETE_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalNode>::error(graph_error)),
             )
                 .into_response()
         }
@@ -920,23 +899,18 @@ pub async fn get_node_neighbors(
                 neighbors.len(),
                 node_id
             );
-            let rest_nodes: Vec<RestNode> =
-                neighbors.into_iter().map(|n| RestNode::from(&*n)).collect();
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_nodes,
-            })
-            .into_response()
+            let canonical_nodes: Vec<CanonicalNode> = neighbors
+                .into_iter()
+                .map(|n| CanonicalNode::from_proto(&n))
+                .collect();
+            Json(GraphResponse::success(canonical_nodes)).into_response()
         }
         Err(err) => {
             error!("Failed to get neighbors for node {}: {}", node_id, err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "neighbors_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_NEIGHBORS_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<Vec<CanonicalNode>>::error(graph_error)),
             )
                 .into_response()
         }
@@ -965,22 +939,19 @@ pub async fn create_edge(
     {
         Ok(edge) => {
             info!("Successfully created edge: {}", edge.id);
-            let rest_edge = RestEdge::from(&*edge);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_edge,
-            })
-            .into_response()
+            let canonical_edge = CanonicalEdge::from_proto(&edge);
+            (
+                StatusCode::CREATED,
+                Json(GraphResponse::success(canonical_edge)),
+            )
+                .into_response()
         }
         Err(err) => {
             error!("Failed to create edge: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "creation_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_EDGE_CREATE_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
             )
                 .into_response()
         }
@@ -988,27 +959,30 @@ pub async fn create_edge(
 }
 
 #[derive(Debug, Deserialize)]
-struct ShortestPathRequest {
+pub struct ShortestPathRequest {
+    /// Starting node ID
     start_node_id: String,
+    /// Target node ID
     target_node_id: String,
+    /// Maximum search depth
     max_depth: Option<u32>,
+    /// Edge types to traverse (empty means all)
     edge_types: Option<Vec<String>>,
-    algorithm: Option<String>, // "DIJKSTRA" or "ASTAR"
+    /// Algorithm: "DIJKSTRA" or "ASTAR"
+    algorithm: Option<String>,
+    /// K for k-shortest paths
     k: Option<u32>,
+    /// Enable prefetch optimization
     enable_prefetch: Option<bool>,
+    /// Prefetch budget (number of nodes)
     prefetch_budget: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
-struct ShortestPathResponse {
-    success: bool,
-    path: Option<Vec<String>>, // node IDs
-    total_weight: Option<f64>,
-}
-
 #[derive(Debug, Deserialize)]
-struct UniqueConstraintRequest {
+pub struct UniqueConstraintRequest {
+    /// Node label to constrain
     label: String,
+    /// Property that must be unique
     property: String,
 }
 
@@ -1059,30 +1033,23 @@ pub async fn shortest_path(
         )
         .await
     {
-        Ok(Some((path, total_weight))) => Json(ShortestPathResponse {
-            success: true,
-            path: Some(path),
-            total_weight: Some(total_weight),
-        })
-        .into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(GraphErrorResponse {
-                error: "no_path".to_string(),
-                message: "No path found between nodes".to_string(),
-                code: "GRAPH_NO_PATH".to_string(),
-            }),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(GraphErrorResponse {
-                error: "shortest_path_failed".into(),
-                message: e.to_string(),
-                code: "GRAPH_SHORTEST_PATH_ERROR".into(),
-            }),
-        )
-            .into_response(),
+        Ok(Some((path, total_weight))) => {
+            let result = ShortestPathResult::found(path, total_weight);
+            Json(GraphResponse::success(result)).into_response()
+        }
+        Ok(None) => {
+            let result = ShortestPathResult::not_found();
+            // Return success with not_found result (the result itself indicates no path)
+            Json(GraphResponse::success(result)).into_response()
+        }
+        Err(e) => {
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, e.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<ShortestPathResult>::error(graph_error)),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1108,16 +1075,15 @@ pub async fn add_unique_constraint(
         .add_unique_constraint(&graph_id, &req.label, &req.property)
         .await
     {
-        Ok(()) => Json(DdlResponse { success: true }).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(GraphErrorResponse {
-                error: "add_unique_failed".into(),
-                message: e.to_string(),
-                code: "GRAPH_ADD_UNIQUE_ERROR".into(),
-            }),
-        )
-            .into_response(),
+        Ok(()) => Json(GraphResponse::success(DdlResponse { success: true })).into_response(),
+        Err(e) => {
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, e.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<DdlResponse>::error(graph_error)),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1134,16 +1100,15 @@ pub async fn remove_unique_constraint(
         .remove_unique_constraint(&graph_id, &req.label, &req.property)
         .await
     {
-        Ok(()) => Json(DdlResponse { success: true }).into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(GraphErrorResponse {
-                error: "remove_unique_failed".into(),
-                message: e.to_string(),
-                code: "GRAPH_REMOVE_UNIQUE_ERROR".into(),
-            }),
-        )
-            .into_response(),
+        Ok(()) => Json(GraphResponse::success(DdlResponse { success: true })).into_response(),
+        Err(e) => {
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, e.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<DdlResponse>::error(graph_error)),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1158,20 +1123,22 @@ pub async fn get_connected_components(
         .connected_components(&graph_id)
         .await
     {
-        Ok(components) => Json(ComponentsResponse {
-            success: true,
-            components,
-        })
-        .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(GraphErrorResponse {
-                error: "components_failed".into(),
-                message: e.to_string(),
-                code: "GRAPH_COMPONENTS_ERROR".into(),
-            }),
-        )
-            .into_response(),
+        Ok(components) => {
+            // Use a lightweight wrapper for components
+            #[derive(Debug, Serialize)]
+            struct ComponentsData {
+                components: Vec<Vec<String>>,
+            }
+            Json(GraphResponse::success(ComponentsData { components })).into_response()
+        }
+        Err(e) => {
+            let graph_error = GraphError::internal(e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<Vec<Vec<String>>>::error(graph_error)),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1186,20 +1153,22 @@ pub async fn check_cycles(
         .has_cycle(&graph_id)
         .await
     {
-        Ok(has) => Json(CycleResponse {
-            success: true,
-            has_cycle: has,
-        })
-        .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(GraphErrorResponse {
-                error: "cycles_failed".into(),
-                message: e.to_string(),
-                code: "GRAPH_CYCLE_ERROR".into(),
-            }),
-        )
-            .into_response(),
+        Ok(has) => {
+            // Use a lightweight wrapper for cycle detection result
+            #[derive(Debug, Serialize)]
+            struct CycleData {
+                has_cycle: bool,
+            }
+            Json(GraphResponse::success(CycleData { has_cycle: has })).into_response()
+        }
+        Err(e) => {
+            let graph_error = GraphError::internal(e.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<bool>::error(graph_error)),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1218,34 +1187,24 @@ pub async fn get_edge(
     {
         Ok(Some(edge)) => {
             info!("Successfully retrieved edge: {}", edge_id);
-            let rest_edge = RestEdge::from(&*edge);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_edge,
-            })
-            .into_response()
+            let canonical_edge = CanonicalEdge::from_proto(&edge);
+            Json(GraphResponse::success(canonical_edge)).into_response()
         }
         Ok(None) => {
             warn!("Edge not found: {}", edge_id);
+            let graph_error = GraphError::not_found("Edge", &edge_id);
             (
                 StatusCode::NOT_FOUND,
-                Json(GraphErrorResponse {
-                    error: "not_found".to_string(),
-                    message: format!("Edge '{}' not found", edge_id),
-                    code: "GRAPH_EDGE_NOT_FOUND".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
             )
                 .into_response()
         }
         Err(err) => {
             error!("Failed to get edge {}: {}", edge_id, err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: "retrieval_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_EDGE_GET_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1274,22 +1233,15 @@ pub async fn update_edge(
     {
         Ok(updated_edge) => {
             info!("Successfully updated edge: {}", edge_id);
-            let rest_edge = RestEdge::from(&*updated_edge);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_edge,
-            })
-            .into_response()
+            let canonical_edge = CanonicalEdge::from_proto(&updated_edge);
+            Json(GraphResponse::success(canonical_edge)).into_response()
         }
         Err(err) => {
             error!("Failed to update edge {}: {}", edge_id, err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "update_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_EDGE_UPDATE_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1311,34 +1263,24 @@ pub async fn delete_edge(
     {
         Ok(Some(deleted_edge)) => {
             info!("Successfully deleted edge: {}", edge_id);
-            let rest_edge = RestEdge::from(&*deleted_edge);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_edge,
-            })
-            .into_response()
+            let canonical_edge = CanonicalEdge::from_proto(&deleted_edge);
+            Json(GraphResponse::success(canonical_edge)).into_response()
         }
         Ok(None) => {
             warn!("Edge not found for deletion: {}", edge_id);
+            let graph_error = GraphError::not_found("Edge", &edge_id);
             (
                 StatusCode::NOT_FOUND,
-                Json(GraphErrorResponse {
-                    error: "not_found".to_string(),
-                    message: format!("Edge '{}' not found", edge_id),
-                    code: "GRAPH_EDGE_NOT_FOUND".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
             )
                 .into_response()
         }
         Err(err) => {
             error!("Failed to delete edge {}: {}", edge_id, err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: "deletion_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_EDGE_DELETE_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1373,22 +1315,48 @@ pub async fn traverse_graph(
     {
         Ok(response) => {
             info!("Successfully completed graph traversal");
-            let rest_response = RestTraversalResponse::from(&response);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_response,
-            })
-            .into_response()
+            // Convert to canonical TraversalResults
+            let canonical_nodes: Vec<CanonicalNode> = response
+                .nodes
+                .iter()
+                .map(CanonicalNode::from_proto)
+                .collect();
+            let canonical_edges: Vec<CanonicalEdge> = response
+                .edges
+                .iter()
+                .map(CanonicalEdge::from_proto)
+                .collect();
+            let canonical_paths: Option<Vec<CanonicalPath>> = if response.paths.is_empty() {
+                None
+            } else {
+                Some(
+                    response
+                        .paths
+                        .iter()
+                        .map(|p| {
+                            CanonicalPath::from_node_ids(
+                                p.entities.iter().map(|e| e.id.clone()).collect(),
+                            )
+                        })
+                        .collect(),
+                )
+            };
+            let stats = response.stats.as_ref().map(TraversalStats::from_proto);
+
+            let traversal_results = TraversalResults {
+                nodes: canonical_nodes,
+                edges: canonical_edges,
+                paths: canonical_paths,
+                stats,
+            };
+            Json(GraphResponse::success(traversal_results)).into_response()
         }
         Err(err) => {
             error!("Failed to traverse graph: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "traversal_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_TRAVERSAL_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<TraversalResults>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1425,30 +1393,28 @@ pub async fn query_nodes(
     {
         Ok(nodes) => {
             info!("Successfully queried {} nodes", nodes.len());
-            let mut next_token = None;
             let lim = q.limit;
-            if (nodes.len() as u32) == lim {
+            let has_more = (nodes.len() as u32) == lim;
+            let canonical_nodes: Vec<CanonicalNode> = nodes
+                .into_iter()
+                .map(|n| CanonicalNode::from_proto(&n))
+                .collect();
+
+            let mut query_results = QueryResults::new(canonical_nodes, has_more);
+            if has_more {
                 let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                next_token = Some(format!("offset:{}", next_off));
+                query_results = query_results.with_next_token(format!("offset:{}", next_off));
             }
-            let rest_nodes: Vec<RestNode> =
-                nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
-            Json(GraphQueryResponse {
-                success: true,
-                data: rest_nodes,
-                next_token,
-            })
-            .into_response()
+            Json(GraphResponse::success(query_results)).into_response()
         }
         Err(err) => {
             error!("Failed to query nodes: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "query_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_NODE_QUERY_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<QueryResults<CanonicalNode>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1480,30 +1446,28 @@ pub async fn query_edges(
     {
         Ok(edges) => {
             info!("Successfully queried {} edges", edges.len());
-            let mut next_token = None;
             let lim = q.limit;
-            if (edges.len() as u32) == lim {
+            let has_more = (edges.len() as u32) == lim;
+            let canonical_edges: Vec<CanonicalEdge> = edges
+                .into_iter()
+                .map(|e| CanonicalEdge::from_proto(&e))
+                .collect();
+
+            let mut query_results = QueryResults::new(canonical_edges, has_more);
+            if has_more {
                 let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                next_token = Some(format!("offset:{}", next_off));
+                query_results = query_results.with_next_token(format!("offset:{}", next_off));
             }
-            let rest_edges: Vec<RestEdge> =
-                edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
-            Json(GraphQueryResponse {
-                success: true,
-                data: rest_edges,
-                next_token,
-            })
-            .into_response()
+            Json(GraphResponse::success(query_results)).into_response()
         }
         Err(err) => {
             error!("Failed to query edges: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "query_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_EDGE_QUERY_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<QueryResults<CanonicalEdge>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1534,26 +1498,21 @@ pub async fn batch_create_nodes(
     {
         Ok(nodes) => {
             info!("Successfully batch created {} nodes", nodes.len());
-            let rest_nodes: Vec<RestNode> =
-                nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
-            Json(GraphBatchResponse {
-                success: true,
-                created_count: rest_nodes.len(),
-                failed_count: 0,
-                results: rest_nodes,
-                errors: vec![],
-            })
-            .into_response()
+            let canonical_nodes: Vec<CanonicalNode> = nodes
+                .into_iter()
+                .map(|n| CanonicalNode::from_proto(&n))
+                .collect();
+            let batch_results = BatchResults::new(canonical_nodes);
+            Json(GraphResponse::success(batch_results)).into_response()
         }
         Err(err) => {
             error!("Failed to batch create nodes: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "batch_creation_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_BATCH_NODES_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<BatchResults<CanonicalNode>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1584,26 +1543,21 @@ pub async fn batch_create_edges(
     {
         Ok(edges) => {
             info!("Successfully batch created {} edges", edges.len());
-            let rest_edges: Vec<RestEdge> =
-                edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
-            Json(GraphBatchResponse {
-                success: true,
-                created_count: rest_edges.len(),
-                failed_count: 0,
-                results: rest_edges,
-                errors: vec![],
-            })
-            .into_response()
+            let canonical_edges: Vec<CanonicalEdge> = edges
+                .into_iter()
+                .map(|e| CanonicalEdge::from_proto(&e))
+                .collect();
+            let batch_results = BatchResults::new(canonical_edges);
+            Json(GraphResponse::success(batch_results)).into_response()
         }
         Err(err) => {
             error!("Failed to batch create edges: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: "batch_creation_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_BATCH_EDGES_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<BatchResults<CanonicalEdge>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1611,18 +1565,6 @@ pub async fn batch_create_edges(
 }
 
 /// Get graph statistics
-#[derive(Debug, Serialize)]
-struct ComponentsResponse {
-    success: bool,
-    components: Vec<Vec<String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct CycleResponse {
-    success: bool,
-    has_cycle: bool,
-}
-
 pub async fn get_graph_stats(
     State(app_state): State<AppState>,
     Path(graph_id): Path<String>,
@@ -1638,21 +1580,14 @@ pub async fn get_graph_stats(
         Ok(stats) => {
             info!("Successfully retrieved graph statistics");
             let rest_stats = RestGraphStats::from(&stats);
-            Json(GraphSuccessResponse {
-                success: true,
-                data: rest_stats,
-            })
-            .into_response()
+            Json(GraphResponse::success(rest_stats)).into_response()
         }
         Err(err) => {
             error!("Failed to get graph statistics: {}", err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: "stats_failed".to_string(),
-                    message: err.to_string(),
-                    code: "GRAPH_STATS_ERROR".to_string(),
-                }),
+                Json(GraphResponse::<RestGraphStats>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1714,17 +1649,18 @@ pub async fn get_graph_stats_legacy(State(app_state): State<AppState>) -> impl I
 
 /// Input for creating a graph collection
 #[derive(Debug, Deserialize)]
-struct CreateGraphCollectionRequest {
+pub struct CreateGraphCollectionRequest {
+    /// Unique graph identifier
     graph_id: String,
+    /// Human-readable name
     name: Option<String>,
+    /// Graph description
     description: Option<String>,
-    // Schema and configuration can be added later
 }
 
-/// Response for graph collection operations
+/// Response for graph collection operations - contains collection metadata
 #[derive(Debug, Serialize)]
-struct GraphCollectionResponse {
-    success: bool,
+struct GraphCollectionData {
     graph_id: String,
     name: String,
     description: String,
@@ -1758,25 +1694,21 @@ pub async fn create_graph_collection(
                 "Successfully created graph collection: {}",
                 collection.graph_id
             );
-            Json(GraphCollectionResponse {
-                success: true,
+            let data = GraphCollectionData {
                 graph_id: collection.graph_id.clone(),
                 name: collection.name.clone(),
                 description: collection.description.clone(),
                 created_at: format_timestamp(&collection.created_at),
                 updated_at: format_timestamp(&collection.updated_at),
-            })
-            .into_response()
+            };
+            (StatusCode::CREATED, Json(GraphResponse::success(data))).into_response()
         }
         Err(err) => {
             error!("Failed to create graph collection: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: err.to_string(),
-                    message: err.to_string(),
-                    code: "CREATE_FAILED".to_string(),
-                }),
+                Json(GraphResponse::<GraphCollectionData>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1792,10 +1724,9 @@ pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl I
         .await
     {
         Ok(collections) => {
-            let response: Vec<GraphCollectionResponse> = collections
+            let items: Vec<GraphCollectionData> = collections
                 .iter()
-                .map(|c| GraphCollectionResponse {
-                    success: true,
+                .map(|c| GraphCollectionData {
                     graph_id: c.graph_id.clone(),
                     name: c.name.clone(),
                     description: c.description.clone(),
@@ -1803,17 +1734,16 @@ pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl I
                     updated_at: format_timestamp(&c.updated_at),
                 })
                 .collect();
-            Json(response).into_response()
+            Json(GraphResponse::success(items)).into_response()
         }
         Err(err) => {
             error!("Failed to list graph collections: {}", err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: err.to_string(),
-                    message: err.to_string(),
-                    code: "CREATE_FAILED".to_string(),
-                }),
+                Json(GraphResponse::<Vec<GraphCollectionData>>::error(
+                    graph_error,
+                )),
             )
                 .into_response()
         }
@@ -1831,33 +1761,30 @@ pub async fn get_graph_collection(
         .get_graph(&graph_id)
         .await
     {
-        Ok(Some(collection)) => Json(GraphCollectionResponse {
-            success: true,
-            graph_id: collection.graph_id.clone(),
-            name: collection.name.clone(),
-            description: collection.description.clone(),
-            created_at: format_timestamp(&collection.created_at),
-            updated_at: format_timestamp(&collection.updated_at),
-        })
-        .into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(GraphErrorResponse {
-                error: format!("Graph collection '{}' not found", graph_id),
-                message: format!("Graph collection '{}' not found", graph_id),
-                code: "NOT_FOUND".to_string(),
-            }),
-        )
-            .into_response(),
+        Ok(Some(collection)) => {
+            let data = GraphCollectionData {
+                graph_id: collection.graph_id.clone(),
+                name: collection.name.clone(),
+                description: collection.description.clone(),
+                created_at: format_timestamp(&collection.created_at),
+                updated_at: format_timestamp(&collection.updated_at),
+            };
+            Json(GraphResponse::success(data)).into_response()
+        }
+        Ok(None) => {
+            let graph_error = GraphError::not_found("Graph collection", &graph_id);
+            (
+                StatusCode::NOT_FOUND,
+                Json(GraphResponse::<GraphCollectionData>::error(graph_error)),
+            )
+                .into_response()
+        }
         Err(err) => {
             error!("Failed to get graph collection: {}", err);
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphErrorResponse {
-                    error: err.to_string(),
-                    message: err.to_string(),
-                    code: "CREATE_FAILED".to_string(),
-                }),
+                Json(GraphResponse::<GraphCollectionData>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1877,21 +1804,23 @@ pub async fn delete_graph_collection(
     {
         Ok(()) => {
             info!("Successfully deleted graph collection: {}", graph_id);
-            Json(serde_json::json!({
-                "success": true,
-                "message": format!("Graph collection '{}' deleted", graph_id)
-            }))
-            .into_response()
+            #[derive(Debug, Serialize)]
+            struct DeleteResult {
+                deleted: bool,
+                graph_id: String,
+            }
+            let result = DeleteResult {
+                deleted: true,
+                graph_id,
+            };
+            Json(GraphResponse::success(result)).into_response()
         }
         Err(err) => {
             error!("Failed to delete graph collection: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,
-                Json(GraphErrorResponse {
-                    error: err.to_string(),
-                    message: err.to_string(),
-                    code: "CREATE_FAILED".to_string(),
-                }),
+                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
             )
                 .into_response()
         }
@@ -1900,18 +1829,158 @@ pub async fn delete_graph_collection(
 
 /// Update graph schema
 pub async fn update_graph_schema(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-    Json(schema): Json<serde_json::Value>,
+    State(_app_state): State<AppState>,
+    Path(_graph_id): Path<String>,
+    Json(_schema): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     // TODO: Implement schema update once GraphSchema is properly defined
+    let graph_error = GraphError::new(
+        ErrorCode::InvalidArgument,
+        "Schema update not yet implemented",
+    );
     (
         StatusCode::NOT_IMPLEMENTED,
-        Json(GraphErrorResponse {
-            error: "Schema update not yet implemented".to_string(),
-            message: "Schema update not yet implemented".to_string(),
-            code: "NOT_IMPLEMENTED".to_string(),
-        }),
+        Json(GraphResponse::<serde_json::Value>::error(graph_error)),
     )
         .into_response()
+}
+
+// ============================================================================
+// Declarative Graph Query (Cypher) Handler
+// ============================================================================
+
+/// Request body for executing a declarative graph query
+#[derive(Debug, Deserialize)]
+pub struct GraphQueryRequest {
+    /// The Cypher query string
+    query: String,
+    /// Query language (currently only "cypher" is supported)
+    #[serde(default = "default_query_language")]
+    _language: String,
+}
+
+fn default_query_language() -> String {
+    "cypher".to_string()
+}
+
+/// Response for graph query execution
+#[derive(Debug, Serialize)]
+struct GraphQueryResultResponse {
+    /// Result rows
+    rows: Vec<serde_json::Value>,
+    /// Total number of rows returned
+    #[allow(dead_code)]
+    row_count: u64,
+    /// Execution time in milliseconds
+    execution_time_ms: f64,
+}
+
+/// Execute a declarative graph query (Cypher)
+///
+/// POST /api/v1/graph/graphs/:graph_id/query
+///
+/// Request body:
+/// ```json
+/// {
+///   "query": "MATCH (n:Person)-[:KNOWS]->(m) RETURN m.name",
+///   "language": "cypher"
+/// }
+/// ```
+///
+/// When the `unified-facade-routing` feature is enabled and a query adapter is available,
+/// the query is routed through the QueryFacadeAdapter for consistent metrics and tracing.
+pub async fn execute_graph_query(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<GraphQueryRequest>,
+) -> impl IntoResponse {
+    debug!(
+        "Executing graph query on graph '{}': {}",
+        graph_id,
+        request.query.chars().take(100).collect::<String>()
+    );
+
+    let start = std::time::Instant::now();
+
+    // Route through unified facade when adapter is available
+    if let Some(ref adapter) = app_state.query_adapter {
+        debug!("Using unified facade routing for graph query");
+        let graph_name = if graph_id.is_empty() || graph_id == "default" {
+            None
+        } else {
+            Some(graph_id.as_str())
+        };
+
+        return match adapter.graph_query(&request.query, graph_name).await {
+            Ok(result) => {
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                // Convert QueryResult to response format
+                let rows = convert_query_result_to_rows(&result);
+                let row_count = rows.len() as u64;
+
+                info!(
+                    "Graph query (facade) completed in {:.2}ms with {} rows",
+                    elapsed_ms, row_count
+                );
+
+                let response = GraphQueryResultResponse {
+                    rows,
+                    row_count,
+                    execution_time_ms: elapsed_ms,
+                };
+                Json(GraphResponse::success(response)).into_response()
+            }
+            Err(e) => {
+                error!("Graph query (facade) failed: {}", e);
+                let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(GraphResponse::<GraphQueryResultResponse>::error(
+                        graph_error,
+                    )),
+                )
+                    .into_response()
+            }
+        };
+    }
+
+    // Legacy path: Return unimplemented error (no direct Cypher execution without facade)
+    let graph_error = GraphError::new(
+        ErrorCode::InvalidArgument,
+        "Declarative query execution requires unified-facade-routing feature. \
+         Use /query/nodes or /query/edges for property-based queries, \
+         or /traverse for graph traversal.",
+    );
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(GraphResponse::<GraphQueryResultResponse>::error(
+            graph_error,
+        )),
+    )
+        .into_response()
+}
+
+/// Convert QueryResult from the unified facade to JSON rows
+fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde_json::Value> {
+    use crate::query::QueryResultData;
+
+    match &result.data {
+        QueryResultData::Rows(rows) => rows.clone(),
+        QueryResultData::VectorResults(matches) => matches
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "score": m.score,
+                    "metadata": m.metadata
+                })
+            })
+            .collect(),
+        QueryResultData::Graph(graph_result) => {
+            // Convert graph nodes to JSON rows
+            graph_result.nodes.clone()
+        }
+        QueryResultData::Empty => vec![],
+    }
 }

@@ -19,6 +19,7 @@ pub struct EnhancedRBACManager {
     collection_permissions: Arc<DashMap<String, CollectionPermissions>>,
 
     /// Domain permissions within tenants
+    #[allow(dead_code)]
     domain_permissions: Arc<DashMap<String, DomainPermissions>>,
 
     /// User role assignments
@@ -193,7 +194,7 @@ impl EnhancedRBACManager {
         self.validate_admin_permission(assigner_context, tenant_id)?;
 
         // Get role definition
-        let role = self.get_tenant_role(tenant_id, role_name)?;
+        let _role = self.get_tenant_role(tenant_id, role_name)?;
 
         // Get or create user assignment
         let user_key = format!("{}::{}", tenant_id, user_id);

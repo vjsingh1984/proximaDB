@@ -5,9 +5,6 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::transaction_coordinator::{
-        StagingConfig, TransactionCoordinator, TransactionStageType,
-    };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
         SystemMetadata, VersionedCollectionMetadata,
@@ -17,11 +14,9 @@ mod tests {
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
-    use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::utils::uuid::Uuid;
-    use anyhow::{Result, anyhow};
     use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -73,6 +68,10 @@ mod tests {
                 auto_index_selection: Some(true),
                 owner: Some("test_user".to_string()),
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: Some(proximadb_v1::CollectionStats {
                 vector_count: 0,
@@ -151,7 +150,7 @@ mod tests {
         async fn begin_transaction(
             &self,
             isolation_level: IsolationLevel,
-        ) -> Result<TransactionId> {
+        ) -> Result<TransactionId, anyhow::Error> {
             let id = Uuid::new_v4();
             let transaction = MetadataTransaction::new(isolation_level, 300);
             self.transactions.write().await.insert(id, transaction);
@@ -162,7 +161,7 @@ mod tests {
             &self,
             transaction_id: &TransactionId,
             operation: MetadataOperation,
-        ) -> Result<()> {
+        ) -> Result<(), anyhow::Error> {
             let mut transactions = self.transactions.write().await;
             match transactions.get_mut(transaction_id) {
                 Some(tx) if tx.state == TransactionState::Active => {
@@ -174,7 +173,10 @@ mod tests {
             }
         }
 
-        async fn commit_transaction(&self, transaction_id: &TransactionId) -> Result<()> {
+        async fn commit_transaction(
+            &self,
+            transaction_id: &TransactionId,
+        ) -> Result<(), anyhow::Error> {
             let mut transactions = self.transactions.write().await;
             match transactions.get_mut(transaction_id) {
                 Some(tx) if tx.state == TransactionState::Active => {
@@ -227,14 +229,17 @@ mod tests {
             }
         }
 
-        async fn abort_transaction(&self, transaction_id: &TransactionId) -> Result<()> {
+        async fn abort_transaction(
+            &self,
+            transaction_id: &TransactionId,
+        ) -> Result<(), anyhow::Error> {
             if let Some(tx) = self.transactions.write().await.get_mut(transaction_id) {
                 tx.state = TransactionState::Aborted;
             }
             Ok(())
         }
 
-        async fn health_check(&self) -> Result<bool> {
+        async fn health_check(&self) -> Result<bool, anyhow::Error> {
             Ok(true)
         }
     }
@@ -245,7 +250,7 @@ mod tests {
         async fn create_collection(
             &self,
             metadata: crate::proto::proximadb_v1::Collection,
-        ) -> Result<()> {
+        ) -> Result<(), anyhow::Error> {
             let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
@@ -257,7 +262,7 @@ mod tests {
         async fn get_collection(
             &self,
             collection_id: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+        ) -> Result<Option<crate::proto::proximadb_v1::Collection>, anyhow::Error> {
             if let Some(versioned) = self.metadata.read().await.get(collection_id) {
                 let collection = crate::proto::proximadb_v1::Collection {
                     id: versioned.id.clone(),
@@ -276,6 +281,10 @@ mod tests {
                         auto_index_selection: Some(true),
                         owner: versioned.owner.clone(),
                         embedding_models: vec![],
+                        record_schema: None,
+                        enable_proxima_record: None,
+                        text_columns: vec![],
+                        text_storage_configs: vec![],
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,
@@ -296,7 +305,7 @@ mod tests {
             &self,
             collection_id: &str,
             metadata: crate::proto::proximadb_v1::Collection,
-        ) -> Result<()> {
+        ) -> Result<(), anyhow::Error> {
             let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
@@ -305,14 +314,14 @@ mod tests {
             Ok(())
         }
 
-        async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
+        async fn delete_collection(&self, collection_id: &str) -> Result<bool, anyhow::Error> {
             Ok(self.metadata.write().await.remove(collection_id).is_some())
         }
 
         async fn list_collections(
             &self,
             _filter: Option<MetadataFilter>,
-        ) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
+        ) -> Result<Vec<crate::proto::proximadb_v1::Collection>, anyhow::Error> {
             let collections: Vec<_> = self
                 .metadata
                 .read()
@@ -335,6 +344,10 @@ mod tests {
                         auto_index_selection: Some(true),
                         owner: versioned.owner.clone(),
                         embedding_models: vec![],
+                        record_schema: None,
+                        enable_proxima_record: None,
+                        text_columns: vec![],
+                        text_storage_configs: vec![],
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,
@@ -354,7 +367,7 @@ mod tests {
             collection_id: &str,
             vector_delta: i64,
             size_delta: i64,
-        ) -> Result<()> {
+        ) -> Result<(), anyhow::Error> {
             if let Some(metadata) = self.metadata.write().await.get_mut(collection_id) {
                 metadata.vector_count = (metadata.vector_count as i64 + vector_delta).max(0) as u64;
                 metadata.total_size_bytes =
@@ -363,7 +376,10 @@ mod tests {
             Ok(())
         }
 
-        async fn batch_operations(&self, operations: Vec<MetadataOperation>) -> Result<()> {
+        async fn batch_operations(
+            &self,
+            operations: Vec<MetadataOperation>,
+        ) -> Result<(), anyhow::Error> {
             for op in operations {
                 match op {
                     MetadataOperation::CreateCollection(metadata) => {
@@ -392,15 +408,18 @@ mod tests {
             Ok(())
         }
 
-        async fn get_system_metadata(&self) -> Result<SystemMetadata> {
+        async fn get_system_metadata(&self) -> Result<SystemMetadata, anyhow::Error> {
             Ok(SystemMetadata::default())
         }
 
-        async fn update_system_metadata(&self, _metadata: SystemMetadata) -> Result<()> {
+        async fn update_system_metadata(
+            &self,
+            _metadata: SystemMetadata,
+        ) -> Result<(), anyhow::Error> {
             Ok(())
         }
 
-        async fn get_stats(&self) -> Result<MetadataStorageStats> {
+        async fn get_stats(&self) -> Result<MetadataStorageStats, anyhow::Error> {
             let metadata = self.metadata.read().await;
             Ok(MetadataStorageStats {
                 total_collections: metadata.len() as u64,
@@ -414,23 +433,23 @@ mod tests {
             })
         }
 
-        async fn begin_transaction(&self) -> Result<Option<String>> {
+        async fn begin_transaction(&self) -> Result<Option<String>, anyhow::Error> {
             Ok(Some(Uuid::new_v4().to_string()))
         }
 
-        async fn commit_transaction(&self, _transaction_id: &str) -> Result<()> {
+        async fn commit_transaction(&self, _transaction_id: &str) -> Result<(), anyhow::Error> {
             Ok(())
         }
 
-        async fn rollback_transaction(&self, _transaction_id: &str) -> Result<()> {
+        async fn rollback_transaction(&self, _transaction_id: &str) -> Result<(), anyhow::Error> {
             Ok(())
         }
 
-        async fn backup(&self, location: &str) -> Result<String> {
+        async fn backup(&self, location: &str) -> Result<String, anyhow::Error> {
             Ok(format!("backup-{}-test", location))
         }
 
-        async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
+        async fn restore(&self, backup_id: &str, location: &str) -> Result<(), anyhow::Error> {
             tracing::info!(
                 "Restoring from backup_id: {}, location: {}",
                 backup_id,
@@ -439,11 +458,11 @@ mod tests {
             Ok(())
         }
 
-        async fn close(&self) -> Result<()> {
+        async fn close(&self) -> Result<(), anyhow::Error> {
             Ok(())
         }
 
-        async fn health_check(&self) -> Result<bool> {
+        async fn health_check(&self) -> Result<bool, anyhow::Error> {
             Ok(true)
         }
     }

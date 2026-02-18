@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::types::{
     CheckpointCollectionState, GlobalCheckpoint, GlobalLsnAllocator, GlobalManifestEntry,
@@ -319,20 +319,20 @@ impl GlobalManifestService {
     /// Unified approach: Reads all manifest_*.jsonl files (sorted by LSN)
     /// Works consistently for local, S3, Azure, GCS storage
     async fn load_from_disk(&self) -> Result<()> {
-        info!("🔍 DEBUG: Loading manifest from: {}", self.wal_base_url);
+        trace!("🔍 : Loading manifest from: {}", self.wal_base_url);
         let fs = self.filesystem_factory.get_filesystem(&self.wal_base_url)?;
-        info!("🔍 DEBUG: Got filesystem for manifest");
+        trace!("🔍 : Got filesystem for manifest");
 
         // List all manifest segment files: manifest_{min_lsn}_{max_lsn}.jsonl
         let dir_entries = fs.list(&self.wal_base_url).await.unwrap_or_default();
-        info!("🔍 DEBUG: Listed {} directory entries", dir_entries.len());
+        trace!("🔍 : Listed {} directory entries", dir_entries.len());
 
         let mut manifest_files: Vec<String> = dir_entries
             .into_iter()
             .filter(|entry| {
                 let matches = entry.name.contains("manifest_") && entry.name.ends_with(".jsonl");
                 if matches {
-                    info!("🔍 DEBUG: Found manifest file: {}", entry.name);
+                    trace!("🔍 : Found manifest file: {}", entry.name);
                 }
                 matches
             })
@@ -549,6 +549,79 @@ impl GlobalManifestService {
         Ok(())
     }
 
+    /// Mark entries as flushed AND delete the actual WAL files from disk
+    ///
+    /// This is the safe pattern: mark as flushed first, then delete files.
+    /// If deletion fails, the entry is already marked as flushed so we won't
+    /// try to recover it again on restart.
+    pub async fn mark_flushed_and_delete_files(&self, batch_ids: &[String]) -> Result<usize> {
+        if batch_ids.is_empty() {
+            return Ok(0);
+        }
+
+        // Collect file URLs before marking as flushed (need Active status entries)
+        let file_urls: Vec<String> = {
+            let entries = self.entries.read().await;
+            entries
+                .iter()
+                .filter(|e| batch_ids.contains(&e.batch_id) && e.status == WalEntryStatus::Active)
+                .map(|e| {
+                    // Construct full file URL from storage_url + file_path
+                    format!("{}/{}", e.storage_url.trim_end_matches('/'), e.file_path)
+                })
+                .collect()
+        };
+
+        if file_urls.is_empty() {
+            debug!(
+                "🔍 No active WAL files found for batch IDs: {:?}",
+                batch_ids
+            );
+            return Ok(0);
+        }
+
+        // Mark as flushed first (CRITICAL: must happen before file deletion)
+        self.mark_flushed(batch_ids).await?;
+
+        // Now delete the actual WAL files
+        let mut deleted_count = 0;
+        for file_url in &file_urls {
+            match self.filesystem_factory.get_filesystem(file_url) {
+                Ok(fs) => {
+                    match fs.delete(file_url).await {
+                        Ok(_) => {
+                            debug!("🗑️ Deleted WAL file: {}", file_url);
+                            deleted_count += 1;
+                        }
+                        Err(e) => {
+                            // File deletion failed, but entry is already marked as flushed
+                            // This is safe - file will be orphaned but won't be recovered
+                            warn!(
+                                "⚠️ Failed to delete WAL file {} (already marked flushed): {}",
+                                file_url, e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ Failed to get filesystem for WAL file {}: {}",
+                        file_url, e
+                    );
+                }
+            }
+        }
+
+        info!(
+            "🧹 Deleted {}/{} WAL files after flush (batch IDs: {})",
+            deleted_count,
+            file_urls.len(),
+            batch_ids.len()
+        );
+
+        Ok(deleted_count)
+    }
+
     /// Rewrite the entire manifest (used after status updates)
     async fn rewrite_manifest(&self) -> Result<()> {
         let entries = self.entries.read().await;
@@ -746,19 +819,177 @@ impl GlobalManifestService {
         Ok(())
     }
 
-    /// Shutdown the service gracefully
-    pub async fn shutdown(&self) -> Result<()> {
-        info!("🛑 Shutting down GlobalManifestService");
+    // ========================================================================
+    // PITR (Point-in-Time Recovery) Support Methods
+    // ========================================================================
 
-        // Close append channel
-        // (dropping append_tx will cause background worker to exit)
+    /// Get the current LSN (last allocated LSN, or 0 if none allocated)
+    pub async fn current_lsn(&self) -> u64 {
+        let next = self.lsn_allocator.current().await;
+        if next > 1 { next - 1 } else { 0 }
+    }
 
-        // Wait for background worker to finish
-        if let Some(handle) = self.worker_handle.lock().await.take() {
-            handle.await.context("Failed to join worker thread")?;
+    /// Get all entries up to (and including) a specific LSN
+    pub async fn get_entries_up_to_lsn(&self, target_lsn: u64) -> Vec<GlobalManifestEntry> {
+        let entries = self.entries.read().await;
+        entries
+            .iter()
+            .filter(|e| e.global_lsn <= target_lsn)
+            .cloned()
+            .collect()
+    }
+
+    /// Get all entries in a LSN range [start_lsn, end_lsn] (inclusive)
+    pub async fn get_entries_between_lsn(
+        &self,
+        start_lsn: u64,
+        end_lsn: u64,
+    ) -> Vec<GlobalManifestEntry> {
+        let entries = self.entries.read().await;
+        entries
+            .iter()
+            .filter(|e| e.global_lsn >= start_lsn && e.global_lsn <= end_lsn)
+            .cloned()
+            .collect()
+    }
+
+    /// Mark all entries after a given LSN as rolled back (for PITR)
+    ///
+    /// This is used during point-in-time recovery to mark entries that should
+    /// not be recovered. Returns the number of entries marked.
+    pub async fn mark_entries_after_lsn_rolled_back(&self, target_lsn: u64) -> Result<usize> {
+        let mut entries = self.entries.write().await;
+        let mut marked_count = 0;
+        let mut status_updates = Vec::new();
+
+        for entry in entries.iter_mut() {
+            if entry.global_lsn > target_lsn && entry.status == WalEntryStatus::Active {
+                entry.status = WalEntryStatus::RolledBack;
+                marked_count += 1;
+
+                // Create status update entry for append-only storage
+                let mut update_entry = entry.clone();
+                update_entry.status = WalEntryStatus::RolledBack;
+                status_updates.push(update_entry);
+            }
         }
 
-        info!("✅ GlobalManifestService shut down");
+        drop(entries);
+
+        if !status_updates.is_empty() {
+            // Write status updates as new manifest segment
+            self.write_to_staging(&status_updates).await?;
+
+            info!(
+                "📛 PITR: Marked {} entries after LSN {} as RolledBack",
+                marked_count, target_lsn
+            );
+        }
+
+        Ok(marked_count)
+    }
+
+    /// Get entries that need to be replayed for a PITR recovery
+    ///
+    /// Returns active entries between current state and target LSN,
+    /// sorted by LSN for replay order.
+    pub async fn get_entries_for_pitr_replay(
+        &self,
+        current_lsn: u64,
+        target_lsn: u64,
+    ) -> Vec<GlobalManifestEntry> {
+        let entries = self.entries.read().await;
+
+        // For forward replay: current_lsn < target_lsn
+        // For rollback: current_lsn > target_lsn (return empty, handled separately)
+        if current_lsn >= target_lsn {
+            return Vec::new();
+        }
+
+        let mut replay_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| {
+                e.global_lsn > current_lsn
+                    && e.global_lsn <= target_lsn
+                    && e.status == WalEntryStatus::Active
+            })
+            .cloned()
+            .collect();
+
+        replay_entries.sort_by_key(|e| e.global_lsn);
+        replay_entries
+    }
+
+    /// Check if a LSN exists in the manifest
+    pub async fn lsn_exists(&self, target_lsn: u64) -> bool {
+        let entries = self.entries.read().await;
+        entries.iter().any(|e| e.global_lsn == target_lsn)
+    }
+
+    /// Find the closest LSN at or before a given timestamp
+    pub async fn find_lsn_at_timestamp(&self, timestamp_ms: u64) -> Option<u64> {
+        let entries = self.entries.read().await;
+
+        // Find entries at or before the timestamp, get the highest LSN
+        entries
+            .iter()
+            .filter(|e| e.timestamp_ms <= timestamp_ms)
+            .map(|e| e.global_lsn)
+            .max()
+    }
+
+    /// Get entry count by status (for PITR diagnostics)
+    pub async fn get_entry_counts_by_status(
+        &self,
+    ) -> std::collections::HashMap<WalEntryStatus, usize> {
+        let entries = self.entries.read().await;
+        let mut counts = std::collections::HashMap::new();
+
+        for entry in entries.iter() {
+            *counts.entry(entry.status.clone()).or_insert(0) += 1;
+        }
+
+        counts
+    }
+
+    // ========================================================================
+    // End PITR Support Methods
+    // ========================================================================
+
+    /// Shutdown the service gracefully
+    pub async fn shutdown(&self) -> Result<()> {
+        debug!("Shutting down GlobalManifestService");
+
+        // Close append channel by dropping the sender
+        // This signals the background worker to exit after flushing pending entries
+        drop(self.append_tx.clone()); // Close the channel
+
+        // Give worker a moment to process the channel closure
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Wait for background worker to finish with timeout
+        if let Some(handle) = self.worker_handle.lock().await.take() {
+            // Use timeout to prevent indefinite hang
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(3), // Reduced from 5s to 3s
+                handle,
+            )
+            .await
+            {
+                Ok(Ok(())) => {
+                    debug!("GlobalManifestService worker exited cleanly");
+                }
+                Ok(Err(e)) => {
+                    warn!("GlobalManifestService worker error: {}", e);
+                }
+                Err(_) => {
+                    warn!("GlobalManifestService shutdown timeout - forcing exit");
+                    // JoinHandle will be dropped, cancelling the task
+                }
+            }
+        }
+
+        debug!("GlobalManifestService shut down");
         Ok(())
     }
 }

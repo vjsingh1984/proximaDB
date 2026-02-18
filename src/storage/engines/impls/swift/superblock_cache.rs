@@ -1,7 +1,6 @@
 // SuperBlock Cache for SWIFT Engine - Tree-Based Navigation Optimized
 // Focused on SWIFT's actual design: hierarchical tree navigation with instant traversal
 
-use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::Result;
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -24,16 +23,20 @@ pub struct SwiftSuperBlockCache {
     tree_navigation_cache: Arc<DashMap<String, Arc<TreeNavigationHints>>>,
 
     /// DataBlock metadata cache with LRU eviction
+    #[allow(dead_code)]
     datablock_cache:
         Arc<RwLock<crate::utils::cache::LruCache<String, Arc<CachedDataBlockMetadata>>>>,
+    #[allow(dead_code)]
     datablock_ttl_sec: u64,
 
     /// Bloom filter cache for instant filtering
     bloom_filter_cache: Arc<DashMap<String, Arc<BloomFilterMetadata>>>,
 
     /// Progressive search cache
+    #[allow(dead_code)]
     progressive_search_cache:
         Arc<RwLock<HashMap<String, (Arc<ProgressiveSearchMetadata>, Instant)>>>,
+    #[allow(dead_code)]
     progressive_ttl_sec: u64,
 
     /// Tree path optimization cache
@@ -393,11 +396,11 @@ impl SwiftSuperBlockCache {
 
         // Load all SuperBlock metadata (critical for instant traversal)
         // Filesystem operations handled by caller
-        let superblock_path = format!("{}/superblocks_metadata.bin", collection_id);
+        let _superblock_path = format!("{}/superblocks_metadata.bin", collection_id);
         // TODO: Load superblock metadata from filesystem
 
         // Load tree navigation hints
-        let navigation_path = format!("{}/tree_navigation_hints.bin", collection_id);
+        let _navigation_path = format!("{}/tree_navigation_hints.bin", collection_id);
         // TODO: Load navigation hints from filesystem
 
         // Load bloom filter metadata (for instant filtering)

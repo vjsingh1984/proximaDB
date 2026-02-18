@@ -6,7 +6,9 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info, warn};
 
 use super::batch_strategy::WALBatchStrategy;
@@ -39,10 +41,15 @@ pub struct BincodeSerializationStrategy {
     storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
 
     /// Flush coordinator
+    #[allow(dead_code)]
     flush_coordinator: Arc<WALFlushCoordinator>,
 
     /// Configuration
     config: WALConfig,
+
+    /// Per-collection flush locks to prevent concurrent flush race conditions
+    /// Each collection gets its own semaphore (permits=1) to ensure only one flush at a time
+    flush_locks: Arc<RwLock<HashMap<String, Arc<Semaphore>>>>,
 }
 
 impl std::fmt::Debug for BincodeSerializationStrategy {
@@ -105,6 +112,7 @@ impl BincodeSerializationStrategy {
             storage_engine: Arc::new(tokio::sync::RwLock::new(None)),
             flush_coordinator,
             config: config.clone(),
+            flush_locks: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 }
@@ -314,6 +322,13 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
     async fn flush_collection(&self, collection_id: &str) -> Result<FlushResult> {
         let start = std::time::Instant::now();
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f").to_string();
+
+        // Use eprintln! for guaranteed visibility in embedded mode
+        eprintln!(
+            "🔥 FLUSH [{}] flush_collection CALLED for '{}' (direct call)",
+            timestamp, collection_id
+        );
 
         let engine = self.storage_engine.read().await;
         let engine = engine.as_ref().context("Storage engine not configured")?;
@@ -324,6 +339,15 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             .get_unflushed_batches(collection_id)
             .await?;
 
+        // Diagnostic: show batch info
+        let total_unflushed_vectors: usize = unflushed.iter().map(|b| b.vector_records.len()).sum();
+        eprintln!(
+            "   ↳ Found {} unflushed batches with {} total vectors for '{}'",
+            unflushed.len(),
+            total_unflushed_vectors,
+            collection_id
+        );
+
         if unflushed.is_empty() {
             return Ok(FlushResult {
                 success: true,
@@ -331,10 +355,12 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
+                file_paths: vec![],
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(),
             });
         }
@@ -381,10 +407,23 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        // Mark batches as flushed in global manifest
+        // Mark batches as flushed in global manifest AND delete WAL files
         use crate::storage::persistence::write_ahead_log::manifest;
         let batch_id_strings: Vec<String> = batch_ids.iter().map(|b| b.to_base62()).collect();
-        let _ = manifest::mark_flushed(&batch_id_strings).await;
+        match manifest::mark_flushed_and_delete_files(&batch_id_strings).await {
+            Ok(deleted) => {
+                debug!(
+                    "🧹 Deleted {} WAL files after flush for collection {}",
+                    deleted, collection_id
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "⚠️ Failed to delete WAL files after flush for collection {}: {}",
+                    collection_id, e
+                );
+            }
+        }
 
         info!(
             "✅ Flushed {} vectors ({} bytes) from collection {} in {}ms",
@@ -397,10 +436,12 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
+            file_paths: flush_result.file_paths.clone(),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
+            compaction_error: None,
             flushed_batch_ids: batch_ids,
         })
     }
@@ -586,11 +627,42 @@ impl BincodeSerializationStrategy {
     }
 
     /// Trigger background flush for a collection
+    /// Uses per-collection semaphore to prevent concurrent flush race conditions
     fn trigger_background_flush(&self, collection_id: &str) {
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f").to_string();
+
+        // Use eprintln! for guaranteed visibility in embedded mode
+        eprintln!(
+            "🚀 FLUSH [{}] trigger_background_flush CALLED for '{}' (semaphore-protected path)",
+            timestamp, collection_id
+        );
+
         let collection_id = collection_id.to_string();
+        let flush_locks = self.flush_locks.clone();
         let strategy = self.clone_for_background();
 
         tokio::spawn(async move {
+            // Get or create lock for this collection (permits=1 ensures single flush)
+            let lock = {
+                let mut locks = flush_locks.write().await;
+                locks
+                    .entry(collection_id.clone())
+                    .or_insert_with(|| Arc::new(Semaphore::new(1)))
+                    .clone()
+            };
+
+            // Try to acquire permit - skip if another flush is already running
+            let permit = match lock.try_acquire() {
+                Ok(p) => p,
+                Err(_) => {
+                    debug!(
+                        "⏭️ Flush already in progress for {}, skipping duplicate",
+                        collection_id
+                    );
+                    return;
+                }
+            };
+
             debug!(
                 "🔄 Background flush triggered for collection {}",
                 collection_id
@@ -603,6 +675,9 @@ impl BincodeSerializationStrategy {
                     e
                 );
             }
+
+            // Permit is automatically released when dropped
+            drop(permit);
         });
     }
 
@@ -616,11 +691,20 @@ impl BincodeSerializationStrategy {
             storage_engine: self.storage_engine.clone(),
             flush_coordinator: self.flush_coordinator.clone(),
             config: self.config.clone(),
+            flush_locks: self.flush_locks.clone(),
         }
     }
 
     /// Flush all collections
     async fn flush_all_collections(&self) -> Result<FlushResult> {
+        let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f").to_string();
+
+        // Use eprintln! for guaranteed visibility in embedded mode
+        eprintln!(
+            "📦 FLUSH [{}] flush_all_collections CALLED (iterates without semaphore protection)",
+            timestamp
+        );
+
         let collections = self.memtable_manager.get_all_collections().await?;
 
         let mut total_vectors = 0;
@@ -642,10 +726,12 @@ impl BincodeSerializationStrategy {
             entries_flushed: Some(total_vectors),
             bytes_written: Some(total_bytes),
             files_created: Some(0),
+            file_paths: vec![],
             duration_ms: Some(total_duration),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: Vec::new(),
         })
     }

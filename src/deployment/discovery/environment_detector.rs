@@ -11,6 +11,7 @@ use tracing::{debug, info, warn};
 
 /// Enterprise environment detector for automated deployment
 pub struct EnvironmentDetector {
+    #[allow(dead_code)]
     detection_config: DetectionConfig,
     platform_analyzers: HashMap<PlatformType, Box<dyn PlatformAnalyzer + Send + Sync>>,
 }
@@ -378,7 +379,7 @@ impl EnvironmentDetector {
 
         // Check for kubectl command
         match tokio::process::Command::new("kubectl")
-            .args(&["cluster-info"])
+            .args(["cluster-info"])
             .output()
             .await
         {
@@ -388,7 +389,7 @@ impl EnvironmentDetector {
 
                     // Additional check: verify we can list nodes
                     match tokio::process::Command::new("kubectl")
-                        .args(&["get", "nodes"])
+                        .args(["get", "nodes"])
                         .output()
                         .await
                     {
@@ -521,7 +522,7 @@ impl EnvironmentDetector {
         debug!("🔍 Checking Docker availability...");
 
         match tokio::process::Command::new("docker")
-            .args(&["version"])
+            .args(["version"])
             .output()
             .await
         {
@@ -547,7 +548,7 @@ impl EnvironmentDetector {
     /// Analyze resource availability for ProximaDB deployment
     async fn analyze_resource_availability(
         &self,
-        platform_analysis: &PlatformAnalysis,
+        _platform_analysis: &PlatformAnalysis,
     ) -> Result<ResourceAvailability> {
         debug!("📊 Analyzing resource availability...");
 
@@ -625,7 +626,7 @@ impl EnvironmentDetector {
     async fn detect_storage_gb(&self) -> Result<u64> {
         // Try using df command to check available disk space
         match tokio::process::Command::new("df")
-            .args(&["-BG", "/"])
+            .args(["-BG", "/"])
             .output()
             .await
         {
@@ -693,7 +694,7 @@ impl EnvironmentDetector {
         platform_type: &PlatformType,
         resources: &ResourceAvailability,
         security: &SecurityConstraints,
-        performance: &PerformanceProfile,
+        _performance: &PerformanceProfile,
     ) -> Result<DeploymentRecommendation> {
         // Determine deployment strategy based on resources and requirements
         let deployment_strategy = if resources.cpu_cores >= 16 && resources.memory_gb >= 32 {
@@ -879,7 +880,7 @@ impl PlatformAnalyzer for KubernetesAnalyzer {
 
         // Check for additional Kubernetes features
         if let Ok(output) = tokio::process::Command::new("kubectl")
-            .args(&["get", "storageclass"])
+            .args(["get", "storageclass"])
             .output()
             .await
         {

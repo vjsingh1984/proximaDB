@@ -337,7 +337,7 @@ impl HyperparameterTuner {
             // Successive halving
             for i in 0..=s {
                 let n_i = (n as f64 * eta.powi(-(i as i32))).floor() as usize;
-                let r_i = r * eta.powi(i as i32);
+                let _r_i = r * eta.powi(i as i32);
 
                 // Evaluate configurations
                 let mut scores = Vec::new();
@@ -437,7 +437,7 @@ impl HyperparameterTuner {
 
         let quantile = (trials.len() as f64 * 0.25) as usize;
         let good_trials = &sorted_trials[..quantile];
-        let bad_trials = &sorted_trials[quantile..];
+        let _bad_trials = &sorted_trials[quantile..];
 
         // Sample from good distribution
         let mut params = HashMap::new();

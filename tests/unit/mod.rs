@@ -23,6 +23,7 @@ pub mod clustering_models_test;
 pub mod compute;
 pub mod config;
 pub mod core;
+pub mod graph;
 pub mod handlers;
 pub mod mvcc_logic_tests;
 pub mod network;

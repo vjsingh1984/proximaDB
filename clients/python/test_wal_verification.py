@@ -104,7 +104,7 @@ def test_wal_directory_creation():
     # Extract file path from storage_path (format: file:///path/to/dir)
     if storage_path.startswith('file://'):
         base_path = storage_path[7:]  # Remove 'file://'
-        wal_path = os.path.join(base_path, collection_id, 'write_buffer')
+        wal_path = os.path.join(base_path, collection_id, 'wal')  # Changed from 'write_buffer' to 'wal'
         data_path = os.path.join(base_path, collection_id, 'data')
 
         print(f"\n2️⃣ Checking directory structure...")

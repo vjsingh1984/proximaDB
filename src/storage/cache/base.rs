@@ -7,7 +7,6 @@ use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 use async_trait::async_trait;
 use std::hash::Hash;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Base implementation that specialized caches can build upon
 pub struct BaseCacheImpl<K, V>

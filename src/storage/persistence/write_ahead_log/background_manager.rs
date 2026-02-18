@@ -51,6 +51,7 @@ impl Default for BackgroundMaintenanceStats {
 
 /// Clean Background Maintenance Manager - Optimized with Context-Based Operations
 pub struct BackgroundMaintenanceManager {
+    #[allow(dead_code)]
     config: Arc<WALConfig>,
     collection_status: Arc<RwLock<HashMap<String, BackgroundTaskStatus>>>,
     stats: Arc<Mutex<BackgroundMaintenanceStats>>,

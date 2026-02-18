@@ -10,9 +10,11 @@
 //! large-scale compactions.
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
+use super::block_format::BlockFormatReader;
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 use anyhow::Result;
@@ -24,27 +26,42 @@ use tracing::{debug, info, warn};
 /// Statistics for zero-copy compaction with AXIS integration
 #[derive(Debug, Clone, Default)]
 pub struct ZeroCopyCompactionStats {
+    /// Number of records read during compaction
     pub records_read: u64,
+    /// Number of records written to output
     pub records_written: u64,
+    /// Number of records deleted
     pub records_deleted: u64,
+    /// Number of records merged
     pub records_merged: u64,
+    /// Bytes read from input files
     pub bytes_read: u64,
+    /// Bytes written to output file
     pub bytes_written: u64,
+    /// Number of files compacted
     pub files_compacted: usize,
+    /// Compaction time in milliseconds
     pub compaction_time_ms: u64,
 
     // AXIS integration: track changes for index updates
-    pub deleted_vector_ids: Vec<String>, // IDs of deleted/expired vectors
-    pub updated_vector_ids: Vec<String>, // IDs of vectors that were updated (version change)
-    pub tombstoned_ids: Vec<String>,     // IDs marked as tombstones
-    pub recommend_index_rebuild: bool,   // True if significant changes warrant index rebuild
+    /// IDs of deleted/expired vectors
+    pub deleted_vector_ids: Vec<String>,
+    /// IDs of vectors that were updated (version change)
+    pub updated_vector_ids: Vec<String>,
+    /// IDs marked as tombstones
+    pub tombstoned_ids: Vec<String>,
+    /// True if significant changes warrant index rebuild
+    pub recommend_index_rebuild: bool,
 }
 
 /// Entry in the k-way merge heap
 #[derive(Debug, Clone)]
 struct MergeEntry {
+    /// The vector record
     record: VectorRecord, // OPTIMIZED: Direct VectorRecord usage
+    /// Index of the file this record came from
     file_index: usize,
+    /// Timestamp for ordering
     timestamp: u32,
 }
 
@@ -110,10 +127,17 @@ impl Default for CompactionSortStrategy {
 
 /// Zero-copy SST compactor that works directly with VectorRecord
 pub struct SstCompactor {
+    /// Filesystem factory for I/O operations
     filesystem_factory: Arc<FilesystemFactory>,
+    /// Optional MVCC resolver for conflict resolution
+    #[allow(dead_code)]
     mvcc_resolver: Option<Arc<MvccResolver>>,
+    /// Block size for compaction
     block_size: usize,
+    /// Compression threshold in bytes
+    #[allow(dead_code)]
     compression_threshold: usize,
+    /// Sorting strategy for output records
     sort_strategy: CompactionSortStrategy,
 }
 
@@ -123,7 +147,7 @@ impl SstCompactor {
         &self,
         stats: &ZeroCopyCompactionStats,
         collection_id: &str,
-        output_file: &str,
+        _output_file: &str,
     ) -> Result<()> {
         // This would integrate with AXIS similar to how EnhancedCompactionStats does it
         // For now, just log the notification
@@ -250,7 +274,7 @@ impl SstCompactor {
         // Use streaming approach for memory-efficient compaction
         info!("🔄 Using streaming approach for zero-copy compaction_info");
         let mut streaming_iterators = Vec::new();
-        let total_records_estimate = 0;
+        let _total_records_estimate = 0;
         for (idx, file_path) in input_files.iter().enumerate() {
             debug!("   📂 Opening file {}: {}", idx, file_path);
             let mut direct_reader =
@@ -269,6 +293,14 @@ impl SstCompactor {
 
         // Perform streaming k-way merge
         let (merged_records, merge_stats) = self.k_way_merge(streaming_iterators).await?;
+
+        // Retrain PCA model on merged data for better Z-Order spatial encoding
+        // Extract collection_id from output file path
+        let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
+        if merged_records.len() >= 100 {
+            self.retrain_pca_model_for_compaction(collection_id, &output_file, &merged_records)
+                .await;
+        }
 
         // Merge the stats from k-way merge
         stats.records_read = merge_stats.records_read;
@@ -320,7 +352,9 @@ impl SstCompactor {
         if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
             // Extract collection_id from output file path or use placeholder
             let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
-            self.notify_axis_of_changes(&stats, collection_id, &output_file)
+            // Best-effort notification - don't fail compaction if AXIS notification fails
+            let _ = self
+                .notify_axis_of_changes(&stats, collection_id, &output_file)
                 .await;
         }
 
@@ -330,6 +364,7 @@ impl SstCompactor {
     /// K-way merge of pre-loaded SST records with proper MVCC resolution
     /// Implements upsert semantics: keeps highest continuous version for each ID
     /// FALLBACK: This batch loading approach is kept for compatibility/testing
+    #[allow(dead_code)]
     async fn k_way_merge_records(
         &self,
         file_records: Vec<(usize, Vec<VectorRecord>)>,
@@ -359,7 +394,7 @@ impl SstCompactor {
             // Collect all versions of each ID
             id_versions
                 .entry(record_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry.record);
         }
 
@@ -370,7 +405,7 @@ impl SstCompactor {
         }
 
         // Now apply MVCC resolution rules for each ID
-        let now = chrono::Utc::now().timestamp() as u32;
+        let _now = chrono::Utc::now().timestamp() as u32;
 
         for (id, mut versions) in id_versions {
             // Skip append-only IDs
@@ -380,23 +415,46 @@ impl SstCompactor {
             }
 
             // Track if this ID has any tombstones
-            // A tombstone is indicated by expires_at being set and in the past
+            // Tombstone indicators (consistent with search coordinator):
+            // 1. Empty vector (primary indicator - marks deleted records)
+            // 2. expires_at in the past (secondary - marks expired tombstones ready for cleanup)
             let current_time = chrono::Utc::now().timestamp() as u32;
-            let has_tombstone = versions.iter().any(|r| {
-                r.expires_at
-                    .map_or(false, |exp| exp > 0 && exp < current_time as i64)
-            });
-            if has_tombstone {
-                debug!("Skipping tombstoned record: {}", id);
-                stats.tombstoned_ids.push(id.clone());
-                stats.records_deleted += versions.len() as u64;
-                continue;
+
+            // Check for empty vector tombstones (deleted records)
+            // Tombstone design: empty vector + expires_at in past (including 0 = epoch = always past)
+            let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
+            if has_empty_vector_tombstone {
+                // Check if any tombstone has expired (past grace period)
+                // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
+                let tombstone_expired = versions.iter().any(|r| {
+                    r.vector.is_empty()
+                        && r.expires_at.map_or(false, |exp| exp <= current_time as i64)
+                });
+
+                if tombstone_expired {
+                    // Tombstone grace period has passed - fully remove
+                    debug!("Removing expired tombstone for record: {}", id);
+                    stats.tombstoned_ids.push(id.clone());
+                    stats.records_deleted += versions.len() as u64;
+                    continue;
+                } else {
+                    // Tombstone still within grace period - keep the tombstone marker
+                    // but don't include any actual data versions
+                    debug!("Keeping active tombstone for record: {}", id);
+                    // Keep only the tombstone record (newest empty vector)
+                    if let Some(tombstone) = versions.iter().find(|r| r.vector.is_empty()).cloned()
+                    {
+                        stats.tombstoned_ids.push(id.clone());
+                        merged_records.push(tombstone);
+                    }
+                    continue;
+                }
             }
 
-            // Track if this ID has expired versions
+            // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < now as i64));
+                .any(|r| r.expires_at.map_or(false, |exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -526,7 +584,7 @@ impl SstCompactor {
             // Collect all versions of each ID
             id_versions
                 .entry(record_id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry.record);
 
             // Get next record from the same file
@@ -552,7 +610,7 @@ impl SstCompactor {
         }
 
         // Now apply MVCC resolution rules for each ID
-        let now = chrono::Utc::now().timestamp() as u32;
+        let _now = chrono::Utc::now().timestamp() as u32;
 
         for (id, mut versions) in id_versions {
             // Skip append-only IDs
@@ -562,23 +620,46 @@ impl SstCompactor {
             }
 
             // Track if this ID has any tombstones
-            // A tombstone is indicated by expires_at being set and in the past
+            // Tombstone indicators (consistent with search coordinator):
+            // 1. Empty vector (primary indicator - marks deleted records)
+            // 2. expires_at in the past (secondary - marks expired tombstones ready for cleanup)
             let current_time = chrono::Utc::now().timestamp() as u32;
-            let has_tombstone = versions.iter().any(|r| {
-                r.expires_at
-                    .map_or(false, |exp| exp > 0 && exp < current_time as i64)
-            });
-            if has_tombstone {
-                debug!("Skipping tombstoned record: {}", id);
-                stats.tombstoned_ids.push(id.clone());
-                stats.records_deleted += versions.len() as u64;
-                continue;
+
+            // Check for empty vector tombstones (deleted records)
+            // Tombstone design: empty vector + expires_at in past (including 0 = epoch = always past)
+            let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
+            if has_empty_vector_tombstone {
+                // Check if any tombstone has expired (past grace period)
+                // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
+                let tombstone_expired = versions.iter().any(|r| {
+                    r.vector.is_empty()
+                        && r.expires_at.map_or(false, |exp| exp <= current_time as i64)
+                });
+
+                if tombstone_expired {
+                    // Tombstone grace period has passed - fully remove
+                    debug!("Removing expired tombstone for record: {}", id);
+                    stats.tombstoned_ids.push(id.clone());
+                    stats.records_deleted += versions.len() as u64;
+                    continue;
+                } else {
+                    // Tombstone still within grace period - keep the tombstone marker
+                    // but don't include any actual data versions
+                    debug!("Keeping active tombstone for record: {}", id);
+                    // Keep only the tombstone record (newest empty vector)
+                    if let Some(tombstone) = versions.iter().find(|r| r.vector.is_empty()).cloned()
+                    {
+                        stats.tombstoned_ids.push(id.clone());
+                        merged_records.push(tombstone);
+                    }
+                    continue;
+                }
             }
 
-            // Track if this ID has expired versions
+            // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < now as i64));
+                .any(|r| r.expires_at.map_or(false, |exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -781,7 +862,7 @@ impl SstCompactor {
                 let sorted_indices = runtime
                     .block_on(async {
                         // Quantize the vectors using the quantization engine directly
-                        let quantized_data = adapter
+                        let _quantized_data = adapter
                             .quantize_batch(&vectors, Some(vector_ids.as_slice()))
                             .await
                             .map_err(|e| anyhow::anyhow!("Quantization failed: {}", e))?;
@@ -834,52 +915,96 @@ impl SstCompactor {
         }
 
         info!(
-            "📊 Writing {} sorted records to SST file at level {}",
+            "📊 Writing {} sorted records to file at level {}",
             records.len(),
             level
         );
 
-        // Create SSTable writer with compression config
-        debug!("🔍 SST_COMPACTOR: Creating SstableWriter");
-        let writer = if let Some(ref compression) = compression_config {
-            debug!(
-                "   ✅ WITH compression: algorithm={}, level={:?}",
-                compression.algorithm, compression.level
-            );
-            debug!("   Block size passed to writer: {} bytes", self.block_size);
-            SstableWriter::with_compression(
-                output_path,
-                self.block_size,
-                self.filesystem_factory.clone(),
-                Some(compression.clone()),
-            )
-        } else {
-            debug!("   ⚠️ NO compression - using default writer");
-            debug!("   Block size passed to writer: {} bytes", self.block_size);
-            SstableWriter::new(
-                output_path,
-                self.block_size,
-                self.filesystem_factory.clone(),
-            )
-        };
+        // Detect format from file extension
+        let block_format = BlockFormatReader::detect_format(output_path);
+        debug!(
+            "🔍 SST_COMPACTOR: Detected block format: {:?} for path: {}",
+            block_format, output_path
+        );
 
-        // Convert records to sorted format (id, record)
-        let sorted_records: Vec<(String, VectorRecord)> = records
-            .into_iter()
-            .map(|r| {
-                let id = r.id.clone().clone();
-                stats.records_written += 1;
-                stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
-                (id, r)
-            })
-            .collect();
+        match block_format {
+            super::block_format::BlockFormat::ArrowBlock => {
+                // Use ArrowBlockWriter for Arrow IPC format
+                debug!("🔍 SST_COMPACTOR: Using ArrowBlockWriter for Arrow format");
 
-        let record_count = sorted_records.len();
+                // Infer dimension from first record
+                let dimension = records
+                    .first()
+                    .map(|r| r.vector.len() as u32)
+                    .unwrap_or(128);
 
-        // Write using the streaming API
-        writer
-            .write_sorted_vector_records(sorted_records.into_iter(), record_count)
-            .await?;
+                // Ensure parent directory exists
+                let path = std::path::Path::new(output_path);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let config = ArrowBlockConfig::new(dimension);
+                let mut writer = ArrowBlockWriter::new(path, config)?;
+
+                // Update stats
+                for record in &records {
+                    stats.records_written += 1;
+                    stats.bytes_written += bincode::serialized_size(record).unwrap_or(0);
+                }
+
+                writer.write_block(&records)?;
+                writer.finalize()?;
+
+                info!(
+                    "✅ SST_COMPACTOR: Wrote {} records to Arrow block",
+                    records.len()
+                );
+            }
+            super::block_format::BlockFormat::ProximaBlocks => {
+                // Use SstableWriter for ProximaBlocks format
+                debug!("🔍 SST_COMPACTOR: Creating SstableWriter");
+                let writer = if let Some(ref compression) = compression_config {
+                    debug!(
+                        "   ✅ WITH compression: algorithm={}, level={:?}",
+                        compression.algorithm, compression.level
+                    );
+                    debug!("   Block size passed to writer: {} bytes", self.block_size);
+                    SstableWriter::with_compression(
+                        output_path,
+                        self.block_size,
+                        self.filesystem_factory.clone(),
+                        Some(compression.clone()),
+                    )
+                } else {
+                    debug!("   ⚠️ NO compression - using default writer");
+                    debug!("   Block size passed to writer: {} bytes", self.block_size);
+                    SstableWriter::new(
+                        output_path,
+                        self.block_size,
+                        self.filesystem_factory.clone(),
+                    )
+                };
+
+                // Convert records to sorted format (id, record)
+                let sorted_records: Vec<(String, VectorRecord)> = records
+                    .into_iter()
+                    .map(|r| {
+                        let id = r.id.clone().clone();
+                        stats.records_written += 1;
+                        stats.bytes_written += bincode::serialized_size(&r).unwrap_or(0);
+                        (id, r)
+                    })
+                    .collect();
+
+                let record_count = sorted_records.len();
+
+                // Write using the streaming API
+                writer
+                    .write_sorted_vector_records(sorted_records.into_iter(), record_count)
+                    .await?;
+            }
+        }
 
         Ok(stats)
     }
@@ -977,6 +1102,91 @@ impl SstCompactor {
         }
 
         Ok(all_stats)
+    }
+
+    /// Retrain PCA model on merged data during compaction
+    ///
+    /// This ensures the collection-level PCA model reflects the full
+    /// data distribution after compaction merges multiple files.
+    async fn retrain_pca_model_for_compaction(
+        &self,
+        collection_id: &str,
+        output_path: &str,
+        merged_records: &[VectorRecord],
+    ) {
+        use super::pca_manager::{AdaptivePcaConfig, EnhancedPCAModel};
+
+        if merged_records.is_empty() {
+            return;
+        }
+
+        let vector_dim = merged_records[0].vector.len();
+        if vector_dim == 0 {
+            return;
+        }
+
+        // Use adaptive configuration for optimal PCA dimensions
+        let pca_config = AdaptivePcaConfig::for_vector_dim(vector_dim);
+        let n_components = pca_config.n_components;
+
+        // Need at least n_components samples for training
+        if merged_records.len() < n_components {
+            debug!(
+                "[SST Compaction] Not enough vectors ({}) for PCA training (need at least {})",
+                merged_records.len(),
+                n_components
+            );
+            return;
+        }
+
+        info!(
+            "[SST Compaction] Retraining PCA model: {} vectors → {} components (from {}-dim)",
+            merged_records.len(),
+            n_components,
+            vector_dim
+        );
+
+        // Train PCA model
+        match EnhancedPCAModel::train(merged_records, n_components) {
+            Ok(model) => {
+                // Update global cache for search access
+                super::core::set_collection_pca_model(collection_id, model.clone());
+
+                // Also save to disk at collection path
+                // Extract collection data directory from output path
+                if let Some(collection_dir) = output_path.rsplit_once('/').map(|(dir, _)| dir) {
+                    let model_dir = format!("{}/__model", collection_dir);
+                    let model_path = format!("{}/pca_model.bin", model_dir);
+
+                    if let Ok(fs) = self.filesystem_factory.get_filesystem(collection_dir) {
+                        // Create model directory
+                        let _ = futures::executor::block_on(async {
+                            let _ = fs.create_dir_all(&model_dir).await;
+
+                            if let Ok(data) = bincode::serialize(&model) {
+                                if let Err(e) = fs.write(&model_path, &data, None).await {
+                                    warn!(
+                                        "[SST Compaction] Failed to save PCA model to disk: {}",
+                                        e
+                                    );
+                                } else {
+                                    info!(
+                                        "[SST Compaction] Persisted PCA model at {} ({} components)",
+                                        model_path, n_components
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "[SST Compaction] Failed to train PCA model: {}. Z-Order pruning may be less effective.",
+                    e
+                );
+            }
+        }
     }
 }
 

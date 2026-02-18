@@ -200,6 +200,8 @@ async fn bench_search_with_pruning() {
         search_params: Arc::new(search_params),
         collection,
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
 
     let results = engine.search_vectors_unified(&ctx).await.unwrap();

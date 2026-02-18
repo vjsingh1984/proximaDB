@@ -150,7 +150,8 @@ impl VIPERParquetMetadataSource {
             column_metadata_cache,
         })
     }
-    
+
+    #[allow(dead_code)]
     fn infer_data_type(value: &serde_json::Value) -> ColumnData {
         match value {
             serde_json::Value::String(_) => ColumnData::String,

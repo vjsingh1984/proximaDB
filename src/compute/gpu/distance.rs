@@ -22,12 +22,14 @@ use tracing::{debug, info, warn};
 
 // Import DistanceMetric from proto module
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
-use crate::core::hardware_capabilities::GpuBackend;
+use crate::core::hardware_capabilities::{
+    GpuBackend, GpuDevice, HardwareCapabilities, get_hardware_capabilities,
+};
 use crate::proto::proximadb_v1::DistanceMetric;
 
 // Using central GpuBackend enum from hardware_capabilities module
 
-// Using central GpuDevice struct from hardware_capabilities module
+// Re-export the central GpuDevice struct so callers don’t create a divergent type.
 pub use crate::core::hardware_capabilities::GpuDevice;
 
 /// GPU distance computation manager
@@ -45,6 +47,43 @@ pub struct GpuDistanceCompute {
 /// Detect and return the best available GPU accelerator
 pub fn detect_best_gpu() -> Result<impl GpuAccelerator> {
     GpuDistanceCompute::new()
+}
+
+/// Detect available GPU backend and devices without initializing the accelerator
+pub fn detect_gpu_capabilities() -> Result<(GpuBackend, Vec<GpuDevice>)> {
+    GpuDistanceCompute::detect_gpu_backend()
+}
+
+/// Create a GPU accelerator wrapped in an Arc for reuse
+pub fn create_gpu_accelerator() -> Result<Arc<dyn GpuAccelerator>> {
+    let caps = get_hardware_capabilities();
+
+    if !caps.has_gpu_distance() {
+        return Err(anyhow!(
+            "GPU acceleration disabled or unavailable in hardware configuration"
+        ));
+    }
+
+    // Prefer cached detection results to avoid redundant probing
+    if let Some(accel) = GpuDistanceCompute::from_capabilities(&caps) {
+        if accel.is_available() {
+            return Ok(Arc::new(accel));
+        }
+        warn!(
+            "Cached GPU backend {:?} reported but no usable devices were found",
+            accel.backend
+        );
+    }
+
+    // Fall back to a fresh detection pass
+    let accel = GpuDistanceCompute::new()?;
+    if accel.is_available() {
+        return Ok(Arc::new(accel));
+    }
+
+    Err(anyhow!(
+        "GPU acceleration requested but no GPU devices are available after detection"
+    ))
 }
 
 // Implement GpuAccelerator trait for GpuDistanceCompute
@@ -114,8 +153,27 @@ impl GpuDistanceCompute {
         })
     }
 
+    /// Construct from already-detected hardware capabilities (avoids re-running probes).
+    pub fn from_capabilities(caps: &HardwareCapabilities) -> Option<Self> {
+        if !caps.has_gpu_distance() || caps.gpu.backend == GpuBackend::None {
+            return None;
+        }
+        if caps.gpu.devices.is_empty() {
+            return None;
+        }
+
+        let selected_device = caps.gpu.primary_device.or_else(|| Some(0));
+
+        Some(Self {
+            backend: caps.gpu.backend,
+            devices: caps.gpu.devices.clone(),
+            selected_device,
+            memory_pool_size: 1024 * 1024 * 1024, // Align with default; tune later via config
+        })
+    }
+
     /// Detect available GPU backend and devices
-    fn detect_gpu_backend() -> Result<(GpuBackend, Vec<GpuDevice>)> {
+    pub(crate) fn detect_gpu_backend() -> Result<(GpuBackend, Vec<GpuDevice>)> {
         // Try CUDA first (most common)
         #[cfg(feature = "cuda")]
         if let Ok(devices) = Self::detect_cuda_devices() {
@@ -492,8 +550,379 @@ impl GpuDistanceCompute {
         vectors: &[Vec<f32>],
         metric: DistanceMetric,
     ) -> Result<Vec<f32>> {
-        // Similar implementation but with batch processing kernel
-        Err(anyhow!("MPS batch calculation not fully implemented yet"))
+        use metal::{Device, MTLResourceOptions, MTLSize};
+        use std::ffi::c_void;
+
+        let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
+
+        let num_vectors = vectors.len();
+        if num_vectors == 0 {
+            return Ok(Vec::new());
+        }
+
+        let dimension = query.len();
+
+        // Flatten vectors into contiguous buffer for GPU transfer
+        let flattened: Vec<f32> = vectors.iter().flatten().copied().collect();
+
+        // Pre-compute query norm for cosine similarity
+        let query_norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        // Load Metal shader library from source
+        let shader_source = include_str!("kernels/distance.metal");
+        let library = device
+            .new_library_with_source(shader_source, &metal::CompileOptions::new())
+            .map_err(|e| anyhow!("Failed to compile Metal shader: {}", e))?;
+
+        // Select kernel based on metric
+        let function_name = match metric {
+            DistanceMetric::Euclidean => "euclidean_distance_batch",
+            DistanceMetric::Cosine => "cosine_similarity_batch",
+            DistanceMetric::DotProduct => "dot_product_batch",
+            DistanceMetric::Manhattan => "manhattan_distance_batch",
+            _ => return Err(anyhow!("Unsupported metric for MPS: {:?}", metric)),
+        };
+
+        let function = library
+            .get_function(function_name, None)
+            .map_err(|e| anyhow!("Failed to get kernel function '{}': {}", function_name, e))?;
+
+        let pipeline = device
+            .new_compute_pipeline_state_with_function(&function)
+            .map_err(|e| anyhow!("Failed to create pipeline: {}", e))?;
+
+        // Create Metal buffers
+        let query_buffer = device.new_buffer_with_data(
+            query.as_ptr() as *const c_void,
+            (query.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
+
+        let vectors_buffer = device.new_buffer_with_data(
+            flattened.as_ptr() as *const c_void,
+            (flattened.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
+
+        let results_buffer = device.new_buffer(
+            (num_vectors * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        // Create command queue and buffer
+        let command_queue = device.new_command_queue();
+        let command_buffer = command_queue.new_command_buffer();
+        let compute_encoder = command_buffer.new_compute_command_encoder();
+
+        // Set pipeline and buffers
+        compute_encoder.set_compute_pipeline_state(&pipeline);
+        compute_encoder.set_buffer(0, Some(&query_buffer), 0);
+        compute_encoder.set_buffer(1, Some(&vectors_buffer), 0);
+        compute_encoder.set_buffer(2, Some(&results_buffer), 0);
+
+        // Set dimension and n_vectors as uint constants
+        let dim_u32 = dimension as u32;
+        let n_vectors_u32 = num_vectors as u32;
+        compute_encoder.set_bytes(
+            3,
+            std::mem::size_of::<u32>() as u64,
+            &dim_u32 as *const u32 as *const c_void,
+        );
+        compute_encoder.set_bytes(
+            4,
+            std::mem::size_of::<u32>() as u64,
+            &n_vectors_u32 as *const u32 as *const c_void,
+        );
+
+        // For cosine similarity, pass pre-computed query norm
+        if matches!(metric, DistanceMetric::Cosine) {
+            compute_encoder.set_bytes(
+                5,
+                std::mem::size_of::<f32>() as u64,
+                &query_norm as *const f32 as *const c_void,
+            );
+        }
+
+        // Dispatch threads - one thread per vector
+        let thread_execution_width = pipeline.thread_execution_width();
+        let threads_per_threadgroup = MTLSize {
+            width: thread_execution_width,
+            height: 1,
+            depth: 1,
+        };
+        let num_threadgroups = MTLSize {
+            width: ((num_vectors as u64 + thread_execution_width - 1) / thread_execution_width),
+            height: 1,
+            depth: 1,
+        };
+
+        compute_encoder.dispatch_thread_groups(num_threadgroups, threads_per_threadgroup);
+        compute_encoder.end_encoding();
+
+        // Execute and wait
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        // Read results back
+        let results_ptr = results_buffer.contents() as *const f32;
+        let results: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(results_ptr, num_vectors).to_vec() };
+
+        debug!(
+            "MPS batch distance: {} vectors x {}D, metric={:?}",
+            num_vectors, dimension, metric
+        );
+
+        Ok(results)
+    }
+
+    /// Calculate pairwise distance matrix (P² matrix) using GPU MPS
+    /// Computes all N×N pairwise distances in a single GPU dispatch
+    /// Returns flattened Vec<f32> of size N×N
+    pub async fn calculate_pairwise_matrix_mps(
+        &self,
+        vectors: &[Vec<f32>],
+        metric: DistanceMetric,
+    ) -> Result<Vec<f32>> {
+        use metal::{Device, MTLResourceOptions, MTLSize};
+        use std::ffi::c_void;
+
+        let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
+
+        let num_vectors = vectors.len();
+        if num_vectors == 0 {
+            return Ok(Vec::new());
+        }
+
+        let dimension = vectors[0].len();
+
+        // Flatten vectors into contiguous buffer for GPU transfer
+        let flattened: Vec<f32> = vectors.iter().flatten().copied().collect();
+
+        // Load Metal shader library
+        let shader_source = include_str!("kernels/distance.metal");
+        let library = device
+            .new_library_with_source(shader_source, &metal::CompileOptions::new())
+            .map_err(|e| anyhow!("Failed to compile Metal shader: {}", e))?;
+
+        // Select pairwise kernel based on metric
+        let function_name = match metric {
+            DistanceMetric::Euclidean => "pairwise_euclidean_matrix",
+            DistanceMetric::Cosine => "pairwise_cosine_matrix",
+            DistanceMetric::DotProduct => "pairwise_dot_product_matrix",
+            _ => return Err(anyhow!("Unsupported metric for pairwise MPS: {:?}", metric)),
+        };
+
+        let function = library
+            .get_function(function_name, None)
+            .map_err(|e| anyhow!("Failed to get kernel function '{}': {}", function_name, e))?;
+
+        let pipeline = device
+            .new_compute_pipeline_state_with_function(&function)
+            .map_err(|e| anyhow!("Failed to create pipeline: {}", e))?;
+
+        // Create vectors buffer
+        let vectors_buffer = device.new_buffer_with_data(
+            flattened.as_ptr() as *const c_void,
+            (flattened.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
+
+        // For cosine, we also need pre-computed norms
+        let norms_buffer = if matches!(metric, DistanceMetric::Cosine) {
+            let norms: Vec<f32> = vectors
+                .iter()
+                .map(|v| v.iter().map(|x| x * x).sum::<f32>().sqrt())
+                .collect();
+            Some(device.new_buffer_with_data(
+                norms.as_ptr() as *const c_void,
+                (norms.len() * std::mem::size_of::<f32>()) as u64,
+                MTLResourceOptions::CPUCacheModeDefaultCache,
+            ))
+        } else {
+            None
+        };
+
+        // Output buffer: N×N distances
+        let output_size = num_vectors * num_vectors;
+        let results_buffer = device.new_buffer(
+            (output_size * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        // Create command queue and buffer
+        let command_queue = device.new_command_queue();
+        let command_buffer = command_queue.new_command_buffer();
+        let compute_encoder = command_buffer.new_compute_command_encoder();
+
+        // Set pipeline and buffers
+        compute_encoder.set_compute_pipeline_state(&pipeline);
+
+        match metric {
+            DistanceMetric::Cosine => {
+                // Cosine uses: vectors, norms, distances, dim, n_vectors
+                compute_encoder.set_buffer(0, Some(&vectors_buffer), 0);
+                // Convert Option<Buffer> to Option<&BufferRef> for Metal API
+                let norms_ref = norms_buffer.as_ref().map(|b| b as &metal::BufferRef);
+                compute_encoder.set_buffer(1, norms_ref, 0);
+                compute_encoder.set_buffer(2, Some(&results_buffer), 0);
+                let dim_u32 = dimension as u32;
+                let n_vectors_u32 = num_vectors as u32;
+                compute_encoder.set_bytes(
+                    3,
+                    std::mem::size_of::<u32>() as u64,
+                    &dim_u32 as *const u32 as *const c_void,
+                );
+                compute_encoder.set_bytes(
+                    4,
+                    std::mem::size_of::<u32>() as u64,
+                    &n_vectors_u32 as *const u32 as *const c_void,
+                );
+            }
+            _ => {
+                // Euclidean/DotProduct use: vectors, distances, dim, n_vectors
+                compute_encoder.set_buffer(0, Some(&vectors_buffer), 0);
+                compute_encoder.set_buffer(1, Some(&results_buffer), 0);
+                let dim_u32 = dimension as u32;
+                let n_vectors_u32 = num_vectors as u32;
+                compute_encoder.set_bytes(
+                    2,
+                    std::mem::size_of::<u32>() as u64,
+                    &dim_u32 as *const u32 as *const c_void,
+                );
+                compute_encoder.set_bytes(
+                    3,
+                    std::mem::size_of::<u32>() as u64,
+                    &n_vectors_u32 as *const u32 as *const c_void,
+                );
+            }
+        }
+
+        // Dispatch 2D grid: one thread per matrix element
+        let thread_execution_width = pipeline.thread_execution_width();
+        let max_threads_per_threadgroup = pipeline.max_total_threads_per_threadgroup();
+
+        // Calculate optimal 2D threadgroup size
+        let threads_per_side = (max_threads_per_threadgroup as f64).sqrt() as u64;
+        let threads_per_threadgroup = MTLSize {
+            width: threads_per_side.min(thread_execution_width),
+            height: threads_per_side,
+            depth: 1,
+        };
+
+        // Total threads needed
+        let num_threadgroups = MTLSize {
+            width: ((num_vectors as u64 + threads_per_threadgroup.width - 1)
+                / threads_per_threadgroup.width),
+            height: ((num_vectors as u64 + threads_per_threadgroup.height - 1)
+                / threads_per_threadgroup.height),
+            depth: 1,
+        };
+
+        compute_encoder.dispatch_thread_groups(num_threadgroups, threads_per_threadgroup);
+        compute_encoder.end_encoding();
+
+        // Execute and wait
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        // Read results back
+        let results_ptr = results_buffer.contents() as *const f32;
+        let results: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(results_ptr, output_size).to_vec() };
+
+        info!(
+            "MPS pairwise matrix: {}×{} vectors x {}D = {} distances computed on GPU",
+            num_vectors, num_vectors, dimension, output_size
+        );
+
+        Ok(results)
+    }
+
+    /// Calculate batch distances with GPU memory reuse for repeated queries
+    /// This is optimized for the common case: same collection, different queries
+    async fn calculate_batch_mps_with_cache(
+        &self,
+        query: &[f32],
+        vectors_buffer: &metal::Buffer,
+        num_vectors: usize,
+        dimension: usize,
+        metric: DistanceMetric,
+        device: &metal::Device,
+        pipeline: &metal::ComputePipelineState,
+        command_queue: &metal::CommandQueue,
+    ) -> Result<Vec<f32>> {
+        use metal::{MTLResourceOptions, MTLSize};
+        use std::ffi::c_void;
+
+        // Pre-compute query norm for cosine similarity
+        let query_norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        // Create query buffer (small, changes per query)
+        let query_buffer = device.new_buffer_with_data(
+            query.as_ptr() as *const c_void,
+            (query.len() * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::CPUCacheModeDefaultCache,
+        );
+
+        // Results buffer
+        let results_buffer = device.new_buffer(
+            (num_vectors * std::mem::size_of::<f32>()) as u64,
+            MTLResourceOptions::StorageModeShared,
+        );
+
+        let command_buffer = command_queue.new_command_buffer();
+        let compute_encoder = command_buffer.new_compute_command_encoder();
+
+        compute_encoder.set_compute_pipeline_state(pipeline);
+        compute_encoder.set_buffer(0, Some(&query_buffer), 0);
+        compute_encoder.set_buffer(1, Some(vectors_buffer), 0);
+        compute_encoder.set_buffer(2, Some(&results_buffer), 0);
+
+        let dim_u32 = dimension as u32;
+        let n_vectors_u32 = num_vectors as u32;
+        compute_encoder.set_bytes(
+            3,
+            std::mem::size_of::<u32>() as u64,
+            &dim_u32 as *const u32 as *const c_void,
+        );
+        compute_encoder.set_bytes(
+            4,
+            std::mem::size_of::<u32>() as u64,
+            &n_vectors_u32 as *const u32 as *const c_void,
+        );
+
+        if matches!(metric, DistanceMetric::Cosine) {
+            compute_encoder.set_bytes(
+                5,
+                std::mem::size_of::<f32>() as u64,
+                &query_norm as *const f32 as *const c_void,
+            );
+        }
+
+        let thread_execution_width = pipeline.thread_execution_width();
+        let threads_per_threadgroup = MTLSize {
+            width: thread_execution_width,
+            height: 1,
+            depth: 1,
+        };
+        let num_threadgroups = MTLSize {
+            width: ((num_vectors as u64 + thread_execution_width - 1) / thread_execution_width),
+            height: 1,
+            depth: 1,
+        };
+
+        compute_encoder.dispatch_thread_groups(num_threadgroups, threads_per_threadgroup);
+        compute_encoder.end_encoding();
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        let results_ptr = results_buffer.contents() as *const f32;
+        let results: Vec<f32> =
+            unsafe { std::slice::from_raw_parts(results_ptr, num_vectors).to_vec() };
+
+        Ok(results)
     }
 }
 
@@ -685,6 +1114,17 @@ impl GpuDistanceCompute {
     async fn calculate_batch_mps(
         &self,
         _query: &[f32],
+        _vectors: &[Vec<f32>],
+        _metric: DistanceMetric,
+    ) -> Result<Vec<f32>> {
+        Err(anyhow!(
+            "Metal Performance Shaders not available on this platform"
+        ))
+    }
+
+    /// Pairwise matrix fallback for non-MPS platforms
+    pub async fn calculate_pairwise_matrix_mps(
+        &self,
         _vectors: &[Vec<f32>],
         _metric: DistanceMetric,
     ) -> Result<Vec<f32>> {

@@ -6,15 +6,6 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
-use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::VectorRecord;
-use proximadb::core::search::{ComparisonOperator, FilterExpression};
-use proximadb::proto::proximadb_v1::MetadataItem;
-use proximadb::storage::traits::UnifiedStorageEngine;
-use std::sync::Arc;
-use tracing::{debug, info};
-
 // REMOVED: Duplicate of integration::isolated_sst_engine_test::test_isolated_sst_vector_insert_flush_search
 // and integration::isolated_sst_engine_test::test_isolated_sst_metadata_based_filtering
 // The integration tests provide better isolation and more comprehensive testing

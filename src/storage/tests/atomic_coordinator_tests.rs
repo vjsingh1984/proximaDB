@@ -7,9 +7,6 @@
 //! - Abort/rollback scenarios
 //! - Multi-operation coordination
 
-use std::sync::Arc;
-use tempfile::TempDir;
-
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::{SqlValue, sql_value};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -17,6 +14,7 @@ use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType, TransactionState,
     TransactionalOperationStatus,
 };
+use std::sync::Arc;
 
 /// Create test vector
 fn create_test_vector(id: &str) -> VectorRecord {

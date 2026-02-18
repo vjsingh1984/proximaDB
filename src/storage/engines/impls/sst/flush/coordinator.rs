@@ -95,10 +95,8 @@ impl FlushCoordinator {
 mod tests {
     use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_flush_coordinator_validation() {

@@ -198,8 +198,8 @@ impl CollectionConfig {
             match self.quantization_method {
                 Some(QuantizationMethod::INT8) => self.dimension,
                 Some(QuantizationMethod::PQ8) => self.dimension,
-                Some(QuantizationMethod::PQ4) => (self.dimension * 4 + 7) / 8,
-                Some(QuantizationMethod::Binary) => (self.dimension + 7) / 8,
+                Some(QuantizationMethod::PQ4) => (self.dimension * 4).div_ceil(8),
+                Some(QuantizationMethod::Binary) => self.dimension.div_ceil(8),
                 None => self.dimension, // Default to 1 byte per dim
             }
         } else {
@@ -280,7 +280,7 @@ impl ZeroOverheadCollection {
 
     /// Get vector by ID with zero-copy access
     #[inline]
-    pub fn get(&self, id: &str) -> Option<VectorView> {
+    pub fn get(&self, id: &str) -> Option<VectorView<'_>> {
         self.id_index.get(id).map(|index| VectorView {
             vector: &self.vectors[*index],
             config: &self.config,
@@ -289,7 +289,7 @@ impl ZeroOverheadCollection {
 
     /// Get vector by index
     #[inline]
-    pub fn by_index(&self, index: usize) -> Option<VectorView> {
+    pub fn by_index(&self, index: usize) -> Option<VectorView<'_>> {
         self.vectors.get(index).map(|vector| VectorView {
             vector,
             config: &self.config,
@@ -297,7 +297,7 @@ impl ZeroOverheadCollection {
     }
 
     /// Iterate over all vectors
-    pub fn iter(&self) -> impl Iterator<Item = VectorView> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = VectorView<'_>> + '_ {
         self.vectors.iter().map(|vector| VectorView {
             vector,
             config: &self.config,

@@ -1,5 +1,5 @@
 use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
 };
@@ -20,7 +20,7 @@ fn create_pattern_vectors(
                 // 90% zeros with some non-zero values in runs
                 for dim in 0..dimension {
                     if dim < 10 || (dim > 100 && dim < 110) {
-                        vector.push((row as f32 * 0.01 + dim as f32 * 0.001));
+                        vector.push(row as f32 * 0.01 + dim as f32 * 0.001);
                     } else {
                         vector.push(0.0);
                     }

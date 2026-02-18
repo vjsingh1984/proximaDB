@@ -34,7 +34,7 @@ def test_sql_value_conversion():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import types_pb2
+        from proximadb.v1 import types_pb2
         
         client = ProximaDBClientV1(url="http://localhost:5678")
         
@@ -88,7 +88,7 @@ def test_sql_request_creation():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import types_pb2
+        from proximadb.v1 import types_pb2
         
         client = ProximaDBClientV1(url="http://localhost:5678")
         
@@ -133,7 +133,7 @@ def test_sql_response_parsing():
     
     try:
         from proximadb.client_v1 import ProximaDBClientV1
-        from proximadb.proto.proximadb.v1 import types_pb2
+        from proximadb.v1 import types_pb2
         
         client = ProximaDBClientV1(url="http://localhost:5678")
         

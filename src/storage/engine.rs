@@ -15,57 +15,16 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
-/// Calculate cosine similarity between two vectors
-fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-
-    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-
-    dot_product / (norm_a * norm_b)
-}
-
-/// Calculate Euclidean distance between two vectors
-fn calculate_euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return f32::MAX;
-    }
-
-    let sum_squared_diff: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
-
-    sum_squared_diff.sqrt()
-}
-
-/// Calculate Manhattan (L1) distance between two vectors  
-fn calculate_manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return f32::MAX;
-    }
-
-    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
-}
-
-/// Calculate dot product similarity between two vectors
-fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() {
-        return 0.0;
-    }
-
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
-}
+// Note: Distance computation is handled by the unified compute module
+// at src/compute/distance_computation/ which provides SIMD-accelerated
+// implementations. Use self.distance_compute for all distance calculations.
 
 pub struct StorageEngine {
     config: StorageConfig,
     sst_storages: Arc<DashMap<String, Arc<SstEngine>>>,
+    #[allow(dead_code)]
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
     axis_index_manager: Arc<AxisManager>,
@@ -183,6 +142,10 @@ impl StorageEngine {
         let axis_config = AxisConfig::default();
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
+        // Make AXIS manager available to SST engine for HNSW/IVF search
+        crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_index_manager.clone());
+        info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
+
         // Initialize compaction manager with default config if not provided
         let sst_config = config
             .sst_config
@@ -191,7 +154,7 @@ impl StorageEngine {
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
 
         // Create singleton SST storage instance
-        let sst_config_for_storage = config
+        let _sst_config_for_storage = config
             .sst_config
             .clone()
             .unwrap_or_else(|| SstConfig::default());
@@ -220,8 +183,20 @@ impl StorageEngine {
     /// Set the metadata provider - used to inject CollectionService after construction
     pub async fn set_metadata_provider(&self, provider: Arc<dyn InternalCollectionProvider>) {
         let mut lock = self.metadata_provider.write().await;
-        *lock = Some(provider);
+        *lock = Some(provider.clone());
         info!("✅ Metadata provider injected into StorageEngine");
+
+        // CRITICAL: Also set metadata provider on WAL manager so it can query storage assignments
+        self.write_ahead_log_manager
+            .set_metadata_provider(provider.clone())
+            .await;
+        info!("✅ Metadata provider propagated to WAL manager");
+
+        // CRITICAL: Also set on WAL Registry so ALL pool instances get it
+        let registry =
+            crate::storage::persistence::write_ahead_log::get_write_ahead_log_manager_registry();
+        registry.set_metadata_provider(provider).await;
+        info!("✅ Metadata provider propagated to WAL Registry (pool)");
     }
 
     /// Get metadata provider - returns None if not yet injected
@@ -258,15 +233,39 @@ impl StorageEngine {
     }
 
     pub async fn stop(&mut self) -> crate::storage::Result<()> {
-        // Stop compaction manager first
+        // STEP 1: Flush all unflushed memtable data to storage engines FIRST
+        // This ensures fast recovery on restart by having data in SST files
+        tracing::info!("🛑 STORAGE_ENGINE: Flushing all unflushed data to storage engines...");
+        match self.flush_memtable_to_storage().await {
+            Ok(result) => {
+                tracing::info!(
+                    "✅ STORAGE_ENGINE: Flushed {} collections, {} vectors, {} bytes to storage",
+                    result.collections_flushed,
+                    result.total_vectors_flushed,
+                    result.total_bytes_written
+                );
+                if !result.failed_collections.is_empty() {
+                    tracing::warn!(
+                        "⚠️ STORAGE_ENGINE: {} collections failed to flush: {:?}",
+                        result.failed_collections.len(),
+                        result.failed_collections
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "⚠️ STORAGE_ENGINE: Failed to flush memtable to storage: {}",
+                    e
+                );
+            }
+        }
+
+        // STEP 2: Stop compaction manager
         if let Some(manager) = Arc::get_mut(&mut self.compaction_manager) {
             manager.stop().await?;
         }
 
-        // SST is pure SSTable storage - no memtable to flush
-        // All data is already persisted through WAL → Flush → SSTable pipeline
-
-        // Force WAL flush during shutdown
+        // STEP 3: Force WAL flush during shutdown (for any remaining entries)
         tracing::debug!("🧹 Forcing WAL flush during storage engine shutdown");
         if let Err(e) = self.write_ahead_log_manager.flush(None).await {
             tracing::warn!("Failed to flush WAL during shutdown: {}", e);
@@ -275,17 +274,69 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Flush all unflushed memtable data to storage engines
+    ///
+    /// This method is called during graceful shutdown to ensure all in-memory
+    /// vector data is persisted to SST files before the database closes.
+    /// This enables fast recovery on restart without needing to replay WAL.
+    pub async fn flush_memtable_to_storage(
+        &self,
+    ) -> crate::storage::Result<
+        crate::storage::persistence::write_ahead_log::flush_coordinator::FlushAllResult,
+    > {
+        use crate::storage::persistence::write_ahead_log::flush_coordinator::WALFlushCoordinator;
+
+        // Create a temporary flush coordinator for shutdown
+        let flush_coordinator = WALFlushCoordinator::new();
+
+        // Register all SST engines from our storage map
+        // Each SST engine implements UnifiedStorageEngine
+        for entry in self.sst_storages.iter() {
+            let engine_key = entry.key();
+            let engine = entry.value();
+            // SST engines use "sst" as engine type
+            flush_coordinator
+                .register_storage_engine("sst", engine.clone())
+                .await;
+            tracing::debug!("Registered SST engine '{}' for shutdown flush", engine_key);
+        }
+
+        // Set collection service if available for metadata lookup
+        if let Some(ref _provider) = *self.metadata_provider.read().await {
+            // Note: FlushCoordinator expects CollectionService, but we have InternalCollectionProvider
+            // The flush_all_collections() method will use None for flush_context and let
+            // execute_coordinated_flush() handle engine determination
+            tracing::debug!("Metadata provider available for engine determination");
+        }
+
+        // Execute flush for all collections with unflushed data
+        match flush_coordinator.flush_all_collections().await {
+            Ok(result) => Ok(result),
+            Err(e) => Err(crate::storage::StorageError::WalError(format!(
+                "Failed to flush memtable to storage: {}",
+                e
+            ))),
+        }
+    }
+
     /// Recover all vectors from WAL files for all collections
     /// This method should be called during server startup after collections are recovered from metadata
     pub async fn recover_from_wal(&self) -> crate::storage::Result<()> {
         info!("🔄 STORAGE_ENGINE: Starting WAL recovery for all collections...");
 
         // Get recovery manager from WAL manager
-        let recovery_manager = match self.write_ahead_log_manager.recovery_manager() {
-            Some(manager) => manager,
-            None => {
-                warn!("⚠️  STORAGE_ENGINE: No recovery manager available, skipping WAL recovery");
-                return Ok(());
+        // CRITICAL FIX: Call async get_recovery_manager() to create/cache if not exists
+        let recovery_manager = match self.write_ahead_log_manager.get_recovery_manager().await {
+            Ok(manager) => {
+                tracing::debug!("Recovery manager obtained successfully");
+                Arc::new(manager)
+            }
+            Err(e) => {
+                error!("❌ STORAGE_ENGINE: Failed to get recovery manager: {}", e);
+                return Err(crate::storage::StorageError::WalError(format!(
+                    "Failed to get recovery manager: {}",
+                    e
+                )));
             }
         };
 
@@ -314,10 +365,7 @@ impl StorageEngine {
         // Recover each collection
         let mut total_vectors_recovered = 0u64;
         for collection in collections {
-            info!(
-                "🔍 STORAGE_ENGINE: Recovering collection: {}",
-                collection.id
-            );
+            tracing::debug!("Recovering collection: {}", collection.id);
 
             match recovery_manager.recover_collection(&collection.id).await {
                 Ok(stats) => {
@@ -737,7 +785,7 @@ impl StorageEngine {
         // No need to rebuild assignments - they're stored with collections
 
         for collection in &collections {
-            let collection_id = &collection.id;
+            let _collection_id = &collection.id;
             let collection_name = collection
                 .config
                 .as_ref()
@@ -771,7 +819,7 @@ impl StorageEngine {
 
         // Determine optimal parallelism based on CPU cores
         let num_cpus = num_cpus::get();
-        let chunk_size = (total_collections + num_cpus - 1) / num_cpus;
+        let chunk_size = total_collections.div_ceil(num_cpus);
         let chunk_size = chunk_size.max(1).min(10); // Between 1 and 10 collections per task
 
         tracing::info!(
@@ -794,7 +842,6 @@ impl StorageEngine {
         );
         Ok(())
     }
-
 
     /// Extract unique collection IDs and their metadata from recovered WAL entries
     /// This method is called by SharedServices during initialization to restore collection metadata
@@ -963,6 +1010,7 @@ impl StorageEngine {
     }
 
     /// Calculate distance/similarity based on collection's configured metric
+    #[allow(dead_code)]
     fn calculate_distance_metric(
         &self,
         query: &[f32],
@@ -1076,7 +1124,7 @@ impl StorageEngine {
         // Get list of all collections from metadata provider
         let collections: Vec<CollectionMetadata> =
             match self.metadata_provider.read().await.as_ref() {
-                Some(provider) => {
+                Some(_provider) => {
                     // TODO: Add list_collections method to InternalCollectionProvider trait
                     // For now, return empty list to allow compilation
                     warn!("Collection listing not yet implemented for test cleanup");
@@ -1126,7 +1174,7 @@ impl StorageEngine {
         // Clear metadata store by deleting all collections
         for collection in collections {
             // Use metadata provider for collection deletion
-            if let Some(provider) = self.metadata_provider.read().await.as_ref() {
+            if let Some(_provider) = self.metadata_provider.read().await.as_ref() {
                 // TODO: Add delete_collection method to InternalCollectionProvider trait
                 tracing::debug!(
                     "Collection deletion would happen through metadata provider for {}",
@@ -1233,6 +1281,9 @@ mod tests {
         let result = storage.recover_from_wal().await;
 
         // The method should exist and return Result<()>
-        assert!(result.is_ok() || result.is_err(), "Method returns Result type");
+        assert!(
+            result.is_ok() || result.is_err(),
+            "Method returns Result type"
+        );
     }
 }

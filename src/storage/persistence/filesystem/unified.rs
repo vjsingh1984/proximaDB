@@ -60,6 +60,7 @@ pub struct UnifiedCachingFilesystem {
     metrics: Arc<CacheMetrics>,
 
     /// Engine-specific metadata serializer (provided by the storage engine)
+    #[allow(dead_code)]
     metadata_serializer: Arc<dyn EngineMetadataSerializer>,
 }
 
@@ -353,7 +354,7 @@ impl FileSystem for UnifiedCachingFilesystem {
         // Try metadata cache first (existence check is just metadata)
         let cache_key = self.cache_key(path);
 
-        if let Some(metadata) = self.metadata_cache.get(&cache_key).await {
+        if let Some(_metadata) = self.metadata_cache.get(&cache_key).await {
             self.metrics.record_cache_hit(CacheType::Metadata);
             return Ok(true); // If we have metadata, file exists
         }
@@ -478,6 +479,25 @@ impl FileSystem for UnifiedCachingFilesystem {
     async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn FilesystemFile>> {
         self.underlying_fs.open_file(path, create).await
     }
+
+    /// Override default read_range to delegate to underlying filesystem properly
+    /// CRITICAL: This must be in the FileSystem trait impl, not the inherent impl,
+    /// otherwise the default trait implementation is used when calling through `&dyn FileSystem`.
+    async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
+        // Delegate to underlying filesystem's read_range for proper offset/length handling
+        self.underlying_fs.read_range(path, offset, length).await
+    }
+
+    /// Delegate mmap to underlying filesystem for zero-copy reads
+    /// This enables memory-mapped access when the underlying fs is LocalFileSystem
+    async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
+        self.underlying_fs.get_mmap(path).await
+    }
+
+    /// Check if underlying filesystem supports memory mapping
+    fn supports_mmap(&self) -> bool {
+        self.underlying_fs.supports_mmap()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -529,20 +549,13 @@ impl UnifiedCachingFilesystem {
         // Read optimized ranges and combine
         let mut data = Vec::with_capacity(metadata.size as usize);
         for range in ranges {
-            let chunk = self.read_range(path, range.start, range.end).await?;
+            // FIX: Third parameter is length, not end offset
+            let length = range.end - range.start;
+            let chunk = self.read_range(path, range.start, length).await?;
             data.extend_from_slice(&chunk);
         }
 
         Ok(data)
-    }
-
-    async fn read_range(&self, path: &str, start: u64, end: u64) -> FsResult<Vec<u8>> {
-        // Read a specific range from the file
-        // This would be implemented with cloud storage range requests
-        let data = self.underlying_fs.read(path).await?;
-        let start = start as usize;
-        let end = std::cmp::min(end as usize, data.len());
-        Ok(data[start..end].to_vec())
     }
 }
 

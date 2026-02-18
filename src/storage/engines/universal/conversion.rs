@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Format Conversion for Universal Adapter
 //!
 //! This module provides conversion utilities between different storage formats

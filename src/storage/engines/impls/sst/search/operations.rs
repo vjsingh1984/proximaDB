@@ -179,7 +179,10 @@ impl SearchOperations {
         Ok(true) // Conservative approach - assume it might exist
     }
 
-    /// Lookup a specific vector in a file
+    /// Lookup a specific vector in a file using B+ tree optimized index
+    ///
+    /// OPTIMIZED: Uses the SST reader's B+ tree index for O(log n) block lookup
+    /// instead of full scan. Critical for RAG use cases.
     async fn lookup_vector_in_file(
         &self,
         file_path: &str,
@@ -187,14 +190,44 @@ impl SearchOperations {
     ) -> Result<OptimizedSearchRecord> {
         debug!("🔍 Looking up vector {} in {}", vector_id, file_path);
 
-        // This would perform an actual lookup in the SSTable
-        // For now, we'll return a placeholder result
-        let mut record = OptimizedSearchRecord::default();
-        record.id = vector_id.to_string();
-        record.score = 0.0;
-        record.vector = Some(Arc::new(vec![0.0; 128])); // Placeholder vector
-        record.metadata = std::collections::HashMap::new();
-        Ok(record)
+        // Use the optimized SST reader with B+ tree index
+        let reader = self.engine.sstable_reader();
+
+        match reader.vector(file_path, vector_id).await {
+            Ok(Some(record)) => {
+                debug!("✅ Found vector {} in {}", vector_id, file_path);
+
+                // Convert VectorRecord to OptimizedSearchRecord
+                let mut result = OptimizedSearchRecord::default();
+                result.id = record.id;
+                result.score = 1.0; // Perfect match for point lookup
+                result.vector = Some(Arc::new(record.vector));
+                result.timestamp = record.timestamp;
+                result.updated_at = record.updated_at;
+                result.expires_at = record.expires_at;
+                result.version = record.version;
+
+                // VectorRecord.metadata is already HashMap<String, SqlValue>, just clone
+                result.metadata = record.metadata;
+
+                Ok(result)
+            }
+            Ok(None) => {
+                debug!("❌ Vector {} not found in {}", vector_id, file_path);
+                Err(anyhow::anyhow!(
+                    "Vector {} not found in {}",
+                    vector_id,
+                    file_path
+                ))
+            }
+            Err(e) => {
+                warn!(
+                    "⚠️ Error looking up vector {} in {}: {}",
+                    vector_id, file_path, e
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Perform range query within a score threshold

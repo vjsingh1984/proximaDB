@@ -86,7 +86,7 @@ impl RangeOptimizer {
         file_path: &str,
         file_size: u64,
         storage_engine: &str,
-        column_indices: Option<Vec<usize>>,
+        _column_indices: Option<Vec<usize>>,
         row_group_indices: Option<Vec<usize>>,
     ) -> Vec<OptimizedRange> {
         let mut ranges = Vec::new();

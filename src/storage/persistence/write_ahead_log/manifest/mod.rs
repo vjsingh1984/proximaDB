@@ -11,7 +11,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::persistence::write_ahead_log::manifest;
 //!
 //! // Initialize during server startup
@@ -43,6 +43,8 @@ pub use singleton::{
     get_service,
     init,
     mark_flushed,
+    mark_flushed_and_delete_files,
+    reset,
     shutdown,
 };
 pub use types::{

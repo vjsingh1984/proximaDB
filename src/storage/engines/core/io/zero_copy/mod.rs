@@ -30,7 +30,7 @@ use std::sync::Arc;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use proximadb::storage::engines::core::io::zero_copy::*;
 ///
 /// // High-performance configuration
@@ -51,6 +51,7 @@ use std::sync::Arc;
 /// // Execute optimized I/O
 /// let data = system.execute_optimized_read(&result).await?;
 /// ```
+#[allow(dead_code)]
 pub async fn create_optimized_io_system(
     filesystem: Arc<FilesystemFactory>,
     workload: WorkloadType,
@@ -67,6 +68,7 @@ pub mod presets {
     use super::*;
 
     /// High-performance setup (minimize latency)
+    #[allow(dead_code)]
     pub async fn high_performance(
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<ZeroCopyIOSystem, ProximaDBError> {
@@ -74,6 +76,7 @@ pub mod presets {
     }
 
     /// Cost-optimized setup (minimize bandwidth)
+    #[allow(dead_code)]
     pub async fn cost_optimized(
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<ZeroCopyIOSystem, ProximaDBError> {
@@ -81,6 +84,7 @@ pub mod presets {
     }
 
     /// Balanced setup (general purpose)
+    #[allow(dead_code)]
     pub async fn balanced(
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<ZeroCopyIOSystem, ProximaDBError> {
@@ -89,7 +93,9 @@ pub mod presets {
 }
 
 /// Version information
+#[allow(dead_code)]
 pub const VERSION: &str = "1.0.0";
+#[allow(dead_code)]
 pub const MAGIC_BYTES: &[u8; 8] = b"PXMDCHV1";
 
 #[cfg(test)]

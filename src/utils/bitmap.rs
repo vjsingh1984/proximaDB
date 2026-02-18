@@ -13,7 +13,7 @@
 //! - Thread-safe operations
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::bitmap::RoaringBitmap;
 //!
 //! let mut bitmap1 = RoaringBitmap::new();
@@ -64,6 +64,7 @@ enum Container {
     /// Bitmap container for dense data (>= 4096 elements)
     Bitmap(BitmapContainer),
     /// Run container for consecutive runs (future optimization)
+    #[allow(dead_code)]
     Run(RunContainer),
 }
 
@@ -360,6 +361,7 @@ struct RunContainer {
 }
 
 impl RunContainer {
+    #[allow(dead_code)]
     fn new() -> Self {
         RunContainer { runs: Vec::new() }
     }
@@ -416,7 +418,7 @@ impl RunContainer {
         self.runs.iter().map(|(_, length)| *length as u32).sum()
     }
 
-    fn iter(&self) -> RunIterator {
+    fn iter(&self) -> RunIterator<'_> {
         RunIterator {
             runs: &self.runs,
             run_index: 0,
@@ -708,7 +710,7 @@ impl RoaringBitmap {
     }
 
     /// Get iterator over all values in the bitmap
-    pub fn iter(&self) -> BitmapIteratorAll {
+    pub fn iter(&self) -> BitmapIteratorAll<'_> {
         BitmapIteratorAll {
             containers_iter: self.containers.iter(),
             current_container: None,
@@ -960,6 +962,7 @@ impl std::ops::SubAssign<&RoaringBitmap> for RoaringBitmap {
 pub struct BitmapIteratorAll<'a> {
     containers_iter: std::collections::btree_map::Iter<'a, u16, Container>,
     current_container: Option<(u16, Box<dyn Iterator<Item = u16> + 'a>)>,
+    #[allow(dead_code)]
     current_high: u16,
 }
 

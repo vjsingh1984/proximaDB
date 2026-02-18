@@ -41,14 +41,14 @@ struct OllamaOptions {
 struct OllamaResponse {
     response: String,
     model: String,
-    created_at: String,
+    _created_at: String,
     done: bool,
-    total_duration: Option<u64>,
-    load_duration: Option<u64>,
+    _total_duration: Option<u64>,
+    _load_duration: Option<u64>,
     prompt_eval_count: Option<u32>,
-    prompt_eval_duration: Option<u64>,
+    _prompt_eval_duration: Option<u64>,
     eval_count: Option<u32>,
-    eval_duration: Option<u64>,
+    _eval_duration: Option<u64>,
 }
 
 impl OllamaClient {
@@ -101,7 +101,7 @@ impl LLMClient for OllamaClient {
 
         let response = self
             .client
-            .post(&format!("{}/api/generate", self.config.base_url))
+            .post(format!("{}/api/generate", self.config.base_url))
             .header("Content-Type", "application/json")
             .json(&ollama_request)
             .send()
@@ -167,7 +167,7 @@ impl LLMClient for OllamaClient {
         // Check if Ollama server is running
         match self
             .client
-            .get(&format!("{}/api/tags", self.config.base_url))
+            .get(format!("{}/api/tags", self.config.base_url))
             .send()
             .await
         {
@@ -185,7 +185,7 @@ impl LLMClient for OllamaClient {
         // Test by checking available models
         let response = self
             .client
-            .get(&format!("{}/api/tags", self.config.base_url))
+            .get(format!("{}/api/tags", self.config.base_url))
             .send()
             .await
             .map_err(|e| LLMError::NetworkError(format!("Failed to connect to Ollama: {}", e)))?;

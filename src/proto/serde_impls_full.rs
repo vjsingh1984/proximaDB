@@ -358,12 +358,13 @@ impl Serialize for crate::proto::proximadb_v1::Collection {
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Collection", 5)?;
+        let mut state = serializer.serialize_struct("Collection", 6)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("config", &self.config)?;
         state.serialize_field("stats", &self.stats)?;
         state.serialize_field("created_at", &self.created_at)?;
         state.serialize_field("updated_at", &self.updated_at)?;
+        state.serialize_field("storage_assignment", &self.storage_assignment)?;
         state.end()
     }
 }
@@ -381,6 +382,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Collection {
             Stats,
             CreatedAt,
             UpdatedAt,
+            StorageAssignment,
         }
 
         struct CollectionVisitor;
@@ -401,6 +403,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Collection {
                 let mut stats = None;
                 let mut created_at = None;
                 let mut updated_at = None;
+                let mut storage_assignment = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -434,6 +437,12 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Collection {
                             }
                             updated_at = Some(map.next_value()?);
                         }
+                        Field::StorageAssignment => {
+                            if storage_assignment.is_some() {
+                                return Err(serde::de::Error::duplicate_field("storage_assignment"));
+                            }
+                            storage_assignment = Some(map.next_value()?);
+                        }
                     }
                 }
 
@@ -447,12 +456,12 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Collection {
                     stats,
                     created_at,
                     updated_at,
-                    storage_assignment: None, // TODO: Implement storage assignment
+                    storage_assignment,
                 })
             }
         }
 
-        deserializer.deserialize_struct("Collection", &["id", "config", "stats", "created_at", "updated_at"], CollectionVisitor)
+        deserializer.deserialize_struct("Collection", &["id", "config", "stats", "created_at", "updated_at", "storage_assignment"], CollectionVisitor)
     }
 }
 

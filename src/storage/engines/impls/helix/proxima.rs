@@ -9,16 +9,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
+
+use crate::storage::persistence::filesystem::FileSystem;
 
 // Reuse existing Proxima structures
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, QuantizationStatistics,
 };
+use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::constants::HELIX_MAGIC;
-use crate::storage::persistence::filesystem::FileSystem;
 
 // ProximaDataBlock now uses ProximaCodec internally
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
@@ -29,9 +31,11 @@ pub use crate::storage::engines::core::formats::proximablocks::block_structures:
 /// HELIX Spatial Block Writer
 /// Uses ProximaDataBlock's internal SIMD encoding with spatial clustering
 pub struct HelixSIMDWriter {
+    #[allow(dead_code)]
     hilbert_curve_size: usize,
-    spatial_grouping_enabled: bool,
+    #[allow(dead_code)]
     dimension: usize,
+    #[allow(dead_code)]
     max_vectors: usize,
 }
 
@@ -39,7 +43,6 @@ impl HelixSIMDWriter {
     pub fn new(dimension: usize, max_vectors: usize, hilbert_curve_size: usize) -> Result<Self> {
         Ok(Self {
             hilbert_curve_size,
-            spatial_grouping_enabled: true,
             dimension,
             max_vectors,
         })
@@ -88,6 +91,72 @@ impl HelixSIMDWriter {
         );
         block.block_id = block_id;
 
+        // Add quantized columns for progressive search (Binary → INT8 → FP32)
+        // HELIX progressive search uses these for 10-50x speedup
+        use crate::storage::engines::core::formats::proximablocks::block_structures::QuantizedSection;
+
+        let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.clone()).collect();
+        if !vectors.is_empty() && !vectors[0].is_empty() {
+            let dimension = vectors[0].len();
+
+            // Compute binary quantization (1-bit per dimension, 32x compression)
+            let binary_vectors: Vec<Vec<u8>> = vectors
+                .iter()
+                .map(|v| {
+                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    for (i, &val) in v.iter().enumerate() {
+                        if val > 0.0 {
+                            binary[i / 8] |= 1 << (i % 8);
+                        }
+                    }
+                    binary
+                })
+                .collect();
+
+            // Compute INT8 quantization (4x compression, ~95% recall)
+            let (min_val, max_val) = vectors
+                .iter()
+                .flat_map(|v| v.iter())
+                .fold((f32::MAX, f32::MIN), |(min, max), &val| {
+                    (min.min(val), max.max(val))
+                });
+
+            let scale = if (max_val - min_val).abs() > 1e-8 {
+                255.0 / (max_val - min_val)
+            } else {
+                1.0
+            };
+
+            let int8_vectors: Vec<Vec<i8>> = vectors
+                .iter()
+                .map(|v| {
+                    v.iter()
+                        .map(|&val| {
+                            let normalized = ((val - min_val) * scale).clamp(0.0, 255.0) as u8;
+                            (normalized as i16 - 128) as i8
+                        })
+                        .collect()
+                })
+                .collect();
+
+            // Create quantized section for progressive search
+            block.quantized_section = Some(QuantizedSection {
+                binary_vectors: Some(binary_vectors),
+                int8_vectors: Some(int8_vectors),
+                pq_vectors: None,
+                codebooks: None,
+            });
+
+            block.metadata.quantization_stats.has_binary = true;
+            block.metadata.quantization_stats.has_int8 = true;
+
+            debug!(
+                "⚡ HELIX: Added quantization to block {} ({} vectors)",
+                block_id,
+                vectors.len()
+            );
+        }
+
         let encoding_time = start_time.elapsed();
 
         // Calculate spatial statistics for clustering
@@ -104,14 +173,10 @@ impl HelixSIMDWriter {
         };
 
         // Generate spatial clustering hints
-        // Extract vectors for spatial analysis
-        let vectors: Vec<Vec<f32>> = records
-            .iter()
-            .filter(|r| !r.vector.is_empty())
-            .map(|r| r.vector.clone())
-            .collect();
+        // Reuse vectors from quantization above (already extracted)
 
         let spatial_variance = self.calculate_spatial_variance(&vectors);
+        let block_centroid = compute_centroid(&vectors);
         let clustering_hints = ClusteringHints {
             access_frequency: 0.0, // Will be updated by query patterns
             last_accessed: None,
@@ -122,7 +187,8 @@ impl HelixSIMDWriter {
         let helix_metadata = HelixBlockMetadata {
             proxima_metadata: block.metadata.clone(),
             hilbert_range,
-            pca_stats: None, // Could be added later for advanced PCA integration
+            block_centroid,
+            pca_stats: None,
             clustering_hints: Some(clustering_hints),
         };
 
@@ -191,8 +257,33 @@ impl HelixSIMDWriter {
     }
 }
 
-/// Enhanced HELIX SSTable writer with SIMD optimization
+fn compute_centroid(vectors: &[Vec<f32>]) -> Vec<f32> {
+    let first = match vectors.first() {
+        Some(f) => f,
+        None => return Vec::new(),
+    };
+    let dim = first.len();
+    if dim == 0 {
+        return Vec::new();
+    }
+    let mut sum = vec![0f32; dim];
+    let mut count = 0f32;
+    for v in vectors {
+        if v.len() != dim {
+            return Vec::new();
+        }
+        for (i, val) in v.iter().enumerate() {
+            sum[i] += *val;
+        }
+        count += 1.0;
+    }
+    if count == 0.0 {
+        return Vec::new();
+    }
+    sum.into_iter().map(|s| s / count).collect()
+}
 
+/// Enhanced HELIX SSTable writer with SIMD optimization
 /// HELIX-specific SSTable metadata with clustering information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixBlockMetadata {
@@ -200,10 +291,72 @@ pub struct HelixBlockMetadata {
     pub proxima_metadata: ProximaBlockMetadata,
     /// Hilbert key range for this block
     pub hilbert_range: Option<(u64, u64)>,
+    /// Block centroid for pruning or clustering
+    pub block_centroid: Vec<f32>,
     /// PCA projection statistics
     pub pca_stats: Option<PCAStats>,
     /// Liquid clustering hints
     pub clustering_hints: Option<ClusteringHints>,
+}
+
+impl HelixBlockMetadata {
+    /// Custom serialization to handle nested Proxima metadata safely
+    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
+        use std::io::Write;
+        let mut buffer = Vec::new();
+
+        // Header
+        buffer.write_all(b"HLX1")?;
+
+        // Proxima Metadata (custom serialize)
+        let proxima_bytes = self.proxima_metadata.serialize()?;
+        buffer.write_all(&(proxima_bytes.len() as u32).to_le_bytes())?;
+        buffer.write_all(&proxima_bytes)?;
+
+        // Other fields (safe for bincode)
+        let rest = bincode::serialize(&(
+            &self.hilbert_range,
+            &self.block_centroid,
+            &self.pca_stats,
+            &self.clustering_hints,
+        ))?;
+        buffer.write_all(&rest)?;
+
+        Ok(buffer)
+    }
+
+    /// Custom deserialization
+    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Read;
+        let mut cursor = std::io::Cursor::new(data);
+
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        if &magic != b"HLX1" {
+            return Err(anyhow::anyhow!("Invalid HelixBlockMetadata magic"));
+        }
+
+        let mut len_buf = [0u8; 4];
+        cursor.read_exact(&mut len_buf)?;
+        let proxima_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut proxima_bytes = vec![0u8; proxima_len];
+        cursor.read_exact(&mut proxima_bytes)?;
+        let proxima_metadata = ProximaBlockMetadata::deserialize(&proxima_bytes)?;
+
+        let mut rest = Vec::new();
+        cursor.read_to_end(&mut rest)?;
+        let (hilbert_range, block_centroid, pca_stats, clustering_hints) =
+            bincode::deserialize(&rest)?;
+
+        Ok(Self {
+            proxima_metadata,
+            hilbert_range,
+            block_centroid,
+            pca_stats,
+            clustering_hints,
+        })
+    }
 }
 
 /// PCA projection statistics for a block
@@ -296,7 +449,7 @@ pub async fn write_helix_sstable(
     file_data.put_u32_le(2); // Version 2 for SIMD-enhanced format
 
     // Calculate block count
-    let num_blocks = (records.len() + block_size - 1) / block_size;
+    let num_blocks = records.len().div_ceil(block_size);
     file_data.put_u32_le(num_blocks as u32);
 
     let mut block_offsets = Vec::new();
@@ -339,7 +492,7 @@ pub async fn write_helix_sstable(
 
         // Create SIMD-optimized block
         let block_start_time = std::time::Instant::now();
-        let (mut simd_block, simd_metadata) = simd_writer
+        let (simd_block, simd_metadata) = simd_writer
             .create_simd_block(chunk, block_hilbert_keys, block_idx as u32)
             .await?;
 
@@ -396,13 +549,13 @@ pub async fn write_helix_sstable(
 
     // Write bloom filter
     let bloom_bytes = global_bloom.serialize()?;
-    let bloom_offset = file_data.len() as u64;
+    let _bloom_offset = file_data.len() as u64;
     file_data.put_u32_le(bloom_bytes.len() as u32);
     file_data.put_slice(&bloom_bytes);
 
     // OPTIMIZATION: Write unified file header containing ALL metadata
     // This allows single-call reading of all metadata for queries
-    let file_header = HelixFileHeader {
+    let _file_header = HelixFileHeader {
         magic: HELIX_MAGIC,
         version: 1,   // HELIX v1 (active development)
         file_size: 0, // Will be updated by reader
@@ -429,8 +582,17 @@ pub async fn write_helix_sstable(
     // 4. Number of blocks
     header_bytes.put_u32_le(num_blocks as u32);
 
-    // 5. Block metadata (bincode-serialized Vec)
-    let block_metadata_bytes = bincode::serialize(&block_metadata)?;
+    // 5. Block metadata (custom serialized Vec)
+    let mut block_metadata_bytes = Vec::new();
+    // Write count
+    block_metadata_bytes.extend_from_slice(&(block_metadata.len() as u64).to_le_bytes());
+    // Write entries
+    for meta in &block_metadata {
+        let meta_bytes = meta.serialize()?;
+        block_metadata_bytes.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+        block_metadata_bytes.extend_from_slice(&meta_bytes);
+    }
+
     header_bytes.put_u32_le(block_metadata_bytes.len() as u32);
     header_bytes.put_slice(&block_metadata_bytes);
 
@@ -569,11 +731,12 @@ pub(crate) async fn read_helix_header_optimized(
     let mut file_size_bytes = [0u8; 8];
     std::io::Read::read_exact(&mut cursor, &mut file_size_bytes)?;
     let _stored_file_size = u64::from_le_bytes(file_size_bytes);
+    let _ = _stored_file_size; // Explicitly ignore to avoid unused warning
 
-    // 4. Read num_blocks
+    // 4. Read num_blocks (for validation, not directly used)
     let mut num_blocks_bytes = [0u8; 4];
     std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
-    let num_blocks = u32::from_le_bytes(num_blocks_bytes);
+    let _num_blocks = u32::from_le_bytes(num_blocks_bytes);
 
     // 5. Read block_metadata
     let mut metadata_len_bytes = [0u8; 4];
@@ -582,8 +745,27 @@ pub(crate) async fn read_helix_header_optimized(
 
     let mut metadata_bytes = vec![0u8; metadata_len];
     std::io::Read::read_exact(&mut cursor, &mut metadata_bytes)?;
-    let block_metadata: Vec<HelixBlockMetadata> = bincode::deserialize(&metadata_bytes)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize block_metadata: {}", e))?;
+
+    // Custom deserialization loop
+    let mut meta_cursor = std::io::Cursor::new(&metadata_bytes);
+    let mut u64_buf = [0u8; 8];
+    std::io::Read::read_exact(&mut meta_cursor, &mut u64_buf)
+        .map_err(|e| anyhow::anyhow!("Failed to read metadata count: {}", e))?;
+    let meta_count = u64::from_le_bytes(u64_buf) as usize;
+
+    let mut block_metadata = Vec::with_capacity(meta_count);
+    for _ in 0..meta_count {
+        let mut len_buf = [0u8; 4];
+        std::io::Read::read_exact(&mut meta_cursor, &mut len_buf)
+            .map_err(|e| anyhow::anyhow!("Failed to read metadata entry length: {}", e))?;
+        let entry_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut entry_bytes = vec![0u8; entry_len];
+        std::io::Read::read_exact(&mut meta_cursor, &mut entry_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to read metadata entry data: {}", e))?;
+
+        block_metadata.push(HelixBlockMetadata::deserialize(&entry_bytes)?);
+    }
 
     // 6. Read block_offsets
     let mut offsets_len_bytes = [0u8; 4];
@@ -638,6 +820,7 @@ pub async fn search_helix_sstable(
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     collection: Option<&crate::proto::proximadb_v1::Collection>,
     filter_expression: Option<&crate::core::search::FilterExpression>,
+    prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<
     Vec<(
         String,
@@ -650,24 +833,25 @@ pub async fn search_helix_sstable(
     let header = read_helix_header_optimized(filesystem, path).await?;
 
     let path_str = path.to_str().unwrap_or("");
-    let num_blocks = header.block_metadata.len();
+    let _num_blocks = header.block_metadata.len();
     let mut results = Vec::new();
-    let mut blocks_pruned = 0;
-    let mut blocks_searched = 0;
+    let mut _blocks_pruned = 0;
+    let mut _blocks_searched = 0;
 
-    // Process only relevant blocks with Hilbert pruning
-    tracing::debug!(
-        "HELIX search: query_hilbert_key = {:?}, num_blocks = {}",
-        query_hilbert_key,
-        num_blocks
-    );
+    // Centroid-based pruning (sqrt heuristic) to reduce block reads
+    let centroid_selected =
+        select_blocks_by_centroid(query_vector, &header.block_metadata, distance_metric, prune);
 
-    for block_idx in 0..num_blocks {
+    // Process only relevant blocks with Hilbert + centroid pruning
+    for &block_idx in &centroid_selected {
         let meta = &header.block_metadata[block_idx];
         let block_offset = header.block_offsets[block_idx];
 
         // Enhanced Hilbert-based pruning using metadata
-        let should_prune = if let Some(query_key) = query_hilbert_key {
+        // IMPORTANT: Skip Hilbert pruning for exact mode to ensure 100% recall
+        let should_prune = if prune.force_exact {
+            false // Never prune in exact mode - search all selected blocks
+        } else if let Some(query_key) = query_hilbert_key {
             if let Some((min_key, max_key)) = meta.hilbert_range {
                 tracing::debug!(
                     "Block {}: query_key={}, hilbert_range=({}, {})",
@@ -697,13 +881,13 @@ pub async fn search_helix_sstable(
         };
 
         if should_prune {
-            blocks_pruned += 1;
+            _blocks_pruned += 1;
             continue; // CRITICAL: Don't read this block from disk at all!
         }
 
         // CLOUD-OPTIMIZED: Read block with EXACT size from header
         // Single API call with exact size = perfect read, zero waste
-        blocks_searched += 1;
+        _blocks_searched += 1;
 
         // Use exact block size from header
         let exact_size = header.block_sizes[block_idx];
@@ -764,18 +948,213 @@ pub async fn search_helix_sstable(
     results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
     results.truncate(k);
 
-    // Log pruning statistics
-    if blocks_pruned > 0 {
-        tracing::info!(
-            "🎯 HELIX pruning: searched {}/{} blocks, pruned {} blocks ({:.1}% pruning rate)",
-            blocks_searched,
-            num_blocks,
-            blocks_pruned,
-            (blocks_pruned as f64 / num_blocks as f64) * 100.0
-        );
+    Ok(results)
+}
+
+fn select_blocks_by_centroid(
+    query_vector: &[f32],
+    metas: &[HelixBlockMetadata],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+    prune: &crate::core::search::BlockPruneConfig,
+) -> Vec<usize> {
+    use crate::storage::engines::core::formats::proximablocks::spatial_pruning::{
+        BlockPruningInfo, PruningConfig, PruningMode, SpatialPruner,
+    };
+
+    if prune.force_exact {
+        return (0..metas.len()).collect();
     }
 
-    Ok(results)
+    if metas.is_empty() {
+        return Vec::new();
+    }
+
+    // OPTIMIZATION: Skip pruning for small datasets where overhead exceeds benefit.
+    // Hilbert code computation and centroid distance calculations have overhead
+    // that only pays off with many blocks to prune.
+    use crate::storage::engines::core::constants::pruning;
+    let min_blocks_threshold = prune
+        .min_blocks_override
+        .unwrap_or(pruning::MIN_BLOCKS_FOR_PRUNING);
+    if metas.len() < min_blocks_threshold {
+        tracing::debug!(
+            "HELIX block pruning skipped: {} blocks < {} threshold (overhead would exceed benefit)",
+            metas.len(),
+            min_blocks_threshold
+        );
+        return (0..metas.len()).collect();
+    }
+
+    // Convert BlockPruneMode to unified PruningMode
+    let prune_mode = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => PruningMode::Sqrt {
+            min_blocks: prune.min_keep.max(3),
+        },
+        crate::core::search::BlockPruneMode::Ratio => PruningMode::Ratio {
+            ratio: prune.ratio,
+            min_blocks: prune.min_keep.max(1),
+        },
+        crate::core::search::BlockPruneMode::Fixed(k) => PruningMode::Fixed { k },
+    };
+
+    // Check if we have Hilbert codes for spatial pruning
+    let has_hilbert_codes = metas.iter().any(|m| m.hilbert_range.is_some());
+
+    if has_hilbert_codes {
+        // Use unified SpatialPruner with Hilbert codes
+        let pruner = SpatialPruner::new(PruningConfig {
+            mode: prune_mode,
+            spatial_weight: 0.6,
+            centroid_weight: 0.4,
+            ..Default::default()
+        });
+
+        // Build block infos with Hilbert codes (use midpoint of range)
+        let blocks: Vec<BlockPruningInfo> = metas
+            .iter()
+            .enumerate()
+            .map(|(idx, meta)| {
+                let hilbert_code = meta
+                    .hilbert_range
+                    .map(|(min, max)| SpatialCode::Code64((min + max) / 2))
+                    .unwrap_or(SpatialCode::Code64(0));
+                BlockPruningInfo::with_centroid(idx, hilbert_code, meta.block_centroid.clone())
+            })
+            .collect();
+
+        // Compute query's Hilbert code using PCA projection + encoder
+        let query_code = compute_query_hilbert_code(query_vector);
+
+        let result = pruner.select_blocks(&query_code, query_vector, &blocks);
+        return result.selected_indices;
+    }
+
+    // Fallback: centroid-only pruning (no Hilbert codes)
+    let mut scored = Vec::with_capacity(metas.len());
+    for (idx, meta) in metas.iter().enumerate() {
+        if meta.block_centroid.len() != query_vector.len() {
+            // SAFE FALLBACK: Include block with distance 0 (highest priority)
+            scored.push((0.0, idx));
+            continue;
+        }
+        let dist = metric_distance(query_vector, &meta.block_centroid, metric);
+        scored.push((dist, idx));
+    }
+
+    let mut k = match prune.mode {
+        crate::core::search::BlockPruneMode::Sqrt => {
+            3.max((scored.len() as f32).sqrt().ceil() as usize)
+        }
+        crate::core::search::BlockPruneMode::Ratio => {
+            let r = prune.ratio.clamp(0.0, 1.0);
+            ((scored.len() as f32) * r).ceil() as usize
+        }
+        crate::core::search::BlockPruneMode::Fixed(k) => k,
+    };
+    k = k.max(prune.min_keep).min(if prune.max_keep > 0 {
+        prune.max_keep
+    } else {
+        usize::MAX
+    });
+    k = k.clamp(1, scored.len());
+
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut selected: Vec<usize> = scored.into_iter().take(k).map(|(_, idx)| idx).collect();
+    selected.sort_unstable();
+    selected.dedup();
+    selected
+}
+
+/// Compute Hilbert code for a query vector using PCA projection
+fn compute_query_hilbert_code(query: &[f32]) -> SpatialCode {
+    use crate::storage::engines::core::formats::proximablocks::spatial_traits::{
+        CurveType, SpatialEncoderFactory,
+    };
+
+    // Use first 8 dimensions for Hilbert encoding (PCA projection would require stored model)
+    let target_dims = 8.min(query.len());
+    let encoder = SpatialEncoderFactory::create(CurveType::Hilbert, target_dims, 8);
+
+    // Normalize query to [0,1] range for encoding
+    let truncated: Vec<f32> = query.iter().take(target_dims).copied().collect();
+    let (min_val, max_val) = truncated
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(min, max), &v| {
+            (min.min(v), max.max(v))
+        });
+    let range = (max_val - min_val).max(1e-6);
+    let normalized: Vec<f32> = truncated
+        .iter()
+        .map(|&v| ((v - min_val) / range).clamp(0.0, 1.0))
+        .collect();
+
+    encoder.encode(&normalized)
+}
+
+fn _l2_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .fold(0.0f32, |acc, (x, y)| acc + (x - y) * (x - y))
+}
+
+fn metric_distance(
+    a: &[f32],
+    b: &[f32],
+    metric: &crate::compute::distance_computation::DistanceMetric,
+) -> f32 {
+    let distance_compute =
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+    distance_compute.distance_with_metric(a, b, metric)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn centroid_pruning_selects_sqrt() {
+        let query = vec![0.0f32, 0.0];
+        let metas = vec![
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![0.1, 0.1],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![3.0, 3.0],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![0.2, 0.2],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+            HelixBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata::default(),
+                hilbert_range: None,
+                block_centroid: vec![6.0, 6.0],
+                pca_stats: None,
+                clustering_hints: None,
+            },
+        ];
+
+        let selected = select_blocks_by_centroid(
+            &query,
+            &metas,
+            &crate::compute::distance_computation::DistanceMetric::Euclidean,
+            &crate::core::search::BlockPruneConfig::for_testing(),
+        );
+        // max(3, sqrt(4)) = 3 -> expect the three closest indices 0, 2, 1
+        // Block 0: [0.1, 0.1] - dist 0.141, Block 2: [0.2, 0.2] - dist 0.283, Block 1: [3.0, 3.0] - dist 4.243
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
 }
 
 /// Extract block metadata for HELIX
@@ -828,6 +1207,9 @@ pub fn extract_helix_metadata(
             HelixBlockMetadata {
                 proxima_metadata: base_metadata,
                 hilbert_range,
+                block_centroid: compute_centroid(
+                    &chunk.iter().map(|r| r.vector.clone()).collect::<Vec<_>>(),
+                ),
                 pca_stats: None,
                 clustering_hints: None,
             }

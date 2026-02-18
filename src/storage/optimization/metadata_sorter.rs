@@ -14,7 +14,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{FilterableColumnSpec, SqlValue, VectorRecord};
+use crate::proto::proximadb_v1::{FilterableColumnSpec, VectorRecord};
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]
@@ -334,6 +334,7 @@ impl SortConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::SqlValue;
     // Import removed - using HashMap metadata now
 
     fn create_test_record(id: &str, category: &str, priority: &str) -> VectorRecord {

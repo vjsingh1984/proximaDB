@@ -10,7 +10,7 @@
 //!   cargo bench --bench graph_engine_reporter
 
 use anyhow::Result;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use proximadb::graph::{Edge, Node, PropertyValue, service::GraphOperationsService};
 use proximadb::proto::proximadb_v1::{
     CreateGraphRequest, GraphEngineConfig, TraversalAlgorithm, TraversalRequest,
@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::Instant;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 // Ensure we only write CSV once per benchmark process
 static CSV_WRITTEN: AtomicBool = AtomicBool::new(false);
@@ -248,8 +248,16 @@ fn write_csv(results: &[GraphBenchResult], filename: &str) -> Result<()> {
     )?;
     for r in results {
         // K elem/s = elems / ms
-        let node_kps = if r.node_insert_ms > 0 { (r.nodes as f64) / (r.node_insert_ms as f64) } else { 0.0 };
-        let edge_kps = if r.edge_insert_ms > 0 { (r.edges as f64) / (r.edge_insert_ms as f64) } else { 0.0 };
+        let node_kps = if r.node_insert_ms > 0 {
+            (r.nodes as f64) / (r.node_insert_ms as f64)
+        } else {
+            0.0
+        };
+        let edge_kps = if r.edge_insert_ms > 0 {
+            (r.edges as f64) / (r.edge_insert_ms as f64)
+        } else {
+            0.0
+        };
         writeln!(
             f,
             "{},{},{},{},{},{:.2},{:.2},{},{},{},{},{},{}",
@@ -277,7 +285,11 @@ fn bench_graph_engine_reporter(c: &mut Criterion) {
     c.bench_function("graph_engine_reporter_generate", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let engines = vec!["ORION", "PULSAR", "QUASAR"]; // Cross-engine report
+                let mut engines = vec!["ORION"];
+                #[cfg(feature = "distributed-graph")]
+                engines.push("PULSAR");
+                #[cfg(feature = "tiered-graph")]
+                engines.push("QUASAR");
                 let scales = vec![(1000, 3000), (5000, 15000)];
 
                 let mut results = Vec::new();
@@ -296,7 +308,8 @@ fn bench_graph_engine_reporter(c: &mut Criterion) {
 
                 // Write CSV exactly once per benchmark process
                 if !CSV_WRITTEN.swap(true, Ordering::SeqCst) {
-                    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+                    let target_dir =
+                        std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
                     let _ = std::fs::create_dir_all(&target_dir);
                     let latest = format!("{}/graph_benchmark_report_latest.csv", target_dir);
                     let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");

@@ -7,9 +7,12 @@ import SecurityTab from './SecurityTab';
 import AlertsTab from './AlertsTab';
 import MetricsTab from './MetricsTab';
 import DiagnosticsTab from './DiagnosticsTab';
+import SqlQueryTab from './SqlQueryTab';
+import GraphVisualizationTab from './GraphVisualizationTab';
+import ThemeToggle from './ThemeToggle';
 import './Dashboard.css';
 
-type TabType = 'overview' | 'collections' | 'performance' | 'cache' | 'security' | 'alerts' | 'metrics' | 'diagnostics';
+type TabType = 'overview' | 'collections' | 'query' | 'graph' | 'performance' | 'cache' | 'security' | 'alerts' | 'metrics' | 'diagnostics';
 
 const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -17,6 +20,8 @@ const Dashboard: React.FC = () => {
   const tabs = [
     { id: 'overview' as const, label: 'System Overview', icon: '🔍' },
     { id: 'collections' as const, label: 'Collections', icon: '📊' },
+    { id: 'query' as const, label: 'SQL Query', icon: '💻' },
+    { id: 'graph' as const, label: 'Graph Explorer', icon: '🔗' },
     { id: 'performance' as const, label: 'Performance', icon: '⚡' },
     { id: 'cache' as const, label: 'Cache', icon: '💾' },
     { id: 'security' as const, label: 'Security', icon: '🔒' },
@@ -48,8 +53,9 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         <div className="status-indicators">
-          <div className="status-badge healthy">🟢 Healthy</div>
+          <div className="status-badge healthy">Healthy</div>
           <div className="uptime">Uptime: 15d 7h 23m</div>
+          <ThemeToggle />
         </div>
       </header>
 
@@ -70,6 +76,8 @@ const Dashboard: React.FC = () => {
       <main className="dashboard-content">
         {activeTab === 'overview' && <SystemOverviewTab />}
         {activeTab === 'collections' && <CollectionsTab />}
+        {activeTab === 'query' && <SqlQueryTab />}
+        {activeTab === 'graph' && <GraphVisualizationTab />}
         {activeTab === 'performance' && <PerformanceTab />}
         {activeTab === 'cache' && <CacheTab />}
         {activeTab === 'security' && <SecurityTab />}

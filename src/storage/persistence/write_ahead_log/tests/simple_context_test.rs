@@ -2,14 +2,12 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
     use std::collections::HashMap;
-    use tracing::{debug, error, info};
-
+    use tracing::{debug, info};
     #[tokio::test]
     async fn test_background_flush_context_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();

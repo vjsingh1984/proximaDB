@@ -568,7 +568,7 @@ impl UnifiedQuantizationEngine {
         }
 
         let dimension = training_vectors[0].len();
-        let subvector_dim = (dimension + num_subvectors - 1) / num_subvectors;
+        let subvector_dim = dimension.div_ceil(num_subvectors);
         let num_centroids = 1 << bits_per_code;
 
         // Initialize centroids for each subspace using k-means++
@@ -754,7 +754,7 @@ impl UnifiedQuantizationEngine {
         threshold: Option<f32>,
     ) -> Result<Vec<u8>> {
         let threshold = threshold.unwrap_or(0.0);
-        let mut binary = vec![0u8; (vector.len() + 7) / 8];
+        let mut binary = vec![0u8; vector.len().div_ceil(8)];
 
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {
@@ -827,8 +827,8 @@ impl UnifiedQuantizationEngine {
         bits_per_code: u32,
     ) -> Result<Vec<u8>> {
         let dimension = vector.len();
-        let subvector_dim = (dimension + num_subvectors - 1) / num_subvectors;
-        let bytes_per_code = ((bits_per_code + 7) / 8) as usize;
+        let subvector_dim = dimension.div_ceil(num_subvectors);
+        let bytes_per_code = bits_per_code.div_ceil(8) as usize;
         let mut codes = Vec::with_capacity(num_subvectors * bytes_per_code);
 
         for i in 0..num_subvectors {
@@ -848,7 +848,7 @@ impl UnifiedQuantizationEngine {
     /// Simple PQ encoding (placeholder for actual codebook-based encoding)
     fn simple_pq_encode(&self, subvector: &[f32], bits_per_code: u32) -> Result<Vec<u8>> {
         let num_centroids = 1 << bits_per_code;
-        let bytes_per_code = ((bits_per_code + 7) / 8) as usize;
+        let bytes_per_code = (bits_per_code as usize).div_ceil(8);
 
         // Simple hash-based code assignment (placeholder)
         let mut hash = 0u32;
@@ -1024,7 +1024,7 @@ impl UnifiedQuantizationEngine {
 
     fn quantize_binary(&self, vector: &[f32], threshold: Option<&f32>) -> Result<QuantizedVector> {
         let threshold = threshold.copied().unwrap_or(0.0);
-        let mut bytes = vec![0u8; (vector.len() + 7) / 8];
+        let mut bytes = vec![0u8; vector.len().div_ceil(8)];
 
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {
@@ -1283,7 +1283,7 @@ impl UnifiedQuantizationEngine {
     ) -> Result<Vec<f32>> {
         let CodebookData::ProductQuantization {
             centroids,
-            _subvector_dim: subvector_dim,
+            _subvector_dim: _,
         } = &codebook.data
         else {
             anyhow::bail!("Invalid codebook type for PQ dequantization");

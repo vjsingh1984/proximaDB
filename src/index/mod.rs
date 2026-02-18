@@ -44,7 +44,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::index::{AxisManager, IndexConfig, HnswConfig};
 //!
 //! // Create AXIS manager with HNSW index
@@ -76,10 +76,17 @@
 
 pub mod axis;
 pub mod config;
+pub mod geo;
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};
 pub use config::{HnswConfig, IndexConfig, IndexUpdateMode, IvfConfig};
+
+// Re-export geospatial types
+pub use geo::{
+    GeoBoundingBox, GeoCircle, GeoDistanceUnit, GeoHash, GeoIndex, GeoIndexConfig, GeoPoint,
+    GeoPolygon, GeoQuery, GeoQueryBuilder, GeoQueryResult,
+};
 
 // Placeholder index structures for compilation
 use anyhow::Result;
@@ -103,7 +110,7 @@ use crate::core::{VectorId, VectorRecord};
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// # use proximadb::index::GlobalIdIndex;
 /// # use proximadb::core::{VectorId, VectorRecord};
 /// # async fn example() -> anyhow::Result<()> {

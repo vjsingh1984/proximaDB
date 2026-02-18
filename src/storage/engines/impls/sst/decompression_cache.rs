@@ -592,6 +592,7 @@ impl Default for CacheConfig {
 
 impl CacheConfig {
     /// Default maximum cap value
+    #[allow(dead_code)]
     fn default_max_cap() -> usize {
         8192 // 8GB
     }

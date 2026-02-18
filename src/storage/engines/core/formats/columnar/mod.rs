@@ -114,6 +114,11 @@ pub mod schema;
 pub mod serialization;
 // NOTE: Distance computation has been moved to crate::compute::distance_computation::quantized
 
+// TEXT column storage, filtering, and full-text search (Phase 3)
+pub mod fulltext_index;
+pub mod text_filter;
+pub mod text_storage;
+
 // Examples demonstrating optimization benefits (moved to tests)
 #[cfg(test)]
 mod examples_test;
@@ -230,6 +235,63 @@ pub use common::{
     CommonColumnarConfig, CommonColumnarOperations, DistanceComputationConfig, OptimalBatchSizes,
     PerformanceMonitor, RowGroupSizeOptimization, SchemaGenerationConfig,
     SerializationOptimizationConfig, ViperOptimizations,
+};
+
+// TEXT column storage and filtering re-exports
+pub use text_filter::{
+    TextColumnFilterEvaluator, TextComparisonOp, TextFilterBuilder, TextFilterError,
+    TextFilterStats,
+};
+pub use text_storage::{
+    // Constants
+    CHUNKED_THRESHOLD,
+    ChunkPosition,
+    // RAG Chunking
+    ChunkingConfig,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_OVERLAP_SIZE,
+    INLINE_THRESHOLD,
+    MAX_BOUNDARY_SEARCH,
+    MIN_CHUNK_SIZE,
+    // Storage types
+    SidecarCompression,
+    SidecarRef,
+    StorageType,
+    TextChunk,
+    TextChunker,
+    TextColumnReader,
+    TextColumnWriter,
+    TextStorageConfig,
+    TextStorageError,
+    TextStorageStats,
+    // Functions
+    determine_storage_strategy,
+};
+
+// Full-text search index re-exports
+pub use fulltext_index::{
+    // Core index types
+    BM25Config,
+    BM25Scorer,
+    ChunkIndexing,
+    ChunkSearchResult,
+    DocumentMetadata,
+    FullTextIndex,
+    FullTextIndexBuilder,
+    FullTextIndexError,
+    // Posting types
+    Posting,
+    PostingList,
+    // Search types
+    SearchOptions,
+    SearchResult as FullTextSearchResult,
+    // Statistics
+    TextStatistics,
+    // Tokenization
+    Token,
+    Tokenizer,
+    TokenizerConfig,
+    TokenizerType,
 };
 
 use anyhow::Result;
@@ -397,6 +459,128 @@ impl FilterCondition {
     }
 }
 
+impl MetadataFilter {
+    /// Convert from core::search::FilterExpression to columnar::MetadataFilter
+    /// This enables row group pruning using FilterExpression
+    pub fn from_filter_expression(expr: &crate::core::search::FilterExpression) -> Option<Self> {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        fn convert_condition(expr: &FilterExpression) -> Option<FilterCondition> {
+            match expr {
+                FilterExpression::Comparison {
+                    field,
+                    operator,
+                    value,
+                } => {
+                    match operator {
+                        ComparisonOperator::Equals => {
+                            Some(FilterCondition::Equals(field.clone(), value.clone()))
+                        }
+                        ComparisonOperator::In => {
+                            if let Some(arr) = value.as_array() {
+                                Some(FilterCondition::In(field.clone(), arr.clone()))
+                            } else {
+                                Some(FilterCondition::In(field.clone(), vec![value.clone()]))
+                            }
+                        }
+                        ComparisonOperator::Between => {
+                            // Between expects an array of [min, max]
+                            if let Some(arr) = value.as_array() {
+                                if arr.len() >= 2 {
+                                    Some(FilterCondition::Range(
+                                        field.clone(),
+                                        arr[0].clone(),
+                                        arr[1].clone(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        ComparisonOperator::GreaterThan
+                        | ComparisonOperator::GreaterThanOrEqual => {
+                            // Range with open upper bound (use MAX values)
+                            let max_val = serde_json::json!(f64::MAX);
+                            Some(FilterCondition::Range(
+                                field.clone(),
+                                value.clone(),
+                                max_val,
+                            ))
+                        }
+                        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => {
+                            // Range with open lower bound (use MIN values)
+                            let min_val = serde_json::json!(f64::MIN);
+                            Some(FilterCondition::Range(
+                                field.clone(),
+                                min_val,
+                                value.clone(),
+                            ))
+                        }
+                        ComparisonOperator::IsNull => Some(FilterCondition::IsNull(field.clone())),
+                        ComparisonOperator::IsNotNull => {
+                            Some(FilterCondition::IsNotNull(field.clone()))
+                        }
+                        _ => None, // NotEquals, NotIn, Contains, StartsWith, EndsWith, Like not directly supported
+                    }
+                }
+                _ => None, // And, Or, Not handled at top level
+            }
+        }
+
+        fn collect_conditions(
+            expr: &FilterExpression,
+            conditions: &mut Vec<FilterCondition>,
+            logic: &mut FilterLogic,
+        ) {
+            match expr {
+                FilterExpression::And(exprs) => {
+                    *logic = FilterLogic::And;
+                    for e in exprs {
+                        if let Some(cond) = convert_condition(e) {
+                            conditions.push(cond);
+                        } else {
+                            // Recursively handle nested And/Or
+                            collect_conditions(e, conditions, logic);
+                        }
+                    }
+                }
+                FilterExpression::Or(exprs) => {
+                    *logic = FilterLogic::Or;
+                    for e in exprs {
+                        if let Some(cond) = convert_condition(e) {
+                            conditions.push(cond);
+                        } else {
+                            collect_conditions(e, conditions, logic);
+                        }
+                    }
+                }
+                FilterExpression::Comparison { .. } => {
+                    if let Some(cond) = convert_condition(expr) {
+                        conditions.push(cond);
+                    }
+                }
+                FilterExpression::Not(_) => {
+                    // NOT expressions can't be easily converted to MetadataFilter
+                    // Skip them for now
+                }
+            }
+        }
+
+        let mut conditions = Vec::new();
+        let mut logic = FilterLogic::And;
+
+        collect_conditions(expr, &mut conditions, &mut logic);
+
+        if conditions.is_empty() {
+            None
+        } else {
+            Some(MetadataFilter { conditions, logic })
+        }
+    }
+}
+
 /// Row group statistics for optimization
 #[derive(Debug, Clone)]
 pub struct RowGroupStats {
@@ -419,6 +603,7 @@ pub struct SearchCandidate {
 }
 
 /// Common columnar operations trait
+#[allow(async_fn_in_trait)]
 pub trait ColumnarOperations {
     /// Search vectors based on mode
     async fn search(&self, mode: ColumnarSearchMode) -> Result<Vec<VectorRecord>>;
@@ -589,9 +774,9 @@ impl ColumnarFactory {
     /// Create optimized Parquet reader for VIPER/NOVA engines
     /// Note: enable_id_less is optimization only, ID column is always kept
     pub async fn create_optimized_reader(
-        filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+        _filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
         config: ColumnarConfig,
-        enable_id_less_optimization: bool,
+        _enable_id_less_optimization: bool,
     ) -> Result<UnifiedParquetReader> {
         // Note: UnifiedParquetReader now takes file_paths and dimension
         // This factory method needs to be updated based on actual usage

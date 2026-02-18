@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Global WAL Manifest
 //!
 //! Provides a centralized manifest for tracking WAL files across all collections.
@@ -41,7 +42,7 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::write_ahead_log::{BatchId, serialization::SerializationFormat};
 
 /// Status of a WAL entry in the global manifest
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WalEntryStatus {
     /// Active WAL file, not yet flushed to storage engine
     Active,
@@ -49,6 +50,8 @@ pub enum WalEntryStatus {
     Flushed,
     /// Archived to long-term storage, can be deleted
     Archived,
+    /// Rolled back during PITR recovery (not to be recovered)
+    RolledBack,
 }
 
 /// Global manifest entry tracking a single WAL batch across all collections
@@ -162,6 +165,7 @@ pub struct CheckpointCollectionState {
 }
 
 /// Global manifest manager
+#[allow(dead_code)]
 pub struct GlobalManifest {
     /// Filesystem factory for I/O
     filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,

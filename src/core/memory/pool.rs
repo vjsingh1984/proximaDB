@@ -308,6 +308,7 @@ where
     }
 
     /// Internal method to return buffer to pool
+    #[allow(dead_code)]
     fn return_buffer(&self, buffer: T) {
         let mut buffers = self.buffers.lock();
 

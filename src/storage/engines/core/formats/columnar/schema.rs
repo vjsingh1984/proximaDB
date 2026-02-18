@@ -14,6 +14,9 @@ use tracing::{debug, info, trace};
 use super::QuantizationConfig;
 use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
+use crate::storage::engines::core::formats::columnar::constants::{
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
+};
 
 /// Convert proto FilterableColumnSpec to internal ColumnarFilterableSpec
 pub fn convert_filterable_spec(spec: &FilterableColumnSpec) -> ColumnarFilterableSpec {
@@ -137,16 +140,101 @@ pub struct ColumnarFilterableSpec {
 }
 
 /// Supported filterable data types
+///
+/// Extended with rich types for ProximaRecord to support OLAP/OLTP workloads.
+/// Each type maps to a specific Arrow DataType for columnar storage.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterableData {
+    // Basic types (original)
     String,
     Integer,
     Float,
     Boolean,
     Datetime,
     Array(Box<FilterableData>),
-    Json, // JSON stored as string for backward compatibility
-    Map,  // Native Parquet Map<String, String> for complex metadata
+    Json,
+    Map,
+
+    // Rich text types (NEW for ProximaRecord)
+    /// Large text with dedicated columnar storage (LargeUtf8)
+    Text(TextColumnOptions),
+    /// Very large text with sidecar storage
+    TextLarge,
+
+    // Precision numeric types (NEW)
+    /// Decimal128 for financial precision (38,18 default)
+    Decimal {
+        precision: u8,
+        scale: u8,
+    },
+
+    // Temporal types (NEW)
+    /// Timestamp with timezone (TimestampTz)
+    TimestampTz {
+        timezone: std::string::String,
+    },
+    /// Date only (Date32)
+    Date,
+    /// Time only (Time64)
+    Time,
+
+    // Identifier types (NEW)
+    /// RFC 4122 UUID (FixedSizeBinary(16))
+    Uuid,
+
+    // Binary types (NEW)
+    /// Raw bytes (Binary)
+    Binary,
+
+    // Geospatial types (NEW)
+    /// Geographic point (lat, lon)
+    GeoPoint,
+    /// Geographic polygon (list of points)
+    GeoPolygon,
+}
+
+/// TEXT column-specific options for storage strategy
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextColumnOptions {
+    /// Storage strategy
+    pub storage_strategy: TextStorageStrategy,
+    /// Enable fulltext index (Tantivy)
+    pub enable_fulltext_index: bool,
+    /// Enable n-gram bloom filter for CONTAINS queries
+    pub enable_ngram_bloom: bool,
+    /// N-gram size (default: 3)
+    pub ngram_size: u32,
+}
+
+/// TEXT storage strategy for columnar storage
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextStorageStrategy {
+    /// Store inline in main Parquet/Arrow column (<4KB)
+    Inline,
+    /// Split into chunks with embeddings (4KB-1MB)
+    Chunked,
+    /// Store in separate sidecar file (>1MB)
+    Sidecar,
+    /// Auto-select based on actual size (default)
+    #[default]
+    Adaptive,
+}
+
+impl TextStorageStrategy {
+    /// Size thresholds for adaptive strategy
+    pub const INLINE_MAX_SIZE: usize = 4 * 1024; // 4KB
+    pub const CHUNKED_MAX_SIZE: usize = 1024 * 1024; // 1MB
+
+    /// Determine strategy based on content size
+    pub fn for_size(size: usize) -> Self {
+        if size <= Self::INLINE_MAX_SIZE {
+            Self::Inline
+        } else if size <= Self::CHUNKED_MAX_SIZE {
+            Self::Chunked
+        } else {
+            Self::Sidecar
+        }
+    }
 }
 
 /// Schema optimization settings
@@ -226,9 +314,11 @@ pub struct ColumnarSchemaBuilder {
     schema_cache: Arc<RwLock<HashMap<String, CachedSchema>>>,
 
     /// Default optimization settings
+    #[allow(dead_code)]
     default_optimization: SchemaOptimization,
 
     /// Default compression strategy
+    #[allow(dead_code)]
     default_compression: CompressionStrategy,
 }
 
@@ -267,8 +357,8 @@ pub struct WriterPropertiesConfig {
 impl Default for WriterPropertiesConfig {
     fn default() -> Self {
         Self {
-            row_group_size: 50_000,
-            page_size: 1024 * 1024, // 1MB pages
+            row_group_size: DEFAULT_ROW_GROUP_SIZE,
+            page_size: DEFAULT_PAGE_SIZE,
             dictionary_enabled: true,
             statistics_enabled: true,
             bloom_filter_enabled: true,
@@ -588,11 +678,18 @@ impl ColumnarSchemaBuilder {
             );
 
             // Estimate compression ratio based on data type
-            let ratio = match filterable.data_type {
-                FilterableData::String => 3.0, // Text compresses well
-                FilterableData::Json => 4.0,   // JSON compresses very well
-                FilterableData::Array(_) => 2.5,
-                _ => 1.5, // Numbers compress moderately
+            let ratio = match &filterable.data_type {
+                FilterableData::String => 3.0,         // Text compresses well
+                FilterableData::Json => 4.0,           // JSON compresses very well
+                FilterableData::Array(_) => 2.5,       // Arrays have moderate compression
+                FilterableData::Text(_) => 4.0,        // Large text compresses very well
+                FilterableData::TextLarge => 4.5,      // Very large text compresses excellently
+                FilterableData::Decimal { .. } => 1.5, // Decimals have moderate compression
+                FilterableData::Uuid => 1.2,           // UUIDs are already dense
+                FilterableData::Binary => 1.0,         // Binary is opaque
+                FilterableData::GeoPoint => 1.3,       // Geo data has some compression
+                FilterableData::GeoPolygon => 2.0,     // Polygon lists compress better
+                _ => 1.5,                              // Numbers compress moderately
             };
             compression_ratios.insert(filterable.name.clone(), ratio);
         }
@@ -638,37 +735,10 @@ impl ColumnarSchemaBuilder {
     }
 
     /// Convert filterable data type to Arrow data type
+    #[allow(dead_code)]
     fn convert_filterable_type(&self, data_type: &FilterableData) -> Result<DataType> {
-        let arrow_type = match data_type {
-            FilterableData::String => DataType::Utf8,
-            FilterableData::Integer => DataType::Int64,
-            FilterableData::Float => DataType::Float64,
-            FilterableData::Boolean => DataType::Boolean,
-            FilterableData::Datetime => DataType::Timestamp(TimeUnit::Millisecond, None),
-            FilterableData::Json => DataType::Utf8, // Store as JSON string
-            FilterableData::Array(inner) => {
-                let inner_type = self.convert_filterable_type(inner)?;
-                DataType::List(Arc::new(Field::new("item", inner_type, false)))
-            }
-            FilterableData::Map => {
-                // Native Parquet Map<String, String>
-                DataType::Map(
-                    Arc::new(Field::new(
-                        "entries",
-                        DataType::Struct(
-                            vec![
-                                Field::new("key", DataType::Utf8, false),
-                                Field::new("value", DataType::Utf8, true),
-                            ]
-                            .into(),
-                        ),
-                        false,
-                    )),
-                    false,
-                )
-            }
-        };
-        Ok(arrow_type)
+        // Use the to_arrow_type method which handles all types
+        Ok(data_type.to_arrow_type())
     }
 
     /// Generate cache key for schema configuration
@@ -793,6 +863,7 @@ impl FilterableData {
     /// Convert to Arrow DataType
     pub fn to_arrow_type(&self) -> DataType {
         match self {
+            // Basic types (original)
             FilterableData::String => DataType::Utf8,
             FilterableData::Integer => DataType::Int64,
             FilterableData::Float => DataType::Float64,
@@ -822,6 +893,90 @@ impl FilterableData {
                     false,
                 )
             }
+
+            // Rich text types (NEW)
+            FilterableData::Text(_) => DataType::LargeUtf8,
+            FilterableData::TextLarge => DataType::LargeUtf8,
+
+            // Precision numeric types (NEW)
+            FilterableData::Decimal { precision, scale } => {
+                DataType::Decimal128(*precision, *scale as i8)
+            }
+
+            // Temporal types (NEW)
+            FilterableData::TimestampTz { timezone } => {
+                DataType::Timestamp(TimeUnit::Microsecond, Some(timezone.clone().into()))
+            }
+            FilterableData::Date => DataType::Date32,
+            FilterableData::Time => DataType::Time64(TimeUnit::Microsecond),
+
+            // Identifier types (NEW)
+            FilterableData::Uuid => DataType::FixedSizeBinary(16),
+
+            // Binary types (NEW)
+            FilterableData::Binary => DataType::Binary,
+
+            // Geospatial types (NEW)
+            FilterableData::GeoPoint => DataType::Struct(
+                vec![
+                    Field::new("latitude", DataType::Float64, false),
+                    Field::new("longitude", DataType::Float64, false),
+                    Field::new("altitude", DataType::Float64, true),
+                ]
+                .into(),
+            ),
+            FilterableData::GeoPolygon => DataType::List(Arc::new(Field::new(
+                "point",
+                DataType::Struct(
+                    vec![
+                        Field::new("latitude", DataType::Float64, false),
+                        Field::new("longitude", DataType::Float64, false),
+                    ]
+                    .into(),
+                ),
+                false,
+            ))),
+        }
+    }
+
+    /// Check if this type is a TEXT variant
+    pub fn is_text(&self) -> bool {
+        matches!(self, FilterableData::Text(_) | FilterableData::TextLarge)
+    }
+
+    /// Check if this type supports range queries
+    pub fn supports_range(&self) -> bool {
+        matches!(
+            self,
+            FilterableData::Integer
+                | FilterableData::Float
+                | FilterableData::Decimal { .. }
+                | FilterableData::Datetime
+                | FilterableData::TimestampTz { .. }
+                | FilterableData::Date
+                | FilterableData::Time
+        )
+    }
+
+    /// Check if this type supports fulltext search
+    pub fn supports_fulltext(&self) -> bool {
+        matches!(self, FilterableData::Text(_) | FilterableData::TextLarge)
+    }
+
+    /// Get storage size hint in bytes (0 for variable size)
+    pub fn storage_size_hint(&self) -> usize {
+        match self {
+            FilterableData::Integer => 8,
+            FilterableData::Float => 8,
+            FilterableData::Decimal { .. } => 16,
+            FilterableData::Boolean => 1,
+            FilterableData::Datetime => 8,
+            FilterableData::TimestampTz { .. } => 8,
+            FilterableData::Date => 4,
+            FilterableData::Time => 8,
+            FilterableData::Uuid => 16,
+            FilterableData::GeoPoint => 24,
+            _ => 0, // Variable size
         }
     }
 }

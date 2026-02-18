@@ -120,7 +120,7 @@ impl EnhancedQuasarEngine {
         Ok(ComplianceAwareHybridResult {
             query_result: compliance_validated_result,
             compliance_metadata: ComplianceMetadata {
-                data_classification: data_classification,
+                data_classification,
                 compliance_validations_applied: compliance_optimized_query.validations_applied,
                 regulatory_frameworks_validated: compliance_optimized_query.frameworks_validated,
                 audit_trail_id: self.regulatory_audit_integration.get_last_audit_id(),

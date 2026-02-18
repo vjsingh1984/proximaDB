@@ -97,7 +97,7 @@ impl OrchestratorIntegration for UnifiedCachingFilesystem {
         key: &str,
     ) -> Vec<String> {
         // Get correlated items from pattern tracker
-        let pattern_tracker = orchestrator.pattern_tracker();
+        let _pattern_tracker = orchestrator.pattern_tracker();
 
         // For now, return empty as the pattern tracker doesn't expose correlation methods directly
         // In a real implementation, we would need to enhance the pattern tracker API

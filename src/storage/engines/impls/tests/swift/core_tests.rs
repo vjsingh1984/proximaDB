@@ -13,8 +13,6 @@
 //! - engine.rs (2 tests)
 //! - id_index.rs (1 test)
 
-use super::helpers::*;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::swift::id_index::{BlockLocation, IdIndex};
 use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
@@ -27,7 +25,7 @@ use std::sync::Arc;
 async fn test_swift_engine_creation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Need to create distance engine and axis manager for new()
-    let distance_engine = Arc::new(
+    let _distance_engine = Arc::new(
         crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
             crate::compute::distance_computation::DistanceMetric::Euclidean,
         ),
@@ -43,7 +41,7 @@ async fn test_swift_engine_creation() {
 async fn test_swift_feature_support() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
     // Need to create distance engine and axis manager for new()
-    let distance_engine = Arc::new(
+    let _distance_engine = Arc::new(
         crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
             crate::compute::distance_computation::DistanceMetric::Euclidean,
         ),

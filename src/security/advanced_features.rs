@@ -29,6 +29,7 @@ pub struct MFAService {
     active_sessions: Arc<DashMap<String, MFASession>>,
 
     /// MFA providers (TOTP, SMS, Email, etc.)
+    #[allow(dead_code)]
     providers: HashMap<MFAProvider, Box<dyn MFAProviderImpl + Send + Sync>>,
 
     /// Audit logger for MFA events
@@ -65,6 +66,7 @@ pub enum MFAProvider {
 /// MFA session state
 #[derive(Debug, Clone)]
 pub struct MFASession {
+    #[allow(dead_code)]
     pub session_id: String,
     pub user_id: String,
     pub tenant_id: Option<String>,
@@ -111,7 +113,7 @@ impl MFAService {
     /// Check if MFA is required for user/operation
     pub async fn is_mfa_required(
         &self,
-        user_context: &UnifiedUserContext,
+        _user_context: &UnifiedUserContext,
         requested_permission: &UnifiedPermission,
     ) -> bool {
         if !self.config.enabled {

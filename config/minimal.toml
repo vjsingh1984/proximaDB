@@ -25,9 +25,9 @@ enable_tls = false
 metrics_enabled = false
 log_level = "info"
 
-[security]
-enabled = false
-mode = "development"
+# [security]
+# enabled = false
+# mode = "development"
 
 [cache]
 total_memory_mb = 128

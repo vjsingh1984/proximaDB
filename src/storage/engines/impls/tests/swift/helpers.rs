@@ -16,7 +16,6 @@
 //! - SwiftFile manipulation
 //! - Search helpers
 
-use anyhow::Result;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
@@ -264,12 +263,12 @@ pub fn unique_collection_id(prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::traits::UnifiedStorageEngine;
 
     #[tokio::test]
-    #[ignore = "engine_name() method not found"]
     async fn test_create_test_engine() {
         let engine = create_test_engine().await;
-        // assert_eq!(engine.engine_name(), "SWIFT");
+        assert_eq!(engine.engine_name(), "SWIFT");
     }
 
     #[test]
@@ -299,12 +298,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "collection_id, dimension, and path fields not found on SwiftFile"]
     fn test_create_test_swift_file() {
-        let _swift_file = create_test_swift_file("test_collection", 128);
-        // assert_eq!(swift_file.collection_id, "test_collection"); // Field not found
-        // assert_eq!(swift_file.dimension, 128); // Field not found
-        // assert!(swift_file.path.to_str().unwrap().contains("test_collection")); // Field not found
-        assert!(true); // Placeholder - fields not accessible
+        let swift_file = create_test_swift_file("test_collection", 128);
+        // Fields are in header, not directly on SwiftFile
+        assert_eq!(swift_file.header.collection_id, "test_collection");
+        assert_eq!(swift_file.header.dimension, 128);
+        // SwiftFile doesn't have a path field - path is managed externally
     }
 }

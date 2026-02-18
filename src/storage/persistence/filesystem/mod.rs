@@ -49,7 +49,7 @@
 //!
 //! ### 1. **Transparent Backend Selection**
 //! Automatic routing based on URL scheme:
-//! ```rust
+//! ```rust,ignore
 //! use std::sync::Arc;
 //! // Create a factory and get a filesystem by URL
 //! let factory = Arc::new(FilesystemFactory::create_default().await?);
@@ -127,7 +127,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use std::sync::Arc;
 //! use proximadb::storage::persistence::filesystem::{FilesystemFactory, FileOptions};
 //!
@@ -190,6 +190,7 @@ pub mod metadata_traits;
 pub mod orchestrator_integration;
 pub mod prefetch_engine;
 pub mod range_optimizer;
+pub mod smart_io;
 pub mod unified;
 pub mod unified_cache;
 pub mod unified_config;
@@ -542,7 +543,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Get memory-mapped access to a file (only supported for local filesystem)
     /// Returns None if memory mapping is not supported (e.g., cloud storage)
     /// The returned mmap is read-only and safe for concurrent access
-    async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
+    async fn get_mmap(&self, _path: &str) -> FsResult<Option<memmap2::Mmap>> {
         // Default implementation returns None (not supported)
         // LocalFileSystem will override this to provide actual memory mapping
         Ok(None)
@@ -868,7 +869,7 @@ impl FilesystemFactory {
     /// ```ignore
     /// let factory = FilesystemFactory::create_default().await?;
     /// let fs = factory.get_filesystem("file:///tmp/data")?;
-    /// ```
+    /// ```text
     pub async fn create_default() -> FsResult<Self> {
         Self::create(FilesystemConfig::default()).await
     }
@@ -888,7 +889,7 @@ impl FilesystemFactory {
     ///     ..Default::default()
     /// };
     /// let factory = FilesystemFactory::create(config).await?;
-    /// ```
+    /// ```text
     pub async fn create(config: FilesystemConfig) -> FsResult<Self> {
         let mut factory = Self {
             config,
@@ -967,7 +968,7 @@ impl FilesystemFactory {
     ///
     /// ## Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // Instead of:
     /// let fs = factory.get_filesystem("s3://bucket")?;
     /// let cached_fs = IntelligentFilesystem::new(fs, collection_id, engine_type);
@@ -978,7 +979,7 @@ impl FilesystemFactory {
     ///     collection_id,
     ///     engine_type,
     /// )?;
-    /// ```
+    /// ```text
     #[deprecated(
         since = "1.0.0",
         note = "Use get_unified_caching_filesystem instead. This method now redirects to it."
@@ -996,13 +997,13 @@ impl FilesystemFactory {
     /// Create filesystem with unified caching
     ///
     /// # Example
-    /// ```
+    /// ```text
     /// let cached_fs = factory.get_unified_caching_filesystem(
     ///     "s3://bucket/collection",
     ///     "collection_123".to_string(),
     ///     "sst".to_string(),
     /// )?;
-    /// ```
+    /// ```text
     pub fn get_unified_caching_filesystem(
         &self,
         url: &str,
@@ -1055,9 +1056,9 @@ impl FilesystemFactory {
 
     /// Cross-storage atomic operations - handles full URLs for source and destination
     pub async fn copy_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
-        info!("📋 [DEBUG] copy_atomic START");
-        info!("    from_url: {}", from_url);
-        info!("    to_url: {}", to_url);
+        trace!("📋 [] copy_atomic START");
+        trace!("from_url: {}", from_url);
+        trace!("to_url: {}", to_url);
         debug!("📋 [DEBUG] copy_atomic START");
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
@@ -1069,15 +1070,15 @@ impl FilesystemFactory {
         let from_path = Self::resolve_path(from_url)?;
         let to_path = Self::resolve_path(to_url)?;
 
-        info!("    from_path: {}", from_path);
-        info!("    to_path: {}", to_path);
+        trace!("from_path: {}", from_path);
+        trace!("to_path: {}", to_path);
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
 
         // Open source and destination files for streaming
-        info!("    📖 Opening source file for streaming...");
+        trace!("Opening source file for streaming...");
         let mut source_file = from_fs.open_file(&from_path, false).await?;
-        info!("    💾 Opening destination file for streaming...");
+        trace!("Opening destination file for streaming...");
         let mut dest_file = to_fs.open_file(&to_path, true).await?;
 
         // Stream data in chunks
@@ -1094,42 +1095,42 @@ impl FilesystemFactory {
         dest_file.flush().await?;
         dest_file.sync_all().await?;
 
-        info!("    ✅ Streaming copy complete");
+        trace!("Streaming copy complete");
         debug!("    ✅ [DEBUG] Streaming copy complete");
 
-        info!("📋 [DEBUG] copy_atomic COMPLETE");
+        trace!("📋 [] copy_atomic COMPLETE");
         debug!("📋 [DEBUG] copy_atomic COMPLETE");
         Ok(())
     }
 
     /// Move operation with atomic cross-storage support
     pub async fn move_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
-        info!("🚚 [DEBUG] move_atomic START");
-        info!("    from_url: {}", from_url);
-        info!("    to_url: {}", to_url);
+        trace!("🚚 [] move_atomic START");
+        trace!("from_url: {}", from_url);
+        trace!("to_url: {}", to_url);
         debug!("🚚 [DEBUG] move_atomic called:");
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
 
         // Copy first using streaming copy
-        info!("    📋 Copying file atomically (streaming)...");
+        trace!("Copying file atomically (streaming)...");
         debug!("    📋 [DEBUG] Copying file atomically (streaming)...");
         self.copy_atomic(from_url, to_url).await?;
-        info!("    ✅ Streaming copy successful");
+        debug!("Streaming copy successful");
         debug!("    ✅ [DEBUG] Streaming copy successful");
 
         // Delete source after successful copy
-        info!("    🗑️ Deleting source file...");
+        trace!("Deleting source file...");
         debug!("    🗑️ [DEBUG] Deleting source file...");
         let from_fs = self.get_filesystem(from_url)?;
         let from_path = Self::resolve_path(from_url)?;
-        info!("    from_path extracted: {}", from_path);
+        trace!("from_path extracted: {}", from_path);
         debug!("    [DEBUG] from_path extracted: {}", from_path);
         from_fs.delete(&from_path).await?;
-        info!("    ✅ Delete successful");
+        trace!("Delete successful");
         debug!("    ✅ [DEBUG] Delete successful");
 
-        info!("🚚 [DEBUG] move_atomic COMPLETE");
+        trace!("🚚 [] move_atomic COMPLETE");
         debug!("🚚 [DEBUG] move_atomic COMPLETE");
         Ok(())
     }
@@ -1480,9 +1481,7 @@ impl FilesystemFactory {
     }
 
     /// Create a zero-copy filesystem wrapper for intelligent caching and optimization
-    ///
     // create_zero_copy_filesystem removed - functionality integrated into get_unified_caching_filesystem
-
     /// Unified filesystem operations - automatically route to correct backend
     pub async fn read(&self, url: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("🔍 FilesystemFactory::read() - URL: {}", url);
@@ -1702,8 +1701,8 @@ mod inline_tests {
 
     #[tokio::test]
     async fn test_path_extraction() {
-        let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::create(config).await.unwrap();
+        let _config = FilesystemConfig::default();
+        let _factory = FilesystemFactory::create(_config).await.unwrap();
 
         assert_eq!(
             FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),

@@ -17,6 +17,7 @@ pub struct ColumnarSchema {
     schema_cache: Arc<RwLock<HashMap<String, CachedSchema>>>,
 
     /// Default configuration
+    #[allow(dead_code)]
     default_config: QuantizationConfig,
 }
 
@@ -109,7 +110,7 @@ impl ColumnarSchema {
         if config.enable_binary.unwrap_or(false) {
             fields.push(Field::new(
                 "vector_binary",
-                DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+                DataType::FixedSizeBinary(dimension.div_ceil(8) as i32),
                 true,
             ));
             debug!("Added binary quantization column");
@@ -268,7 +269,7 @@ impl ColumnarSchema {
                     ) {
                         compatibility
                             .breaking_changes
-                            .push(format!("Incompatible type change: {}", change));
+                            .push(format!("Incompatible type change: {change}"));
                         compatibility.is_compatible = false;
                     }
                 }
@@ -413,7 +414,7 @@ impl ColumnarSchema {
             {
                 fields.push(Arc::new(Field::new(
                     "vector_binary",
-                    DataType::FixedSizeBinary(((new_requirements.dimension + 7) / 8) as i32),
+                    DataType::FixedSizeBinary(new_requirements.dimension.div_ceil(8) as i32),
                     true,
                 )));
             }

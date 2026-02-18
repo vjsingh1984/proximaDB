@@ -692,11 +692,15 @@ mod tests {
     fn create_test_index_entries() -> Vec<IndexEntry> {
         vec![IndexEntry {
             key: "vec1".to_string(),
+            last_key: None,
             offset: 0,
             size: 1024,
             block_id: 0,
             block_offset: 0,
             compressed: false,
+            block_centroid: Vec::new(),
+            block_centroid_fp16: None,
+            zorder_code: None,
             metadata_min_values: HashMap::from([(
                 "category".to_string(),
                 serde_json::json!("books"),

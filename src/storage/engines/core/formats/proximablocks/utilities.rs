@@ -4,12 +4,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::block_structures::BlockStatistics;
-use super::{BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, RowBasedConfig};
-use crate::core::compression::CompressionAlgorithm;
+use super::{ProximaDataBlock, RowBasedConfig};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::proto::v1::VectorRecord;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -133,10 +130,10 @@ impl RowBasedUtilities {
             // Check for NaN or infinite values
             for (i, &value) in record.vector.iter().enumerate() {
                 if value.is_nan() {
-                    record_issues.push(format!("NaN value at position {}", i));
+                    record_issues.push(format!("NaN value at position {i}"));
                 }
                 if value.is_infinite() {
-                    record_issues.push(format!("Infinite value at position {}", i));
+                    record_issues.push(format!("Infinite value at position {i}"));
                 }
             }
 
@@ -373,7 +370,7 @@ impl PathResolver {
     pub fn resolve_backup_path(collection_path: &Path, timestamp: i64) -> PathBuf {
         collection_path
             .join("backups")
-            .join(format!("backup_{}", timestamp))
+            .join(format!("backup_{timestamp}"))
     }
 }
 
@@ -585,10 +582,97 @@ pub struct PerformanceProfile {
     pub peak_memory_bytes: usize,
 }
 
+/// Compute a deterministic score from a centroid for clustering.
+///
+/// Uses the sum of the first 8 dimensions to create a simple but effective
+/// ordering that groups similar vectors together in physical storage.
+/// This is used by SST, SWIFT, and HELIX for block clustering.
+///
+/// # Arguments
+/// * `centroid` - Vector centroid (typically mean of block vectors)
+///
+/// # Returns
+/// Floating-point score for sorting blocks
+///
+/// # Example
+/// ```rust,ignore
+/// let centroid = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+/// let score = centroid_score(&centroid);
+/// // score = 36.0 (sum of first 8 elements)
+/// ```
+pub fn centroid_score(centroid: &[f32]) -> f32 {
+    centroid.iter().take(8).copied().sum()
+}
+
+/// Cluster blocks by centroid distance to improve pruning and cache locality.
+///
+/// This function reorders blocks based on their centroid scores while preserving
+/// the logical ID-to-block mapping through index updates. Used by SST, SWIFT, and
+/// HELIX engines for spatial locality optimization.
+///
+/// # Type Parameters
+/// * `B` - Block type
+/// * `I` - Index entry type (must provide centroid via `get_centroid`)
+///
+/// # Arguments
+/// * `blocks` - Vector of data blocks to cluster
+/// * `index_entries` - Corresponding index entries with centroid information
+/// * `get_centroid` - Function to extract centroid from index entry
+///
+/// # Returns
+/// Tuple of (clustered_blocks, reordered_index_entries)
+///
+/// # Example
+/// ```rust,ignore
+/// let (clustered_blocks, clustered_index) = cluster_blocks_by_centroid(
+///     data_blocks,
+///     index_entries,
+///     |entry| &entry.block_centroid
+/// );
+/// // Physical layout is now optimized for locality
+/// // Logical index still provides correct key-based lookups
+/// ```
+pub fn cluster_blocks_by_centroid<B, I, F>(
+    blocks: Vec<B>,
+    index_entries: Vec<I>,
+    get_centroid: F,
+) -> (Vec<B>, Vec<I>)
+where
+    F: Fn(&I) -> &[f32],
+{
+    if blocks.len() != index_entries.len() {
+        // Mismatched lengths - return unchanged
+        return (blocks, index_entries);
+    }
+
+    // Compute score for each block and pair with data
+    let mut clustered: Vec<(f32, B, I)> = blocks
+        .into_iter()
+        .zip(index_entries)
+        .map(|(block, entry)| {
+            let score = centroid_score(get_centroid(&entry));
+            (score, block, entry)
+        })
+        .collect();
+
+    // Sort by centroid score (deterministic ordering)
+    clustered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Unzip into separate vectors maintaining clustered order
+    let (blocks, index_entries): (Vec<B>, Vec<I>) = clustered
+        .into_iter()
+        .map(|(_, block, entry)| (block, entry))
+        .unzip();
+
+    (blocks, index_entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::VectorRecord;
+    use crate::storage::common::FilenameCodec;
+    use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
 
     #[test]
     fn test_memory_usage_calculation() {
@@ -618,9 +702,9 @@ mod tests {
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             quantized_section: None,
-            metadata: ProximaBlockMetadata::default(),
-            compression_config: BlockCompressionConfig::default(),
-            compression_algorithm: CompressionAlgorithm::None,
+            metadata: crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata::default(),
+            compression_config: crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig::default(),
+            compression_algorithm: crate::core::compression::CompressionAlgorithm::None,
             uncompressed_size: 0,
             bloom_filter: None,
             block_bloom_filter: None,

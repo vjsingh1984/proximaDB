@@ -47,6 +47,7 @@ pub struct ConfigReloader {
     config_path: String,
 
     /// Config loader
+    #[allow(dead_code)]
     loader: ConfigLoader,
 
     /// File modification time tracking
@@ -270,7 +271,6 @@ impl ConfigReloader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{Duration, sleep};
 
     #[tokio::test]
     async fn test_config_change_detection() {

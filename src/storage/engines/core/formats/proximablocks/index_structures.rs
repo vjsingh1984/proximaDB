@@ -2,7 +2,6 @@
 // ID indexing, bloom filters, and hierarchical index management
 
 use anyhow::Result;
-use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
 use super::block_structures::BlockLocation;
@@ -26,12 +25,14 @@ pub struct RowBasedIdIndex {
     /// Bloom filter builders for existence checks (built during construction)
     bloom_filter_builders: Vec<BloomFilterBuilder>,
     /// Final bloom filters (created after construction)
+    #[allow(dead_code)]
     bloom_filters: Vec<SstableBloomFilter>,
 
     /// Index statistics
     statistics: IndexStatistics,
 
     /// Configuration
+    #[allow(dead_code)]
     config: IndexConfiguration,
 }
 
@@ -81,7 +82,9 @@ pub struct DenseIndex {
     config: DenseIndexConfig,
 
     /// Current capacity and growth
+    #[allow(dead_code)]
     current_capacity: u64,
+    #[allow(dead_code)]
     next_id: u64,
 }
 
@@ -225,17 +228,23 @@ pub struct EntryMetadata {
 #[derive(Debug)]
 pub struct HierarchicalIndex {
     /// All levels in the hierarchy
+    #[allow(dead_code)]
     levels: Vec<HierarchicalLevel>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: HierarchicalConfig,
 
     /// Current state
+    #[allow(dead_code)]
     current_height: u8,
+    #[allow(dead_code)]
     total_entries: u64,
 
     /// Maintenance state
+    #[allow(dead_code)]
     last_rebalance: i64,
+    #[allow(dead_code)]
     needs_rebalancing: bool,
 }
 
@@ -243,18 +252,23 @@ pub struct HierarchicalIndex {
 #[derive(Debug)]
 pub struct MultiLevelIndex {
     /// Primary fast index (hash)
+    #[allow(dead_code)]
     primary_index: HashMap<String, BlockLocation>,
 
     /// Secondary sorted index (B+ tree)
+    #[allow(dead_code)]
     secondary_index: BTreeMap<String, BlockLocation>,
 
     /// Tertiary hierarchical index for range queries
+    #[allow(dead_code)]
     hierarchical_index: Option<HierarchicalIndex>,
 
     /// Bloom filters at each level
+    #[allow(dead_code)]
     bloom_filters: Vec<SstableBloomFilter>,
 
     /// Index selection statistics
+    #[allow(dead_code)]
     access_patterns: HashMap<String, AccessPattern>,
 }
 
@@ -524,9 +538,9 @@ impl RowBasedIdIndex {
     /// Range lookup in hierarchical index
     async fn range_lookup_hierarchical(
         &self,
-        start_key: &str,
-        end_key: &str,
-        limit: usize,
+        _start_key: &str,
+        _end_key: &str,
+        _limit: usize,
     ) -> Vec<(String, BlockLocation)> {
         // Simplified implementation - would need proper range navigation
         Vec::new()

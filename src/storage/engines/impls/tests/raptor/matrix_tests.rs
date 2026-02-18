@@ -23,15 +23,12 @@ use super::helpers::*;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tempfile::TempDir;
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use crate::storage::engines::impls::raptor::common::{
-    InterCentroidMatrix, VectorCentroidMatrix, VectorCentroidStorageStrategy,
-};
+use crate::storage::engines::impls::raptor::common::VectorCentroidStorageStrategy;
+use crate::storage::engines::impls::raptor::consolidated_reader::IntraRowgroupMatrix;
 use crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder;
 
 // ============================================================================
@@ -252,9 +249,7 @@ fn test_p2_matrix_memory_scaling() {
 async fn test_p2_matrix_search_integration() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::storage::engines::impls::raptor::consolidated_reader::{
-        IntraRowgroupMatrix, RaptorReader,
-    };
+    // use crate::storage::engines::impls::raptor::consolidated_reader::{  // Unclosed delimiter - commented out
 
     // Create test P² matrix
     let p2_matrix = P2Matrix {

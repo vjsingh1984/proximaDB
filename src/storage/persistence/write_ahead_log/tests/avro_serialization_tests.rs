@@ -463,10 +463,12 @@ mod integration_tests {
                 entries_flushed: Some(10),
                 bytes_written: Some(1024),
                 files_created: Some(1),
+                file_paths: vec![],
                 duration_ms: Some(100),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: vec![],
             })
         }

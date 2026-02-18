@@ -9,13 +9,7 @@
 //! with dynamic schema generation and metadata separation.
 
 use anyhow::{Context, Result};
-use uuid::Uuid;
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
-use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, StreamingParquetWriter,
-    constants::{FIELD_ID, FIELD_VECTOR_FP32},
-};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -23,8 +17,6 @@ use tracing::{debug, error, info, warn};
 // Use core compression directly instead of adapter
 use crate::core::compression::StandardCompression;
 // Use unified quantization engine
-use crate::compute::distance_computation::UnifiedDistanceCompute;
-use crate::compute::quantization::{UnifiedQuantizationEngine, unified::InMemoryCodebookStore};
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -35,6 +27,8 @@ use crate::storage::transaction_coordinator::{
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
+
+use super::viper_meta_collector::{ViperCollectorConfig, ViperMetadataCollector};
 
 /// Flush operations for VIPER storage engine with atomic writes
 pub struct Flush {
@@ -52,7 +46,7 @@ pub struct Flush {
     atomic_coordinator: Arc<TransactionCoordinator>,
 
     /// Direct compression provider (no adapter indirection)
-    compression_provider: StandardCompression,
+    _compression_provider: StandardCompression,
 
     /// Metrics updater for flush operation tracking
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
@@ -113,7 +107,7 @@ impl Flush {
             collection_service,
             filesystem_factory,
             atomic_coordinator,
-            compression_provider,
+            _compression_provider: compression_provider,
             metrics_updater: None, // Set via set_metrics_updater for dependency injection
             quantization_engine,
         })
@@ -213,9 +207,11 @@ impl Flush {
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
+                file_paths: vec![],
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(), // ✅ Empty for empty flush
                 engine_metrics: {
                     let mut metrics = std::collections::HashMap::new();
@@ -378,7 +374,16 @@ impl Flush {
             sort_columns: vec![],
             id_less_storage: false,
             filterable_metadata_columns: None,
-            quantization: Default::default(),
+            quantization: {
+                // Enable quantization for VIPER progressive search (Binary → INT8 → FP32)
+                // VIPER uses aggressive quantization for columnar analytics workloads
+                let mut qconfig = crate::proto::proximadb_v1::QuantizationConfig::default();
+                qconfig.enabled = Some(true);
+                qconfig.enable_progressive_search = Some(true);
+                qconfig.binary_filter_selectivity = Some(0.1);
+                qconfig.int8_ranking_selectivity = Some(0.3);
+                qconfig
+            },
             max_records_per_file: None,
             target_file_size_bytes: Some(128 * 1024 * 1024), // 128MB
             enable_async_io: true,
@@ -407,15 +412,22 @@ impl Flush {
             .and_then(|c| c.config.as_ref())
             .map(|config| config.filterable_columns.clone());
 
+        // Create VIPER metadata collector for centroid-based row group pruning
+        let viper_collector = ViperMetadataCollector::new(ViperCollectorConfig {
+            compute_centroids: true,
+            compute_radius: true,
+            sample_rate: 1.0, // Sample all vectors for accurate radius
+        });
+
         // Use HybridParquetWriter::write_with_cache like NOVA does
-        let (stats, _metadata_collector) = match crate::storage::engines::core::formats::columnar::hybrid_writer::HybridParquetWriter::write_with_cache(
+        let (stats, returned_collector) = match crate::storage::engines::core::formats::columnar::hybrid_writer::HybridParquetWriter::write_with_cache(
             &sorted_records,
             vector_dimensions as usize,
             hybrid_config,
             &final_url,
             &*self.filesystem_factory,
             filterable_columns_for_writer, // Pass filterable columns from collection config
-            None, // No metadata collector for VIPER
+            Some(Box::new(viper_collector)), // Pass VIPER metadata collector for centroid computation
         ).await {
             Ok(result) => {
                 debug!("🟩 HYBRID_WRITER: ✅ write_with_cache completed successfully");
@@ -429,6 +441,41 @@ impl Flush {
                 return Err(e.context("Failed to write Parquet via HybridParquetWriter"));
             }
         };
+
+        // Save sidecar metadata file with centroids for row group pruning
+        if let Some(collector) = returned_collector {
+            let sidecar_ext = collector.sidecar_extension();
+            if !sidecar_ext.is_empty() {
+                match collector.serialize_metadata() {
+                    Ok(sidecar_bytes) if !sidecar_bytes.is_empty() => {
+                        // Generate sidecar file path (same as parquet but with .viper_meta extension)
+                        let sidecar_url =
+                            final_url.replace(".parquet", &format!(".{}", sidecar_ext));
+                        if let Ok(fs) = self.filesystem_factory.get_filesystem(&sidecar_url) {
+                            match fs.write(&sidecar_url, &sidecar_bytes, None).await {
+                                Ok(_) => {
+                                    debug!(
+                                        "🟩 VIPER: Saved centroid sidecar metadata to {}",
+                                        sidecar_url
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!("⚠️ VIPER: Failed to save sidecar metadata: {}", e);
+                                    // Continue even if sidecar fails - Parquet file is the primary data
+                                }
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        // Empty metadata - likely dimension not detected
+                        debug!("🟩 VIPER: No sidecar metadata to save (dimension not detected)");
+                    }
+                    Err(e) => {
+                        warn!("⚠️ VIPER: Failed to serialize sidecar metadata: {}", e);
+                    }
+                }
+            }
+        }
 
         // Since HybridWriter handled everything, create a marker to indicate completion
         let final_file_path = stats.file_path.clone();
@@ -585,6 +632,7 @@ impl Flush {
             entries_flushed: Some(vector_records.len() as u64),
             bytes_written: Some(data_size as u64),
             files_created: Some(1),
+            file_paths: vec![final_file_path.clone()],
             duration_ms: Some(0), // Will be set by high-level flush() method
             completed_at: chrono::Utc::now(),
             flushed_batch_ids: batch_ids
@@ -615,11 +663,13 @@ impl Flush {
                 metrics
             },
             compaction_triggered,
+            compaction_error: None,
         })
     }
 
     /// INT8 Quantization for Parquet columnar storage
     /// Delegates to unified quantization engine for consistency across all engines
+    #[allow(dead_code)]
     fn quantize_to_int8(
         &self,
         fp32_vector: &[f32],
@@ -706,7 +756,7 @@ impl Flush {
         );
 
         // Check if we have UnifiedCachingFilesystem for optimal performance
-        if let Some(unified_fs) =
+        if let Some(_unified_fs) =
             fs.as_any()
                 .downcast_ref::<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>()
         {
@@ -950,6 +1000,7 @@ impl Flush {
     }
 
     /// Apply mixed compression strategy with per-column optimization
+    #[allow(dead_code)]
     fn apply_mixed_compression_strategy(
         &self,
         mut props_builder: parquet::file::properties::WriterPropertiesBuilder,

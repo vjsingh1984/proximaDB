@@ -5,24 +5,19 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::compute::distance_computation::engine::SimilarityResult;
-    use crate::compute::quantization::unified::UnifiedQuantizationLevel;
     use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-    use crate::core::service_types::VectorSearchResponse;
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;
     use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
-    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use anyhow::Result;
-    use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
+    use arrow_array::{Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
     use serde_json::json;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tracing::{debug, error, info};
 
     // Test helpers
     async fn create_test_reader() -> UnifiedParquetReader {
@@ -60,14 +55,14 @@ mod tests {
         .unwrap()
     }
 
-    fn convert_search_params_to_plan(params: &SearchParams, collection_id: &str) -> SearchPlan {
+    fn convert_search_params_to_plan(_params: &SearchParams, collection_id: &str) -> SearchPlan {
         SearchPlan {
             collection_id: collection_id.to_string(),
             collection_config: Some(CollectionConfig {
-                default_distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
+                default_distance_metric: _params.distance_metric.unwrap_or(DistanceMetric::Cosine),
                 vector_dimension: 128,
                 enable_quantization: false,
-                enable_metadata_filtering: params.filter_expression.is_some(),
+                enable_metadata_filtering: _params.filter_expression.is_some(),
                 estimated_document_count: 1000,
             }),
             filterable_columns: vec![],
@@ -81,8 +76,8 @@ mod tests {
                 file_paths: None,
             },
             filter_expression: None,
-            query_vector: params.vector.clone(),
-            top_k: params.top_k.unwrap_or(100) as usize,
+            query_vector: _params.vector.clone(),
+            top_k: _params.top_k.unwrap_or(100) as usize,
             min_score: None,                // No minimum score filter for tests
             enable_early_termination: true, // Enable optimizations by default
         }
@@ -103,15 +98,15 @@ mod tests {
     // Basic Strategy Selection Tests
     #[tokio::test]
     async fn test_reader_creation() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
         // Test passes if reader is created successfully
         assert!(true);
     }
 
     #[tokio::test]
     async fn test_strategy_selection_basic() {
-        let reader = create_test_reader().await;
-        let context = create_test_context();
+        let _reader = create_test_reader().await;
+        let _context = create_test_context();
 
         let params = SearchParams {
             query_vectors: Some(vec![vec![0.1; 128]]),
@@ -127,8 +122,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_strategy_with_filters() {
-        let reader = create_test_reader().await;
-        let context = create_test_context();
+        let _reader = create_test_reader().await;
+        let _context = create_test_context();
 
         let params = SearchParams {
             query_vectors: Some(vec![vec![0.1; 128]]),
@@ -148,11 +143,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_strategy_with_quantization() {
-        let reader = create_test_reader().await;
+        let _reader = create_test_reader().await;
         let context = create_test_context();
         // Note: quantization_columns field removed from CollectionContext
 
-        let params = SearchParams {
+        let _params = SearchParams {
             query_vectors: Some(vec![vec![0.1; 128]]),
             top_k: Some(10),
             distance_metric: Some(DistanceMetric::Cosine),
@@ -167,7 +162,7 @@ mod tests {
     // Filter Expression Tests
     #[tokio::test]
     async fn test_complex_filter_expression() {
-        let filter = FilterExpression::And(vec![
+        let _filter = FilterExpression::And(vec![
             FilterExpression::Comparison {
                 field: "category".to_string(),
                 operator: ComparisonOperator::Equals,
@@ -189,7 +184,7 @@ mod tests {
 
         // Test filter can be created and used
         let params = SearchParams {
-            filter_expression: Some(filter),
+            filter_expression: Some(_filter),
             ..Default::default()
         };
 
@@ -313,7 +308,6 @@ mod tests {
             FixedSizeListBuilder, Float32Builder, ListBuilder, StringBuilder,
         };
         use tokio::fs;
-        use tracing::{debug, error, info};
 
         // Ensure parent directory exists
         if let Some(parent) = std::path::Path::new(file_path).parent() {
@@ -595,6 +589,11 @@ mod tests {
             enable_progressive_search: None,
             filters: None,
             timeout_ms: None,
+            search_mode: crate::core::search::SearchMode::default(),
+            block_prune: crate::core::search::BlockPruneConfig::default(),
+            text_query: None,
+            hybrid_mode: crate::core::search::HybridSearchMode::default(),
+            vector_weight: None,
         };
 
         // Create collection context
@@ -621,16 +620,16 @@ mod tests {
 
         // Debug output
         for (i, result) in results.results.iter().enumerate() {
-            debug!(
+            println!(
                 "Result {}: id={}, similarity={:?}, score={:?}, semantic_similarity={:?}",
                 i, result.id, result.similarity, result.score, result.semantic_similarity
             );
         }
 
         // Also print the actual vectors to verify they were correctly written
-        debug!("Test vectors created:");
+        println!("Test vectors created:");
         for vec in test_vectors_debug.iter() {
-            debug!("  {} -> {:?}", vec.id, vec.vector);
+            println!("  {} -> {:?}", vec.id, vec.vector);
         }
 
         assert_eq!(
@@ -750,9 +749,9 @@ mod tests {
         let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Debug output
-        debug!("Found {} results from parquet file", results.results.len());
+        println!("Found {} results from parquet file", results.results.len());
         if !results.results.is_empty() {
-            debug!(
+            println!(
                 "First result: id={:?}, distance={:?}",
                 results.results[0].id, results.results[0].semantic_similarity
             );

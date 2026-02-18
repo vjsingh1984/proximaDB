@@ -168,7 +168,7 @@ pub struct SyncResult {
 }
 
 /// gRPC service definition for distributed mode
-#[cfg(feature = "distributed")]
+#[cfg(all(feature = "distributed", feature = "compile_protobuf"))]
 pub mod grpc {
     use super::*;
 

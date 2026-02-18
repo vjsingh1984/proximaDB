@@ -1,0 +1,82 @@
+= Graph API Reference
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.lead]
+Graph API for nodes, edges, and traversal. Base path: `/api/v1/graph`.
+
+== Status Notes
+
+* ORION engine is the default (in‑memory CSR).
+* Graph metadata persistence and schema updates are in progress.
+
+== Quick Reference
+
+|===
+| Operation | Method | Endpoint
+
+| Create graph | POST | `/graphs`
+| List graphs | GET | `/graphs`
+| Create node | POST | `/graphs/:id/nodes`
+| Create edge | POST | `/graphs/:id/edges`
+| Traverse | POST | `/graphs/:id/traverse`
+|===
+
+---
+
+== Create Graph
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs \
+  -H "Content-Type: application/json" \
+  -d '{"graph_id": "topology"}'
+----
+
+---
+
+== Create Node
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/nodes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node": {
+      "id": "service-api",
+      "labels": ["Service"],
+      "properties": {"name": "api"}
+    }
+  }'
+----
+
+---
+
+== Create Edge
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/edges \
+  -H "Content-Type: application/json" \
+  -d '{
+    "edge": {
+      "from_node_id": "service-api",
+      "to_node_id": "service-db",
+      "edge_type": "DEPENDS_ON",
+      "weight": 1.0
+    }
+  }'
+----
+
+---
+
+== Traverse
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/traverse \
+  -H "Content-Type: application/json" \
+  -d '{"start_node_id": "service-api", "max_depth": 2}'
+----
+

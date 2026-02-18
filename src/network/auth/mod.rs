@@ -128,7 +128,7 @@ pub struct AuthService {
     config: AuthConfig,
     rbac: RbacService,
     jwt_service: JwtService,
-    providers: HashMap<String, Box<dyn AuthProvider>>,
+    _providers: HashMap<String, Box<dyn AuthProvider>>,
 }
 
 impl AuthService {
@@ -142,7 +142,7 @@ impl AuthService {
             config,
             rbac,
             jwt_service,
-            providers,
+            _providers: providers,
         })
     }
 

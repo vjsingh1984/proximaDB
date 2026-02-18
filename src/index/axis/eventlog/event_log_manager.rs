@@ -345,7 +345,7 @@ impl EventLogManager {
         QueueServiceStats {
             collections_with_queues: self.event_logs.len(),
             total_pending_events: total_events,
-            total_files_tracked: total_files_tracked,
+            total_files_tracked,
         }
     }
 

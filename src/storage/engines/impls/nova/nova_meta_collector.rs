@@ -59,7 +59,7 @@ impl Default for NovaCollectorConfig {
 
 /// Builder for accumulating row group statistics
 struct RowGroupBuilder {
-    row_group_id: usize,
+    _row_group_id: usize,
     vector_count: usize,
     min_values: Vec<f32>,
     max_values: Vec<f32>,
@@ -70,7 +70,7 @@ struct RowGroupBuilder {
 impl RowGroupBuilder {
     fn new(row_group_id: usize, dimension: usize) -> Self {
         Self {
-            row_group_id,
+            _row_group_id: row_group_id,
             vector_count: 0,
             min_values: vec![f32::MAX; dimension],
             max_values: vec![f32::MIN; dimension],

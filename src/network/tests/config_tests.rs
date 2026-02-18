@@ -15,7 +15,7 @@ mod tests {
         assert!(config.enable_rest);
         assert!(config.enable_dashboard);
         assert!(!config.auth.enabled);
-        assert!(!config.rate_limit.enabled); // Now disabled by default
+        assert!(config.rate_limit.enabled); // ENABLED by default (secure by default)
         assert_eq!(config.request_timeout_secs, 30);
         assert_eq!(config.max_request_size, 64 * 1024 * 1024);
         assert_eq!(config.keep_alive_timeout_secs, 60);
@@ -77,7 +77,7 @@ mod tests {
     async fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
 
-        assert!(!config.enabled); // Now disabled by default
+        assert!(config.enabled); // ENABLED by default (secure by default)
         assert_eq!(config.requests_per_minute, 1000);
         assert_eq!(config.burst_size, 100);
         assert!(config.by_ip);

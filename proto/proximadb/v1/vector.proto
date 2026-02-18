@@ -9,4 +9,6 @@ service VectorService {
   rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);
   rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);
   rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);
+  // Streaming search for large result sets - streams individual search results
+  rpc VectorSearchStream(VectorSearchRequest) returns (stream SearchVectorRecord);
 }

@@ -24,6 +24,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 
 /// Common trait for all Parquet writers
+#[allow(async_fn_in_trait)]
 pub trait ParquetWriter: Send + Sync {
     /// Write a batch of records
     async fn write_batch(&mut self, records: &[VectorRecord]) -> Result<()>;

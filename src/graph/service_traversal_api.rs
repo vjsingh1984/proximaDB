@@ -6,7 +6,7 @@
 
 use super::Result;
 use crate::core::error::ProximaDBError;
-use crate::graph::{Node, NodeId};
+use crate::graph::NodeId;
 use tracing::debug;
 
 impl super::GraphOperationsService {
@@ -44,6 +44,8 @@ impl super::GraphOperationsService {
             max_frontier: None,
             enable_prefetch: true,
             prefetch_budget: 8,
+            astar_heuristic:
+                crate::graph::engines::orion::traversal::AStarHeuristic::EuclideanEmbedding,
         };
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
@@ -56,6 +58,7 @@ impl super::GraphOperationsService {
                 )
                 .await?
             }
+            #[cfg(feature = "distributed-graph")]
             crate::graph::engines::GraphEngineImpl::Pulsar(p) => {
                 let nodes = p
                     .cross_shard_traversal(&request.start_node_id, request.max_depth)
@@ -182,6 +185,8 @@ impl super::GraphOperationsService {
             parallel_processing: true,
             timeout_ms: None,
             max_frontier: None,
+            astar_heuristic:
+                crate::graph::engines::orion::traversal::AStarHeuristic::EuclideanEmbedding,
         };
         self.traverse_with_config(graph_id, request, traversal_config)
             .await
@@ -272,6 +277,8 @@ impl super::GraphOperationsService {
                 .unwrap_or(self.graph_settings.enable_prefetch),
             prefetch_budget: override_prefetch_budget
                 .unwrap_or(self.graph_settings.prefetch_budget),
+            astar_heuristic:
+                crate::graph::engines::orion::traversal::AStarHeuristic::EuclideanEmbedding,
         };
         let engine = self.get_or_create_graph_engine(graph_id).await?;
         let orion_engine = match &*engine {

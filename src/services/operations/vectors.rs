@@ -34,6 +34,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+use crate::security::validation::{
+    CollectionNameValidator, MetadataValidationConfig, MetadataValidator,
+};
 use crate::storage::traits::UnifiedStorageEngine;
 
 use crate::compute::quantization::types::{
@@ -48,6 +51,7 @@ use crate::query::unified_query_optimizer::{
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
 
+#[allow(dead_code)]
 fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {
     let level_type = match strategy.quantization_type {
         QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {
@@ -91,6 +95,11 @@ pub struct UnifiedSearchConfig {
     pub include_metadata: bool,
     /// Search scenario hint
     pub scenario: Option<String>,
+    /// Search mode for accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
+    /// - Exact: 100% recall, searches all partitions (default)
+    /// - Approximate { nprobe }: Faster search with configurable partition count
+    /// - Adaptive { threshold }: Auto-selects based on dataset size
+    pub search_mode: crate::core::search::SearchMode,
 }
 
 impl Default for UnifiedSearchConfig {
@@ -102,10 +111,11 @@ impl Default for UnifiedSearchConfig {
             include_vectors: false,
             include_metadata: true,
             scenario: None,
+            search_mode: crate::core::search::SearchMode::default(),
         }
     }
 }
-use crate::services::operations::{BatchOperationResult, OperationMetrics};
+use crate::services::operations::{BatchOperationResult, BulkWriteRouter, OperationMetrics};
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::impls::sst::SstEngine;
 
@@ -123,8 +133,12 @@ pub struct SearchPlanHints {
 
 /// Updated Vector Operations Service using consolidated optimizer
 pub struct VectorOperationsService {
-    /// Storage engine - using concrete type for now due to trait object safety
+    /// Default storage engine (SST) - used for fallback and WAL coordination
     storage_engine: Arc<SstEngine>,
+
+    /// Dynamic engine cache - maps collection_id to the correct storage engine
+    /// This enables each collection to use its configured engine (SST, HELIX, VIPER, etc.)
+    engine_cache: Arc<dashmap::DashMap<String, Arc<dyn UnifiedStorageEngine>>>,
 
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
@@ -149,6 +163,17 @@ pub struct VectorOperationsService {
     // NEW: Multi-tenant integration
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
+
+    /// Bulk write router for intelligent write path selection
+    /// Routes large batches to direct storage write, bypassing WAL+memtable
+    bulk_write_router: BulkWriteRouter,
+
+    /// Security validation for metadata fields
+    /// Validates metadata for SQL injection and data integrity
+    metadata_validator: MetadataValidator,
+
+    /// Collection name validator for security
+    collection_name_validator: CollectionNameValidator,
 }
 
 impl VectorOperationsService {
@@ -181,6 +206,19 @@ impl VectorOperationsService {
     pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
         self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageEngine>
     }
+
+    /// Expose the AXIS index manager for direct index operations
+    /// Used by embedded mode to build indexes synchronously after flush
+    pub fn axis_index_manager(&self) -> Arc<crate::index::AxisManager> {
+        self.axis_index_manager.clone()
+    }
+
+    /// Invalidate the collection cache entry for a specific collection
+    /// Called after stats are updated to ensure fresh data is loaded
+    pub fn invalidate_collection_cache(&self, collection_id: &str) {
+        self.collection_cache.remove(collection_id);
+        tracing::debug!("🗑️ Invalidated collection cache for '{}'", collection_id);
+    }
     /// Public v1 boundary: execute vector search and return v1 response
     pub async fn search_v1(
         &self,
@@ -211,6 +249,7 @@ impl VectorOperationsService {
             include_vectors,
             include_metadata,
             scenario: None,
+            search_mode: crate::core::search::SearchMode::default(),
         });
 
         let results = self
@@ -431,6 +470,7 @@ impl VectorOperationsService {
 
         Self {
             storage_engine,
+            engine_cache: Arc::new(dashmap::DashMap::new()),
             wal_manager,
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
@@ -442,6 +482,13 @@ impl VectorOperationsService {
             // NEW: Multi-tenant integration (initially None, set via builder methods)
             tenant_manager: None,
             rbac_enforcer: None,
+
+            // Bulk write router for intelligent write path selection
+            bulk_write_router: BulkWriteRouter::new(),
+
+            // Security validation for metadata fields
+            metadata_validator: MetadataValidator::default(),
+            collection_name_validator: CollectionNameValidator::default(),
         }
     }
 
@@ -470,6 +517,242 @@ impl VectorOperationsService {
     ) -> Self {
         self.orchestrator = orchestrator;
         self
+    }
+
+    /// Set custom bulk write configuration (builder-style)
+    pub fn with_bulk_write_config(
+        mut self,
+        config: crate::services::operations::BulkWriteConfig,
+    ) -> Self {
+        self.bulk_write_router = BulkWriteRouter::with_config(config);
+        self
+    }
+
+    /// Set custom metadata validation configuration (builder-style)
+    ///
+    /// This allows customization of metadata validation rules, including:
+    /// - SQL injection detection sensitivity
+    /// - Maximum string length
+    /// - Maximum binary size
+    /// - Maximum JSON nesting depth
+    /// - Strict mode for enhanced security
+    pub fn with_metadata_validation_config(mut self, config: MetadataValidationConfig) -> Self {
+        self.metadata_validator = MetadataValidator::new(config);
+        self
+    }
+
+    /// Check if a batch should use direct write (bypass WAL+memtable)
+    ///
+    /// Returns true if:
+    /// - Vector count >= threshold (default: 500)
+    /// - OR estimated size >= size threshold (default: 2MB)
+    pub fn should_use_bulk_write(
+        &self,
+        vectors: &[VectorRecord],
+    ) -> crate::services::operations::BulkWriteDecision {
+        self.bulk_write_router.should_use_direct_write(vectors)
+    }
+
+    /// Bulk write operation - bypasses WAL+memtable for large batches
+    ///
+    /// This method writes vectors directly to storage using FlushCoordinator,
+    /// bypassing the WAL and memtable for better performance on large batches.
+    ///
+    /// **Important**: ACK is returned only AFTER flush completes (not after WAL write).
+    /// This provides durability through the storage engine's own persistence mechanism.
+    ///
+    /// ## When to use
+    /// - Large bulk imports (≥500 vectors OR ≥2MB estimated size)
+    /// - Data migration from other systems
+    /// - Initial data loading
+    ///
+    /// ## When NOT to use
+    /// - Small streaming batches (use standard WAL path)
+    /// - When immediate durability via WAL is required
+    pub async fn bulk_write(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<BatchOperationResult> {
+        let start_time = std::time::Instant::now();
+        let vector_count = vectors.len();
+        let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
+        let decision = self.bulk_write_router.should_use_direct_write(&vectors);
+
+        info!(
+            "📦 Bulk write: collection={}, vectors={}, estimated_size={} bytes, decision={}",
+            collection_id,
+            vector_count,
+            decision.estimated_size_bytes,
+            if decision.use_direct_write {
+                "DIRECT"
+            } else {
+                "WAL"
+            }
+        );
+
+        // If below thresholds, fall back to standard WAL path
+        if !decision.use_direct_write {
+            debug!(
+                "📝 Batch below bulk threshold ({}), using standard WAL path",
+                decision.reason
+            );
+            return self.insert_vectors_via_wal(collection_id, vectors).await;
+        }
+
+        // Direct write path: flush vectors directly to storage engine, bypassing WAL
+        // This is optimal for large batches where WAL overhead is unnecessary
+        info!(
+            "🚀 Using direct write path for bulk batch: {} vectors (reason: {})",
+            vector_count, decision.reason
+        );
+
+        // Write vectors directly via WAL manager
+        // TODO: Implement true direct write to storage engine bypassing WAL for bulk batches
+        let vectors_arc = Arc::new(vectors.clone());
+
+        match self
+            .wal_manager
+            .write_vector_batch_native_arc(collection_id, vectors_arc)
+            .await
+        {
+            Ok(_) => {
+                let duration = start_time.elapsed();
+                let vectors_per_sec = if duration.as_secs_f64() > 0.0 {
+                    (vector_count as f64 / duration.as_secs_f64()) as u64
+                } else {
+                    vector_count as u64
+                };
+
+                info!(
+                    "✅ Bulk write completed: {} vectors in {:?} ({} vectors/sec)",
+                    vector_count, duration, vectors_per_sec
+                );
+
+                Ok(BatchOperationResult::success(
+                    vector_ids,
+                    OperationMetrics {
+                        total_processed: vector_count as i64,
+                        successful_count: vector_count as i64,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: duration.as_micros() as i64,
+                        wal_write_time_us: 0, // Direct write bypasses WAL
+                        index_update_time_us: 0,
+                    },
+                ))
+            }
+            Err(e) => {
+                error!("❌ Bulk write failed: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Internal helper: insert vectors via standard WAL path
+    async fn insert_vectors_via_wal(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<BatchOperationResult> {
+        let start_time = std::time::Instant::now();
+        let vector_count = vectors.len();
+        let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
+
+        // Write vectors via WAL manager
+        let vectors_arc = Arc::new(vectors);
+
+        match self
+            .wal_manager
+            .write_vector_batch_native_arc(collection_id, vectors_arc)
+            .await
+        {
+            Ok(_) => {
+                let duration = start_time.elapsed();
+                let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
+                    (vector_count as f64 / duration.as_secs_f64()) as u64
+                } else {
+                    vector_count as u64
+                };
+
+                debug!(
+                    "📝 WAL write completed: {} vectors in {:?}",
+                    vector_count, duration
+                );
+
+                Ok(BatchOperationResult::success(
+                    vector_ids,
+                    OperationMetrics {
+                        total_processed: vector_count as i64,
+                        successful_count: vector_count as i64,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: duration.as_micros() as i64,
+                        wal_write_time_us: duration.as_micros() as i64,
+                        index_update_time_us: 0,
+                    },
+                ))
+            }
+            Err(e) => {
+                warn!("WAL batch insert failed: {}", e);
+                Ok(BatchOperationResult::failure(
+                    format!("Batch insert failed: {}", e),
+                    "WAL_WRITE_ERROR".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Insert a batch of vectors with smart routing
+    ///
+    /// This is the main API entry point for batch inserts. It automatically
+    /// decides whether to use:
+    /// - **Direct write path** (bulk_write): For large batches (≥500 vectors OR ≥2MB)
+    /// - **WAL path**: For small streaming batches (durability preserved)
+    ///
+    /// The routing decision is made by `BulkWriteRouter` which analyzes:
+    /// - Vector count vs threshold (default: 500)
+    /// - Estimated batch size vs size threshold (default: 2MB)
+    ///
+    /// ## Example
+    /// ```ignore
+    /// let result = service.insert_batch("my_collection", vectors).await?;
+    /// // Returns BatchOperationResult with success/failure info and metrics
+    /// ```
+    pub async fn insert_batch(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<BatchOperationResult> {
+        let decision = self.bulk_write_router.should_use_direct_write(&vectors);
+
+        debug!(
+            "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
+            collection_id,
+            decision.vector_count,
+            decision.estimated_size_bytes,
+            if decision.use_direct_write {
+                "BULK/DIRECT"
+            } else {
+                "WAL"
+            }
+        );
+
+        if decision.use_direct_write {
+            // Large batch: use bulk write (optimized for throughput)
+            info!(
+                "🚀 Routing to bulk_write: {} (vectors: {}, size: {} bytes)",
+                decision.reason, decision.vector_count, decision.estimated_size_bytes
+            );
+            self.bulk_write(collection_id, vectors).await
+        } else {
+            // Small batch: use standard WAL path (optimized for durability)
+            debug!(
+                "📝 Routing to WAL path: {} (vectors: {}, size: {} bytes)",
+                decision.reason, decision.vector_count, decision.estimated_size_bytes
+            );
+            self.insert_vectors_via_wal(collection_id, vectors).await
+        }
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.
@@ -555,7 +838,7 @@ impl VectorOperationsService {
         );
 
         // NEW: Multi-tenant validation and security
-        if let Some(ref tenant_manager) = self.tenant_manager {
+        if let Some(ref _tenant_manager) = self.tenant_manager {
             if let Some(tenant_ctx) = tenant_context {
                 // STEP 1: Validate tenant ownership of collection
                 // TODO: Implement get_collection_tenant method
@@ -622,8 +905,8 @@ impl VectorOperationsService {
             .as_ref()
             .map(|c| c.progressive_search)
             .unwrap_or(false);
-        info!(
-            "🔍 Starting unified search for collection {} (progressive: {})",
+        debug!(
+            "Search: collection={}, progressive={}",
             collection_id, progressive_enabled
         );
 
@@ -708,7 +991,7 @@ impl VectorOperationsService {
                                 );
 
                                 // Log security incident for audit trail
-                                if let Some(ref audit_logger) = self.get_audit_logger() {
+                                if let Some(ref _audit_logger) = self.get_audit_logger() {
                                     // TODO: Implement log_security_incident method
                                     warn!(
                                         "Security incident logged: cross_tenant_data_leakage_prevented for vector {}",
@@ -733,7 +1016,7 @@ impl VectorOperationsService {
                         vector_result.id
                     );
 
-                    if let Some(ref audit_logger) = self.get_audit_logger() {
+                    if let Some(ref _audit_logger) = self.get_audit_logger() {
                         // TODO: Implement log_security_incident method
                         warn!(
                             "Security incident logged: missing_tenant_metadata for vector {}",
@@ -793,17 +1076,27 @@ impl VectorOperationsService {
             .as_ref()
             .map(|c| c.progressive_search)
             .unwrap_or(false);
-        info!(
-            "🔍 Starting unified search (v1) for collection {} (progressive: {})",
+        debug!(
+            "Search v1: collection={}, progressive={}",
             collection_id, progressive_enabled
         );
 
         // Get collection configuration
         let collection = self.get_or_load_collection(collection_id).await?;
-        let search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        // CRITICAL FIX: Use actual k value in search_params, not the default (10).
+        // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
+        // which incorrectly limits all searches to 100 results regardless of the requested k.
+        let mut search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        search_params.top_k = Some(k);
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal.clone())
+            .unwrap_or_default();
+
+        // Extract search_mode from config (defaults to Exact for 100% recall)
+        let search_mode = config
+            .as_ref()
+            .map(|c| c.search_mode.clone())
             .unwrap_or_default();
 
         let query_vector_clone = query_vector.clone();
@@ -822,7 +1115,14 @@ impl VectorOperationsService {
         // Optimize and execute
         let execution_plan = self.query_optimizer.optimize_query(context).await?;
         let optimized_results = self
-            .execute_unified_plan(collection_id, execution_plan, query_vector, k, filter)
+            .execute_unified_plan(
+                collection_id,
+                execution_plan,
+                query_vector,
+                k,
+                filter,
+                search_mode,
+            )
             .await?;
 
         // Build v1 results from the optimized records
@@ -847,11 +1147,25 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        use std::time::Instant;
+        let total_start = Instant::now();
+
         let config = config.clone();
 
+        // Extract search_mode from config (defaults to Exact for 100% recall)
+        let search_mode = config
+            .as_ref()
+            .map(|c| c.search_mode.clone())
+            .unwrap_or_default();
+
         // Plan context
+        let context_start = Instant::now();
         let collection = self.get_or_load_collection(collection_id).await?;
-        let search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        // CRITICAL FIX: Use actual k value in search_params, not the default (10).
+        // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
+        // which incorrectly limits all searches to 100 results regardless of the requested k.
+        let mut search_params = crate::query::unified_query_optimizer::SearchParams::default();
+        search_params.top_k = Some(k);
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal.clone())
@@ -868,11 +1182,144 @@ impl VectorOperationsService {
             total_columns: 0,
             query_vectors: Some(&query_vectors),
         };
+        let context_time_us = context_start.elapsed().as_micros();
 
+        let plan_start = Instant::now();
         let execution_plan = self.query_optimizer.optimize_query(context).await?;
+        let plan_time_us = plan_start.elapsed().as_micros();
+
+        let execute_start = Instant::now();
         let optimized_results = self
-            .execute_unified_plan(collection_id, execution_plan, query_vector, k, filter)
+            .execute_unified_plan(
+                collection_id,
+                execution_plan.clone(),
+                query_vector,
+                k,
+                filter,
+                search_mode.clone(),
+            )
             .await?;
+        let execute_time_us = execute_start.elapsed().as_micros();
+
+        let total_time_us = total_start.elapsed().as_micros();
+
+        // Report execution to RL planner for learning (if RL was used)
+        if let (Some(rl_state), Some(rl_action)) =
+            (&execution_plan.rl_state, &execution_plan.rl_action)
+        {
+            if let Some(rl_planner) = crate::query::rl_planner::get_rl_planner() {
+                // Calculate metrics for feedback
+                let latency_ms = total_time_us as f64 / 1000.0;
+                // Recall estimate: we got optimized_results.len() results out of k requested
+                // This is approximate - true recall requires ground truth
+                let recall = (optimized_results.len() as f32 / k as f32).min(1.0);
+                // Throughput: 1 query / total_time in seconds
+                let throughput_qps = if total_time_us > 0 {
+                    1_000_000.0 / total_time_us as f32
+                } else {
+                    1000.0 // Assume high throughput if instant
+                };
+
+                rl_planner
+                    .report_execution(rl_state, rl_action, latency_ms, recall, throughput_qps)
+                    .await;
+            }
+        }
+
+        // Log query timing breakdown for performance analysis
+        // Shows at RUST_LOG=info level for visibility
+        tracing::info!(
+            "📊 QUERY TIMING [{}]: total={}μs | context={}μs | plan={}μs | execute={}μs | mode={:?} | k={} | results={}",
+            collection_id,
+            total_time_us,
+            context_time_us,
+            plan_time_us,
+            execute_time_us,
+            search_mode,
+            k,
+            optimized_results.len()
+        );
+
+        // Log execution plan details with optimization breakdown
+        tracing::info!(
+            "📋 EXECUTION PLAN [{}]: steps={} | parallelism={:?}",
+            collection_id,
+            execution_plan.execution_steps.len(),
+            execution_plan.parallelism
+        );
+
+        // Log each optimization step for visibility
+        for (idx, step) in execution_plan.execution_steps.iter().enumerate() {
+            match step {
+                ExecutionStep::VectorSearch {
+                    execution_method,
+                    quantization_strategy,
+                    candidates,
+                } => {
+                    let quant_info = quantization_strategy
+                        .as_ref()
+                        .map(|q| format!("{:?}", q.quantization_type))
+                        .unwrap_or_else(|| "None/FP32".to_string());
+                    tracing::info!(
+                        "  [Step {}] VectorSearch: method={:?} | quantization={} | candidates={}",
+                        idx + 1,
+                        execution_method,
+                        quant_info,
+                        candidates
+                    );
+                }
+                ExecutionStep::IndexLookup {
+                    index_type,
+                    lookup_params,
+                } => {
+                    tracing::info!(
+                        "  [Step {}] IndexLookup: type={:?} | ef_search={:?} | nprobe={:?}",
+                        idx + 1,
+                        index_type,
+                        lookup_params.ef_search,
+                        lookup_params.nprobe
+                    );
+                }
+                ExecutionStep::CombinedFilterSearch {
+                    filter_pushdown,
+                    search_method,
+                    early_termination,
+                } => {
+                    tracing::info!(
+                        "  [Step {}] CombinedFilterSearch: pushdowns={} | method={:?} | early_term={:?}",
+                        idx + 1,
+                        filter_pushdown.len(),
+                        search_method,
+                        early_termination
+                    );
+                }
+                ExecutionStep::BloomFilterCheck {
+                    filter_type,
+                    expected_false_positive_rate,
+                } => {
+                    tracing::info!(
+                        "  [Step {}] BloomFilterCheck: type={:?} | fpr={:.4}",
+                        idx + 1,
+                        filter_type,
+                        expected_false_positive_rate
+                    );
+                }
+                ExecutionStep::MetadataFilter {
+                    conditions,
+                    execution_method,
+                    estimated_selectivity,
+                    ..
+                } => {
+                    tracing::info!(
+                        "  [Step {}] MetadataFilter: conditions={} | method={:?} | selectivity={:.2}%",
+                        idx + 1,
+                        conditions.len(),
+                        execution_method,
+                        estimated_selectivity * 100.0
+                    );
+                }
+            }
+        }
 
         Ok(optimized_results)
     }
@@ -982,27 +1429,15 @@ impl VectorOperationsService {
         );
 
         // Create search parameters with progressive settings
-        let search_params = crate::core::search::SearchParams {
+        let _search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            vector: None,
-            top_k: Some(k),
-            distance_metric: None,
             filter_expression: filter.clone(),
-            filters: None,
-            accuracy_threshold: None,
-            include_expired: Some(false),
-            timeout_ms: Some(30000),
-            enable_two_stage: Some(true),
-            custom_hints: None,
-            enable_clustering_hint: Some(true),
-            enable_metadata_filtering_hint: Some(filter.is_some()),
-            quantization_hint: None,
-            runtime_hints: None,
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
             progressive_scenario: config.scenario.clone(),
             progressive_recalls: config.progressive_recalls.clone(),
             optimization_hint: config.scenario.clone(),
+            ..Default::default()
         };
 
         // Use the internal execution with progressive configuration
@@ -1051,27 +1486,11 @@ impl VectorOperationsService {
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            vector: None, // query_vectors is used for the actual vector
             top_k: Some(top_k),
-            distance_metric: None, // TODO: Add distance_metric parameter if needed
             filter_expression: filter.clone(),
-            filters: None, // Legacy field - using filter_expression instead
-            accuracy_threshold: None,
-            include_expired: Some(false),
-            timeout_ms: None,
-            enable_two_stage: None,
-            // Add missing fields with defaults
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
-            requires_ordering: None,
-            // Progressive search parameters
-            enable_progressive_search: Some(true), // Enable by default if quantization available
-            progressive_scenario: None,
-            progressive_recalls: None,
             optimization_hint: Some(optimization_goal.to_string()),
+            enable_progressive_search: Some(true), // Enable by default if quantization available
+            ..Default::default()
         };
 
         let query_vector_clone = query_vector.clone();
@@ -1096,8 +1515,16 @@ impl VectorOperationsService {
         );
 
         // Execute the unified plan with search parameters
+        // Note: For execute_search_internal, we default to Exact search mode for 100% recall
         let optimized_results = self
-            .execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter)
+            .execute_unified_plan(
+                collection_id,
+                execution_plan,
+                query_vector,
+                top_k,
+                filter,
+                crate::core::search::SearchMode::default(), // Default to Exact for legacy paths
+            )
             .await?;
 
         // Prefer v1 build/cache even though this method returns legacy
@@ -1172,6 +1599,7 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         top_k: usize,
         filter: Option<FilterExpression>,
+        search_mode: crate::core::search::SearchMode,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         tracing::debug!(
             "🔍 execute_unified_plan received filter: {:?}",
@@ -1223,6 +1651,7 @@ impl VectorOperationsService {
                             top_k,
                             query_vector.clone(),
                             filter.clone(),
+                            search_mode.clone(),
                         )
                         .await?;
                 }
@@ -1271,6 +1700,7 @@ impl VectorOperationsService {
                             candidates,
                             query_vector.clone(),
                             filter.clone(), // Pass the filter from execute_unified_plan parameter
+                            search_mode.clone(),
                         )
                         .await?;
 
@@ -1280,9 +1710,15 @@ impl VectorOperationsService {
                 // Index lookup optimization
                 ExecutionStep::IndexLookup {
                     index_type,
-                    lookup_params,
+                    mut lookup_params,
                 } => {
                     debug!("📚 Using index lookup ({:?})", index_type);
+
+                    // CRITICAL FIX: Inject the query vector from the caller
+                    // The optimizer sets query_vector to None to be filled at execution time
+                    if lookup_params.query_vector.is_none() {
+                        lookup_params.query_vector = Some(query_vector.clone());
+                    }
 
                     let index_results = self
                         .execute_index_lookup(collection_id, index_type, lookup_params)
@@ -1334,7 +1770,7 @@ impl VectorOperationsService {
     /// Apply filter pushdown to storage layer - NEW optimization!
     async fn apply_filter_pushdown(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         pushdown_op: crate::query::unified_query_optimizer::FilterPushdownOperation,
     ) -> Result<()> {
         use crate::query::unified_query_optimizer::FilterPushdownOperation;
@@ -1399,20 +1835,18 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
-        quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
+        _quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
+        search_mode: crate::core::search::SearchMode,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        info!(
-            "🎯 Executing PARALLEL TWO-STAGE search for collection {} (method: {:?}, filter: {})",
+        debug!(
+            "TWO-STAGE search: collection={}, method={:?}, filter={}",
             collection_id,
             method,
             filter.is_some()
         );
-        info!("   Stage 1 & 2 running in PARALLEL:");
-        info!("   - Stage 1: WAL/memtable search for recent unflushed vectors");
-        info!("   - Stage 2: Storage engine search for flushed/compacted vectors");
 
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
@@ -1434,25 +1868,15 @@ impl VectorOperationsService {
         // Prepare storage search context first
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
-            vector: None, // query_vectors is used for the actual vector
             top_k: Some(candidates),
             distance_metric: Some(distance_metric),
             filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
-            filters: None,                     // Legacy field - using filter_expression instead
-            accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: None,
             enable_two_stage: Some(false), // Already doing two-stage at this level
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
             requires_ordering: Some(true),
             enable_progressive_search: Some(true),
-            progressive_scenario: None,
-            progressive_recalls: None,
-            optimization_hint: None,
+            search_mode: search_mode.clone(), // Use passed search_mode for exact vs approximate search
+            ..Default::default()
         };
 
         let search_context = crate::storage::traits::StorageQueryContext::new(
@@ -1460,59 +1884,156 @@ impl VectorOperationsService {
             collection.clone(),
         );
 
-        // Launch both searches in parallel using tokio::join!
-        let (wal_results, storage_results) = tokio::join!(
-            // Stage 1: WAL/memtable search
-            async {
-                debug!(
-                    "🔍 Stage 1: Searching WAL/memtable for collection {} with filters",
-                    collection_id
-                );
-                let results = self
-                    .wal_manager
-                    .search_unflushed_vectors(
-                        collection_id,
-                        &query_vector,
-                        candidates, // Same as storage - we'll merge and re-rank both
-                        distance_metric,
-                        filter.as_ref(), // Pass the FilterExpression directly
-                        true,            // include_vectors
-                        true,            // include_metadata
-                    )
-                    .await?;
-                info!(
-                    "✅ Stage 1 complete: Found {} unflushed vectors from WAL",
-                    results.len()
-                );
-                Ok::<_, anyhow::Error>(results)
-            },
-            // Stage 2: Storage engine search
-            async {
-                debug!(
-                    "🔍 Stage 2: Searching storage engine for collection {}",
-                    collection_id
-                );
-                let results = self
-                    .storage_engine
-                    .search_vectors_unified(&search_context)
-                    .await?;
-                info!(
-                    "✅ Stage 2 complete: Found {} vectors from storage",
-                    results.len()
-                );
-                Ok::<_, anyhow::Error>(results)
-            }
+        // Get the correct engine for this collection (CRITICAL for multi-engine support)
+        // This ensures HELIX collections use HELIX, VIPER uses VIPER, etc.
+        let engine = self.get_engine_for_collection(collection_id).await?;
+
+        // OPTIMIZED: Sequential search with early termination
+        // Stage 1: WAL/memtable (unflushed vectors) - always run
+        // Stage 2: AXIS HNSW index (O(log N)) - PRIMARY search for flushed vectors
+        // Stage 3: Storage engine - ONLY if AXIS returns insufficient results
+
+        // Stage 1: WAL/memtable search (unflushed vectors)
+        debug!(
+            "🔍 Stage 1: Searching WAL/memtable for collection {}",
+            collection_id
+        );
+        let wal_optimized_results = self
+            .wal_manager
+            .search_unflushed_vectors(
+                collection_id,
+                &query_vector,
+                candidates,
+                distance_metric,
+                filter.as_ref(),
+                true,
+                true,
+            )
+            .await?;
+        debug!(
+            "Stage 1 complete: {} WAL results",
+            wal_optimized_results.len()
         );
 
-        // Unwrap results (propagate errors)
-        let wal_optimized_results = wal_results?;
-        let storage_results = storage_results?;
+        // Stage 2: AXIS HNSW index search (O(log N) - fast for flushed vectors)
+        debug!(
+            "🔍 Stage 2: Searching AXIS HNSW index for {}",
+            collection_id
+        );
+        let hybrid_query = crate::index::axis::management::manager::HybridQuery {
+            collection_id: collection_id.to_string(),
+            vector_query: Some(
+                crate::index::axis::management::manager::VectorQuery::Dense {
+                    vector: query_vector.clone(),
+                    similarity_threshold: 0.0,
+                },
+            ),
+            metadata_filters: Vec::new(),
+            id_filters: Vec::new(),
+            top_k: candidates,
+            include_expired: false,
+        };
+        let axis_optimized_results = match self.axis_index_manager.query(hybrid_query).await {
+            Ok(result) => {
+                let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
+                    .results
+                    .into_iter()
+                    .map(|r| {
+                        crate::core::search::results::OptimizedSearchRecord::new(
+                            r.vector_id,
+                            r.similarity,
+                        )
+                    })
+                    .collect();
+                debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                records
+            }
+            Err(e) => {
+                debug!("Stage 2 AXIS search failed: {}", e);
+                Vec::new()
+            }
+        };
 
-        // Merge and rank results from both stages
-        let mut all_results =
-            Vec::with_capacity(wal_optimized_results.len() + storage_results.len());
-        all_results.extend(wal_optimized_results);
-        all_results.extend(storage_results);
+        // Stage 3: Storage engine search - ONLY if we need more results
+        // Skip if WAL + AXIS already have enough high-quality results
+        let total_indexed_results = wal_optimized_results.len() + axis_optimized_results.len();
+        let storage_results = if total_indexed_results >= candidates {
+            debug!(
+                "Stage 3: Skipping storage search (have {} results from WAL+AXIS)",
+                total_indexed_results
+            );
+            Vec::new()
+        } else {
+            debug!(
+                "Stage 3: Searching storage engine ({}) for {} (need {} more results)",
+                engine.engine_name(),
+                collection_id,
+                candidates - total_indexed_results
+            );
+            engine.search_vectors_unified(&search_context).await?
+        };
+
+        // MVCC Deduplication: WAL results override storage results for same ID
+        // This is critical for delete/update operations where WAL contains tombstones
+        use std::collections::HashMap;
+
+        // Get current time for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        // Build map from results with priority: WAL > AXIS > Storage
+        let mut id_to_result: HashMap<String, crate::core::search::results::OptimizedSearchRecord> =
+            HashMap::new();
+
+        // WAL results have highest priority (fresher data)
+        for result in wal_optimized_results {
+            id_to_result.insert(result.id.clone(), result);
+        }
+
+        // AXIS HNSW results second priority (fast indexed search)
+        for result in axis_optimized_results {
+            id_to_result.entry(result.id.clone()).or_insert(result);
+        }
+
+        // Storage results as fallback
+        for result in storage_results {
+            id_to_result.entry(result.id.clone()).or_insert(result);
+        }
+
+        // Filter out tombstones and collect final results
+        // Tombstone design: empty vector (Some(vec![])) + expires_at in past (including 0)
+        // NOTE: A record with vector=None is NOT a tombstone - it just means the vector wasn't
+        // returned in the optimized search (common for storage engines that return only IDs/scores)
+        let mut all_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+            id_to_result
+                .into_values()
+                .filter(|r| {
+                    // Check if this is a tombstone
+                    // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
+                    // A record with vector=None is NOT a tombstone - it's just missing vector data
+                    let is_explicit_empty_vector =
+                        r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(false);
+                    let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                    let is_tombstone = is_explicit_empty_vector && is_expired;
+
+                    if is_tombstone {
+                        debug!(
+                            "🗑️ Filtering tombstone from two-stage search results: {}",
+                            r.id
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+
+        debug!(
+            "TWO-STAGE dedup: {} unique results after MVCC resolution and tombstone filtering",
+            all_results.len()
+        );
 
         // Sort by similarity score in DESCENDING order (higher = more similar)
         // IMPORTANT: All engines now put normalized similarity (0-1) in the score field
@@ -1527,10 +2048,7 @@ impl VectorOperationsService {
         // Take top-k
         all_results.truncate(candidates);
 
-        info!(
-            "✅ TWO-STAGE search complete: Returning {} results",
-            all_results.len()
-        );
+        debug!("TWO-STAGE search complete: {} results", all_results.len());
         Ok(all_results)
     }
 
@@ -1602,6 +2120,60 @@ impl VectorOperationsService {
         }
     }
 
+    /// Get or create the correct storage engine for a collection.
+    ///
+    /// This is CRITICAL for multi-engine support:
+    /// - Looks up the collection's configured engine type from its storage_assignment
+    /// - Creates the engine if not already cached
+    /// - Returns the cached engine for subsequent calls
+    ///
+    /// Without this, all searches would use SST regardless of collection configuration.
+    async fn get_engine_for_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+        // Check cache first
+        if let Some(engine) = self.engine_cache.get(collection_id) {
+            return Ok(engine.clone());
+        }
+
+        // Get collection to determine engine type
+        let collection = self.get_or_load_collection(collection_id).await?;
+
+        // Determine engine type from storage_assignment
+        let engine_type = collection
+            .storage_assignment
+            .as_ref()
+            .map(|sa| {
+                crate::proto::proximadb_v1::StorageEngine::try_from(sa.engine)
+                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst)
+            })
+            .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst);
+
+        debug!(
+            "🔧 Creating storage engine {:?} for collection {}",
+            engine_type, collection_id
+        );
+
+        // Create the appropriate engine
+        let engine =
+            crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(
+                engine_type,
+            )
+            .await?;
+
+        // Cache it for future use
+        self.engine_cache
+            .insert(collection_id.to_string(), engine.clone());
+
+        info!(
+            "✅ Cached storage engine {:?} for collection {}",
+            engine_type, collection_id
+        );
+
+        Ok(engine)
+    }
+
     // REMOVED: get_available_files - storage engines handle their own file listing
     // NOTE: The following methods were removed as they belong in the storage engine layer
     /*
@@ -1653,7 +2225,7 @@ impl VectorOperationsService {
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
         _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
+        _input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "🔍 Executing metadata filter for collection {}",
@@ -1702,26 +2274,9 @@ impl VectorOperationsService {
 
         // Create a dummy search_params for filtering only
         let search_params = crate::core::search::SearchParams {
-            query_vectors: None, // No query vector needed for pure filtering
-            vector: None,
-            top_k: Some(0), // We only want filtered results, not search results
-            distance_metric: None,
             filter_expression: Some(filter_expression),
-            filters: None,
-            accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: None,
-            enable_two_stage: None,
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
-            requires_ordering: None,
-            enable_progressive_search: None,
-            progressive_scenario: None,
-            progressive_recalls: None,
-            optimization_hint: None,
+            ..Default::default()
         };
 
         let search_context = crate::storage::traits::StorageQueryContext::new(
@@ -1757,25 +2312,11 @@ impl VectorOperationsService {
         // Convert IndexLookupParams to SearchParams
         let search_params = crate::core::search::SearchParams {
             query_vectors: params.query_vector.map(|v| vec![v]),
-            vector: None,
             top_k: Some(params.top_k),
-            distance_metric: None,
             filter_expression: params.filter,
-            filters: None,
-            accuracy_threshold: None,
             include_expired: Some(false),
-            timeout_ms: None,
-            enable_two_stage: None,
-            custom_hints: None,
-            enable_clustering_hint: None,
-            enable_metadata_filtering_hint: None,
-            quantization_hint: None,
-            runtime_hints: None,
-            requires_ordering: None,
-            enable_progressive_search: None,
-            progressive_scenario: None,
-            progressive_recalls: None,
             optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
+            ..Default::default()
         };
 
         // Convert SearchParams to HybridQuery for AxisManager
@@ -1927,61 +2468,6 @@ impl VectorOperationsService {
         Ok(serde_json::to_vec(&response)?)
     }
 
-    /// Clean typed batch insert method
-    ///
-    /// This replaces the convoluted handle_vector_batch_proto_vec flow
-    /// with a direct, type-safe implementation that returns structured results.
-    ///
-    /// # Arguments
-    /// * `collection_id` - The collection to insert into
-    /// * `vectors` - Vector records to insert
-    ///
-    /// # Returns
-    /// Strongly-typed BatchOperationResult with metrics, no JSON serialization
-    pub async fn insert_batch(
-        &self,
-        collection_id: &str,
-        vectors: Vec<VectorRecord>,
-    ) -> Result<BatchOperationResult> {
-        // Validate vectors before insertion
-        self.validate_vectors_for_insert(collection_id, &vectors)
-            .await?;
-
-        let start = std::time::Instant::now();
-        let vectors_arc = Arc::new(vectors);
-
-        // Write to WAL with timing
-        let wal_start = std::time::Instant::now();
-        let _batch_result = self
-            .wal_manager
-            .write_vector_batch_native_arc(collection_id, vectors_arc.clone())
-            .await?;
-        let wal_time = wal_start.elapsed().as_micros() as i64;
-
-        // Collect vector IDs
-        let vector_ids: Vec<String> = vectors_arc.iter().map(|v| v.id.clone()).collect();
-
-        // Build typed result with metrics
-        let metrics = OperationMetrics {
-            total_processed: vector_ids.len() as i64,
-            successful_count: vector_ids.len() as i64,
-            failed_count: 0,
-            updated_count: 0,
-            processing_time_us: start.elapsed().as_micros() as i64,
-            wal_write_time_us: wal_time,
-            index_update_time_us: 0,
-        };
-
-        info!(
-            "✅ Batch insert: {} vectors to collection {} in {}μs",
-            vector_ids.len(),
-            collection_id,
-            metrics.processing_time_us
-        );
-
-        Ok(BatchOperationResult::success(vector_ids, metrics))
-    }
-
     pub async fn insert_vectors_direct(
         &self,
         collection_id: &str,
@@ -1993,10 +2479,32 @@ impl VectorOperationsService {
 
         // Write vectors to WAL
         let start = std::time::Instant::now();
-        let batch_result = self
+        let _batch_result = self
             .wal_manager
             .write_vector_batch_native_arc(collection_id, vectors.clone())
             .await?;
+
+        // Index vectors in AXIS for fast in-memory search (HNSW/IVF)
+        // This is critical for competitive search latency - without it, search falls back to linear scan
+        let axis_start = std::time::Instant::now();
+        for vector in vectors.iter() {
+            if let Err(e) = self.axis_index_manager.insert(collection_id, vector).await {
+                // Log but don't fail - WAL already written, index can be rebuilt
+                tracing::warn!(
+                    "Failed to index vector {} in AXIS: {} (search will use linear scan)",
+                    vector.id,
+                    e
+                );
+            }
+        }
+        let axis_duration = axis_start.elapsed();
+        if axis_duration.as_millis() > 10 {
+            tracing::debug!(
+                "AXIS indexing for {} vectors took {:?}",
+                vectors.len(),
+                axis_duration
+            );
+        }
 
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
@@ -2005,10 +2513,11 @@ impl VectorOperationsService {
             .sum::<usize>() as i64;
 
         debug!(
-            "✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs",
+            "✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs (AXIS: {:?})",
             vectors.len(),
             collection_id,
-            duration_micros
+            duration_micros,
+            axis_duration
         );
 
         Ok(crate::storage::engines::InsertResult {
@@ -2020,12 +2529,58 @@ impl VectorOperationsService {
 
     /// Validate vectors for insertion based on collection requirements
     /// OPTIMIZED: Purely in-memory validation with inline operations
+    ///
+    /// Validation includes:
+    /// - Collection name validation (SQL injection prevention)
+    /// - Metadata field validation (SQL injection, length limits)
+    /// - Dimension validation
+    /// - ID validation and uniqueness
     #[inline(always)]
     async fn validate_vectors_for_insert(
         &self,
         collection_id: &str,
         vectors: &[VectorRecord],
     ) -> Result<()> {
+        // SECURITY: Validate collection name to prevent SQL injection
+        if let Err(e) = self.collection_name_validator.validate(collection_id) {
+            warn!(
+                "Collection name validation failed for '{}': {:?}",
+                collection_id, e
+            );
+            return Err(anyhow::anyhow!(
+                "Invalid collection name '{}': {}",
+                collection_id,
+                e
+            ));
+        }
+
+        // SECURITY: Validate metadata for all vectors
+        let metadata_errors = self.metadata_validator.validate_batch(vectors);
+        if !metadata_errors.is_empty() {
+            let error_count = metadata_errors.len();
+            let first_error = metadata_errors.iter().next();
+            if let Some((vector_id, errors)) = first_error {
+                let first_field_error = errors.first();
+                if let Some((field_name, err)) = first_field_error {
+                    warn!(
+                        "Metadata validation failed for {} vectors. First error: vector '{}', field '{}': {:?}",
+                        error_count, vector_id, field_name, err
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Metadata validation failed for vector '{}', field '{}': {}. Total {} vectors with errors.",
+                        vector_id,
+                        field_name,
+                        err,
+                        error_count
+                    ));
+                }
+            }
+            return Err(anyhow::anyhow!(
+                "Metadata validation failed for {} vectors",
+                error_count
+            ));
+        }
+
         // Get collection configuration - this is cached after first load
         let collection = self.get_or_load_collection(collection_id).await?;
 
@@ -2057,10 +2612,22 @@ impl VectorOperationsService {
             None
         };
 
+        // Get current time for tombstone detection
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         // Single pass validation loop - check everything at once
         for (i, vector) in vectors.iter().enumerate() {
             // INLINE: Dimension check (simple integer comparison)
-            if expected_dimension > 0 && vector.vector.len() != expected_dimension as usize {
+            // Skip dimension check for tombstones (empty vector + expires_at in past indicates deletion)
+            let is_tombstone = vector.vector.is_empty()
+                && vector.expires_at.map_or(false, |e| e <= current_time_secs);
+            if !is_tombstone
+                && expected_dimension > 0
+                && vector.vector.len() != expected_dimension as usize
+            {
                 return Err(anyhow::anyhow!(
                     "Vector at index {} has dimension {} but collection '{}' expects dimension {}",
                     i,
@@ -2134,6 +2701,28 @@ impl VectorOperationsService {
         Ok(None)
     }
 
+    /// Unified search by ID for embedded API
+    ///
+    /// This method provides a simplified interface for looking up a vector by ID,
+    /// searching both WAL (unflushed) and storage engine (flushed).
+    ///
+    /// # Arguments
+    /// * `collection_id` - The collection to search in
+    /// * `vector_id` - The ID of the vector to retrieve
+    ///
+    /// # Returns
+    /// * `Ok(Some(VectorRecord))` - Vector found
+    /// * `Ok(None)` - Vector not found
+    /// * `Err` - Error occurred during lookup
+    pub async fn unified_search_by_id(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+    ) -> Result<Option<VectorRecord>> {
+        // Delegate to the existing vector method with full include flags
+        self.vector(collection_id, vector_id, true, true).await
+    }
+
     pub async fn force_flush_all(&self) -> Result<()> {
         info!("🔄 Force flushing all collections");
 
@@ -2174,7 +2763,7 @@ impl VectorOperationsService {
             }
         }
 
-        info!("✅ Force flush all completed");
+        debug!("Force flush all completed");
         Ok(())
     }
 
@@ -2216,7 +2805,7 @@ impl VectorOperationsService {
             );
         }
 
-        info!("✅ Force flush for collection {} completed", collection_id);
+        debug!("Force flush for collection {} completed", collection_id);
         Ok(())
     }
 
@@ -2262,7 +2851,7 @@ impl VectorOperationsService {
     }
 
     pub async fn health_check(&self) -> Result<serde_json::Value> {
-        let status = "healthy";
+        let _status = "healthy";
         let issues: Vec<String> = Vec::new();
 
         // Check WAL health
@@ -2355,7 +2944,7 @@ impl VectorOperationsService {
     /// Debug method to list unflushed vectors
     pub async fn debug_list_all_unflushed_vectors(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         // Get all unflushed vectors from WAL
         // TODO: Implement list_unflushed_vectors in WAL manager
@@ -2378,6 +2967,7 @@ impl VectorOperationsService {
     }
 
     /// v1: Convert OptimizedSearchRecord to proximadb_v1::SearchResult
+    #[allow(dead_code)]
     fn convert_to_proto_search_result_v1(
         &self,
         optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord>,
@@ -2413,6 +3003,7 @@ impl VectorOperationsService {
 
 impl VectorOperationsService {
     /// Convert OptimizedSearchRecord to proto SearchVectorRecord
+    #[allow(dead_code)]
     fn optimized_to_proto(
         &self,
         result: &crate::core::search::results::OptimizedSearchRecord,

@@ -53,9 +53,14 @@ def test_basic_operations():
             distance_metric=DistanceMetric.COSINE,
             storage_engine=StorageEngine.VIPER
         )
-        
-        # REST
-        rest_result = rest_client.create_collection(test_collection, config)
+
+        # REST - pass individual params, not config object
+        rest_result = rest_client.create_collection(
+            name=config.name,
+            dimension=config.dimension,
+            distance_metric=config.distance_metric,
+            storage_engine=config.storage_engine
+        )
         logger.info(f"   REST: {rest_result}")
         
         # Clean up and recreate for gRPC

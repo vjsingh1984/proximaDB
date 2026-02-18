@@ -3,11 +3,6 @@
 use super::super::specialized::bitmap_filter_cache::{FilterOp, FilterUpdateOp};
 use super::super::specialized::index_node_cache::IndexNode;
 use super::super::specialized::*;
-use super::super::*;
-use crate::utils::bitmap::RoaringBitmap;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 // Test helper types
 #[derive(Debug, Clone)]
@@ -159,7 +154,7 @@ async fn test_query_result_cache_subqueries() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord, SqlValue, VectorRecord};
+    use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord, VectorRecord};
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 
@@ -327,7 +322,7 @@ async fn test_cache_compression() {
         large_bitmap.insert(i);
     }
 
-    let uncompressed_size = large_bitmap.serialized_size();
+    let _uncompressed_size = large_bitmap.serialized_size();
 
     let filter_result = CachedFilterResult {
         bitmap: large_bitmap,

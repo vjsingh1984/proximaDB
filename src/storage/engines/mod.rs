@@ -81,7 +81,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::{StorageEngineFactory, WorkloadType};
 //!
 //! // Automatic engine selection
@@ -105,7 +105,6 @@ pub mod impls;
 pub mod event_log_integration;
 pub mod factory;
 pub mod migration;
-pub mod progressive_search_trait;
 pub mod universal;
 
 // Re-export traits

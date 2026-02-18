@@ -14,10 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::storage::engines::core::formats::columnar::constants::*;
+use crate::storage::engines::core::formats::common_quantization::QuantizationFileConfig;
 use crate::storage::engines::core::formats::common_quantization::QuantizationLevel;
-use crate::storage::engines::core::formats::common_quantization::{
-    QuantizationFileConfig, QuantizedVectorData,
-};
 
 /// Schema definition for quantized vector storage
 ///
@@ -381,6 +379,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Check if quantization level requires codebook
+    #[allow(dead_code)]
     fn requires_codebook(&self, level: &QuantizationLevel) -> bool {
         matches!(
             level,
@@ -393,6 +392,7 @@ impl QuantizedVectorSchemaBuilder {
 
     /// Build codebook field definition (NOT USED - codebooks are file-level metadata)
     /// This method is kept for backward compatibility but returns an error
+    #[allow(dead_code)]
     fn build_codebook_definition(
         &self,
         level: &QuantizationLevel,
@@ -486,6 +486,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Calculate number of subquantizers for PQ
+    #[allow(dead_code)]
     fn calculate_subquantizers(&self, bits_per_code: u8) -> Result<usize> {
         // Standard PQ: aim for 8-32 dimensions per subquantizer
         let target_dims_per_subq = match bits_per_code {
@@ -501,12 +502,12 @@ impl QuantizedVectorSchemaBuilder {
             }
         };
 
-        let num_subquantizers =
-            ((self.dimension + target_dims_per_subq - 1) / target_dims_per_subq).max(1);
+        let num_subquantizers = (self.dimension.div_ceil(target_dims_per_subq)).max(1);
         Ok(num_subquantizers)
     }
 
     /// Get bits per code for quantization level
+    #[allow(dead_code)]
     fn get_bits_per_code(&self, level: &QuantizationLevel) -> u8 {
         match level {
             QuantizationLevel::PQ4 => 4,
@@ -646,7 +647,7 @@ impl QuantizedVectorSchemaBuilder {
                     column_mapping,
                     compression_mapping,
                     row_group_strategy: RowGroupStrategy::Unified {
-                        target_row_group_size: 10000,
+                        target_row_group_size: DEFAULT_ROW_GROUP_SIZE,
                     },
                 })
             }

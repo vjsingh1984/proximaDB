@@ -51,14 +51,16 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
 use super::EntityStore;
+use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
 use crate::graph::{GraphOperationsService, Node, PropertyValue};
 use crate::proto::proximadb_v1::{
-    property_value, EdgeQuery, Entity, MetadataFilter, NodeQuery, Relation,
+    ComparisonOp, EdgeQuery, Entity, LogicalOp, MetadataFilter, NodeQuery, Relation, filter_clause,
+    property_value,
 };
+use crate::{core::VectorId, index::AxisManager};
 
 /// Orion-backed entity store using graph-first architecture
 pub struct OrionBackedEntityStore {
@@ -73,6 +75,16 @@ pub struct OrionBackedEntityStore {
 
     /// Relation to Edge mapper
     relation_mapper: RelationEdgeMapper,
+
+    /// Optional AXIS manager for hybrid vector + metadata search
+    axis_manager: Option<Arc<AxisManager>>,
+}
+
+static GLOBAL_AXIS_MANAGER: OnceLock<Arc<AxisManager>> = OnceLock::new();
+
+/// Register a global AXIS manager so new stores can default to it.
+pub fn set_global_axis_manager(axis_manager: Arc<AxisManager>) {
+    let _ = GLOBAL_AXIS_MANAGER.set(axis_manager);
 }
 
 impl OrionBackedEntityStore {
@@ -97,7 +109,14 @@ impl OrionBackedEntityStore {
             graph_id: collection_id,
             entity_mapper: EntityNodeMapper,
             relation_mapper: RelationEdgeMapper,
+            axis_manager: GLOBAL_AXIS_MANAGER.get().cloned(),
         }
+    }
+
+    /// Attach an AXIS manager for hybrid search; returns self for chaining.
+    pub fn with_axis_manager(mut self, axis_manager: Arc<AxisManager>) -> Self {
+        self.axis_manager = Some(axis_manager);
+        self
     }
 
     /// Get the graph ID
@@ -195,9 +214,8 @@ impl EntityStore for OrionBackedEntityStore {
 
             // Fetch relations if requested
             if include_relations {
-                // TODO: Implement relation fetching from edges
-                // For now, leave relations empty
-                entity.relations = Vec::new();
+                // TODO: Optimize with cached relation lookups when AXIS wiring lands
+                entity.relations = self.get_relations(entity_id).await.unwrap_or_default();
             }
 
             Ok(Some(entity))
@@ -277,7 +295,7 @@ impl EntityStore for OrionBackedEntityStore {
         &self,
         collection_id: &str,
         query_vector: Option<Vec<f32>>,
-        _metadata_filter: Option<MetadataFilter>,
+        metadata_filter: Option<MetadataFilter>,
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>> {
         // Validate collection_id
@@ -289,7 +307,52 @@ impl EntityStore for OrionBackedEntityStore {
             );
         }
 
-        // Get all nodes in the collection
+        // If AXIS manager is available and query_vector provided, use hybrid query
+        if let (Some(axis_manager), Some(vec)) = (&self.axis_manager, query_vector.clone()) {
+            // Convert metadata filters (AND semantics; OR not yet supported in AXIS)
+            let axis_filters = Self::convert_metadata_filters(metadata_filter.as_ref());
+
+            let hybrid_query = crate::index::axis::management::manager::HybridQuery {
+                collection_id: collection_id.to_string(),
+                vector_query: Some(
+                    crate::index::axis::management::manager::VectorQuery::Dense {
+                        vector: vec.clone(),
+                        similarity_threshold: 0.0,
+                    },
+                ),
+                metadata_filters: axis_filters,
+                id_filters: Vec::<VectorId>::new(),
+                top_k,
+                include_expired: false,
+            };
+
+            if let Ok(axis_results) = axis_manager.query(hybrid_query).await {
+                let mut final_results = Vec::new();
+                for scored in axis_results.results.into_iter().take(top_k) {
+                    // Fetch corresponding node/entity for hybrid response
+                    if let Some(node) = self
+                        .graph_service
+                        .get_node(&self.graph_id, &scored.vector_id)
+                        .await
+                        .ok()
+                        .flatten()
+                    {
+                        let entity = self
+                            .entity_mapper
+                            .node_to_entity(&node)
+                            .context("Failed to convert node to entity")?;
+                        final_results.push((entity, scored.similarity));
+                    }
+                }
+
+                // Return AXIS results if we got any; otherwise fall back to local scan
+                if !final_results.is_empty() {
+                    return Ok(final_results);
+                }
+            }
+        }
+
+        // Get all nodes in the collection (TODO: replace with AXIS index for vector search)
         let query = NodeQuery {
             graph_id: self.graph_id.clone(),
             labels: vec![collection_id.to_string()],
@@ -299,11 +362,19 @@ impl EntityStore for OrionBackedEntityStore {
             continuation_token: None,
         };
 
-        let nodes = self
+        let mut nodes = self
             .graph_service
             .query_nodes(&self.graph_id, query)
             .await
             .context("Failed to query nodes")?;
+
+        // Apply metadata filter if provided (best-effort until AXIS integration)
+        if metadata_filter.is_some() {
+            tracing::warn!(
+                "Metadata filter provided to OrionBackedEntityStore::search_entities but AXIS index is not wired; applying best-effort post-filter."
+            );
+            nodes.retain(|node| Self::matches_metadata_filter(node, metadata_filter.as_ref()));
+        }
 
         // If no query vector provided, return nodes with default score
         let query_vec = match query_vector {
@@ -656,6 +727,119 @@ impl OrionBackedEntityStore {
 
         dot_product / (norm_a * norm_b)
     }
+
+    /// Convert proto metadata filters to AXIS metadata filters (best-effort).
+    fn convert_metadata_filters(
+        filter: Option<&MetadataFilter>,
+    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+        let Some(filter) = filter else {
+            return Vec::new();
+        };
+
+        filter
+            .clauses
+            .iter()
+            .filter_map(|clause| {
+                let operator = match ComparisonOp::try_from(clause.op).ok() {
+                    Some(ComparisonOp::Eq) => {
+                        crate::index::axis::management::manager::FilterOperator::Equals
+                    }
+                    Some(ComparisonOp::Ne) => {
+                        crate::index::axis::management::manager::FilterOperator::NotEquals
+                    }
+                    Some(ComparisonOp::Gt) => {
+                        crate::index::axis::management::manager::FilterOperator::GreaterThan
+                    }
+                    Some(ComparisonOp::Lt) => {
+                        crate::index::axis::management::manager::FilterOperator::LessThan
+                    }
+                    _ => return None,
+                };
+
+                let value = match &clause.value {
+                    Some(filter_clause::Value::StringValue(v)) => {
+                        serde_json::Value::String(v.clone())
+                    }
+                    Some(filter_clause::Value::IntValue(v)) => {
+                        serde_json::Value::Number((*v).into())
+                    }
+                    Some(filter_clause::Value::DoubleValue(v)) => serde_json::json!(v),
+                    Some(filter_clause::Value::BoolValue(v)) => serde_json::Value::Bool(*v),
+                    None => return None,
+                };
+
+                Some(crate::index::axis::management::manager::MetadataFilter {
+                    field: clause.field.clone(),
+                    operator,
+                    value,
+                })
+            })
+            .collect()
+    }
+
+    /// Best-effort metadata filter matcher respecting basic AND/OR semantics.
+    fn matches_metadata_filter(node: &Node, filter: Option<&MetadataFilter>) -> bool {
+        let Some(filter) = filter else {
+            return true;
+        };
+
+        let is_or = LogicalOp::try_from(filter.op).ok() == Some(LogicalOp::Or);
+        let mut any = false;
+
+        for clause in &filter.clauses {
+            let Some(value) = node.properties.get(&clause.field) else {
+                if is_or {
+                    continue;
+                } else {
+                    return false;
+                }
+            };
+
+            let matched = match &clause.value {
+                Some(filter_clause::Value::StringValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::StringValue(s) => Some(s == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                Some(filter_clause::Value::IntValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::IntValue(i) => Some(i == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                Some(filter_clause::Value::DoubleValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::DoubleValue(f) => Some(f == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                Some(filter_clause::Value::BoolValue(expected)) => value
+                    .value
+                    .as_ref()
+                    .and_then(|v| match v {
+                        property_value::Value::BoolValue(b) => Some(b == expected),
+                        _ => None,
+                    })
+                    .unwrap_or(false),
+                None => false,
+            };
+
+            if is_or {
+                any |= matched;
+            } else if !matched {
+                return false;
+            }
+        }
+
+        if is_or { any } else { true }
+    }
 }
 
 #[cfg(test)]
@@ -672,6 +856,65 @@ mod tests {
         assert_eq!(store.graph_id(), "test-collection");
     }
 
+    #[test]
+    fn test_matches_metadata_filter_and_or() {
+        let mut node = Node::default();
+        node.properties.insert(
+            "category".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::StringValue("ai".into())),
+            },
+        );
+        node.properties.insert(
+            "active".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::BoolValue(true)),
+            },
+        );
+
+        // AND filter should pass
+        let filter_and = MetadataFilter {
+            clauses: vec![
+                crate::proto::proximadb_v1::FilterClause {
+                    field: "category".into(),
+                    op: ComparisonOp::Eq as i32,
+                    value: Some(filter_clause::Value::StringValue("ai".into())),
+                },
+                crate::proto::proximadb_v1::FilterClause {
+                    field: "active".into(),
+                    op: ComparisonOp::Eq as i32,
+                    value: Some(filter_clause::Value::BoolValue(true)),
+                },
+            ],
+            op: LogicalOp::And as i32,
+        };
+        assert!(OrionBackedEntityStore::matches_metadata_filter(
+            &node,
+            Some(&filter_and)
+        ));
+
+        // OR filter should pass if any clause matches
+        let filter_or = MetadataFilter {
+            clauses: vec![
+                crate::proto::proximadb_v1::FilterClause {
+                    field: "missing".into(),
+                    op: ComparisonOp::Eq as i32,
+                    value: Some(filter_clause::Value::BoolValue(true)),
+                },
+                crate::proto::proximadb_v1::FilterClause {
+                    field: "category".into(),
+                    op: ComparisonOp::Eq as i32,
+                    value: Some(filter_clause::Value::StringValue("ai".into())),
+                },
+            ],
+            op: LogicalOp::Or as i32,
+        };
+        assert!(OrionBackedEntityStore::matches_metadata_filter(
+            &node,
+            Some(&filter_or)
+        ));
+    }
+
     #[tokio::test]
     async fn test_upsert_and_get_entity() {
         let graph_service = Arc::new(GraphOperationsService::new());
@@ -686,7 +929,8 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(create_request)
+        graph_service
+            .create_graph_collection(create_request)
             .await
             .expect("Failed to create graph collection");
 
@@ -747,7 +991,8 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        graph_service.create_graph_collection(create_request)
+        graph_service
+            .create_graph_collection(create_request)
             .await
             .expect("Failed to create graph collection");
 
@@ -891,7 +1136,8 @@ mod tests {
             .await
             .expect("Failed to create graph collection");
 
-        let store = OrionBackedEntityStore::new(graph_service.clone(), "test-collection-4".to_string());
+        let store =
+            OrionBackedEntityStore::new(graph_service.clone(), "test-collection-4".to_string());
 
         // Create entities with different embeddings
         let entity1 = Entity {
@@ -1009,7 +1255,8 @@ mod tests {
             .await
             .expect("Failed to create graph collection");
 
-        let store = OrionBackedEntityStore::new(graph_service.clone(), "test-collection-5".to_string());
+        let store =
+            OrionBackedEntityStore::new(graph_service.clone(), "test-collection-5".to_string());
 
         // Create 100 test entities
         let mut entities = Vec::new();
@@ -1059,6 +1306,9 @@ mod tests {
 
         println!("✓ Batch upsert of 100 entities successful");
         println!("  - Duration: {:?}", duration);
-        println!("  - Throughput: {:.2} entities/sec", 100.0 / duration.as_secs_f64());
+        println!(
+            "  - Throughput: {:.2} entities/sec",
+            100.0 / duration.as_secs_f64()
+        );
     }
 }

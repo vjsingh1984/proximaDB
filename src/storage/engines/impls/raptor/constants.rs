@@ -34,10 +34,12 @@ pub mod file_format {
 pub mod clustering {
     /// Default row group size optimized for k<10 queries
     /// Balances I/O efficiency vs wasted reads
-    pub const DEFAULT_ROWGROUP_SIZE: usize = 1024;
+    pub const DEFAULT_ROWGROUP_SIZE: usize = 512;
 
     /// Minimum row group size for meaningful clustering benefit
-    pub const MIN_ROWGROUP_SIZE: usize = 512;
+    /// Reduced to 256 to enable sqrt(k) nprobe optimization at smaller scales (30K vectors)
+    /// With 256 vectors/rowgroup at 30K scale: ~117 clusters, nprobe=sqrt(117)≈11 = scan 9%
+    pub const MIN_ROWGROUP_SIZE: usize = 256;
 
     /// Minimum dataset size before applying optimization (vectors)
     pub const MIN_OPTIMIZATION_DATASET_SIZE: usize = 10_000;
@@ -73,7 +75,8 @@ pub mod clustering {
 /// Matrix Trinity constants (replaces HNSW)
 pub mod matrix {
     /// Default P² matrix dimension (vectors per rowgroup)
-    pub const DEFAULT_P_DIMENSION: usize = 1024;
+    /// Reduced to 512 to align with DEFAULT_ROWGROUP_SIZE for better cluster pruning
+    pub const DEFAULT_P_DIMENSION: usize = 512;
 
     /// Maximum K² matrix dimension (number of centroids)
     pub const MAX_K_DIMENSION: usize = 10000;
@@ -166,7 +169,6 @@ pub mod io {
 /// Complexity calculation constants for performance analysis
 pub mod complexity {
     /// Matrix Trinity complexity: k² + p×(k+p)
-
     /// RAPTOR complexity components: k² + p×(k+p) where:
     /// - k = number of clusters (typically √n)
     /// - p = rowgroup size (typically √n/5)
@@ -219,7 +221,8 @@ mod tests {
     #[test]
     fn test_constants_consistency() {
         // Ensure minimum rowgroup size is reasonable for clustering
-        assert!(clustering::MIN_ROWGROUP_SIZE >= 512);
+        // Minimum of 256 enables sqrt(k) nprobe optimization at smaller scales (30K vectors)
+        assert!(clustering::MIN_ROWGROUP_SIZE >= 256);
         assert!(clustering::DEFAULT_ROWGROUP_SIZE >= clustering::MIN_ROWGROUP_SIZE);
 
         // Ensure Matrix Trinity parameters are reasonable

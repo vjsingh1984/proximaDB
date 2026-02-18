@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Trend analyzer for business data
 #[derive(Debug, Clone)]
 pub struct TrendAnalyzer {
-    config: TrendAnalyzerConfig,
+    _config: TrendAnalyzerConfig,
 }
 
 /// Configuration for trend analysis
@@ -43,7 +43,7 @@ pub enum TrendDirection {
 impl TrendAnalyzer {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            config: TrendAnalyzerConfig::default(),
+            _config: TrendAnalyzerConfig::default(),
         })
     }
 

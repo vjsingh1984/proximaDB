@@ -5,6 +5,7 @@
 
 #[derive(Debug, Clone)]
 pub struct SalesPipelineAnalytics {
+    #[allow(dead_code)]
     pipeline_data: std::collections::HashMap<String, PipelineStage>,
 }
 
@@ -24,6 +25,7 @@ pub struct ConversionAnalysis {
 
 #[derive(Debug, Clone)]
 pub struct CustomerEngagementTracker {
+    #[allow(dead_code)]
     engagement_history: Vec<String>,
 }
 

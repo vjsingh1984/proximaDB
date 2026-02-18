@@ -13,7 +13,7 @@ mod tests {
     use crate::proto::proximadb_v1::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
-    use tracing::{debug, error, info};
+    use tracing::{debug, info};
 
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         VectorRecord {
@@ -94,7 +94,7 @@ mod tests {
     #[tokio::test]
     async fn test_flat_all_distance_metrics() {
         // Test FLAT index with all supported distance metrics
-        let dimension = 64;
+        let _dimension = 64;
         let metrics = vec![
             DistanceMetric::Euclidean,
             DistanceMetric::Cosine,
@@ -103,7 +103,7 @@ mod tests {
         ];
 
         for metric in metrics {
-            let vectors = vec![
+            let vectors = [
                 vec![1.0, 0.0, 0.0],
                 vec![0.0, 1.0, 0.0],
                 vec![0.0, 0.0, 1.0],
@@ -289,8 +289,8 @@ mod tests {
     #[tokio::test]
     async fn test_flat_range_search() {
         // FLAT index can support range queries
-        let dimension = 3;
-        let vectors = vec![
+        let _dimension = 3;
+        let vectors = [
             ("vec1", vec![0.0, 0.0, 0.0]),
             ("vec2", vec![1.0, 0.0, 0.0]),
             ("vec3", vec![0.0, 1.0, 0.0]),
@@ -417,10 +417,10 @@ mod tests {
     #[tokio::test]
     async fn test_flat_high_dimensional() {
         // Test FLAT index with high-dimensional vectors
-        let dimensions = vec![512, 768, 1024, 2048];
+        let dimensions = [512, 768, 1024, 2048];
 
         for dim in dimensions {
-            let vectors = vec![
+            let vectors = [
                 vec![0.1; dim],
                 vec![0.2; dim],
                 vec![0.3; dim],

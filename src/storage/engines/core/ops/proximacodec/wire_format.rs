@@ -4,7 +4,7 @@
 //! Wire format management - Single source of truth for header format
 //!
 //! The wire format header structure is:
-//! ```
+//! ```text
 //! [VERSION:8][TYPE:8][SCHEME:8][COUNT_MODE:8][COUNT:0-4][DATA...]
 //! ```
 //!
@@ -13,7 +13,7 @@
 
 use super::types::{ProximaScheme, TypeId};
 use anyhow::Result;
-use tracing::{debug, trace};
+use tracing::trace;
 
 /// Wire format version
 pub const WIRE_FORMAT_VERSION: u8 = 0x01;
@@ -76,7 +76,7 @@ impl WireFormatManager {
     /// Header bytes (4-8 bytes depending on count)
     ///
     /// # Format
-    /// ```
+    /// ```text
     /// [VERSION:8][TYPE:8][SCHEME:8][COUNT_MODE:8][COUNT:0-4]
     /// ```
     pub fn write_header(&self, scheme: &ProximaScheme, count: usize, type_id: TypeId) -> Vec<u8> {

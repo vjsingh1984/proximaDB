@@ -27,8 +27,8 @@ use async_trait::async_trait;
 
 use crate::compute::distance_computation::DistanceMetric;
 // VectorRecord eliminated from AXIS - zero-overhead storage only
-// use crate::index::axis::hnsw_integration::{AxisHnswConfig, PartitionedHnswIndex};
 use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
+use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
 use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::indexes::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
@@ -74,9 +74,8 @@ pub enum AxisIndexCreationResult {
     Lsh(Box<AxisLshIndex>),
     /// Annoy index (requires building)
     Annoy(Box<AxisAnnoyIndex>),
-    // HNSW will be added once async wrapper is implemented
-    // /// HNSW index (ready to use)
-    // Hnsw(Box<PartitionedHnswIndex>),
+    /// HNSW index (ready to use, no training required)
+    Hnsw(Box<AxisHnswIndex>),
 }
 
 /// Factory for creating AXIS-native index implementations
@@ -92,16 +91,21 @@ impl IndexFactory {
     ) -> Result<AxisIndexCreationResult> {
         match algorithm {
             IndexAlgorithm::HNSW {
-                m: _m,
-                ef_construction: _ef_construction,
-                ef_search: _ef_search,
-                max_elements: _max_elements,
+                m,
+                ef_construction,
+                ef_search,
+                max_elements: _,
             } => {
-                // HNSW requires more complex setup with existing implementation
-                // For now, we'll return an error and implement a proper async wrapper later
-                Err(anyhow!(
-                    "HNSW index creation requires async initialization. Use AxisHnswManager for HNSW indexes."
-                ))
+                let config = AxisHnswConfig {
+                    m: *m as usize,
+                    ef_construction: *ef_construction as usize,
+                    ef: *ef_search as usize,
+                    max_layers: 16, // Reasonable default
+                    distance_metric,
+                };
+
+                let index = AxisHnswIndex::new(config, dimension)?;
+                Ok(AxisIndexCreationResult::Hnsw(Box::new(index)))
             }
 
             IndexAlgorithm::IVF {
@@ -188,7 +192,11 @@ impl IndexFactory {
                 // Annoy needs to be built after adding vectors
                 // For now, return it as-is; the user must call build() separately
                 Ok(index as Box<dyn AxisVectorIndex>)
-            } // AxisIndexCreationResult::Hnsw(index) => Ok(index as Box<dyn AxisVectorIndex>),
+            }
+            AxisIndexCreationResult::Hnsw(index) => {
+                // HNSW is ready to use immediately - no training required
+                Ok(index as Box<dyn AxisVectorIndex>)
+            }
         }
     }
 }
@@ -199,7 +207,7 @@ impl IndexFactory {
 // - UnifiedIvfIndex in ivf_unified.rs
 // - AxisLshIndex in lsh_index.rs
 // - AxisAnnoyIndex in annoy_index.rs
-// - PartitionedHnswIndex in hnsw_integration.rs
+// - AxisHnswIndex in hnsw_index.rs
 
 #[cfg(test)]
 mod tests {
@@ -265,6 +273,68 @@ mod tests {
             }
             _ => panic!("Expected Annoy index"),
         }
+    }
+
+    #[test]
+    fn test_create_hnsw_index() {
+        // Initialize hardware capabilities for HNSW
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let algorithm = IndexAlgorithm::HNSW {
+            m: 16,
+            ef_construction: 200,
+            ef_search: 100,
+            max_elements: 10000,
+        };
+
+        let result = IndexFactory::create_index(&algorithm, 128, DistanceMetric::Cosine);
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            AxisIndexCreationResult::Hnsw(index) => {
+                let stats = index.stats();
+                assert_eq!(stats.index_type, "HNSW");
+                assert_eq!(stats.vector_count, 0); // Empty initially
+            }
+            _ => panic!("Expected HNSW index"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_trained_hnsw_index() {
+        // Initialize hardware capabilities for HNSW
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let algorithm = IndexAlgorithm::HNSW {
+            m: 16,
+            ef_construction: 200,
+            ef_search: 50,
+            max_elements: 10000,
+        };
+
+        // HNSW doesn't require training - it's ready to use immediately
+        let index = IndexFactory::create_trained_index(
+            &algorithm,
+            4,
+            DistanceMetric::Euclidean,
+            None, // No training data needed
+        )
+        .await;
+
+        assert!(index.is_ok());
+        let index = index.unwrap();
+        assert_eq!(index.stats().index_type, "HNSW");
+
+        // Test that we can add and search vectors
+        index
+            .add("test_vec".to_string(), vec![1.0, 0.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        assert_eq!(index.stats().vector_count, 1);
+
+        let results = index.search(&[1.0, 0.0, 0.0, 0.0], 1, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "test_vec");
     }
 
     #[tokio::test]

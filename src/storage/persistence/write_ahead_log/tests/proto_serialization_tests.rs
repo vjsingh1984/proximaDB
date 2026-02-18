@@ -6,17 +6,15 @@
 //! - Schema evolution scenarios
 //! - Network-optimized serialization
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::proto::proximadb_v1::{SqlValue, sql_value};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, ProtoSerializationStrategy, WALBatchStrategy, WALConfig,
 };
-use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Create test configuration for Proto strategy
 fn create_test_config() -> WALConfig {

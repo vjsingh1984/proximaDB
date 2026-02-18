@@ -16,61 +16,61 @@ impl super::GraphOperationsService {
     /// Enforce schema constraints for a node if schema is defined
     pub(super) async fn enforce_schema_on_node(&self, graph_id: &str, node: &Node) -> Result<()> {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
-        if let Some(coll) = maybe_collection {
-            if let Some(schema) = &coll.schema {
-                let strict = schema.strict_mode;
-                // Build quick lookup for node label schemas
-                for label in &node.labels {
-                    let label_schema = schema.node_labels.iter().find(|ls| &ls.label == label);
-                    if label_schema.is_none() {
-                        if strict {
+        if let Some(coll) = maybe_collection
+            && let Some(schema) = &coll.schema
+        {
+            let strict = schema.strict_mode;
+            // Build quick lookup for node label schemas
+            for label in &node.labels {
+                let label_schema = schema.node_labels.iter().find(|ls| &ls.label == label);
+                if label_schema.is_none() && strict {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "Label '{}' is not allowed by schema",
+                        label
+                    )));
+                }
+                if label_schema.is_none() {
+                    continue;
+                }
+                let ls = label_schema.unwrap();
+                // Required properties present
+                for req in &ls.required_properties {
+                    if !node.properties.contains_key(req) {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Missing required property '{}' for label '{}'",
+                            req, label
+                        )));
+                    }
+                }
+                // Validate property types and constraints (schema-level + label-level)
+                for (k, v) in &node.properties {
+                    if let Some(ps) = schema.properties.get(k) {
+                        Self::validate_property_value_type(k, v, ps)?;
+                        Self::validate_property_constraints(k, v, &ps.constraints)?;
+                    }
+                    if let Some(pc) = ls.property_constraints.get(k) {
+                        Self::validate_property_constraint_one(k, v, pc)?;
+                    }
+                }
+                // Disallow additional properties if configured
+                if !ls.allow_additional_properties {
+                    let mut allowed: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    for s in &ls.required_properties {
+                        allowed.insert(s.as_str());
+                    }
+                    for s in &ls.optional_properties {
+                        allowed.insert(s.as_str());
+                    }
+                    for (p, _) in &ls.property_constraints {
+                        allowed.insert(p.as_str());
+                    }
+                    for key in node.properties.keys() {
+                        if !allowed.contains(key.as_str()) {
                             return Err(ProximaDBError::InvalidInput(format!(
-                                "Label '{}' is not allowed by schema",
-                                label
+                                "Property '{}' not allowed by schema for label '{}'",
+                                key, label
                             )));
-                        }
-                        continue;
-                    }
-                    let ls = label_schema.unwrap();
-                    // Required properties present
-                    for req in &ls.required_properties {
-                        if !node.properties.contains_key(req) {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "Missing required property '{}' for label '{}'",
-                                req, label
-                            )));
-                        }
-                    }
-                    // Validate property types and constraints (schema-level + label-level)
-                    for (k, v) in &node.properties {
-                        if let Some(ps) = schema.properties.get(k) {
-                            Self::validate_property_value_type(k, v, ps)?;
-                            Self::validate_property_constraints(k, v, &ps.constraints)?;
-                        }
-                        if let Some(pc) = ls.property_constraints.get(k) {
-                            Self::validate_property_constraint_one(k, v, pc)?;
-                        }
-                    }
-                    // Disallow additional properties if configured
-                    if !ls.allow_additional_properties {
-                        let mut allowed: std::collections::HashSet<&str> =
-                            std::collections::HashSet::new();
-                        for s in &ls.required_properties {
-                            allowed.insert(s.as_str());
-                        }
-                        for s in &ls.optional_properties {
-                            allowed.insert(s.as_str());
-                        }
-                        for (p, _) in &ls.property_constraints {
-                            allowed.insert(p.as_str());
-                        }
-                        for key in node.properties.keys() {
-                            if !allowed.contains(key.as_str()) {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Property '{}' not allowed by schema for label '{}'",
-                                    key, label
-                                )));
-                            }
                         }
                     }
                 }
@@ -88,79 +88,78 @@ impl super::GraphOperationsService {
         to_labels: &[String],
     ) -> Result<()> {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
-        if let Some(coll) = maybe_collection {
-            if let Some(schema) = &coll.schema {
-                let strict = schema.strict_mode;
-                let ets = schema
-                    .edge_types
-                    .iter()
-                    .find(|et| et.edge_type == edge.edge_type);
-                if ets.is_none() {
-                    if strict {
+        if let Some(coll) = maybe_collection
+            && let Some(schema) = &coll.schema
+        {
+            let strict = schema.strict_mode;
+            let ets = schema
+                .edge_types
+                .iter()
+                .find(|et| et.edge_type == edge.edge_type);
+            if ets.is_none() && strict {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Edge type '{}' is not allowed by schema",
+                    edge.edge_type
+                )));
+            }
+            if ets.is_none() {
+                return Ok(());
+            }
+            let ets = ets.unwrap();
+            // Required properties present
+            for req in &ets.required_properties {
+                if !edge.properties.contains_key(req) {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "Missing required property '{}' for edge type '{}'",
+                        req, edge.edge_type
+                    )));
+                }
+            }
+            // Validate edge property types and constraints (schema-level + edge-type level)
+            for (k, v) in &edge.properties {
+                if let Some(ps) = schema.properties.get(k) {
+                    Self::validate_property_value_type(k, v, ps)?;
+                    Self::validate_property_constraints(k, v, &ps.constraints)?;
+                }
+                if let Some(pc) = ets.property_constraints.get(k) {
+                    Self::validate_property_constraint_one(k, v, pc)?;
+                }
+            }
+            // Source/target label constraints
+            if !ets.source_labels.is_empty()
+                && !from_labels.iter().any(|l| ets.source_labels.contains(l))
+            {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Source node labels {:?} do not satisfy schema for edge type '{}'",
+                    from_labels, edge.edge_type
+                )));
+            }
+            if !ets.target_labels.is_empty()
+                && !to_labels.iter().any(|l| ets.target_labels.contains(l))
+            {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Target node labels {:?} do not satisfy schema for edge type '{}'",
+                    to_labels, edge.edge_type
+                )));
+            }
+            // Disallow additional properties if configured
+            if !ets.allow_additional_properties {
+                let mut allowed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+                for s in &ets.required_properties {
+                    allowed.insert(s.as_str());
+                }
+                for s in &ets.optional_properties {
+                    allowed.insert(s.as_str());
+                }
+                for (p, _) in &ets.property_constraints {
+                    allowed.insert(p.as_str());
+                }
+                for key in edge.properties.keys() {
+                    if !allowed.contains(key.as_str()) {
                         return Err(ProximaDBError::InvalidInput(format!(
-                            "Edge type '{}' is not allowed by schema",
-                            edge.edge_type
+                            "Property '{}' not allowed by schema for edge type '{}'",
+                            key, edge.edge_type
                         )));
-                    }
-                    return Ok(());
-                }
-                let ets = ets.unwrap();
-                // Required properties present
-                for req in &ets.required_properties {
-                    if !edge.properties.contains_key(req) {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Missing required property '{}' for edge type '{}'",
-                            req, edge.edge_type
-                        )));
-                    }
-                }
-                // Validate edge property types and constraints (schema-level + edge-type level)
-                for (k, v) in &edge.properties {
-                    if let Some(ps) = schema.properties.get(k) {
-                        Self::validate_property_value_type(k, v, ps)?;
-                        Self::validate_property_constraints(k, v, &ps.constraints)?;
-                    }
-                    if let Some(pc) = ets.property_constraints.get(k) {
-                        Self::validate_property_constraint_one(k, v, pc)?;
-                    }
-                }
-                // Source/target label constraints
-                if !ets.source_labels.is_empty() {
-                    if !from_labels.iter().any(|l| ets.source_labels.contains(l)) {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Source node labels {:?} do not satisfy schema for edge type '{}'",
-                            from_labels, edge.edge_type
-                        )));
-                    }
-                }
-                if !ets.target_labels.is_empty() {
-                    if !to_labels.iter().any(|l| ets.target_labels.contains(l)) {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Target node labels {:?} do not satisfy schema for edge type '{}'",
-                            to_labels, edge.edge_type
-                        )));
-                    }
-                }
-                // Disallow additional properties if configured
-                if !ets.allow_additional_properties {
-                    let mut allowed: std::collections::HashSet<&str> =
-                        std::collections::HashSet::new();
-                    for s in &ets.required_properties {
-                        allowed.insert(s.as_str());
-                    }
-                    for s in &ets.optional_properties {
-                        allowed.insert(s.as_str());
-                    }
-                    for (p, _) in &ets.property_constraints {
-                        allowed.insert(p.as_str());
-                    }
-                    for key in edge.properties.keys() {
-                        if !allowed.contains(key.as_str()) {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "Property '{}' not allowed by schema for edge type '{}'",
-                                key, edge.edge_type
-                            )));
-                        }
                     }
                 }
             }

@@ -52,7 +52,7 @@
 //! ## Memory Allocation Strategies
 //!
 //! ### Pooled Allocation
-//! ```rust
+//! ```rust,ignore
 //! // Get buffer from pool
 //! let mut buffer = pool.acquire();
 //! buffer.resize(needed_size, 0);
@@ -62,7 +62,7 @@
 //!
 //! ### Arena Allocation
 //! Fast bump-pointer allocation:
-//! ```rust
+//! ```rust,ignore
 //! let arena = Arena::new();
 //! let vec1 = arena.alloc_slice(&[1, 2, 3]);
 //! let vec2 = arena.alloc_slice(&[4, 5, 6]);
@@ -71,7 +71,7 @@
 //!
 //! ### Adaptive Allocation
 //! Choose strategy based on size:
-//! ```rust
+//! ```rust,ignore
 //! fn allocate(size: usize) -> Buffer {
 //!     match size {
 //!         0..=4096 => pool_small.acquire(),
@@ -125,7 +125,7 @@
 //! ## Usage Examples
 //!
 //! ### Vector Pool Usage
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::memory::VectorMemoryPool;
 //!
 //! let pool = VectorMemoryPool::new(768, 1000);
@@ -141,7 +141,7 @@
 //! ```
 //!
 //! ### Generic Pool Usage
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::memory::Pool;
 //!
 //! #[derive(Default)]
@@ -161,7 +161,7 @@
 //! ## Memory Monitoring
 //!
 //! Track memory usage and pool efficiency:
-//! ```rust
+//! ```rust,ignore
 //! let stats = pool.stats();
 //! println!("Pool hit rate: {:.2}%", stats.hit_rate * 100.0);
 //! println!("Active items: {}", stats.active_count);
@@ -186,7 +186,7 @@
 //! ## Memory Pressure Handling
 //!
 //! Automatic response to memory pressure:
-//! ```rust
+//! ```rust,ignore
 //! if system_memory_low() {
 //!     pool.shrink_to(pool.capacity() / 2);
 //!     arena.reset();

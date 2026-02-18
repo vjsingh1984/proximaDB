@@ -12,7 +12,7 @@
 //! - Zero-allocation matching for compiled patterns
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::glob::{GlobPattern, GlobMatcher};
 //!
 //! let pattern = GlobPattern::new("*.parquet").unwrap();
@@ -72,6 +72,7 @@ enum CharacterClass {
     /// Explicit set of characters
     Set(HashSet<char>),
     /// Character range
+    #[allow(dead_code)]
     Range(char, char),
     /// Negated character class
     Negated(Box<CharacterClass>),
@@ -94,10 +95,15 @@ struct CompiledPattern {
 }
 
 /// High-level glob pattern that can be compiled for matching
+///
+/// Represents a compiled glob pattern that can be used to match strings efficiently.
 #[derive(Debug, Clone)]
 pub struct GlobPattern {
+    /// Original pattern string
     pattern: String,
+    /// Compiled pattern representation
     compiled: CompiledPattern,
+    /// Whether matching is case-sensitive
     case_sensitive: bool,
 }
 
@@ -282,7 +288,10 @@ impl GlobPattern {
 }
 
 /// Matcher for efficient repeated matching against a compiled pattern
+///
+/// Provides a convenient interface for checking if strings or paths match a compiled glob pattern.
 pub struct GlobMatcher<'a> {
+    /// Reference to the compiled pattern
     pattern: &'a GlobPattern,
 }
 

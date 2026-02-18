@@ -18,7 +18,6 @@
 use anyhow::Result;
 
 use super::helpers;
-use super::helpers::ToWireFormat;
 
 // ===== Core wire format encoding functions =====
 
@@ -100,9 +99,9 @@ fn encode_frame_of_ref_i64_wire(wire_values: &[i64], base: i64) -> Result<Vec<u8
 /// 3. Pack offsets using specified bit width
 ///
 /// # Format (raw data only, NO headers)
-/// ```
+/// ```text
 /// [base:4 bytes][bitpacked_offsets...]
-/// ```
+/// ```text
 ///
 /// # Parameters
 /// - `values`: f32 slice to encode

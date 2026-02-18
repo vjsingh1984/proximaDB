@@ -21,6 +21,7 @@ use crate::core::error::ProximaDBError;
 /// Fixed-size cache file header (bytemuck compatible)
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
+#[allow(dead_code)]
 pub struct CacheFileHeader {
     /// Magic bytes for file identification: b"PXMDCHV1"
     pub magic: [u8; 8],
@@ -42,7 +43,9 @@ pub struct CacheFileHeader {
     pub reserved: [u32; 4],
 }
 
+#[allow(dead_code)]
 impl CacheFileHeader {
+    #[allow(dead_code)]
     pub fn new(
         engine_hash: u32,
         original_file_size: u64,
@@ -67,17 +70,20 @@ impl CacheFileHeader {
     }
 
     /// Validate magic bytes and version
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         self.magic == *MAGIC_BYTES && self.version <= 1
     }
 
     /// Check if the header matches expected file properties
+    #[allow(dead_code)]
     pub fn matches_file(&self, engine_hash: u32, file_path_hash: u64) -> bool {
         self.is_valid() && self.engine_hash == engine_hash && self.file_path_hash == file_path_hash
     }
 }
 
 /// Memory-mapped metadata with zero-copy access
+#[allow(dead_code)]
 pub struct MmappedMetadata {
     /// Memory-mapped file
     mmap: Mmap,
@@ -89,8 +95,10 @@ pub struct MmappedMetadata {
     serializer: Arc<dyn MetadataSerializer>,
 }
 
+#[allow(dead_code)]
 impl MmappedMetadata {
     /// Create from memory-mapped file
+    #[allow(dead_code)]
     pub fn from_mmap(
         mmap: Mmap,
         serializer: Arc<dyn MetadataSerializer>,
@@ -118,6 +126,7 @@ impl MmappedMetadata {
     }
 
     /// Get cached metadata, deserializing if needed
+    #[allow(dead_code)]
     pub fn get_metadata(&self) -> Result<Arc<Box<dyn EngineMetadata>>, ProximaDBError> {
         // Fast path: already deserialized
         {
@@ -158,6 +167,7 @@ impl MmappedMetadata {
     }
 
     /// Check if file can be skipped for given query
+    #[allow(dead_code)]
     pub fn can_skip_file(&self, query_context: &QueryContext) -> Result<bool, ProximaDBError> {
         let metadata = self.get_metadata()?;
         Ok(self
@@ -166,6 +176,7 @@ impl MmappedMetadata {
     }
 
     /// Get required data ranges for selective reading
+    #[allow(dead_code)]
     pub fn get_required_ranges(
         &self,
         query_context: &QueryContext,
@@ -177,11 +188,13 @@ impl MmappedMetadata {
     }
 
     /// Get cache file header
+    #[allow(dead_code)]
     pub fn header(&self) -> &CacheFileHeader {
         &self.header
     }
 
     /// Get memory footprint
+    #[allow(dead_code)]
     pub fn memory_footprint(&self) -> usize {
         self.mmap.len() + std::mem::size_of::<Self>()
     }
@@ -203,6 +216,7 @@ pub struct CacheStatistics {
 }
 
 impl CacheStatistics {
+    #[allow(dead_code)]
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
         if total == 0 {
@@ -212,6 +226,7 @@ impl CacheStatistics {
         }
     }
 
+    #[allow(dead_code)]
     pub fn avg_serialization_time_ms(&self) -> f64 {
         if self.hits + self.misses == 0 {
             0.0
@@ -222,6 +237,7 @@ impl CacheStatistics {
 }
 
 /// Zero-copy metadata cache with mmap-based storage
+#[allow(dead_code)]
 pub struct ZeroCopyMetadataCache {
     /// Cache directory for metadata files
     cache_dir: PathBuf,
@@ -237,6 +253,7 @@ pub struct ZeroCopyMetadataCache {
     enable_compression: bool,
 }
 
+#[allow(dead_code)]
 impl ZeroCopyMetadataCache {
     /// Create new cache with configuration
     pub async fn new(

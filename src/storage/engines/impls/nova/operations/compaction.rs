@@ -1,20 +1,17 @@
 //! Compaction operations module for NOVA engine
 //! Handles file merging, optimization, and hierarchical statistics management
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
-    HybridParquetWriter, HybridWriterConfig, ParquetWriterConfig, ReaderConfig,
-    StreamingParquetWriter, UnifiedParquetReader,
+    HybridParquetWriter, HybridWriterConfig, ParquetWriterConfig, UnifiedParquetReader,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{CompactionParameters, CompactionResult};
-
-use crate::storage::engines::impls::nova::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 
 /// Handles all compaction operations for NOVA engine
 pub struct NovaCompactionOperations {

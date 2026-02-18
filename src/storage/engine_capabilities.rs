@@ -10,62 +10,45 @@
 //! Centralized module for checking storage engine capabilities and feature support.
 //! This module provides static methods to check what features each engine supports
 //! without needing to instantiate engine instances.
+//!
+//! ## Architecture Note
+//!
+//! This module provides a static API that delegates to the trait-based capability
+//! system in `trait_components::capabilities`. This approach:
+//! - Maintains backward compatibility with existing static API consumers
+//! - Uses the trait-based system as the single source of truth (OCP compliant)
+//! - Avoids duplication of capability definitions
 
-use crate::proto::proximadb_v1::{CompressionAlgorithm, StorageEngine};
+use crate::proto::proximadb_v1::CompressionAlgorithm;
+use crate::storage::trait_components::capabilities::CapabilityFactory;
 use std::collections::HashSet;
+
+// Re-export StorageEngine for external use
+pub use crate::proto::proximadb_v1::StorageEngine;
 
 /// Engine capabilities checker - provides static methods for feature support queries
 pub struct EngineCapabilities;
 
 impl EngineCapabilities {
     /// Check if a compression algorithm is supported by a given storage engine
+    ///
+    /// Delegates to the trait-based capability system for OCP compliance.
     pub fn is_compression_supported(
         engine: StorageEngine,
         algorithm: CompressionAlgorithm,
     ) -> bool {
-        let supported = Self::get_supported_compression_algorithms(engine);
-        supported.contains(&algorithm)
+        let caps = CapabilityFactory::from_proto_engine(engine);
+        caps.is_compression_supported(algorithm)
     }
 
     /// Get all supported compression algorithms for a storage engine
+    ///
+    /// Delegates to the trait-based capability system for OCP compliance.
     pub fn get_supported_compression_algorithms(
         engine: StorageEngine,
     ) -> HashSet<CompressionAlgorithm> {
-        match engine {
-            StorageEngine::Sst => {
-                // SST supports all algorithms except LZO (no Rust implementation)
-                let mut supported = HashSet::new();
-                supported.insert(CompressionAlgorithm::CompressionNone);
-                supported.insert(CompressionAlgorithm::CompressionZstd);
-                supported.insert(CompressionAlgorithm::CompressionLz4);
-                supported.insert(CompressionAlgorithm::CompressionSnappy);
-                supported.insert(CompressionAlgorithm::CompressionGzip);
-                supported.insert(CompressionAlgorithm::CompressionBrotli);
-                supported.insert(CompressionAlgorithm::CompressionBzip2);
-                supported.insert(CompressionAlgorithm::CompressionDeflate);
-                supported.insert(CompressionAlgorithm::CompressionXz);
-                supported.insert(CompressionAlgorithm::CompressionZlib);
-                supported.insert(CompressionAlgorithm::CompressionLz4hc);
-                supported.insert(CompressionAlgorithm::CompressionLzma);
-                // LZO not supported
-                supported
-            }
-            StorageEngine::Viper => {
-                // VIPER uses Parquet which has limited compression support
-                let mut supported = HashSet::new();
-                supported.insert(CompressionAlgorithm::CompressionNone);
-                supported.insert(CompressionAlgorithm::CompressionZstd);
-                supported.insert(CompressionAlgorithm::CompressionLz4);
-                supported.insert(CompressionAlgorithm::CompressionSnappy);
-                supported.insert(CompressionAlgorithm::CompressionGzip);
-                supported.insert(CompressionAlgorithm::CompressionBrotli);
-                supported
-            }
-            _ => {
-                // Unknown engine - return empty set (no support)
-                HashSet::new()
-            }
-        }
+        let caps = CapabilityFactory::from_proto_engine(engine);
+        caps.supported_compression()
     }
 
     /// Get unsupported compression algorithms for a storage engine
@@ -126,6 +109,34 @@ impl EngineCapabilities {
                 CompressionAlgorithm::CompressionZstd
             }
             (StorageEngine::Viper, CompressionPriority::Ratio) => {
+                CompressionAlgorithm::CompressionBrotli
+            }
+
+            // HELIX and SWIFT engine recommendations (SST-based, use LZ4 for speed)
+            (StorageEngine::Helix, CompressionPriority::Speed)
+            | (StorageEngine::Swift, CompressionPriority::Speed) => {
+                CompressionAlgorithm::CompressionLz4
+            }
+            (StorageEngine::Helix, CompressionPriority::Balanced)
+            | (StorageEngine::Swift, CompressionPriority::Balanced) => {
+                CompressionAlgorithm::CompressionZstd
+            }
+            (StorageEngine::Helix, CompressionPriority::Ratio)
+            | (StorageEngine::Swift, CompressionPriority::Ratio) => {
+                CompressionAlgorithm::CompressionBrotli
+            }
+
+            // NOVA and RAPTOR engine recommendations (columnar-based, use ZSTD)
+            (StorageEngine::Nova, CompressionPriority::Speed)
+            | (StorageEngine::Raptor, CompressionPriority::Speed) => {
+                CompressionAlgorithm::CompressionSnappy
+            }
+            (StorageEngine::Nova, CompressionPriority::Balanced)
+            | (StorageEngine::Raptor, CompressionPriority::Balanced) => {
+                CompressionAlgorithm::CompressionZstd
+            }
+            (StorageEngine::Nova, CompressionPriority::Ratio)
+            | (StorageEngine::Raptor, CompressionPriority::Ratio) => {
                 CompressionAlgorithm::CompressionBrotli
             }
 
@@ -211,6 +222,10 @@ impl EngineCapabilities {
         match engine {
             StorageEngine::Sst => "SST",
             StorageEngine::Viper => "VIPER",
+            StorageEngine::Helix => "HELIX",
+            StorageEngine::Nova => "NOVA",
+            StorageEngine::Swift => "SWIFT",
+            StorageEngine::Raptor => "RAPTOR",
             _ => "Unknown",
         }
     }
@@ -220,9 +235,263 @@ impl EngineCapabilities {
         match engine_type {
             1 => StorageEngine::Sst,
             2 => StorageEngine::Viper,
+            3 => StorageEngine::Helix,
+            4 => StorageEngine::Nova,
+            5 => StorageEngine::Swift,
+            6 => StorageEngine::Raptor,
             _ => StorageEngine::Unspecified,
         }
     }
+
+    // ========================================================================
+    // Search Optimization Capabilities (for RL Planner Integration)
+    // ========================================================================
+
+    /// Get supported index types for a storage engine
+    pub fn get_supported_index_types(engine: StorageEngine) -> Vec<SearchIndexType> {
+        match engine {
+            StorageEngine::Sst => vec![
+                SearchIndexType::Flat,
+                SearchIndexType::HNSW,
+                SearchIndexType::IVF,
+            ],
+            StorageEngine::Helix => vec![
+                SearchIndexType::Flat,
+                SearchIndexType::HNSW,
+                SearchIndexType::IVF,
+                SearchIndexType::HilbertCurve, // Specialized for HELIX
+            ],
+            StorageEngine::Viper => vec![SearchIndexType::Flat, SearchIndexType::IVF],
+            StorageEngine::Swift => vec![
+                SearchIndexType::Flat,
+                SearchIndexType::HNSW,
+                SearchIndexType::AdaCurve, // Learned space-filling curve (uses Hilbert internally)
+            ],
+            StorageEngine::Nova => vec![
+                SearchIndexType::Flat,
+                SearchIndexType::IVF,
+                SearchIndexType::ZoneMap,
+            ],
+            StorageEngine::Raptor => vec![
+                SearchIndexType::Flat,
+                SearchIndexType::IVF,
+                SearchIndexType::AdaptiveMatrix,
+            ],
+            _ => vec![SearchIndexType::Flat],
+        }
+    }
+
+    /// Get supported quantization levels for a storage engine
+    pub fn get_supported_quantization_levels(
+        engine: StorageEngine,
+    ) -> Vec<SearchQuantizationLevel> {
+        match engine {
+            StorageEngine::Sst => vec![
+                SearchQuantizationLevel::FP32,
+                SearchQuantizationLevel::INT8,
+                SearchQuantizationLevel::Binary,
+            ],
+            StorageEngine::Helix => vec![
+                SearchQuantizationLevel::FP32,
+                SearchQuantizationLevel::INT8,
+                SearchQuantizationLevel::Binary,
+                SearchQuantizationLevel::PQ8,
+            ],
+            StorageEngine::Viper => {
+                vec![SearchQuantizationLevel::FP32, SearchQuantizationLevel::INT8]
+            }
+            StorageEngine::Swift => vec![
+                SearchQuantizationLevel::FP32,
+                SearchQuantizationLevel::INT8,
+                SearchQuantizationLevel::Binary,
+                SearchQuantizationLevel::PQ4,
+                SearchQuantizationLevel::PQ8,
+            ],
+            StorageEngine::Nova => vec![
+                SearchQuantizationLevel::FP32,
+                SearchQuantizationLevel::INT8,
+                SearchQuantizationLevel::Binary,
+            ],
+            StorageEngine::Raptor => {
+                vec![SearchQuantizationLevel::FP32, SearchQuantizationLevel::INT8]
+            }
+            _ => vec![SearchQuantizationLevel::FP32],
+        }
+    }
+
+    /// Get supported pruning strategies for a storage engine
+    pub fn get_supported_pruning_strategies(engine: StorageEngine) -> Vec<SearchPruningStrategy> {
+        match engine {
+            StorageEngine::Sst => vec![
+                SearchPruningStrategy::None,
+                SearchPruningStrategy::BloomFilter,
+                SearchPruningStrategy::BlockCentroid,
+            ],
+            StorageEngine::Helix => vec![
+                SearchPruningStrategy::None,
+                SearchPruningStrategy::HilbertRange,
+                SearchPruningStrategy::ZoneMap,
+                SearchPruningStrategy::BlockCentroid,
+            ],
+            StorageEngine::Viper => vec![
+                SearchPruningStrategy::None,
+                SearchPruningStrategy::RowGroupStats,
+            ],
+            StorageEngine::Swift => vec![
+                SearchPruningStrategy::None,
+                SearchPruningStrategy::AdaCurvePruning, // Learned curve-based pruning
+                SearchPruningStrategy::BlockCentroid,
+                SearchPruningStrategy::SuperblockSignature,
+            ],
+            StorageEngine::Nova => vec![
+                SearchPruningStrategy::None,
+                SearchPruningStrategy::ZoneMap,
+                SearchPruningStrategy::ColumnStats,
+            ],
+            StorageEngine::Raptor => vec![
+                SearchPruningStrategy::None,
+                SearchPruningStrategy::AdaptiveTier,
+            ],
+            _ => vec![SearchPruningStrategy::None],
+        }
+    }
+
+    /// Check if engine supports progressive search pipeline
+    ///
+    /// Delegates to the trait-based capability system for OCP compliance.
+    pub fn supports_progressive_search(engine: StorageEngine) -> bool {
+        let caps = CapabilityFactory::from_proto_engine(engine);
+        caps.supports_progressive_quantization()
+    }
+
+    /// Get recommended search configuration for a workload
+    pub fn get_search_recommendations(
+        engine: StorageEngine,
+        collection_size: u64,
+        latency_sensitive: bool,
+    ) -> SearchRecommendation {
+        let use_index = collection_size > 5000;
+        let use_progressive = Self::supports_progressive_search(engine) && collection_size > 10000;
+
+        let index_type = if use_index {
+            match engine {
+                StorageEngine::Helix => SearchIndexType::HilbertCurve,
+                StorageEngine::Raptor => SearchIndexType::AdaptiveMatrix,
+                _ => SearchIndexType::IVF, // Default to IVF for large collections
+            }
+        } else {
+            SearchIndexType::Flat
+        };
+
+        let quantization = if latency_sensitive && collection_size > 10000 {
+            SearchQuantizationLevel::INT8
+        } else {
+            SearchQuantizationLevel::FP32
+        };
+
+        let pruning = match engine {
+            StorageEngine::Sst if collection_size > 10000 => SearchPruningStrategy::BloomFilter,
+            StorageEngine::Helix => SearchPruningStrategy::HilbertRange,
+            StorageEngine::Swift => SearchPruningStrategy::AdaCurvePruning, // Learned curve pruning
+            StorageEngine::Nova => SearchPruningStrategy::ZoneMap,
+            _ => SearchPruningStrategy::None,
+        };
+
+        SearchRecommendation {
+            index_type,
+            quantization,
+            pruning,
+            use_progressive,
+            expected_recall: if use_index { 0.95 } else { 1.0 },
+            expected_latency_factor: if use_progressive {
+                0.3
+            } else if use_index {
+                0.5
+            } else {
+                1.0
+            },
+        }
+    }
+}
+
+/// Index types supported by storage engines
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SearchIndexType {
+    /// No index, full scan
+    Flat,
+    /// Hierarchical Navigable Small World graph
+    HNSW,
+    /// Inverted File index with clustering
+    IVF,
+    /// Locality Sensitive Hashing
+    LSH,
+    /// Product Quantization based index
+    PQ,
+    /// HELIX-specific Hilbert curve ordering
+    HilbertCurve,
+    /// SWIFT AdaCurve - learned space-filling curve (uses Hilbert internally)
+    AdaCurve,
+    /// Zone map based pruning (NOVA)
+    ZoneMap,
+    /// Adaptive matrix structure (RAPTOR)
+    AdaptiveMatrix,
+}
+
+/// Quantization levels for search
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SearchQuantizationLevel {
+    /// Full 32-bit floating point
+    FP32,
+    /// 8-bit integer quantization
+    INT8,
+    /// 1-bit binary quantization
+    Binary,
+    /// 4-bit product quantization
+    PQ4,
+    /// 8-bit product quantization
+    PQ8,
+}
+
+/// Pruning strategies for search
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SearchPruningStrategy {
+    /// No pruning
+    None,
+    /// Bloom filter based pruning (SST)
+    BloomFilter,
+    /// Block centroid distance pruning
+    BlockCentroid,
+    /// Hilbert range pruning (HELIX)
+    HilbertRange,
+    /// AdaCurve (learned curve) pruning (SWIFT) - uses Hilbert internally
+    AdaCurvePruning,
+    /// Zone map pruning (NOVA)
+    ZoneMap,
+    /// Row group statistics pruning (VIPER)
+    RowGroupStats,
+    /// Column statistics pruning (NOVA)
+    ColumnStats,
+    /// Superblock signature pruning (SWIFT)
+    SuperblockSignature,
+    /// Adaptive tier pruning (RAPTOR)
+    AdaptiveTier,
+}
+
+/// Search recommendation from capabilities
+#[derive(Debug, Clone)]
+pub struct SearchRecommendation {
+    /// Recommended index type
+    pub index_type: SearchIndexType,
+    /// Recommended quantization level
+    pub quantization: SearchQuantizationLevel,
+    /// Recommended pruning strategy
+    pub pruning: SearchPruningStrategy,
+    /// Whether to use progressive search
+    pub use_progressive: bool,
+    /// Expected recall with these settings
+    pub expected_recall: f32,
+    /// Expected latency factor (1.0 = baseline)
+    pub expected_latency_factor: f32,
 }
 
 /// Compression priority for choosing algorithms and levels

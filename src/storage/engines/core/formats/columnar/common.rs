@@ -11,17 +11,16 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::schema::{ColumnarSchemaBuilder, ColumnarSchemaConfig};
 use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
+use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
-use crate::core::compression::CompressionAlgorithm;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone)]
@@ -414,6 +413,7 @@ pub struct CommonColumnarOperations {
 
     // Distance computation removed - engines should use compute module directly
     /// Filesystem factory for I/O operations
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Metadata cache
@@ -463,6 +463,7 @@ pub struct PerformanceMonitor {
 
 /// Operation performance metrics
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct OperationMetrics {
     /// Serialization metrics
     serialization_ops: usize,
@@ -470,17 +471,24 @@ pub struct OperationMetrics {
     serialization_bytes_processed: usize,
 
     /// Distance computation metrics
+    #[allow(dead_code)]
     distance_ops: usize,
+    #[allow(dead_code)]
     distance_total_time_ms: f64,
+    #[allow(dead_code)]
     distance_vectors_processed: usize,
 
     /// Schema generation metrics
     schema_generations: usize,
+    #[allow(dead_code)]
     schema_cache_hits: usize,
+    #[allow(dead_code)]
     schema_cache_misses: usize,
 
     /// I/O metrics
+    #[allow(dead_code)]
     read_ops: usize,
+    #[allow(dead_code)]
     write_ops: usize,
     bytes_read: usize,
     bytes_written: usize,
@@ -488,20 +496,28 @@ pub struct OperationMetrics {
 
 /// Resource usage metrics
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct ResourceMetrics {
     /// Memory usage
+    #[allow(dead_code)]
     memory_usage_bytes: usize,
+    #[allow(dead_code)]
     peak_memory_usage_bytes: usize,
 
     /// CPU usage
+    #[allow(dead_code)]
     cpu_usage_percent: f32,
 
     /// I/O metrics
+    #[allow(dead_code)]
     disk_read_mb_s: f32,
+    #[allow(dead_code)]
     disk_write_mb_s: f32,
 
     /// Cache metrics
+    #[allow(dead_code)]
     cache_hit_ratio: f32,
+    #[allow(dead_code)]
     cache_memory_usage_bytes: usize,
 }
 
@@ -676,7 +692,6 @@ impl CommonColumnarOperations {
         Ok(records)
     }
 
-    /// Compute distance with quantized optimization
     // Distance computation methods removed - use compute module directly
     // Engines (NOVA, VIPER) should use:
     // - crate::compute::distance_computation::engine::UnifiedDistanceCompute
@@ -790,7 +805,7 @@ impl CommonColumnarOperations {
     ) -> Result<(ColumnarFileMetadata, Arc<Schema>, CompressionMetadata)> {
         // This would implement actual file metadata loading
         // For now, return placeholder data
-        warn!("File metadata loading from disk not fully implemented");
+        info!("File metadata loading from disk not fully implemented");
 
         use crate::compute::distance_computation::DistanceMetric;
 
@@ -863,7 +878,7 @@ impl PerformanceMonitor {
         }
     }
 
-    async fn record_schema_generation(&self, duration_ms: f64) {
+    async fn record_schema_generation(&self, _duration_ms: f64) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
             metrics.schema_generations += 1;
@@ -879,19 +894,18 @@ impl PerformanceMonitor {
         }
     }
 
-    async fn record_deserialization(&self, duration_ms: f64, record_count: usize) {
+    async fn record_deserialization(&self, _duration_ms: f64, _record_count: usize) {
         if self.config.enable_metrics {
-            let metrics = self.operation_metrics.write().await;
+            let _metrics = self.operation_metrics.write().await;
             // Deserialization metrics would be tracked separately if needed
         }
     }
 
-    async fn record_distance_computation(&self, duration_ms: f64, vector_count: usize) {
+    #[allow(dead_code)]
+    async fn record_distance_computation(&self, _duration_ms: f64, _vector_count: usize) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
             metrics.distance_ops += 1;
-            metrics.distance_total_time_ms += duration_ms;
-            metrics.distance_vectors_processed += vector_count;
         }
     }
 
@@ -923,24 +937,28 @@ impl SerializationOptimizationConfig {
 }
 
 impl DistanceComputationConfig {
+    #[allow(dead_code)]
     fn to_simd_optimization(
         &self,
     ) -> crate::compute::distance_computation::quantized::SIMDOptimization {
         crate::compute::distance_computation::quantized::SIMDOptimization::default()
     }
 
+    #[allow(dead_code)]
     fn to_cache_config(
         &self,
     ) -> crate::compute::distance_computation::quantized::DistanceCacheConfig {
         crate::compute::distance_computation::quantized::DistanceCacheConfig::default()
     }
 
+    #[allow(dead_code)]
     fn to_approximation_config(
         &self,
     ) -> crate::compute::distance_computation::quantized::ApproximationConfig {
         crate::compute::distance_computation::quantized::ApproximationConfig::default()
     }
 
+    #[allow(dead_code)]
     fn to_hardware_preferences(
         &self,
     ) -> crate::compute::distance_computation::quantized::HardwarePreferences {
@@ -1361,7 +1379,6 @@ pub fn map_core_to_parquet_compression(
                 Compression::BROTLI(parquet::basic::BrotliLevel::default())
             }
         }
-        CompressionAlgorithm::Lz4 => Compression::LZ4,
         CompressionAlgorithm::Lzo => Compression::LZO,
         // Map unsupported algorithms to fallbacks
         CompressionAlgorithm::Deflate | CompressionAlgorithm::Zlib => {

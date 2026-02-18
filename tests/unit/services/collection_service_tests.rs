@@ -61,6 +61,10 @@ async fn test_create_collection() -> Result<()> {
         owner: Some("test_user".to_string()),
         embedding_models: vec![],
         storage_config: None,
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
     };
 
     let response = service.create_collection(&config).await?;
@@ -91,6 +95,10 @@ async fn test_get_collection() -> Result<()> {
         owner: None,
         embedding_models: vec![],
         storage_config: None,
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -129,6 +137,10 @@ async fn test_list_collections() -> Result<()> {
             owner: None,
             embedding_models: vec![],
             storage_config: None,
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         };
 
         let response = service.create_collection(&config).await?;
@@ -162,6 +174,10 @@ async fn test_delete_collection() -> Result<()> {
         owner: None,
         embedding_models: vec![],
         storage_config: None,
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
     };
 
     let create_response = service.create_collection(&config).await?;

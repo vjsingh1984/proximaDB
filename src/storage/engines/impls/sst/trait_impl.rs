@@ -25,8 +25,6 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::sst::SstError;
 use crate::storage::engines::impls::sst::core::SstEngine;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
@@ -64,7 +62,7 @@ impl UnifiedStorageEngine for SstEngine {
         info!("🔄 SST: Starting compaction operation");
 
         // Use the compaction manager if available
-        if let Some(compaction_manager) = self.compaction_manager() {
+        if let Some(_compaction_manager) = self.compaction_manager() {
             // Trigger compaction through the manager
             // This would be implemented in the compaction module
             Ok(CompactionResult {
@@ -155,7 +153,7 @@ impl UnifiedStorageEngine for SstEngine {
         );
 
         // Add SST-specific metrics
-        if let Some(compaction_manager) = self.compaction_manager() {
+        if let Some(_compaction_manager) = self.compaction_manager() {
             metrics.insert(
                 "compaction_enabled".to_string(),
                 serde_json::Value::Bool(true),

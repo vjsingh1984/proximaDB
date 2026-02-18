@@ -19,6 +19,7 @@ use tracing::{debug, info, trace};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 pub use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::{Collection, CompressionAlgorithm};
+use crate::query::rl_planner::{ExecutionAction, get_rl_planner};
 use crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig;
 // Note: SearchStageContext from search_modes is for search stages, not query context - using StorageQueryContext instead
 
@@ -30,7 +31,9 @@ use crate::storage::engines::core::formats::columnar::common::EarlyTerminationCo
 /// Consolidates Universal Metadata Filtering + Unified Search Optimizer
 pub struct UnifiedQueryOptimizer {
     /// Shared metadata caches (consolidated from both systems)
+    #[allow(dead_code)]
     file_metadata_cache: Arc<dashmap::DashMap<String, FileMetadata>>,
+    #[allow(dead_code)]
     column_metadata_cache: Arc<dashmap::DashMap<String, ColumnMetadata>>,
 
     /// Unified performance tracking (merged from both)
@@ -40,12 +43,14 @@ pub struct UnifiedQueryOptimizer {
     index_capabilities: Arc<dashmap::DashMap<String, IndexCapabilities>>,
 
     /// Quantization engines (from search optimizer)
+    #[allow(dead_code)]
     quantization_engines: Arc<dashmap::DashMap<String, Arc<StorageQuantizationEngine>>>,
 
     /// Unified cost model (NEW - combines both systems)
     cost_model: Arc<UnifiedCostModel>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: UnifiedOptimizerConfig,
 }
 
@@ -234,6 +239,12 @@ pub struct UnifiedExecutionPlan {
 
     /// Fallback strategies
     pub fallback_strategies: Vec<FallbackStrategy>,
+
+    /// RL planner state used for this plan (for feedback loop)
+    pub rl_state: Option<crate::query::rl_planner::PlannerState>,
+
+    /// RL action selected for this plan (for feedback loop)
+    pub rl_action: Option<crate::query::rl_planner::ExecutionAction>,
 }
 
 /// Execution steps that combine search and filter operations
@@ -282,12 +293,15 @@ pub enum ExecutionStep {
 pub struct UnifiedCostModel {
     /// Cost calculation strategies
     /// Cost calculation strategies
+    #[allow(dead_code)]
     strategies: HashMap<String, Box<dyn CostStrategy>>,
 
     /// Historical cost data
+    #[allow(dead_code)]
     historical_costs: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
 
     /// Hardware capabilities for cost adjustment
+    #[allow(dead_code)]
     hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
 }
 
@@ -422,40 +436,130 @@ impl UnifiedQueryOptimizer {
         // Step 2: Build unified cost model
         let cost_analysis = self.build_cost_analysis(&context, &query_analysis)?;
 
-        // Step 3: Optimize execution order (KEY CONSOLIDATION POINT)
+        // Step 3: Check if RL planner is available and get optimized action
+        let (rl_state, rl_action) = self.get_rl_optimized_action(&context).await;
+
+        // Step 4: Optimize execution order (KEY CONSOLIDATION POINT)
         let execution_steps =
             self.optimize_execution_order(&cost_analysis, &query_analysis, &context)?;
 
-        // Step 4: Configure resources
+        // Step 5: Configure resources
         let resource_allocation = self.allocate_resources(&context, &execution_steps)?;
 
-        // Step 5: Estimate performance
+        // Step 6: Estimate performance
         let performance_estimate =
             self.estimate_unified_performance(&context, &execution_steps, &resource_allocation)?;
 
-        // Step 6: Configure parallelism
+        // Step 7: Configure parallelism (may be modified by RL action)
         let parallelism = self.configure_parallelism(&context, &execution_steps);
 
-        // Step 7: Setup fallback strategies
+        // Step 8: Setup fallback strategies
         let fallback_strategies = self.configure_fallbacks(&context, &execution_steps);
+
+        // Step 9: Build initial plan with RL context for feedback loop
+        let mut plan = UnifiedExecutionPlan {
+            execution_steps,
+            resource_allocation,
+            performance_estimate,
+            parallelism,
+            fallback_strategies,
+            rl_state: rl_state.clone(),
+            rl_action: rl_action.clone(),
+        };
+
+        // Step 10: Apply RL-selected action to modify the plan if available
+        if let Some(ref action) = rl_action {
+            self.apply_rl_action_to_plan(action, &mut plan);
+            trace!("🎯 RL planner applied action: {}", action.describe());
+        }
 
         let optimization_time = start.elapsed();
 
         debug!(
             "✅ Unified optimization complete in {:?}: {} steps, est. latency {}ms, recall {:.2}",
             optimization_time,
-            execution_steps.len(),
-            performance_estimate.estimated_latency_ms,
-            performance_estimate.estimated_recall
+            plan.execution_steps.len(),
+            plan.performance_estimate.estimated_latency_ms,
+            plan.performance_estimate.estimated_recall
         );
 
-        Ok(UnifiedExecutionPlan {
-            execution_steps,
-            resource_allocation,
-            performance_estimate,
-            parallelism,
-            fallback_strategies,
-        })
+        Ok(plan)
+    }
+
+    /// Get optimized action from RL planner if available
+    ///
+    /// Returns both the state (for feedback loop) and the selected action.
+    async fn get_rl_optimized_action(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+    ) -> (
+        Option<crate::query::rl_planner::PlannerState>,
+        Option<ExecutionAction>,
+    ) {
+        if let Some(rl_planner) = get_rl_planner() {
+            if rl_planner.is_enabled() {
+                let state = rl_planner.extract_state(context);
+                let action = rl_planner.select_action(&state).await;
+                trace!(
+                    "🎯 RL planner selected action for collection {}: {}",
+                    context.collection.id,
+                    action.describe()
+                );
+                return (Some(state), Some(action));
+            }
+        }
+        (None, None)
+    }
+
+    /// Apply RL-selected action to modify the execution plan
+    fn apply_rl_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
+        // Modify execution steps based on RL action
+        for step in &mut plan.execution_steps {
+            match step {
+                ExecutionStep::VectorSearch {
+                    execution_method,
+                    candidates,
+                    ..
+                } => {
+                    // Apply index strategy from action
+                    if let Some(ref strategy) = action.index_strategy {
+                        *execution_method = match strategy {
+                            crate::query::rl_planner::IndexStrategy::HNSW { .. } => {
+                                SearchExecutionMethod::IndexBased {
+                                    index_type: Index::HNSW,
+                                }
+                            }
+                            crate::query::rl_planner::IndexStrategy::IVF { .. } => {
+                                SearchExecutionMethod::IndexBased {
+                                    index_type: Index::IVF,
+                                }
+                            }
+                            crate::query::rl_planner::IndexStrategy::LSH { .. } => {
+                                SearchExecutionMethod::IndexBased {
+                                    index_type: Index::LSH,
+                                }
+                            }
+                            crate::query::rl_planner::IndexStrategy::DirectScan => {
+                                SearchExecutionMethod::DirectFP32
+                            }
+                            _ => execution_method.clone(),
+                        };
+                    }
+
+                    // Apply search mode expansion factor
+                    if let crate::query::rl_planner::SearchModeAction::Approximate {
+                        expansion_factor,
+                    } = &action.search_mode
+                    {
+                        *candidates = (*candidates as f32 * expansion_factor) as usize;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Apply parallelism settings from RL action
+        plan.parallelism.use_simd = action.parallelism.enable_simd;
     }
 
     /// Optimize execution order - CORE CONSOLIDATION LOGIC
@@ -549,7 +653,7 @@ impl UnifiedQueryOptimizer {
         }
 
         // Add index lookups if beneficial
-        if let Some(index_strategy) = self.select_index_strategy(cost_analysis) {
+        if let Some(index_strategy) = self.select_index_strategy(cost_analysis, context) {
             steps.insert(
                 0,
                 ExecutionStep::IndexLookup {
@@ -725,18 +829,24 @@ impl CostStrategy for DefaultCostStrategy {
 /// Cost analysis results
 #[derive(Debug)]
 struct CostAnalysis {
+    #[allow(dead_code)]
     total_cost: f64,
     filter_cost: Option<f64>,
     search_cost: Option<f64>,
+    #[allow(dead_code)]
     index_cost: Option<f64>,
     filter_selectivity: Option<f64>,
     filters: Vec<FilterAnalysis>,
+    #[allow(dead_code)]
     has_bloom_filters: bool,
     /// Dataset size for accurate cost estimation
+    #[allow(dead_code)]
     dataset_size: usize,
     /// Estimated memory usage for operation
+    #[allow(dead_code)]
     estimated_memory_mb: f64,
     /// Estimated I/O operations required
+    #[allow(dead_code)]
     estimated_io_ops: usize,
 }
 
@@ -751,7 +861,7 @@ struct FilterAnalysis {
 }
 
 /// Operation types for cost calculation
-enum Operation {
+pub enum Operation {
     MetadataFilter(FilterOperation),
     VectorSearch(SearchOperation),
     IndexLookup(IndexOperation),
@@ -759,26 +869,27 @@ enum Operation {
 }
 
 /// Index operation details
-struct IndexOperation {
+pub struct IndexOperation {
     index_type: Index,
+    #[allow(dead_code)]
     lookup_params: IndexLookupParams,
 }
 
 /// Filter operation details
-struct FilterOperation {
+pub struct FilterOperation {
     condition: FilterCondition,
     rows_to_scan: usize,
     can_use_index: bool,
 }
 
 /// Search operation details
-struct SearchOperation {
+pub struct SearchOperation {
     method: SearchExecutionMethod,
     num_vectors: usize,
 }
 
 /// Combined operation details
-struct CombinedOperation {
+pub struct CombinedOperation {
     filter: FilterOperation,
     search: SearchOperation,
     can_parallelize: bool,
@@ -1020,7 +1131,9 @@ struct UnifiedPerformanceHistory {
 struct StrategyPerformance {
     pub avg_latency_ms: f32,
     pub avg_recall: f32,
+    #[allow(dead_code)]
     pub avg_memory_mb: usize,
+    #[allow(dead_code)]
     pub success_rate: f32,
 }
 
@@ -1079,7 +1192,6 @@ pub fn migrate_universal_filter(
     filter: &crate::core::search::FilterExpression,
 ) -> UnifiedMetadataFilter {
     let mut conditions = Vec::new();
-    let mut logic = FilterLogic::And;
 
     fn extract_conditions(
         expr: &crate::core::search::FilterExpression,
@@ -1192,17 +1304,13 @@ pub fn migrate_universal_filter(
     }
 
     // Determine the overall logic based on the top-level expression
-    match filter {
-        crate::core::search::FilterExpression::And(_) => {
-            logic = FilterLogic::And;
-        }
-        crate::core::search::FilterExpression::Or(_) => {
-            logic = FilterLogic::Or;
-        }
+    let logic = match filter {
+        crate::core::search::FilterExpression::And(_) => FilterLogic::And,
+        crate::core::search::FilterExpression::Or(_) => FilterLogic::Or,
         _ => {
-            logic = FilterLogic::And; // Default for single conditions
+            FilterLogic::And // Default for single conditions
         }
-    }
+    };
 
     // Extract all conditions
     extract_conditions(filter, &mut conditions);
@@ -1219,17 +1327,79 @@ pub fn migrate_universal_filter(
 }
 
 impl UnifiedQueryOptimizer {
-    /// Analyze query components (stub implementation)
+    /// Analyze query components with real complexity assessment
     fn analyze_query_components(&self, context: &UnifiedQueryContext<'_>) -> Result<QueryAnalysis> {
-        let top_k = context.search_params.and_then(|p| p.top_k).unwrap_or(10); // Default to 10 if not specified
+        let top_k = context.search_params.and_then(|p| p.top_k).unwrap_or(10);
+
+        // Determine query complexity based on actual filter structure
+        let (filter_depth, filter_count) = if let Some(filter) = context.filter_params {
+            Self::analyze_filter_complexity(filter)
+        } else {
+            (0, 0)
+        };
+
+        // Calculate complexity based on multiple factors
+        let query_complexity = {
+            let vector_complexity = if context.search_params.is_some() {
+                1
+            } else {
+                0
+            };
+            let filter_complexity = filter_count.min(10); // Cap at 10 for scoring
+            let depth_penalty = filter_depth.min(5); // Cap depth penalty
+            let data_scale_factor = if context.total_vectors > 1_000_000 {
+                3
+            } else if context.total_vectors > 100_000 {
+                2
+            } else {
+                1
+            };
+
+            let complexity_score =
+                vector_complexity + filter_complexity + depth_penalty + data_scale_factor;
+
+            if complexity_score <= 3 {
+                QueryComplexity::Simple
+            } else if complexity_score <= 7 {
+                QueryComplexity::Moderate
+            } else {
+                QueryComplexity::Complex
+            }
+        };
+
+        trace!(
+            "Query analysis: filter_depth={}, filter_count={}, complexity={:?}",
+            filter_depth, filter_count, query_complexity
+        );
 
         Ok(QueryAnalysis {
             has_vector_search: context.search_params.is_some(),
             has_metadata_filter: context.filter_params.is_some(),
             has_aggregation: false,
-            query_complexity: QueryComplexity::Simple,
+            query_complexity,
             top_k,
         })
+    }
+
+    /// Recursively analyze filter complexity
+    fn analyze_filter_complexity(filter: &FilterExpression) -> (usize, usize) {
+        match filter {
+            FilterExpression::Comparison { .. } => (1, 1),
+            FilterExpression::And(expressions) | FilterExpression::Or(expressions) => {
+                let mut max_depth = 0;
+                let mut total_count = 0;
+                for expr in expressions {
+                    let (depth, count) = Self::analyze_filter_complexity(expr);
+                    max_depth = max_depth.max(depth);
+                    total_count += count;
+                }
+                (max_depth + 1, total_count)
+            }
+            FilterExpression::Not(inner) => {
+                let (depth, count) = Self::analyze_filter_complexity(inner);
+                (depth + 1, count)
+            }
+        }
     }
 
     /// Extract filter conditions from cost analysis
@@ -1333,83 +1503,574 @@ impl UnifiedQueryOptimizer {
         }
     }
 
-    /// Build cost analysis (stub implementation)
+    /// Build cost analysis with real statistics and filter analysis
     fn build_cost_analysis(
         &self,
         context: &UnifiedQueryContext<'_>,
-        _analysis: &QueryAnalysis,
+        analysis: &QueryAnalysis,
     ) -> Result<CostAnalysis> {
-        Ok(CostAnalysis {
-            total_cost: 1.0,
-            filter_cost: Some(0.5),
-            search_cost: Some(0.5),
-            index_cost: None,
-            filter_selectivity: Some(0.8),
-            filters: vec![],
-            has_bloom_filters: false,
-            dataset_size: context
+        // Get dataset size from collection stats or estimate
+        let dataset_size = context
+            .collection
+            .stats
+            .as_ref()
+            .map(|s| s.vector_count as usize)
+            .unwrap_or(context.total_vectors.max(10000));
+
+        // Analyze filters and compute selectivity
+        let (filters, combined_selectivity) = if let Some(filter_expr) = context.filter_params {
+            self.analyze_filters(filter_expr, context)
+        } else {
+            (vec![], 1.0)
+        };
+
+        // Calculate filter cost based on complexity and selectivity
+        let filter_cost = if analysis.has_metadata_filter {
+            let base_filter_cost = match analysis.query_complexity {
+                QueryComplexity::Simple => 0.1,
+                QueryComplexity::Moderate => 0.3,
+                QueryComplexity::Complex => 0.6,
+            };
+            // Adjust for dataset size (log scale)
+            let size_factor = (dataset_size as f64 / 10000.0).log2().max(1.0);
+            Some(base_filter_cost * size_factor * combined_selectivity)
+        } else {
+            None
+        };
+
+        // Calculate search cost based on vector operations
+        let search_cost = if analysis.has_vector_search {
+            let dimension = context
                 .collection
-                .stats
+                .config
                 .as_ref()
-                .map(|s| s.vector_count as usize)
-                .unwrap_or(10000),
-            estimated_memory_mb: 64.0, // Reasonable default
-            estimated_io_ops: 100,     // Default estimate
+                .map(|c| c.dimension as usize)
+                .unwrap_or(128);
+
+            // Base cost: O(n * d) for exhaustive search, reduced by quantization
+            let base_search_cost = (dataset_size as f64 * dimension as f64) / 1_000_000.0;
+
+            // Adjust for selectivity if filter is applied first
+            let effective_dataset = if combined_selectivity < 1.0 {
+                base_search_cost * combined_selectivity
+            } else {
+                base_search_cost
+            };
+
+            // Top-k factor (larger k = more work)
+            let top_k_factor = (analysis.top_k as f64 / 10.0).log2().max(1.0);
+
+            Some(effective_dataset * top_k_factor)
+        } else {
+            None
+        };
+
+        // Check for available bloom filters
+        // Bloom filters are typically enabled for larger datasets
+        let has_bloom_filters = dataset_size > 50000;
+
+        // Estimate memory usage
+        let dimension = context
+            .collection
+            .config
+            .as_ref()
+            .map(|c| c.dimension as usize)
+            .unwrap_or(128);
+        let bytes_per_vector = dimension * 4; // FP32
+        let estimated_memory_mb = (dataset_size * bytes_per_vector) as f64 / (1024.0 * 1024.0);
+
+        // Estimate I/O operations (files to read)
+        let estimated_io_ops =
+            context.available_files.len().max(1) * (1.0 / combined_selectivity).ceil() as usize;
+
+        // Total cost combines all components
+        let total_cost = filter_cost.unwrap_or(0.0) + search_cost.unwrap_or(0.0) + 0.1; // Base overhead
+
+        debug!(
+            "Cost analysis: dataset={}, filter_selectivity={:.3}, filter_cost={:?}, search_cost={:?}, total={:.3}",
+            dataset_size, combined_selectivity, filter_cost, search_cost, total_cost
+        );
+
+        Ok(CostAnalysis {
+            total_cost,
+            filter_cost,
+            search_cost,
+            index_cost: None, // Could be populated from index_capabilities cache
+            filter_selectivity: Some(combined_selectivity),
+            filters,
+            has_bloom_filters,
+            dataset_size,
+            estimated_memory_mb,
+            estimated_io_ops,
         })
     }
 
-    /// Allocate resources (stub implementation)
-    fn allocate_resources(
+    /// Analyze filters and estimate selectivity
+    fn analyze_filters(
         &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
-    ) -> Result<ResourceAllocation> {
-        Ok(ResourceAllocation {
-            memory_budget_mb: 1024,
-            cpu_cores: 4,
-            io_threads: 2,
-        })
+        filter: &FilterExpression,
+        context: &UnifiedQueryContext<'_>,
+    ) -> (Vec<FilterAnalysis>, f64) {
+        let mut analyses = Vec::new();
+        let mut combined_selectivity = 1.0;
+
+        self.extract_filter_analyses(filter, context, &mut analyses, &mut combined_selectivity);
+
+        (analyses, combined_selectivity)
     }
 
-    /// Estimate unified performance (stub implementation)
-    fn estimate_unified_performance(
+    /// Extract filter analyses recursively
+    fn extract_filter_analyses(
         &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
-        _allocation: &ResourceAllocation,
-    ) -> Result<UnifiedPerformanceEstimate> {
-        Ok(UnifiedPerformanceEstimate {
-            estimated_latency_ms: 100,
-            estimated_memory_mb: 100,
-            estimated_io_ops: 10,
-            estimated_recall: 0.95,
-            estimated_precision: 0.98,
-            // confidence removed -  0.8,
-        })
-    }
+        filter: &FilterExpression,
+        context: &UnifiedQueryContext<'_>,
+        analyses: &mut Vec<FilterAnalysis>,
+        combined_selectivity: &mut f64,
+    ) {
+        match filter {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                // Convert to FilterCondition for selectivity estimation
+                let condition = self.convert_to_filter_condition(field, operator, value);
+                let selectivity = self.cost_model.estimate_selectivity(&condition);
 
-    /// Configure parallelism (stub implementation)
-    fn configure_parallelism(
-        &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
-    ) -> ParallelismConfig {
-        ParallelismConfig {
-            file_parallelism: 4,
-            vector_parallelism: 4,
-            filter_parallelism: 2,
-            use_simd: true,
+                // Check if we can push to index
+                let can_push_to_index = self.check_index_availability(field, context);
+                let can_push_to_storage = self.check_storage_pushdown(operator);
+
+                analyses.push(FilterAnalysis {
+                    condition,
+                    selectivity,
+                    can_push_to_storage,
+                    can_push_to_index,
+                    best_index: if can_push_to_index {
+                        Some(format!("idx_{}", field))
+                    } else {
+                        None
+                    },
+                });
+
+                // AND semantics: multiply selectivities
+                *combined_selectivity *= selectivity;
+            }
+            FilterExpression::And(expressions) => {
+                for expr in expressions {
+                    self.extract_filter_analyses(expr, context, analyses, combined_selectivity);
+                }
+            }
+            FilterExpression::Or(expressions) => {
+                // OR: take max selectivity (conservative estimate)
+                let mut or_selectivity: f64 = 0.0;
+                for expr in expressions {
+                    let mut temp_selectivity: f64 = 1.0;
+                    self.extract_filter_analyses(expr, context, analyses, &mut temp_selectivity);
+                    or_selectivity = or_selectivity.max(temp_selectivity);
+                }
+                *combined_selectivity *= or_selectivity.min(1.0);
+            }
+            FilterExpression::Not(inner) => {
+                let mut inner_selectivity: f64 = 1.0;
+                self.extract_filter_analyses(inner, context, analyses, &mut inner_selectivity);
+                // NOT inverts selectivity
+                *combined_selectivity *= 1.0 - inner_selectivity;
+            }
         }
     }
 
-    /// Configure fallbacks (stub implementation)
+    /// Convert FilterExpression comparison to FilterCondition
+    fn convert_to_filter_condition(
+        &self,
+        field: &str,
+        operator: &crate::core::search::ComparisonOperator,
+        value: &serde_json::Value,
+    ) -> FilterCondition {
+        use crate::core::search::ComparisonOperator;
+
+        match operator {
+            ComparisonOperator::Equals => FilterCondition::Equals {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::NotEquals => FilterCondition::NotEquals {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::GreaterThan => FilterCondition::GreaterThan {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::LessThan => FilterCondition::LessThan {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+            ComparisonOperator::In => FilterCondition::In {
+                column: field.to_string(),
+                values: match value {
+                    serde_json::Value::Array(arr) => arr.clone(),
+                    _ => vec![value.clone()],
+                },
+            },
+            _ => FilterCondition::Equals {
+                column: field.to_string(),
+                value: value.clone(),
+            },
+        }
+    }
+
+    /// Check if an index exists for a field
+    fn check_index_availability(&self, field: &str, _context: &UnifiedQueryContext<'_>) -> bool {
+        // Check our index capabilities cache
+        self.index_capabilities.contains_key(field)
+    }
+
+    /// Check if operator supports storage-level pushdown
+    fn check_storage_pushdown(&self, operator: &crate::core::search::ComparisonOperator) -> bool {
+        use crate::core::search::ComparisonOperator;
+        matches!(
+            operator,
+            ComparisonOperator::Equals
+                | ComparisonOperator::NotEquals
+                | ComparisonOperator::GreaterThan
+                | ComparisonOperator::LessThan
+                | ComparisonOperator::GreaterThanOrEqual
+                | ComparisonOperator::LessThanOrEqual
+                | ComparisonOperator::In
+        )
+    }
+
+    /// Allocate resources based on query complexity and hardware capabilities
+    fn allocate_resources(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
+    ) -> Result<ResourceAllocation> {
+        // Get hardware capabilities
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let available_cores = hardware.cpu.logical_cores.max(1);
+        let available_memory_mb = (hardware.memory.available_memory / (1024 * 1024)) as usize;
+
+        // Calculate resource needs based on execution steps
+        let mut memory_budget_mb = 256; // Base allocation
+        let mut cpu_cores = 1;
+        let mut io_threads = 1;
+
+        for step in steps {
+            match step {
+                ExecutionStep::VectorSearch { candidates, .. } => {
+                    // Vector search needs more memory and CPU
+                    memory_budget_mb += (*candidates as usize * 4) / 1024; // 4 bytes per float
+                    cpu_cores = cpu_cores.max(available_cores / 2);
+                }
+                ExecutionStep::CombinedFilterSearch { .. } => {
+                    // Combined operations need balanced resources
+                    memory_budget_mb += 512;
+                    cpu_cores = cpu_cores.max(available_cores * 3 / 4);
+                    io_threads = io_threads.max(2);
+                }
+                ExecutionStep::MetadataFilter { estimated_cost, .. } => {
+                    // Filter cost scales with data size
+                    if *estimated_cost > 1.0 {
+                        cpu_cores = cpu_cores.max(2);
+                    }
+                }
+                ExecutionStep::IndexLookup { .. } => {
+                    // Index lookups are memory-intensive
+                    memory_budget_mb += 256;
+                }
+                ExecutionStep::BloomFilterCheck { .. } => {
+                    // Bloom filters are very lightweight
+                    memory_budget_mb += 16;
+                }
+            }
+        }
+
+        // Scale based on dataset size
+        let dataset_scale = (context.total_vectors as f64 / 100_000.0).log2().max(1.0);
+        memory_budget_mb = (memory_budget_mb as f64 * dataset_scale) as usize;
+
+        // Cap at available resources
+        memory_budget_mb = memory_budget_mb.min(available_memory_mb / 2); // Use at most 50% of available
+        cpu_cores = cpu_cores.min(available_cores);
+        io_threads = io_threads.min(cpu_cores / 2).max(1);
+
+        trace!(
+            "Resource allocation: memory={}MB, cores={}, io_threads={}",
+            memory_budget_mb, cpu_cores, io_threads
+        );
+
+        Ok(ResourceAllocation {
+            memory_budget_mb,
+            cpu_cores,
+            io_threads,
+        })
+    }
+
+    /// Estimate unified performance based on cost model and historical data
+    fn estimate_unified_performance(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
+        allocation: &ResourceAllocation,
+    ) -> Result<UnifiedPerformanceEstimate> {
+        let mut total_latency_ms: f64 = 0.0;
+        let mut total_memory_mb = 0;
+        let mut total_io_ops = 0;
+        let mut min_recall = 1.0f32;
+        let mut min_precision = 1.0f32;
+
+        // Calculate estimates for each step
+        for step in steps {
+            match step {
+                ExecutionStep::VectorSearch {
+                    execution_method,
+                    candidates,
+                    ..
+                } => {
+                    // Latency depends on method
+                    let method_latency = match execution_method {
+                        SearchExecutionMethod::DirectFP32 => {
+                            // O(n) scan
+                            (context.total_vectors as f64 / 10000.0) * 10.0
+                        }
+                        SearchExecutionMethod::Progressive { stages } => {
+                            // Progressive reduces latency
+                            stages.len() as f64 * 5.0
+                        }
+                        SearchExecutionMethod::QuantizedOnly { .. } => {
+                            // Quantized is fast
+                            (context.total_vectors as f64 / 50000.0) * 5.0
+                        }
+                        SearchExecutionMethod::IndexBased { index_type } => {
+                            // Index-based is fastest
+                            match index_type {
+                                Index::HNSW => 2.0,
+                                Index::IVF => 5.0,
+                                Index::LSH => 3.0,
+                                _ => 10.0,
+                            }
+                        }
+                    };
+                    total_latency_ms += method_latency;
+                    total_memory_mb += *candidates * 4 / (1024 * 1024);
+
+                    // Recall/precision estimates based on method
+                    let (recall, precision) = match execution_method {
+                        SearchExecutionMethod::DirectFP32 => (1.0, 1.0),
+                        SearchExecutionMethod::Progressive { .. } => (0.98, 0.99),
+                        SearchExecutionMethod::QuantizedOnly { .. } => (0.90, 0.95),
+                        SearchExecutionMethod::IndexBased { .. } => (0.95, 0.97),
+                    };
+                    min_recall = min_recall.min(recall);
+                    min_precision = min_precision.min(precision);
+                }
+                ExecutionStep::MetadataFilter {
+                    estimated_cost,
+                    estimated_selectivity,
+                    ..
+                } => {
+                    // Filter latency based on cost and selectivity
+                    total_latency_ms += estimated_cost * 10.0;
+                    total_io_ops += (1.0 / estimated_selectivity.max(0.01)) as usize;
+                }
+                ExecutionStep::CombinedFilterSearch { .. } => {
+                    // Combined is optimized
+                    total_latency_ms += 15.0;
+                    total_io_ops += 5;
+                    min_recall = min_recall.min(0.95);
+                }
+                ExecutionStep::IndexLookup { .. } => {
+                    total_latency_ms += 2.0;
+                    total_io_ops += 1;
+                }
+                ExecutionStep::BloomFilterCheck { .. } => {
+                    total_latency_ms += 0.1;
+                }
+            }
+        }
+
+        // Adjust for parallelism
+        let parallelism_factor = (allocation.cpu_cores as f64).sqrt();
+        total_latency_ms /= parallelism_factor;
+
+        // Check historical performance for adjustments
+        let history = self.performance_history.read();
+        if history.total_queries > 100 {
+            // Use historical data to refine estimates
+            if let Some(perf) = history.strategy_performance.get("default") {
+                total_latency_ms = (total_latency_ms + perf.avg_latency_ms as f64) / 2.0;
+                min_recall = (min_recall + perf.avg_recall) / 2.0;
+            }
+        }
+
+        trace!(
+            "Performance estimate: latency={:.1}ms, memory={}MB, recall={:.3}",
+            total_latency_ms, total_memory_mb, min_recall
+        );
+
+        Ok(UnifiedPerformanceEstimate {
+            estimated_latency_ms: total_latency_ms.max(1.0) as u32,
+            estimated_memory_mb: total_memory_mb.max(1),
+            estimated_io_ops: total_io_ops.max(1),
+            estimated_recall: min_recall,
+            estimated_precision: min_precision,
+        })
+    }
+
+    /// Configure parallelism based on hardware and query characteristics
+    fn configure_parallelism(
+        &self,
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
+    ) -> ParallelismConfig {
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let available_cores = hardware.cpu.logical_cores.max(1);
+
+        // Determine parallelism based on query type and data size
+        let has_heavy_search = steps.iter().any(|s| {
+            matches!(
+                s,
+                ExecutionStep::VectorSearch { .. } | ExecutionStep::CombinedFilterSearch { .. }
+            )
+        });
+
+        let has_heavy_filter = steps.iter().any(|s| {
+            matches!(
+                s,
+                ExecutionStep::MetadataFilter {
+                    estimated_cost,
+                    ..
+                } if *estimated_cost > 0.5
+            )
+        });
+
+        // File parallelism based on available files
+        let file_parallelism = context.available_files.len().min(available_cores).max(1);
+
+        // Vector parallelism for search operations
+        let vector_parallelism = if has_heavy_search && context.total_vectors > 100_000 {
+            available_cores
+        } else if has_heavy_search {
+            available_cores / 2
+        } else {
+            1
+        }
+        .max(1);
+
+        // Filter parallelism
+        let filter_parallelism = if has_heavy_filter {
+            (available_cores / 2).max(2)
+        } else {
+            1
+        };
+
+        // SIMD support
+        let use_simd = hardware.cpu.features.avx2_support || hardware.cpu.features.neon_support;
+
+        ParallelismConfig {
+            file_parallelism,
+            vector_parallelism,
+            filter_parallelism,
+            use_simd,
+        }
+    }
+
+    /// Configure fallback strategies based on query characteristics
     fn configure_fallbacks(
         &self,
-        _context: &UnifiedQueryContext<'_>,
-        _steps: &[ExecutionStep],
+        context: &UnifiedQueryContext<'_>,
+        steps: &[ExecutionStep],
     ) -> Vec<FallbackStrategy> {
-        // Return empty fallback strategies for now
-        vec![]
+        let mut fallbacks = Vec::new();
+
+        // Only configure fallbacks for complex queries
+        let is_complex = steps.len() > 2 || context.total_vectors > 500_000;
+
+        if !is_complex {
+            return fallbacks;
+        }
+
+        // Memory pressure fallback: switch to streaming mode
+        let memory_threshold = (context.total_vectors * 4 / (1024 * 1024)).max(512);
+        if memory_threshold > 1024 {
+            fallbacks.push(FallbackStrategy {
+                trigger_condition: TriggerCondition::MemoryPressure {
+                    threshold_mb: memory_threshold,
+                },
+                fallback_plan: Box::new(UnifiedExecutionPlan {
+                    execution_steps: vec![ExecutionStep::MetadataFilter {
+                        conditions: vec![],
+                        execution_method: FilterExecutionMethod::SequentialScan,
+                        estimated_selectivity: 1.0,
+                        estimated_cost: 1.0,
+                    }],
+                    resource_allocation: ResourceAllocation {
+                        memory_budget_mb: 256,
+                        cpu_cores: 1,
+                        io_threads: 1,
+                    },
+                    performance_estimate: UnifiedPerformanceEstimate {
+                        estimated_latency_ms: 1000,
+                        estimated_memory_mb: 256,
+                        estimated_io_ops: 100,
+                        estimated_recall: 1.0,
+                        estimated_precision: 1.0,
+                    },
+                    parallelism: ParallelismConfig {
+                        file_parallelism: 1,
+                        vector_parallelism: 1,
+                        filter_parallelism: 1,
+                        use_simd: false,
+                    },
+                    fallback_strategies: vec![],
+                    rl_state: None,
+                    rl_action: None,
+                }),
+            });
+        }
+
+        // Latency fallback: use faster but less accurate method
+        fallbacks.push(FallbackStrategy {
+            trigger_condition: TriggerCondition::LatencyExceeded { threshold_ms: 1000 },
+            fallback_plan: Box::new(UnifiedExecutionPlan {
+                execution_steps: vec![ExecutionStep::VectorSearch {
+                    execution_method: SearchExecutionMethod::QuantizedOnly {
+                        quantization_type: QuantizationType::Binary,
+                    },
+                    quantization_strategy: Some(QuantizationStrategy {
+                        quantization_type: QuantizationType::Binary,
+                        use_two_stage: false,
+                        candidate_multiplier: 5,
+                    }),
+                    candidates: context.search_params.and_then(|p| p.top_k).unwrap_or(10) * 20,
+                }],
+                resource_allocation: ResourceAllocation {
+                    memory_budget_mb: 128,
+                    cpu_cores: 2,
+                    io_threads: 1,
+                },
+                performance_estimate: UnifiedPerformanceEstimate {
+                    estimated_latency_ms: 50,
+                    estimated_memory_mb: 128,
+                    estimated_io_ops: 5,
+                    estimated_recall: 0.85,
+                    estimated_precision: 0.90,
+                },
+                parallelism: ParallelismConfig {
+                    file_parallelism: 2,
+                    vector_parallelism: 2,
+                    filter_parallelism: 1,
+                    use_simd: true,
+                },
+                fallback_strategies: vec![],
+                rl_state: None,
+                rl_action: None,
+            }),
+        });
+
+        fallbacks
     }
 
     /// Configure early termination settings
@@ -1421,9 +2082,96 @@ impl UnifiedQueryOptimizer {
         }
     }
 
-    /// Select index strategy based on cost analysis
-    fn select_index_strategy(&self, _cost_analysis: &CostAnalysis) -> Option<IndexStrategy> {
-        // For now, return None - can be enhanced later
+    /// Select index strategy based on cost analysis and collection configuration
+    ///
+    /// This method checks if the collection has AXIS indexes configured (HNSW, IVF, etc.)
+    /// and returns an appropriate IndexStrategy if beneficial for the query.
+    fn select_index_strategy(
+        &self,
+        cost_analysis: &CostAnalysis,
+        context: &UnifiedQueryContext<'_>,
+    ) -> Option<IndexStrategy> {
+        // Check if collection has index configs
+        let index_configs = context
+            .collection
+            .config
+            .as_ref()
+            .map(|c| &c.index_configs)
+            .filter(|configs| !configs.is_empty())?;
+
+        // Only use indexes for large enough datasets
+        // Small datasets (<1000 vectors) are often faster with brute force
+        if cost_analysis.dataset_size < 1000 {
+            trace!(
+                "Skipping index lookup: dataset too small ({} vectors)",
+                cost_analysis.dataset_size
+            );
+            return None;
+        }
+
+        // Find the best index for this query
+        // Priority: HNSW > IVF > LSH
+        use crate::proto::proximadb_v1::IndexingAlgorithm;
+
+        for config in index_configs {
+            // Skip disabled indexes
+            if config.enabled == Some(false) {
+                continue;
+            }
+
+            match config.algorithm() {
+                IndexingAlgorithm::Hnsw => {
+                    debug!(
+                        "Using HNSW index '{}' for collection {} ({} vectors)",
+                        config.index_name, context.collection.id, cost_analysis.dataset_size
+                    );
+                    let mut params = HashMap::new();
+                    // Set ef_search based on query complexity
+                    let ef_search = if cost_analysis.total_cost > 100.0 {
+                        200 // Higher ef for complex queries
+                    } else {
+                        100 // Default ef for simple queries
+                    };
+                    params.insert("ef_search".to_string(), serde_json::json!(ef_search));
+                    return Some(IndexStrategy {
+                        index_type: Index::HNSW,
+                        params,
+                    });
+                }
+                IndexingAlgorithm::Ivf => {
+                    debug!(
+                        "Using IVF index '{}' for collection {} ({} vectors)",
+                        config.index_name, context.collection.id, cost_analysis.dataset_size
+                    );
+                    let mut params = HashMap::new();
+                    // Set nprobe based on dataset size
+                    let nprobe = if cost_analysis.dataset_size > 100_000 {
+                        32 // More probes for larger datasets
+                    } else {
+                        16 // Default nprobe
+                    };
+                    params.insert("nprobe".to_string(), serde_json::json!(nprobe));
+                    return Some(IndexStrategy {
+                        index_type: Index::IVF,
+                        params,
+                    });
+                }
+                IndexingAlgorithm::Lsh => {
+                    debug!(
+                        "Using LSH index '{}' for collection {} ({} vectors)",
+                        config.index_name, context.collection.id, cost_analysis.dataset_size
+                    );
+                    return Some(IndexStrategy {
+                        index_type: Index::LSH,
+                        params: HashMap::new(),
+                    });
+                }
+                _ => {
+                    trace!("Skipping index with algorithm {:?}", config.algorithm());
+                }
+            }
+        }
+
         None
     }
 }
@@ -1532,9 +2280,10 @@ mod tests {
             value: serde_json::json!("electronics"),
         };
 
+        let search_params = SearchParams::default();
         let context = UnifiedQueryContext {
             collection,
-            search_params: Some(&SearchParams::default()),
+            search_params: Some(&search_params),
             filter_params: Some(&filter),
             optimization_goal: OptimizationGoal::Balanced,
             available_files: vec!["file1.parquet".to_string()],

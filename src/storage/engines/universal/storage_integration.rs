@@ -161,6 +161,7 @@ pub enum IntegrationError {
 /// PRISM storage engine adapter
 #[derive(Debug)]
 pub struct PRISMAdapter {
+    #[allow(dead_code)]
     config: StorageEngineConfig,
     performance_metrics: EnginePerformanceMetrics,
 }
@@ -376,6 +377,7 @@ impl StorageEngineAdapter for PRISMAdapter {
 /// NOVA storage engine adapter
 #[derive(Debug)]
 pub struct NOVAAdapter {
+    #[allow(dead_code)]
     config: StorageEngineConfig,
     performance_metrics: EnginePerformanceMetrics,
 }
@@ -579,6 +581,7 @@ macro_rules! create_simple_adapter {
     ($adapter_name:ident, $engine_type:ident, $description:literal) => {
         #[derive(Debug)]
         pub struct $adapter_name {
+            #[allow(dead_code)]
             config: StorageEngineConfig,
             performance_metrics: EnginePerformanceMetrics,
         }

@@ -1,6 +1,6 @@
 [package]
 name = "proximadb"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
@@ -14,6 +14,7 @@ rust-version = "1.88"
 [workspace]
 members = [
     ".",
+    "clients/rust",
 ]
 
 [[bin]]
@@ -23,6 +24,15 @@ path = "src/bin/server.rs"
 [[bin]]
 name = "proximadb-bench"
 path = "src/bin/proximadb-bench-consolidated.rs"
+
+[[bin]]
+name = "proximadb-migrate"
+path = "src/bin/proximadb-migrate.rs"
+
+# Python embedded library (cdylib for PyO3)
+[lib]
+name = "proximadb"
+crate-type = ["rlib", "cdylib"]
 
 
 
@@ -38,7 +48,7 @@ bincode = "1.3"
 bytemuck = { version = "1.14", features = ["derive"] }
 
 # SQL Parsing
-sqlparser = "0.44"
+sqlparser = "0.59"
 
 # Async recursion support
 async-recursion = "1.0"
@@ -54,13 +64,16 @@ once_cell = "1.19"
 lazy_static = "1.5"
 
 # Networking & gRPC
-tonic = { version = "0.10", features = ["gzip"] }
-# tonic-reflection = "0.10"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
-prost = "0.12"
-prost-types = { version = "0.12" }
-hyper = "0.14"  # Used internally by axum and tonic
-tower = "0.4"
-tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full"] }
+tonic = { version = "0.14", features = ["gzip", "tls-ring", "tls-webpki-roots"] }
+tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
+# tonic-reflection = "0.14"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
+prost = "0.14"
+prost-types = { version = "0.14" }
+hyper = "0.14"  # Used by axum 0.6
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }  # Utilities for hyper 1.x (tonic compatibility)
+http-body-util = "0.1"  # Body utilities for http 1.x (tonic compatibility)
+tower = { version = "0.4", features = ["limit"] }
+tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full", "timeout"] }
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
 
@@ -69,17 +82,23 @@ memmap2 = "0.9"
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
-# Parquet and Arrow dependencies - using v56+ for improved performance
-parquet = { version = "56.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
-# Arrow dependencies matching parquet v56
-arrow = { version = "56.1", features = ["prettyprint"] }
-arrow-array = { version = "56.1", default-features = false }
-arrow-buffer = { version = "56.1", default-features = false }
-arrow-schema = { version = "56.1", default-features = false }
-arrow-data = { version = "56.1", default-features = false }
-arrow-ipc = { version = "56.1", default-features = false }
-arrow-select = { version = "56.1", default-features = false }
-arrow-ord = { version = "56.1", default-features = false }
+# Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
+parquet = { version = "57.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+# Arrow dependencies matching parquet v57
+arrow = { version = "57.1", features = ["prettyprint"] }
+arrow-array = { version = "57.1", default-features = false }
+arrow-buffer = { version = "57.1", default-features = false }
+arrow-schema = { version = "57.1", default-features = false }
+arrow-data = { version = "57.1", default-features = false }
+arrow-ipc = { version = "57.1", default-features = false, features = ["lz4", "zstd"] }
+arrow-select = { version = "57.1", default-features = false }
+arrow-ord = { version = "57.1", default-features = false }
+arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
+arrow-cast = { version = "57.1", default-features = false }
+
+# DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
+datafusion = { version = "51.0", default-features = false, features = ["regex_expressions", "unicode_expressions"], optional = true }
+datafusion-common = { version = "51.0", optional = true }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -105,19 +124,30 @@ azure_storage_blobs = { version = "0.19", optional = true }
 google-cloud-storage = { version = "0.15", optional = true }
 
 # Vector operations & SIMD
-nalgebra = "0.32"  # For PCA eigendecomposition in HELIX engine
+nalgebra = { version = "0.32", features = ["serde-serialize"] }  # For PCA eigendecomposition, with serde for model persistence
+half = "2.4"  # FP16 (float16) support for centroid quantization (50% storage reduction)
 
 # CPU optimization
 num_cpus = "1.16"
 raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
-rand = "0.8"
+rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
 # Cryptographic hashing
 sha2 = "0.10"
+
+# TLS/mTLS certificate management
+rcgen = "0.12"                   # Certificate generation
+x509-parser = "0.16"             # Certificate parsing and validation
+rustls = { version = "0.21", features = ["dangerous_configuration"] }  # TLS implementation
+rustls-pemfile = "1.0"           # PEM file parsing
+tokio-rustls = "0.24"            # Async TLS streams
+webpki-roots = "0.25"            # Mozilla root certificates
+axum-server = { version = "0.5", features = ["tls-rustls"] }  # Axum TLS support
+time = { version = "0.3", features = ["std"] }  # Time handling for certificates
 
 # Logging & Monitoring
 tracing = "0.1"
@@ -141,18 +171,43 @@ thiserror = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
 jsonwebtoken = "9.2"  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
-# crossbeam = "0.8"  # REMOVED: Unused dependency (confirmed by cargo-udeps)
+chrono-tz = "0.10"  # Timezone support for log parsing
+hex = "0.4"  # Hex encoding for bytea types
+base64 = "0.22"  # Base64 encoding for encryption
+ring = "0.17"  # Cryptographic operations for field-level encryption
+crossbeam = "0.8"  # Lock-free ring buffers for observability ingestion
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
 nom = "7"
+hostname = "0.3"  # Get hostname for leader election
+
+# Multi-model storage (Document + Observability)
+tantivy = "0.22"  # Full-text search for documents
+jsonpath-rust = "0.5"  # JSON path queries for document filtering (actively maintained)
+flume = "0.11"  # High-performance MPSC channels for observability
+
+# PostgreSQL wire protocol compatibility
+pgwire = "0.21"  # PostgreSQL wire protocol for pgvector migration
 
 # REST API
-axum = { version = "0.6", features = ["json"] }
+axum = { version = "0.6", features = ["json", "ws"] }
 urlencoding = "2.1.3"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
+
+# Language bindings (optional, for embedded mode)
+# Python bindings via PyO3
+pyo3 = { version = "0.25", features = ["extension-module"], optional = true }
+# Zero-copy NumPy array access (matches PyO3 version)
+# Provides direct buffer access to numpy arrays without Python .tolist() conversion
+numpy = { version = "0.25", optional = true }
+# Java bindings via JNI
+jni = { version = "0.21", optional = true }
+# Node.js bindings via NAPI-RS
+napi = { version = "2.14", features = ["napi9"], optional = true }
+napi-derive = { version = "2.14", optional = true }
 
 # GPU acceleration dependencies (platform-specific)
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
@@ -160,7 +215,8 @@ metal = { version = "0.27", optional = true }  # Metal GPU acceleration for Appl
 
 # Build dependencies
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build = "0.14"
+tonic-prost-build = "0.14"  # Required for prost-based protobuf compilation in tonic-build 0.14+
 apache-avro = "0.16"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -173,11 +229,27 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
+tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
-default = ["sql_frontend", "graph-first-sks"]
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
+# Optional surfaces; keep off by default to minimize binary size and public API surface
+ai_endpoints = []
+sales_endpoints = []
+tenant_access = []
+executive_intel = []
+# Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
+# server panics from unimplemented code paths. Enable for development/testing only.
+experimental-engines = []
+# Experimental SIMD path; not enabled by default
+simd-experimental = []
+# AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
+avx512 = []
 distributed = []
 standalone = []
+# Cluster mode - enables distributed consensus (Raft), replication, and health services
+# Used for multi-node deployments with leader election and data replication
+cluster = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
@@ -185,18 +257,85 @@ aws = ["dep:aws-config", "dep:aws-sdk-s3"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
 
-# Test gating (keeps default test runs lean)
-comprehensive_tests = []
-perf_tests = []
+# ============================================================================
+# TEST CATEGORIZATION (Strategic CI/CD Gating)
+# ============================================================================
+# These feature flags categorize tests for efficient CI pipeline execution.
+# Usage in CI:
+#   - Fast CI: cargo test --lib (unit tests only, ~2-5s)
+#   - Standard CI: cargo test (unit + integration, ~30-60s)
+#   - Full CI: cargo test --features test-full (all tests, ~5-10min)
+#
+# Test Categories:
+#   - test-unit: Unit tests in src/ (always run, fastest)
+#   - test-integration: Integration tests in tests/ (run on PRs)
+#   - test-graph: Graph database tests (test_graph_*, graph_*)
+#   - test-storage: Storage engine tests (sst, helix, viper, nova, swift, raptor)
+#   - test-query: Query engine tests (sql, unified_query, federated)
+#   - test-perf: Performance benchmarks (slow, CI-gated)
+#   - test-security: Security/penetration tests
+#   - test-cloud: Cloud backend tests (requires credentials)
+#
+# Example CI usage:
+#   cargo test --lib                           # Fast: unit tests only
+#   cargo test --features test-integration     # Standard: integration tests
+#   cargo test --features test-graph           # Graph-specific tests
+#   cargo test --features test-full            # All tests
+
+# Default test runs (lean - unit tests only in CI by default)
+comprehensive_tests = []  # Legacy flag for comprehensive tests
+perf_tests = []           # Legacy flag for performance tests
+
+# Strategic test categories for CI/CD
+test-unit = []        # Unit tests (always fast, always run)
+test-integration = [] # Integration tests (tests/*_test.rs)
+test-graph = []       # Graph database tests
+test-storage = []     # Storage engine tests
+test-query = []       # Query engine tests (SQL, unified, federated)
+test-perf = []        # Performance/benchmark tests
+test-security = []    # Security and penetration tests
+test-cloud = ["aws", "azure", "gcp"]  # Cloud backend tests
+
+# Composite test categories
+test-quick = ["test-unit"]  # Fast CI (<1min)
+test-standard = ["test-unit", "test-integration"]  # Standard CI (<5min)
+test-full = ["test-unit", "test-integration", "test-graph", "test-storage", "test-query"]  # Full CI
+
+# Cloud storage features (optional to avoid linking issues during testing)
 cloud-full = ["aws", "azure", "gcp"]
 
 # SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
 sql_frontend = []
 
+# Unified facade routing feature flag.
+# When enabled, routes all queries through UnifiedQueryFacade for consistent execution.
+# When disabled, uses legacy direct handler paths for backward compatibility.
+unified-facade-routing = []
+
 # SKS Graph-First Architecture (default on for production)
 # When enabled, uses OrionBackedEntityStore for 3-6x better performance
 # When disabled, falls back to legacy split storage
 graph-first-sks = []
+
+# DataFusion integration for compute engine compatibility
+# NOTE: Disabled by default due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x)
+# TODO: Upgrade when DataFusion releases version with Arrow 57.x support
+datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
+
+# ============================================================================
+# EXPERIMENTAL GRAPH ENGINE FEATURES
+# ============================================================================
+# These engines are experimental and not production-ready. Use ORION for production.
+
+# PULSAR: Distributed sharded graph engine (experimental)
+# WARNING: Cross-shard queries may miss edges, no distributed WAL
+# For production, use ORION with application-level sharding
+distributed-graph = []
+
+# QUASAR: Hybrid hot/cold tiering graph engine (experimental)
+# WARNING: No WAL for cold tier, simple LRU tiering, not integrated with storage engines
+# For production, use ORION with appropriate memory sizing
+tiered-graph = []
 
 # Hardware acceleration features
 gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
@@ -205,11 +344,52 @@ metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 simd = []  # Placeholder - would need ARM NEON implementation
 debug-filters = []  # Enable debug filtering for search operations
 
+# ============================================================================
+# CDC (CHANGE DATA CAPTURE) FEATURES
+# ============================================================================
+# CDC core is always available (event types, outbound CDC, sinks, transforms).
+# Database connectors are experimental and require feature flags.
+
+# EXPERIMENTAL: Native database CDC connectors (PostgreSQL, MySQL, MongoDB)
+# WARNING: These connectors have partial implementations without network I/O.
+# For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
+# PostgreSQL connector has pgoutput decoder but no connection layer.
+experimental-cdc-connectors = []
+
+# ============================================================================
+# EMBEDDED DATABASE MODE FEATURES
+# ============================================================================
+# Enable language-specific bindings for embedded database mode
+
+# Python embedded mode (PyO3 bindings with zero-copy numpy support)
+python = ["dep:pyo3", "dep:numpy"]  # Enable Python bindings with zero-copy numpy support
+
+# Java embedded mode (JNI bindings)
+java = ["dep:jni"]  # Enable Java bindings for embedded database mode
+
+# Node.js embedded mode (NAPI-RS bindings)
+nodejs = ["dep:napi", "dep:napi-derive"]  # Enable Node.js bindings
+
+# C FFI for Go CGO and other C-compatible languages
+c_ffi = []  # Enable C FFI for Go/CGO, C, C++
+
+# All embedded language bindings
+embedded-all = ["python", "java", "nodejs", "c_ffi"]
+
 # CPU optimizations - Disabled Intel MKL on ARM64
 # cpu-optimized = ["intel-mkl"]
 # intel-mkl = ["intel-mkl-src"]
 
 # GPU acceleration (removed - was placeholder code)
+
+# Enterprise catalog integrations (optional)
+unity-catalog = []      # Databricks Unity Catalog integration
+polaris-catalog = []    # Apache Polaris (Iceberg REST Catalog) integration
+delta-lake = []         # Delta Lake table format support
+enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]
+
+# TLS/mTLS support (enabled by default)
+tls = []  # Enable TLS/mTLS certificate management and secure connections
 
 # External libraries
 # faiss-cpu = ["faiss"]  # Unused - no FAISS integration
@@ -217,11 +397,10 @@ debug-filters = []  # Enable debug filtering for search operations
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
+lto = "thin"          # Thin LTO: ~90% of full LTO perf, 3x faster compile
+codegen-units = 6     # 60% of cores (6 of 10) for parallel LLVM codegen
 debug = false
-strip = false  # Keep symbols for profiling
+strip = false         # Keep symbols for profiling
 incremental = false
 
 # Test configuration
@@ -371,6 +550,36 @@ path = "benches/bench_15_memory_pool.rs"
 name = "bench_16_proximacodec_comprehensive"
 harness = false
 path = "benches/bench_16_proximacodec_comprehensive.rs"
+
+[[bench]]
+name = "bench_18_fp16_centroid_performance"
+harness = false
+path = "benches/bench_18_fp16_centroid_performance.rs"
+
+[[bench]]
+name = "bench_19_comprehensive_optimization"
+harness = false
+path = "benches/bench_19_comprehensive_optimization.rs"
+
+[[bench]]
+name = "bench_20_facade_routing"
+harness = false
+path = "benches/bench_20_facade_routing.rs"
+
+[[bench]]
+name = "bench_21_query_cache"
+harness = false
+path = "benches/bench_21_query_cache.rs"
+
+[[bench]]
+name = "bench_22_multimodal_queries"
+harness = false
+path = "benches/bench_22_multimodal_queries.rs"
+
+[[bench]]
+name = "streaming_search_bench"
+harness = false
+path = "benches/streaming_search_bench.rs"
 
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY

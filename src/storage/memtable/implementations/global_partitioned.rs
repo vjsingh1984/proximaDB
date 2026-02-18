@@ -109,10 +109,13 @@ struct CollectionPartition {
 
     /// Collection statistics for monitoring and management
     total_size: usize, // Total bytes consumed by all batches
-    vector_count: usize,      // Total number of vectors across all batches
-    batch_count: usize,       // Number of batches in this partition
+    vector_count: usize, // Total number of vectors across all batches
+    batch_count: usize,  // Number of batches in this partition
+    #[allow(dead_code)]
     last_flush_sequence: u64, // Sequence number of last successful flush
+    #[allow(dead_code)]
     timestamp: std::time::SystemTime, // Last modification time
+    #[allow(dead_code)]
     created_at: std::time::SystemTime, // Partition creation time
 }
 
@@ -476,25 +479,46 @@ impl CollectionPartition {
                     };
 
                     if is_newer {
-                        let score = distance_compute.calculate_distance(
-                            query_vector,
-                            &vector_record.vector,
-                            distance_metric,
-                        );
-                        id_to_latest.insert(
-                            vector_record.id.clone(),
-                            (score, vector_record.clone(), sequence, version),
-                        );
+                        // Skip tombstones (empty vector + expires_at in past or 0) - they mark deletions
+                        // and should not be included in search results
+                        let current_time_secs = (current_time / 1_000_000) as i64;
+                        let is_tombstone = vector_record.vector.is_empty()
+                            && vector_record
+                                .expires_at
+                                .map_or(false, |e| e <= current_time_secs);
+                        if is_tombstone {
+                            // Remove any previous version from results (tombstone shadows it)
+                            id_to_latest.remove(vector_id);
+                            tracing::debug!(
+                                "🗑️ Tombstone found for ID {}: removing from results",
+                                vector_id
+                            );
+                        } else {
+                            let score = distance_compute.calculate_distance(
+                                query_vector,
+                                &vector_record.vector,
+                                distance_metric,
+                            );
+                            id_to_latest.insert(
+                                vector_record.id.clone(),
+                                (score, vector_record.clone(), sequence, version),
+                            );
 
-                        tracing::debug!(
-                            "📝 Updated latest version for ID {}: seq={}, version={:?}",
-                            &vector_record.id,
-                            sequence,
-                            version
-                        );
+                            tracing::debug!(
+                                "📝 Updated latest version for ID {}: seq={}, version={:?}",
+                                &vector_record.id,
+                                sequence,
+                                version
+                            );
+                        }
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
+                    // Also skip empty vectors (should not happen for valid data, but safety check)
+                    if vector_record.vector.is_empty() {
+                        continue;
+                    }
+
                     let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
@@ -645,13 +669,9 @@ impl GlobalPartitionedMemtable {
         metrics.entry_count += vector_count; // Multiple vectors
         metrics.size_bytes += batch_size;
 
-        tracing::info!(
-            "✅ NATIVE_BATCH_COMPLETE: Added batch {} with sequences {:?} (collection={}, vectors={}, bytes={})",
-            batch_id,
-            sequences,
-            collection_id,
-            vector_count,
-            batch_size
+        debug!(
+            "Batch added: {} (collection={}, vectors={}, bytes={})",
+            batch_id, collection_id, vector_count, batch_size
         );
 
         Ok(sequences)

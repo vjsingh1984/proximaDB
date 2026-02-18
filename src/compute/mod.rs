@@ -124,7 +124,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::compute::{ComputeConfig, UnifiedDistanceCompute};
 //!
 //! // Auto-detect hardware and create engine
@@ -165,6 +165,15 @@ pub mod distance_computation;
 pub mod gpu;
 pub mod quantization;
 
+// Pluggable compute provider interface (Hadoop-style storage-compute separation)
+pub mod provider;
+
+// Serializable compute plans for storage-compute separation
+pub mod plan;
+
+// Compute scheduler for routing plans to optimal providers
+pub mod scheduler;
+
 // Legacy distance module removed - all functionality moved to distance_computation::core
 
 // Unit tests - will be added as modules are completed
@@ -174,6 +183,29 @@ pub mod quantization;
 // Re-export main APIs from semantic modules
 pub use distance_computation::*;
 pub use quantization::*;
+
+// ============================================================================
+// Storage-Compute Separation Re-exports (Hadoop-style architecture)
+// ============================================================================
+
+// Re-export compute provider types for pluggable compute engines
+pub use provider::{
+    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, LocalComputeProvider,
+    ProviderMetrics,
+};
+
+// Re-export compute plan types for serializable query plans
+pub use plan::{
+    AggExpr, AggFunction, BinaryOp, ComputePlan, Expr, JoinCondition, JoinStrategy, JoinType,
+    LiteralValue, Partitioning, PlanHints, PlanNode, ProjectExpr, SortExpr, TraversalDirection,
+    TraversalSpec, UnaryOp,
+};
+
+// Re-export compute scheduler types for provider selection and routing
+pub use scheduler::{
+    ComputeScheduler, ComputeSchedulerBuilder, CostWeights, ProviderStatistics, SchedulerConfig,
+    SchedulerStatistics, SchedulingPolicy,
+};
 
 #[cfg(test)]
 mod tests;

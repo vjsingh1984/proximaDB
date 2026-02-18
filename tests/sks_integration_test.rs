@@ -69,10 +69,12 @@ mod sks_integration_tests {
                     entries_flushed: Some(0),
                     bytes_written: Some(0),
                     files_created: Some(0),
+                    file_paths: vec![],
                     duration_ms: Some(0),
                     completed_at: Utc::now(),
                     engine_metrics: HashMap::new(),
                     compaction_triggered: false,
+                    compaction_error: None,
                     flushed_batch_ids: vec![],
                 })
             }

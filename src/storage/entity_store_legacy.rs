@@ -21,11 +21,9 @@ use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::{
     EmbeddingVersion, Entity, MetadataFilter, Provenance, Relation, TemporalInfo, TypedMetadata,
 };
-use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::UnifiedStorageEngine;
 use crate::storage::kv::{FsKV, StorageKV};
-use tokio::io::AsyncWriteExt;
 
 /// Core trait for entity storage operations
 #[async_trait]
@@ -81,7 +79,8 @@ pub struct EntityHeader {
 /// ProximaDB implementation of EntityStore
 pub struct ProximaEntityStore {
     /// Storage engine for vectors
-    vector_engine: Arc<dyn UnifiedStorageEngine>,
+    #[allow(dead_code)]
+    _vector_engine: Arc<dyn UnifiedStorageEngine>,
 
     /// Relations store (to be implemented)
     relations_store: Arc<dyn RelationsStore>,
@@ -100,7 +99,7 @@ pub struct ProximaEntityStore {
     embeddings: RwLock<HashMap<String, Vec<f32>>>,
 
     /// Optional vector service for engine-backed persistence
-    vector_service: Option<Arc<VectorOperationsService>>,
+    vector_service: Option<Arc<crate::services::operations::vectors::VectorOperationsService>>,
 
     /// Entity ↔ Vector index (in-memory; rebuilt or persisted in future)
     entity_to_vectors: RwLock<HashMap<String, Vec<String>>>,
@@ -118,7 +117,7 @@ impl ProximaEntityStore {
         provenance_registry: Arc<dyn ProvenanceRegistry>,
     ) -> Self {
         Self {
-            vector_engine,
+            _vector_engine: vector_engine,
             relations_store,
             provenance_registry,
             headers: RwLock::new(HashMap::new()),
@@ -137,7 +136,7 @@ impl ProximaEntityStore {
         vector_engine: Arc<dyn UnifiedStorageEngine>,
         relations_store: Arc<dyn RelationsStore>,
         provenance_registry: Arc<dyn ProvenanceRegistry>,
-        vector_service: Arc<VectorOperationsService>,
+        vector_service: Arc<crate::services::operations::vectors::VectorOperationsService>,
     ) -> Self {
         let mut s = Self::new(vector_engine, relations_store, provenance_registry);
         s.vector_service = Some(vector_service);
@@ -197,7 +196,7 @@ impl ProximaEntityStore {
                 let parts: Vec<&str> = k.split('/').collect();
                 if parts.len() >= 4 {
                     let model_id = parts[2].to_string();
-                    let modality = parts[3].to_string();
+                    let _modality = parts[3].to_string();
                     out.push(EmbeddingVersion {
                         model_id,
                         model_version: "v1".to_string(),
@@ -307,11 +306,12 @@ impl EntityStore for ProximaEntityStore {
             let mut v2e = self.vector_to_entity.write().unwrap();
             let entry = e2v.entry(entity.id.clone()).or_default();
             for embedding in &entity.embeddings {
+                let _modality = embedding.modality;
                 let key = Self::embedding_key(
                     collection_id,
                     &entity.id,
                     &embedding.model_id,
-                    &format!("{:?}", embedding.modality),
+                    &format!("{:?}", _modality),
                 );
                 if !entry.iter().any(|k| k == &key) {
                     entry.push(key.clone());
@@ -406,19 +406,19 @@ impl EntityStore for ProximaEntityStore {
                 Option<TemporalInfo>,
             )>(&bytes)
             {
-                Ok((typed_metadata, flexible_metadata, provenance, temporal)) => {
-                    EntityHeader {
-                        typed_metadata,
-                        flexible_metadata,
-                        provenance,
-                        temporal,
-                    }
-                }
-                Err(_e) => {
+                Ok((typed_metadata, flexible_metadata, provenance, temporal)) => EntityHeader {
+                    typed_metadata,
+                    flexible_metadata,
+                    provenance,
+                    temporal,
+                },
+                Err(_) => {
                     // If deserialization fails, check test_entity_headers in test mode
                     #[cfg(test)]
                     {
-                        if let Some(test_header) = self.test_entity_headers.read().unwrap().get(&header_key) {
+                        if let Some(test_header) =
+                            self.test_entity_headers.read().unwrap().get(&header_key)
+                        {
                             test_header.clone()
                         } else {
                             EntityHeader {
@@ -486,7 +486,10 @@ impl EntityStore for ProximaEntityStore {
 
             #[cfg(test)]
             {
-                self.test_entity_headers.write().unwrap().remove(&header_key);
+                self.test_entity_headers
+                    .write()
+                    .unwrap()
+                    .remove(&header_key);
             }
 
             // Remove from KV store
@@ -554,6 +557,7 @@ impl EntityStore for ProximaEntityStore {
                     include_vectors: false,
                     include_metadata: true,
                     scenario: Some("sks_entity_search".to_string()),
+                    search_mode: crate::core::search::SearchMode::default(),
                 };
                 let vos_results = vs
                     .unified_search_v1(
@@ -596,7 +600,7 @@ impl EntityStore for ProximaEntityStore {
                     }
                 }
             }
-        } else if let Some(filter) = core_filter {
+        } else if let Some(_filter) = core_filter {
             // Implement efficient pure metadata filter path using entity headers
             if let Some(ref metadata_filter) = metadata_filter {
                 results = self
@@ -700,6 +704,7 @@ impl ProximaEntityStore {
     }
 
     /// Fast header-level filtering with metadata optimization
+    #[allow(dead_code)]
     fn header_matches_filter(&self, header: &EntityHeader, filter: &MetadataFilter) -> bool {
         // Optimized header-level filtering using indexed metadata
 
@@ -786,8 +791,8 @@ impl ProximaEntityStore {
     /// Check if typed field matches filter clause
     fn typed_field_matches(
         &self,
-        typed_field: &crate::proto::proximadb_v1::TypedField,
-        clause: &crate::proto::proximadb_v1::FilterClause,
+        _typed_field: &crate::proto::proximadb_v1::TypedField,
+        _clause: &crate::proto::proximadb_v1::FilterClause,
     ) -> bool {
         // For now, simplified matching - in full implementation would handle typed field values properly
         // This is a placeholder since TypedField structure needs to be analyzed further
@@ -851,18 +856,18 @@ impl ProximaEntityStore {
         filters: &'a [MetadataFilter],
         batch_size: usize,
     ) -> impl futures::Stream<Item = Result<Vec<Entity>>> + 'a {
-        use futures::stream::{self, StreamExt};
+        use futures::{StreamExt, stream};
 
         #[cfg(test)]
         let total_count = self.test_entity_headers.read().unwrap().len();
         #[cfg(not(test))]
         let total_count = self.headers.read().unwrap().len();
 
-        let num_batches = (total_count + batch_size - 1) / batch_size;
+        let num_batches = total_count.div_ceil(batch_size);
 
         stream::iter(0..num_batches).then(move |batch_idx| async move {
             let start_idx = batch_idx * batch_size;
-            let end_idx = std::cmp::min(start_idx + batch_size, total_count);
+            let _end_idx = std::cmp::min(start_idx + batch_size, total_count);
 
             let mut results = Vec::with_capacity(batch_size);
             let mut count = 0;
@@ -914,75 +919,54 @@ impl ProximaEntityStore {
                     }
                 }
 
-                return Ok(results);
+                Ok(results)
             }
 
             #[cfg(not(test))]
-            for (entity_id, _header_bytes) in self.headers.read().unwrap().iter().skip(start_idx) {
-                if count >= batch_size {
-                    break;
-                }
+            {
+                for (entity_id, _header_bytes) in
+                    self.headers.read().unwrap().iter().skip(start_idx)
+                {
+                    if count >= batch_size {
+                        break;
+                    }
 
-                if entity_id.starts_with(&format!("{}_", collection_id)) {
-                    let mut all_match = true;
+                    if entity_id.starts_with(&format!("{}_", collection_id)) {
+                        let mut all_match = true;
 
-                    // Early exit on first non-matching filter
-                    // TODO: Implement header-level filtering once EntityHeader serialization is resolved
-                    // For now, defer to entity-level filtering
-                    for filter in filters {
-                        if let Ok(Some(entity)) = self
-                            .get_entity(collection_id, entity_id, false, false)
-                            .await
-                        {
-                            if !self.entity_matches_metadata_filter(&entity, filter) {
+                        // Early exit on first non-matching filter
+                        // TODO: Implement header-level filtering once EntityHeader serialization is resolved
+                        // For now, defer to entity-level filtering
+                        for filter in filters {
+                            if let Ok(Some(_entity)) = self
+                                .get_entity(collection_id, entity_id, false, false)
+                                .await
+                            {
+                                if !self.entity_matches_metadata_filter(&_entity, filter) {
+                                    all_match = false;
+                                    break;
+                                }
+                            } else {
                                 all_match = false;
                                 break;
                             }
-                        } else {
-                            all_match = false;
-                            break;
                         }
-                    }
 
-                    if all_match {
-                        if let Ok(Some(entity)) = self
-                            .get_entity(collection_id, entity_id, false, false)
-                            .await
-                        {
-                            results.push(entity);
-                            count += 1;
+                        if all_match {
+                            if let Ok(Some(entity)) = self
+                                .get_entity(collection_id, entity_id, false, false)
+                                .await
+                            {
+                                results.push(entity);
+                                count += 1;
+                            }
                         }
                     }
                 }
-            }
 
-            Ok(results)
+                Ok(results)
+            }
         })
-    }
-
-    async fn list_entities(
-        &self,
-        collection_id: &str,
-        offset: usize,
-        limit: usize,
-    ) -> Result<Vec<Entity>> {
-        let prefix = format!("{}/entity/", collection_id);
-        let mut ids: Vec<String> = {
-            let headers = self.headers.read().unwrap();
-            headers
-                .keys()
-                .filter_map(|k| k.strip_prefix(&prefix).map(|rest| rest.to_string()))
-                .collect()
-        }; // Lock is released here
-        ids.sort();
-        let slice = ids.into_iter().skip(offset).take(limit);
-        let mut out = Vec::new();
-        for id in slice {
-            if let Some(entity) = self.get_entity(collection_id, &id, false, false).await? {
-                out.push(entity);
-            }
-        }
-        Ok(out)
     }
 }
 
@@ -1012,7 +996,7 @@ impl ProximaEntityStore {
                 Some(filter_clause::Value::BoolValue(b)) => serde_json::json!(*b),
                 None => serde_json::Value::Null,
             };
-            let op = match ComparisonOp::from_i32(c.op).unwrap_or(ComparisonOp::Eq) {
+            let op = match ComparisonOp::try_from(c.op).unwrap_or(ComparisonOp::Eq) {
                 ComparisonOp::Eq => Op::Equals,
                 ComparisonOp::Ne => Op::NotEquals,
                 ComparisonOp::Gt => Op::GreaterThan,
@@ -1029,7 +1013,7 @@ impl ProximaEntityStore {
                 value: val,
             });
         }
-        match LogicalOp::from_i32(f.op).unwrap_or(LogicalOp::And) {
+        match LogicalOp::try_from(f.op).unwrap_or(LogicalOp::And) {
             LogicalOp::And => Some(FE::And(terms)),
             LogicalOp::Or => Some(FE::Or(terms)),
             LogicalOp::Not => {
@@ -1134,7 +1118,6 @@ mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Modality, Relation};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use tokio::runtime::Runtime;
 
     // Test helper struct for mocking storage engine
     struct NoopEngine {
@@ -1226,7 +1209,7 @@ mod tests {
             Arc::new(InMemoryProvenanceRegistry::new()),
         );
 
-        let mut entity = Entity {
+        let entity = Entity {
             id: "".to_string(),
             embeddings: vec![EmbeddingVersion {
                 model_id: "model-a".to_string(),
@@ -1424,6 +1407,7 @@ mod tests {
             let batch = batch_result.unwrap();
             total_entities += batch.len();
             batch_count += 1;
+            let _end_idx = batch.len(); // For future pagination support
             assert!(batch.len() <= 2); // Batch size should be respected
         }
 

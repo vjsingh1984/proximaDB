@@ -21,11 +21,300 @@
 //! - **ORION**: In-memory CSR format for real-time traversal (1M+ edges/sec)
 //! - **PULSAR**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
 //! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
+//!
+//! ## Embedding Storage Modes
+//!
+//! Graph engines support three embedding storage modes:
+//!
+//! - **None** (DEFAULT): No embeddings stored - pure graph, best performance
+//! - **Cold**: Embeddings in vector engine (SST/HELIX/VIPER) - SKS with large graphs
+//! - **Memory**: Embeddings cached in memory - SKS-heavy workloads, consumer override
+//!
+//! CSR (Compressed Sparse Row) format NEVER contains embedding data.
+//! Embeddings are optionally stored in separate vector storage engines.
 
 pub mod generic_traversal;
 pub mod orion;
-pub mod pulsar; // Distributed graph engine
-pub mod quasar; // Hybrid hot/cold tiering // Engine-agnostic traversal utilities
+
+// PULSAR: Distributed graph engine (experimental)
+// Enable with: cargo build --features distributed-graph
+#[cfg(feature = "distributed-graph")]
+pub mod pulsar;
+
+// QUASAR: Hybrid hot/cold tiering engine (experimental)
+// Enable with: cargo build --features tiered-graph
+#[cfg(feature = "tiered-graph")]
+pub mod quasar;
+
+// Provide stub modules when features are disabled to maintain API compatibility
+#[cfg(not(feature = "distributed-graph"))]
+pub mod pulsar {
+    //! # PULSAR Graph Engine - FEATURE DISABLED
+    //!
+    //! This module is disabled by default. To enable PULSAR, build with:
+    //! ```bash
+    //! cargo build --features distributed-graph
+    //! ```
+    //!
+    //! **Note**: PULSAR is experimental and not production-ready.
+    //! For production use, use ORION with application-level sharding.
+
+    use crate::core::error::ProximaDBError;
+    use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use std::sync::Arc;
+
+    /// PULSAR configuration (stub)
+    #[derive(Debug, Clone, Default)]
+    pub struct PulsarConfig {
+        /// Number of shards for data distribution
+        pub shard_count: usize,
+        /// Replication factor (stub field for API compatibility)
+        pub replication_factor: u8,
+    }
+
+    /// PULSAR engine (stub - requires distributed-graph feature)
+    #[derive(Debug)]
+    pub struct PulsarGraphEngine;
+
+    impl PulsarGraphEngine {
+        pub fn new(_config: PulsarConfig) -> Result<Self, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR requires 'distributed-graph' feature. Build with: cargo build --features distributed-graph".to_string()
+            ))
+        }
+
+        /// Cross-shard traversal (stub - returns error when feature disabled)
+        pub async fn cross_shard_traversal(
+            &self,
+            _start_node_id: &str,
+            _max_depth: u32,
+        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR cross_shard_traversal requires 'distributed-graph' feature".to_string(),
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::GraphEngine for PulsarGraphEngine {
+        async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_incoming_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_neighbors(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn node_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn edge_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+        fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "PULSAR disabled".to_string(),
+            ))
+        }
+    }
+}
+
+#[cfg(not(feature = "tiered-graph"))]
+pub mod quasar {
+    //! # QUASAR Graph Engine - FEATURE DISABLED
+    //!
+    //! This module is disabled by default. To enable QUASAR, build with:
+    //! ```bash
+    //! cargo build --features tiered-graph
+    //! ```
+    //!
+    //! **Note**: QUASAR is experimental and not production-ready.
+    //! For production use, use ORION.
+
+    use crate::core::error::ProximaDBError;
+    use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use std::sync::Arc;
+
+    /// QUASAR configuration (stub)
+    #[derive(Debug, Clone, Default)]
+    pub struct QuasarConfig {
+        /// Maximum size of hot tier (in number of nodes) - stub field for API compatibility
+        pub hot_tier_max_nodes: usize,
+        /// Cold tier storage path (stub field for API compatibility)
+        pub cold_tier_path: std::path::PathBuf,
+    }
+
+    /// QUASAR engine (stub - requires tiered-graph feature)
+    #[derive(Debug)]
+    pub struct QuasarGraphEngine;
+
+    impl QuasarGraphEngine {
+        pub async fn new(_config: QuasarConfig) -> Result<Self, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR requires 'tiered-graph' feature. Build with: cargo build --features tiered-graph".to_string()
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::GraphEngine for QuasarGraphEngine {
+        async fn insert_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        async fn update_node(&self, _node: Node) -> Result<Arc<Node>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        async fn delete_node(&self, _id: &NodeId) -> Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        async fn insert_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        async fn update_edge(&self, _edge: Edge) -> Result<Arc<Edge>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        async fn delete_edge(&self, _id: &EdgeId) -> Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_incoming_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_neighbors(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_nodes_by_label(&self, _label: &str) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn node_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn edge_count(&self) -> Result<usize, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+        fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>, ProximaDBError> {
+            Err(ProximaDBError::NotImplemented(
+                "QUASAR disabled".to_string(),
+            ))
+        }
+    }
+}
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -35,6 +324,65 @@ use crate::metrics::collectors::MetricsSample;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+
+/// Embedding storage mode for graph engines
+///
+/// Controls how node embeddings are stored relative to the graph structure.
+/// CSR (Compressed Sparse Row) format NEVER contains embedding data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmbeddingMode {
+    /// No embeddings stored - pure graph workloads (DEFAULT, best performance)
+    ///
+    /// Use this for:
+    /// - Pure graph traversal/analytics
+    /// - Pattern matching
+    /// - Path finding
+    /// - When embeddings are not needed
+    #[default]
+    None,
+
+    /// Embeddings stored in cold tier vector engine (SST/HELIX/VIPER)
+    ///
+    /// Use this for:
+    /// - SKS (Semantic Knowledge Search) with large graphs
+    /// - When graph + embeddings don't fit in memory
+    /// - Cost-optimized production deployments
+    Cold,
+
+    /// Embeddings cached in memory (consumer override)
+    ///
+    /// Use this for:
+    /// - SKS-heavy workloads with smaller graphs
+    /// - When latency is critical
+    /// - Development/testing
+    Memory,
+}
+
+impl EmbeddingMode {
+    /// Parse embedding mode from config string
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "cold" => EmbeddingMode::Cold,
+            "memory" => EmbeddingMode::Memory,
+            _ => EmbeddingMode::None, // Default for "none" or invalid
+        }
+    }
+
+    /// Check if embeddings are stored at all
+    pub fn stores_embeddings(&self) -> bool {
+        !matches!(self, EmbeddingMode::None)
+    }
+
+    /// Check if embeddings are in cold tier
+    pub fn is_cold(&self) -> bool {
+        matches!(self, EmbeddingMode::Cold)
+    }
+
+    /// Check if embeddings are in memory
+    pub fn is_memory(&self) -> bool {
+        matches!(self, EmbeddingMode::Memory)
+    }
+}
 
 /// Engine performance statistics integrated with unified metrics framework
 #[derive(Debug, Clone, Default)]
@@ -263,7 +611,7 @@ pub trait GraphEngine: Send + Sync {
 
     /// Save graph snapshot to persistent storage
     /// Uses UnifiedCachingFilesystem for cloud-native storage support
-    async fn save_snapshot(&self, path: &Path) -> Result<()> {
+    async fn save_snapshot(&self, _path: &Path) -> Result<()> {
         // Default implementation - engines should override for optimal performance
         Err(ProximaDBError::NotImplemented(
             "Graph persistence not implemented for this engine".to_string(),
@@ -272,7 +620,7 @@ pub trait GraphEngine: Send + Sync {
 
     /// Load graph from persistent storage
     /// Restores graph state from a previous snapshot
-    async fn load_snapshot(&self, path: &Path) -> Result<()> {
+    async fn load_snapshot(&self, _path: &Path) -> Result<()> {
         Err(ProximaDBError::NotImplemented(
             "Graph persistence not implemented for this engine".to_string(),
         ))
@@ -285,14 +633,14 @@ pub trait GraphEngine: Send + Sync {
     }
 
     /// Export graph to standard format (GraphML, GEXF, etc.)
-    async fn export(&self, format: GraphExportFormat, path: &Path) -> Result<()> {
+    async fn export(&self, _format: GraphExportFormat, _path: &Path) -> Result<()> {
         Err(ProximaDBError::NotImplemented(
             "Graph export not implemented for this engine".to_string(),
         ))
     }
 
     /// Import graph from standard format
-    async fn import(&self, format: GraphExportFormat, path: &Path) -> Result<()> {
+    async fn import(&self, _format: GraphExportFormat, _path: &Path) -> Result<()> {
         Err(ProximaDBError::NotImplemented(
             "Graph import not implemented for this engine".to_string(),
         ))
@@ -400,7 +748,7 @@ impl GraphEngineImpl {
                 Ok(GraphEngineImpl::Pulsar(engine))
             }
             GraphEngineType::Quasar => {
-                let quasar_config = config.quasar_config.unwrap_or_default();
+                let _quasar_config = config.quasar_config.unwrap_or_default();
                 // Note: This needs async, so we'll provide a different factory method
                 Err(ProximaDBError::InvalidInput(
                     "Use new_quasar_async for QUASAR engine".to_string(),
@@ -568,7 +916,40 @@ impl GraphEngine for GraphEngineImpl {
         }
     }
 
-    // Note: Async methods can't be delegated in this pattern, but we can provide alternative methods
+    // ===== Bulk Operations - Critical for Performance =====
+    // These MUST be delegated to underlying engines to avoid O(n) per-edge overhead
+
+    async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_insert_nodes(nodes).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_insert_nodes(nodes).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_insert_nodes(nodes).await,
+        }
+    }
+
+    async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_insert_edges(edges).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_insert_edges(edges).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_insert_edges(edges).await,
+        }
+    }
+
+    async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_delete_nodes(node_ids).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_delete_nodes(node_ids).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_delete_nodes(node_ids).await,
+        }
+    }
+
+    async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.bulk_delete_edges(edge_ids).await,
+            GraphEngineImpl::Pulsar(engine) => engine.bulk_delete_edges(edge_ids).await,
+            GraphEngineImpl::Quasar(engine) => engine.bulk_delete_edges(edge_ids).await,
+        }
+    }
 }
 
 /// Graph engine factory for creating different engine types

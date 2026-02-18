@@ -5,8 +5,8 @@
 
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    LogicalOp, MetadataFilter, SearchQuery, SqlValue, StorageEngine, VectorBatchRequest,
-    VectorOperationResponse, VectorRecord, VectorSearchRequest, sql_value,
+    SearchQuery, SqlValue, StorageEngine, VectorBatchRequest, VectorOperationResponse,
+    VectorRecord, VectorSearchRequest, sql_value,
 };
 use proximadb::utils::uuid::Uuid;
 use std::time::Duration;
@@ -32,6 +32,10 @@ mod comprehensive_api_tests {
             index_configs: vec![],
             quantization: None,
             storage_config: None,
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
         }
     }
 
@@ -197,7 +201,7 @@ mod comprehensive_api_tests {
 
         // Step 5: Delete collection
         println!("Deleting collection...");
-        let delete_request = CollectionRequest {
+        let _delete_request = CollectionRequest {
             operation: CollectionOperation::CollectionDelete as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,

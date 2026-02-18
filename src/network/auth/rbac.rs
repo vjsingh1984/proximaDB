@@ -358,7 +358,7 @@ impl RbacService {
 
         // Tenant isolation check
         if let Some(resource_tenant) = &context.tenant_id {
-            let user_roles = self.get_user_roles(user_id)?;
+            let _user_roles = self.get_user_roles(user_id)?;
             // Check if user belongs to the same tenant (simplified check)
             // In production, this would involve more complex tenant validation
             if !self.user_belongs_to_tenant(user_id, resource_tenant).await {
@@ -370,7 +370,7 @@ impl RbacService {
     }
 
     /// Check if user has access to a specific collection
-    async fn user_has_collection_access(&self, user_id: &str, collection_id: &str) -> bool {
+    async fn user_has_collection_access(&self, user_id: &str, _collection_id: &str) -> bool {
         // This is a simplified implementation
         // In production, this would check collection-specific ACLs
         let roles = match self.get_user_roles(user_id) {

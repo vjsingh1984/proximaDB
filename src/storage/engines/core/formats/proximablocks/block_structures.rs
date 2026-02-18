@@ -107,7 +107,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
@@ -215,7 +215,7 @@ pub struct BlockMetadataStats {
 /// - **Encoding Selection**: `block.encoding_marker` chooses optimal SIMD encoding automatically
 ///
 /// ### **🏗️ COMPOSITION PATTERN (Follow HELIX's Example)**
-/// ```rust
+/// ```rust,ignore
 /// // ✅ CORRECT: Compose with Proxima, don't replace it
 /// pub struct MyEngineMetadata {
 ///     pub proxima_metadata: ProximaBlockMetadata,  // <- Reuse all auto-generated data
@@ -224,7 +224,7 @@ pub struct BlockMetadataStats {
 /// ```
 ///
 /// **See module documentation for complete usage examples and best practices!**
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProximaDataBlock {
     /// PROXIMA ENCODING MARKER (1 byte) - First byte of serialized block
     ///
@@ -280,6 +280,7 @@ pub struct ProximaDataBlock {
     pub metadata: ProximaBlockMetadata,
 
     /// Compression information
+    #[allow(dead_code)]
     pub compression_config: BlockCompressionConfig,
 
     /// Direct compression algorithm field (for SST compatibility)
@@ -335,6 +336,202 @@ pub struct ProximaBlockMetadata {
     pub metadata_checksum: u32,
 }
 
+impl ProximaBlockMetadata {
+    /// Serialize metadata robustly handling JSON values
+    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
+        use std::io::Write;
+        let mut buffer = Vec::new();
+
+        // Version 1
+        buffer.write_all(b"PBMB")?;
+        buffer.write_all(&1u32.to_le_bytes())?;
+
+        // Basic fields
+        buffer.write_all(&self.record_count.to_le_bytes())?;
+        buffer.write_all(&self.size_bytes.to_le_bytes())?;
+        buffer.write_all(&self.compressed_size.to_le_bytes())?;
+        buffer.write_all(&self.timestamp.to_le_bytes())?;
+        buffer.write_all(&[self.compaction_level])?;
+        buffer.write_all(&[if self.has_deletes { 1u8 } else { 0u8 }])?;
+        buffer.write_all(&[if self.has_updates { 1u8 } else { 0u8 }])?;
+        buffer.write_all(&self.version_range.0.to_le_bytes())?;
+        buffer.write_all(&self.version_range.1.to_le_bytes())?;
+
+        // Column Stats
+        buffer.write_all(&(self.column_stats.len() as u32).to_le_bytes())?;
+        for (name, stat) in &self.column_stats {
+            let name_bytes = name.as_bytes();
+            buffer.write_all(&(name_bytes.len() as u32).to_le_bytes())?;
+            buffer.write_all(name_bytes)?;
+
+            // Serialize stat fields
+            let stat_name_bytes = stat.name.as_bytes();
+            buffer.write_all(&(stat_name_bytes.len() as u32).to_le_bytes())?;
+            buffer.write_all(stat_name_bytes)?;
+            buffer.write_all(&stat.null_count.to_le_bytes())?;
+            buffer.write_all(&stat.distinct_count.to_le_bytes())?;
+            buffer.write_all(&stat.avg_size_bytes.to_le_bytes())?;
+            buffer.write_all(&[if stat.bloom_filter_enabled { 1u8 } else { 0u8 }])?;
+
+            // JSON values using safe serializer
+            crate::core::search::json_value_serde::serialize_json_value(
+                &stat.min_value.clone().unwrap_or(serde_json::Value::Null),
+                &mut buffer,
+            )?;
+            crate::core::search::json_value_serde::serialize_json_value(
+                &stat.max_value.clone().unwrap_or(serde_json::Value::Null),
+                &mut buffer,
+            )?;
+        }
+
+        // Quantization stats (safe for bincode as no JSON)
+        let q_stats = bincode::serialize(&self.quantization_stats)?;
+        buffer.write_all(&(q_stats.len() as u32).to_le_bytes())?;
+        buffer.write_all(&q_stats)?;
+
+        // Checksums
+        buffer.write_all(&self.data_checksum.to_le_bytes())?;
+        buffer.write_all(&self.metadata_checksum.to_le_bytes())?;
+
+        Ok(buffer)
+    }
+
+    /// Deserialize metadata
+    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Read;
+        let mut cursor = std::io::Cursor::new(data);
+
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+        if &magic != b"PBMB" {
+            // Fallback for old bincode format if needed, but for now strict
+            return Err(anyhow::anyhow!("Invalid ProximaBlockMetadata magic"));
+        }
+
+        let mut u32_buf = [0u8; 4];
+        cursor.read_exact(&mut u32_buf)?;
+        let _version = u32::from_le_bytes(u32_buf);
+
+        cursor.read_exact(&mut u32_buf)?;
+        let record_count = u32::from_le_bytes(u32_buf);
+
+        let mut u64_buf = [0u8; 8];
+        cursor.read_exact(&mut u64_buf)?;
+        let size_bytes = u64::from_le_bytes(u64_buf);
+
+        cursor.read_exact(&mut u64_buf)?;
+        let compressed_size = u64::from_le_bytes(u64_buf);
+
+        let mut i64_buf = [0u8; 8];
+        cursor.read_exact(&mut i64_buf)?;
+        let timestamp = i64::from_le_bytes(i64_buf);
+
+        let mut u8_buf = [0u8; 1];
+        cursor.read_exact(&mut u8_buf)?;
+        let compaction_level = u8_buf[0];
+
+        cursor.read_exact(&mut u8_buf)?;
+        let has_deletes = u8_buf[0] != 0;
+
+        cursor.read_exact(&mut u8_buf)?;
+        let has_updates = u8_buf[0] != 0;
+
+        cursor.read_exact(&mut i64_buf)?;
+        let v_start = i64::from_le_bytes(i64_buf);
+        cursor.read_exact(&mut i64_buf)?;
+        let v_end = i64::from_le_bytes(i64_buf);
+
+        // Column Stats
+        cursor.read_exact(&mut u32_buf)?;
+        let col_count = u32::from_le_bytes(u32_buf);
+        let mut column_stats = HashMap::new();
+
+        for _ in 0..col_count {
+            cursor.read_exact(&mut u32_buf)?;
+            let name_len = u32::from_le_bytes(u32_buf) as usize;
+            let mut name_bytes = vec![0u8; name_len];
+            cursor.read_exact(&mut name_bytes)?;
+            let key_name = String::from_utf8(name_bytes)?;
+
+            cursor.read_exact(&mut u32_buf)?;
+            let stat_name_len = u32::from_le_bytes(u32_buf) as usize;
+            let mut stat_name_bytes = vec![0u8; stat_name_len];
+            cursor.read_exact(&mut stat_name_bytes)?;
+            let stat_name = String::from_utf8(stat_name_bytes)?;
+
+            cursor.read_exact(&mut u32_buf)?;
+            let null_count = u32::from_le_bytes(u32_buf);
+
+            cursor.read_exact(&mut u32_buf)?;
+            let distinct_count = u32::from_le_bytes(u32_buf);
+
+            cursor.read_exact(&mut u64_buf)?;
+            let avg_size_bytes = u64::from_le_bytes(u64_buf);
+
+            cursor.read_exact(&mut u8_buf)?;
+            let bloom_filter_enabled = u8_buf[0] != 0;
+
+            let min_value =
+                crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+            let max_value =
+                crate::core::search::json_value_serde::deserialize_json_value(&mut cursor).ok();
+
+            // Convert Null to None
+            let min_value = if let Some(serde_json::Value::Null) = min_value {
+                None
+            } else {
+                min_value
+            };
+            let max_value = if let Some(serde_json::Value::Null) = max_value {
+                None
+            } else {
+                max_value
+            };
+
+            column_stats.insert(
+                key_name,
+                ColumnStatistics {
+                    name: stat_name,
+                    null_count,
+                    distinct_count,
+                    min_value,
+                    max_value,
+                    avg_size_bytes,
+                    bloom_filter_enabled,
+                },
+            );
+        }
+
+        // Quantization stats
+        cursor.read_exact(&mut u32_buf)?;
+        let q_len = u32::from_le_bytes(u32_buf) as usize;
+        let mut q_bytes = vec![0u8; q_len];
+        cursor.read_exact(&mut q_bytes)?;
+        let quantization_stats = bincode::deserialize(&q_bytes)?;
+
+        cursor.read_exact(&mut u64_buf)?;
+        let data_checksum = u64::from_le_bytes(u64_buf);
+
+        cursor.read_exact(&mut u32_buf)?;
+        let metadata_checksum = u32::from_le_bytes(u32_buf);
+
+        Ok(Self {
+            record_count,
+            size_bytes,
+            compressed_size,
+            timestamp,
+            compaction_level,
+            has_deletes,
+            has_updates,
+            version_range: (v_start, v_end),
+            column_stats,
+            quantization_stats,
+            data_checksum,
+            metadata_checksum,
+        })
+    }
+}
+
 /// Column statistics for optimization
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColumnStatistics {
@@ -347,6 +544,331 @@ pub struct ColumnStatistics {
     pub bloom_filter_enabled: bool,
 }
 
+/// Typed column statistics for efficient predicate pushdown
+///
+/// Unlike ColumnStatistics which uses serde_json::Value, TypedColumnStatistics
+/// provides native typed statistics for each column type, enabling:
+/// - Zero-overhead predicate evaluation (no JSON parsing)
+/// - Type-specific statistics (e.g., ngram bloom for TEXT)
+/// - Efficient serialization (bincode, not JSON)
+///
+/// This is part of the ProximaRecord type system upgrade.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TypedColumnStatistics {
+    /// String column statistics
+    String(StringStats),
+    /// Integer column statistics (i64)
+    Integer(NumericStats<i64>),
+    /// Float column statistics (f64)
+    Float(NumericStats<f64>),
+    /// Decimal column statistics (i128 representation)
+    Decimal(DecimalStats),
+    /// Boolean column statistics
+    Boolean(BooleanStats),
+    /// Timestamp column statistics (microseconds since epoch)
+    Timestamp(TimestampStats),
+    /// TEXT column statistics (large text with storage strategy)
+    Text(TextStats),
+    /// UUID column statistics
+    Uuid(UuidStats),
+    /// Binary column statistics
+    Binary(BinaryStats),
+    /// Date column statistics (days since epoch)
+    Date(DateStats),
+    /// Time column statistics (microseconds since midnight)
+    Time(TimeStats),
+    /// GeoPoint column statistics
+    GeoPoint(GeoPointStats),
+    /// JSON column statistics
+    Json(JsonStats),
+    /// Array column statistics
+    Array(ArrayStats),
+}
+
+/// String column statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StringStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<String>,
+    pub max_value: Option<String>,
+    pub avg_length: f32,
+    pub max_length: u32,
+    pub total_bytes: u64,
+    pub bloom_filter_offset: Option<u64>,
+}
+
+/// Numeric statistics (generic over i64/f64)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NumericStats<T: Clone> {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<T>,
+    pub max_value: Option<T>,
+    pub sum: Option<T>,
+    /// Histogram buckets for cardinality estimation
+    pub histogram_buckets: Option<Vec<T>>,
+}
+
+/// Decimal statistics (128-bit precision)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecimalStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i128>,
+    pub max_value: Option<i128>,
+    pub precision: u8,
+    pub scale: u8,
+}
+
+/// Boolean statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BooleanStats {
+    pub null_count: u32,
+    pub true_count: u32,
+    pub false_count: u32,
+}
+
+/// Timestamp statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimestampStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i64>, // Microseconds since epoch
+    pub max_value: Option<i64>,
+    pub timezone: Option<String>,
+}
+
+/// TEXT column statistics for large text with storage strategy info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_length: f32,
+    pub max_length: u64,
+    pub total_bytes: u64,
+    /// Offset to n-gram bloom filter for CONTAINS queries
+    pub ngram_bloom_offset: Option<u64>,
+    /// Storage strategy used (Inline/Chunked/Sidecar)
+    pub storage_strategy: TextStorageStrategyStats,
+    /// Number of chunked records (if chunked storage used)
+    pub chunked_count: u32,
+    /// Sidecar file reference (if sidecar storage used)
+    pub sidecar_file: Option<String>,
+}
+
+/// TEXT storage strategy statistics
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub enum TextStorageStrategyStats {
+    #[default]
+    Inline,
+    Chunked,
+    Sidecar,
+    Mixed, // Block contains records with different strategies
+}
+
+/// UUID statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UuidStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    /// Bloom filter for exact match
+    pub bloom_filter_offset: Option<u64>,
+}
+
+/// Binary statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_size: f32,
+    pub max_size: u64,
+    pub total_bytes: u64,
+}
+
+/// Date statistics (days since epoch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DateStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i32>,
+    pub max_value: Option<i32>,
+}
+
+/// Time statistics (microseconds since midnight)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeStats {
+    pub null_count: u32,
+    pub distinct_count: u32,
+    pub min_value: Option<i64>,
+    pub max_value: Option<i64>,
+}
+
+/// GeoPoint statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoPointStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    /// Bounding box for spatial queries
+    pub min_latitude: Option<f64>,
+    pub max_latitude: Option<f64>,
+    pub min_longitude: Option<f64>,
+    pub max_longitude: Option<f64>,
+}
+
+/// JSON statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_size: f32,
+    pub max_depth: u32,
+    pub total_bytes: u64,
+}
+
+/// Array statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArrayStats {
+    pub null_count: u32,
+    pub total_count: u32,
+    pub avg_length: f32,
+    pub max_length: u32,
+    pub element_type: String, // Type name of array elements
+}
+
+impl TypedColumnStatistics {
+    /// Check if column has null values
+    pub fn has_nulls(&self) -> bool {
+        match self {
+            TypedColumnStatistics::String(s) => s.null_count > 0,
+            TypedColumnStatistics::Integer(s) => s.null_count > 0,
+            TypedColumnStatistics::Float(s) => s.null_count > 0,
+            TypedColumnStatistics::Decimal(s) => s.null_count > 0,
+            TypedColumnStatistics::Boolean(s) => s.null_count > 0,
+            TypedColumnStatistics::Timestamp(s) => s.null_count > 0,
+            TypedColumnStatistics::Text(s) => s.null_count > 0,
+            TypedColumnStatistics::Uuid(s) => s.null_count > 0,
+            TypedColumnStatistics::Binary(s) => s.null_count > 0,
+            TypedColumnStatistics::Date(s) => s.null_count > 0,
+            TypedColumnStatistics::Time(s) => s.null_count > 0,
+            TypedColumnStatistics::GeoPoint(s) => s.null_count > 0,
+            TypedColumnStatistics::Json(s) => s.null_count > 0,
+            TypedColumnStatistics::Array(s) => s.null_count > 0,
+        }
+    }
+
+    /// Get null count
+    pub fn null_count(&self) -> u32 {
+        match self {
+            TypedColumnStatistics::String(s) => s.null_count,
+            TypedColumnStatistics::Integer(s) => s.null_count,
+            TypedColumnStatistics::Float(s) => s.null_count,
+            TypedColumnStatistics::Decimal(s) => s.null_count,
+            TypedColumnStatistics::Boolean(s) => s.null_count,
+            TypedColumnStatistics::Timestamp(s) => s.null_count,
+            TypedColumnStatistics::Text(s) => s.null_count,
+            TypedColumnStatistics::Uuid(s) => s.null_count,
+            TypedColumnStatistics::Binary(s) => s.null_count,
+            TypedColumnStatistics::Date(s) => s.null_count,
+            TypedColumnStatistics::Time(s) => s.null_count,
+            TypedColumnStatistics::GeoPoint(s) => s.null_count,
+            TypedColumnStatistics::Json(s) => s.null_count,
+            TypedColumnStatistics::Array(s) => s.null_count,
+        }
+    }
+
+    /// Convert to legacy ColumnStatistics for backward compatibility
+    pub fn to_legacy(&self, name: &str) -> ColumnStatistics {
+        let (min_value, max_value) = match self {
+            TypedColumnStatistics::String(s) => (
+                s.min_value
+                    .as_ref()
+                    .map(|v| serde_json::Value::String(v.clone())),
+                s.max_value
+                    .as_ref()
+                    .map(|v| serde_json::Value::String(v.clone())),
+            ),
+            TypedColumnStatistics::Integer(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Float(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Decimal(s) => (
+                s.min_value.map(|v| serde_json::json!(v.to_string())),
+                s.max_value.map(|v| serde_json::json!(v.to_string())),
+            ),
+            TypedColumnStatistics::Timestamp(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Date(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            TypedColumnStatistics::Time(s) => (
+                s.min_value.map(|v| serde_json::json!(v)),
+                s.max_value.map(|v| serde_json::json!(v)),
+            ),
+            _ => (None, None),
+        };
+
+        ColumnStatistics {
+            name: name.to_string(),
+            null_count: self.null_count(),
+            distinct_count: self.get_distinct_count(),
+            min_value,
+            max_value,
+            avg_size_bytes: self.get_avg_size_bytes(),
+            bloom_filter_enabled: self.has_bloom_filter(),
+        }
+    }
+
+    fn get_distinct_count(&self) -> u32 {
+        match self {
+            TypedColumnStatistics::String(s) => s.distinct_count,
+            TypedColumnStatistics::Integer(s) => s.distinct_count,
+            TypedColumnStatistics::Float(s) => s.distinct_count,
+            TypedColumnStatistics::Decimal(s) => s.distinct_count,
+            TypedColumnStatistics::Timestamp(s) => s.distinct_count,
+            TypedColumnStatistics::Date(s) => s.distinct_count,
+            TypedColumnStatistics::Time(s) => s.distinct_count,
+            TypedColumnStatistics::Uuid(s) => s.distinct_count,
+            _ => 0,
+        }
+    }
+
+    fn get_avg_size_bytes(&self) -> u64 {
+        match self {
+            TypedColumnStatistics::String(s) => s.avg_length as u64,
+            TypedColumnStatistics::Text(s) => s.avg_length as u64,
+            TypedColumnStatistics::Binary(s) => s.avg_size as u64,
+            TypedColumnStatistics::Json(s) => s.avg_size as u64,
+            TypedColumnStatistics::Integer(_) => 8,
+            TypedColumnStatistics::Float(_) => 8,
+            TypedColumnStatistics::Decimal(_) => 16,
+            TypedColumnStatistics::Boolean(_) => 1,
+            TypedColumnStatistics::Timestamp(_) => 8,
+            TypedColumnStatistics::Date(_) => 4,
+            TypedColumnStatistics::Time(_) => 8,
+            TypedColumnStatistics::Uuid(_) => 16,
+            TypedColumnStatistics::GeoPoint(_) => 24,
+            TypedColumnStatistics::Array(s) => s.avg_length as u64,
+        }
+    }
+
+    fn has_bloom_filter(&self) -> bool {
+        match self {
+            TypedColumnStatistics::String(s) => s.bloom_filter_offset.is_some(),
+            TypedColumnStatistics::Uuid(s) => s.bloom_filter_offset.is_some(),
+            TypedColumnStatistics::Text(s) => s.ngram_bloom_offset.is_some(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ColumnData {
     String,
@@ -355,6 +877,15 @@ pub enum ColumnData {
     Boolean,
     Timestamp,
     Json,
+    // New types for ProximaRecord
+    Text,
+    Decimal,
+    Uuid,
+    Binary,
+    Date,
+    Time,
+    GeoPoint,
+    Array,
 }
 
 /// Quantization statistics
@@ -370,7 +901,7 @@ pub struct QuantizationStatistics {
 }
 
 /// Vector encoding layout strategies for Proxima compression
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VectorEncodingLayout {
     /// TransposeFieldEncodedAndCompressedVector: transpose RxD → DxR, store each dimension as separate field
     /// Each dimension field gets Proxima encoding + field-level compression
@@ -401,6 +932,7 @@ pub enum VectorEncodingLayout {
     /// Auto: choose strategy based on workload type and benchmark data
     /// DEFAULT: FullVector (fastest decode for vector database WORM workloads)
     /// Based on comprehensive 12-pattern benchmark showing FullVector has best decode performance
+    #[default]
     Auto,
 }
 
@@ -460,6 +992,9 @@ pub struct SuperBlock {
 
     /// SuperBlock-level indexes
     pub centroid: Option<Vec<f32>>,
+    /// FP16 quantized superblock centroid (50% storage reduction, <0.1% distance error)
+    /// When present, this is used for block selection; centroid is kept for backward compatibility
+    pub centroid_fp16: Option<Vec<u16>>,
     pub quantized_signature: Vec<u8>,
     pub bloom_filter: Option<SstableBloomFilter>,
 
@@ -610,7 +1145,7 @@ impl ProximaDataBlock {
     /// ## **🎯 Usage Examples**
     ///
     /// ### **Basic Usage (Replaces 100+ lines of manual code)**
-    /// ```rust
+    /// ```rust,ignore
     /// let compression_config = BlockCompressionConfig::default();
     /// let block = ProximaDataBlock::new(records, compression_config);
     ///
@@ -622,7 +1157,7 @@ impl ProximaDataBlock {
     /// ```
     ///
     /// ### **Engine Integration (Follow HELIX Pattern)**
-    /// ```rust
+    /// ```rust,ignore
     /// // ✅ Wrap Proxima capabilities in your engine-specific metadata
     /// pub struct MyEngineBlockMetadata {
     ///     pub proxima_metadata: ProximaBlockMetadata,  // <- All the auto-generated goodness
@@ -752,7 +1287,7 @@ impl ProximaDataBlock {
         block
     }
 
-    /// Generate bloom filter for record IDs
+    /// Generate bloom filter for record IDs with adaptive sizing
     fn generate_bloom_filter(records: &[VectorRecord]) -> Option<SstableBloomFilter> {
         if records.is_empty() {
             return None;
@@ -760,7 +1295,26 @@ impl ProximaDataBlock {
 
         use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
 
-        let bloom_config = BloomFilterConfig::for_sstable(records.len());
+        // Use adaptive bloom filter sizing for optimal memory usage
+        let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::for_block_level();
+        let num_keys = records.len();
+        let optimal_size = adaptive_config.optimal_size(num_keys);
+        let bits_per_key = if num_keys > 0 {
+            (optimal_size / num_keys).max(4) as u32
+        } else {
+            10
+        };
+
+        // Create config with adaptive sizing
+        let bloom_config = BloomFilterConfig {
+            enabled: true,
+            strategy: crate::core::bloom::BloomStrategy::BitPacked,
+            bits_per_key,
+            expected_items: num_keys,
+            false_positive_rate: Some(adaptive_config.target_fp_rate),
+            hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+        };
+
         let mut bloom = BloomFilterFactory::create(&bloom_config);
 
         for record in records {
@@ -773,9 +1327,9 @@ impl ProximaDataBlock {
                 use crate::core::bloom::BloomFilterStats;
 
                 let stats = BloomFilterStats {
-                    key_count: records.len() as u64,
+                    key_count: num_keys as u64,
                     metadata_columns: 0, // No metadata columns in block-level bloom
-                    total_keys: records.len() as u64,
+                    total_keys: num_keys as u64,
                     key_lookups_saved: 0,
                     metadata_queries_saved: 0,
                 };
@@ -799,7 +1353,7 @@ impl ProximaDataBlock {
     pub fn new_with_engine_profile(
         records: Vec<VectorRecord>,
         compression_config: BlockCompressionConfig,
-        engine_profile: EngineProfile,
+        _engine_profile: EngineProfile,
     ) -> Self {
         let record_count = records.len() as u32;
         let block_id = 0u32;
@@ -915,7 +1469,7 @@ impl ProximaDataBlock {
     /// - **Memory Efficient**: Bloom filter sized automatically based on record count
     ///
     /// ## **🎯 Usage in Storage Engines:**
-    /// ```rust
+    /// ```rust,ignore
     /// // ✅ Instead of implementing custom bloom filter logic, just use this:
     /// if block.contains_id("vector_123") {
     ///     // Block likely contains this ID - proceed with detailed search
@@ -1213,9 +1767,6 @@ impl ProximaDataBlock {
 
     /// Serialize directly to a buffer (avoids intermediate allocations)
     fn serialize_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
-        use crate::core::compression::CompressionAlgorithm;
-        use crate::core::compression::{CompressionContext, compress};
-        use std::collections::{HashMap, HashSet};
         use std::io::Write;
 
         trace!("[ENCODE] Starting optimized serialization");
@@ -1249,8 +1800,8 @@ impl ProximaDataBlock {
     /// Helper to serialize vectors directly to buffer
     fn serialize_vectors_to_buffer(
         &self,
-        buffer: &mut Vec<u8>,
-        config: &BlockCompressionConfig,
+        _buffer: &mut Vec<u8>,
+        _config: &BlockCompressionConfig,
     ) -> anyhow::Result<()> {
         // This would contain the vector serialization logic from serialize_with_config
         // but writing directly to the buffer instead of creating intermediate buffers
@@ -1258,7 +1809,7 @@ impl ProximaDataBlock {
     }
 
     /// Helper to serialize metadata directly to buffer
-    fn serialize_metadata_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
+    fn serialize_metadata_to_buffer(&self, _buffer: &mut Vec<u8>) -> anyhow::Result<()> {
         // This would contain the metadata serialization logic
         // but writing directly to the buffer instead of creating intermediate buffers
         Ok(())
@@ -1313,8 +1864,6 @@ impl ProximaDataBlock {
 
     /// Serialize with bloom filter generation in parallel (sync)
     pub fn serialize_with_bloom_sync(&self) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
-        use rayon::prelude::*;
-
         let (serialized_block, bloom_filter) = rayon::join(
             || self.serialize_with_config(&self.compression_config),
             || self.generate_bloom(),
@@ -1368,8 +1917,8 @@ impl ProximaDataBlock {
 
         // ============ STEP 1: Encode vectors using Proxima dual-mode encoding ============
         // Use ProximaCodec for encoding
-        let codec = ProximaCodec::global();
-        let scheme = ProximaScheme::Delta { base: 0 }; // Default scheme
+        let _codec = ProximaCodec::global();
+        let _scheme = ProximaScheme::Delta { base: 0 }; // Default scheme
 
         // Collect vectors from records
         let vectors: Vec<Vec<f32>> = self.records.iter().map(|r| r.vector.clone()).collect();
@@ -1567,25 +2116,28 @@ impl ProximaDataBlock {
                     // Set bit in presence bitmap
                     presence_bitmap[idx / 8] |= 1 << (idx % 8);
 
-                    // Serialize value
+                    // Serialize value WITH TYPE TAG for unambiguous deserialization
+                    // Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
                     if let Some(value) = &sql_value.value {
-                        // Encode the metadata value based on its type
-                        let value_bytes = match value {
+                        let (type_tag, value_bytes): (u8, Vec<u8>) = match value {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                                s.as_bytes().to_vec()
+                                (0x01, s.as_bytes().to_vec())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                                n.to_le_bytes().to_vec()
+                                (0x02, n.to_le_bytes().to_vec())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                i.to_le_bytes().to_vec()
+                                (0x03, i.to_le_bytes().to_vec())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                vec![if *b { 1 } else { 0 }]
+                                (0x04, vec![if *b { 1 } else { 0 }])
                             }
-                            _ => vec![], // Handle other variants
+                            _ => (0x00, vec![]), // Handle other variants
                         };
-                        sparse_values.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
+                        // Write: [u32 total_len][u8 type_tag][value_bytes]
+                        let total_len = 1 + value_bytes.len();
+                        sparse_values.write_all(&(total_len as u32).to_le_bytes())?;
+                        sparse_values.write_all(&[type_tag])?;
                         sparse_values.write_all(&value_bytes)?;
                     } else {
                         sparse_values.write_all(&0u32.to_le_bytes())?;
@@ -1846,7 +2398,7 @@ impl ProximaDataBlock {
         // No serialization needed for input records
 
         // ============ STEP 8: Write block metadata ============
-        let metadata_bytes = bincode::serialize(&self.metadata)?;
+        let metadata_bytes = self.metadata.serialize()?;
         result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
         result.write_all(&metadata_bytes)?;
         debug!(
@@ -1933,44 +2485,65 @@ impl ProximaDataBlock {
     ) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{FilterableDataType, SqlValue, sql_value::Value};
 
+        // Metadata values are stored with type tags: [type_tag:1][value_bytes:N]
+        // Skip the type tag byte (index 0) to get the actual payload
+        let payload = if val_bytes.len() > 1 {
+            &val_bytes[1..]
+        } else {
+            &[]
+        };
+
         // Try to get type from collection config for filterable columns
         if let Some(config) = collection_config {
             if let Some(cfg) = config.config.as_ref() {
                 // Check if this key is a declared filterable column
                 if let Some(col_spec) = cfg.filterable_columns.iter().find(|c| c.name == key_name) {
                     // Use declared type from config (single source of truth!)
+                    // Payload excludes the type tag - read actual values from payload
                     return match col_spec.data_type() {
                         FilterableDataType::FilterableInteger => {
-                            let i = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            let i = if payload.len() >= 8 {
+                                i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                            } else {
+                                0
+                            };
                             SqlValue {
                                 value: Some(Value::Int64Value(i)),
                             }
                         }
                         FilterableDataType::FilterableFloat => {
-                            let f = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            let f = if payload.len() >= 8 {
+                                f64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                            } else {
+                                0.0
+                            };
                             SqlValue {
                                 value: Some(Value::NumberValue(f)),
                             }
                         }
                         FilterableDataType::FilterableBoolean => SqlValue {
                             value: Some(Value::BoolValue(
-                                val_bytes.get(0).map(|&b| b != 0).unwrap_or(false),
+                                payload.get(0).map(|&b| b != 0).unwrap_or(false),
                             )),
                         },
                         FilterableDataType::FilterableString => {
-                            let s = String::from_utf8_lossy(val_bytes).to_string();
+                            let s = String::from_utf8_lossy(payload).to_string();
                             SqlValue {
                                 value: Some(Value::StringValue(s)),
                             }
                         }
                         FilterableDataType::FilterableDatetime => {
-                            let ts = i64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
+                            let ts = if payload.len() >= 8 {
+                                i64::from_le_bytes(payload[..8].try_into().unwrap_or([0u8; 8]))
+                            } else {
+                                0
+                            };
                             SqlValue {
                                 value: Some(Value::Int64Value(ts)),
                             }
                         }
                         _ => {
-                            // Unknown type, fall back to heuristic
+                            // Unknown type, fall back to heuristic (which handles type tags)
                             Self::deserialize_metadata_value_heuristic(val_bytes)
                         }
                     };
@@ -1979,24 +2552,88 @@ impl ProximaDataBlock {
         }
 
         // Not a filterable column or no config available: use heuristic
-        // This is the same approach as Parquet's extra_meta (stores as strings)
+        // The heuristic function handles type tags internally
         Self::deserialize_metadata_value_heuristic(val_bytes)
     }
 
-    /// Heuristic-based deserialization for non-filterable metadata
-    /// Similar to Parquet's extra_meta approach (best-effort type guessing)
+    /// Type-tagged deserialization for metadata values
+    /// New format (v2): [type_tag:1][value_bytes:N]
+    /// Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
+    /// Falls back to heuristic for legacy data without type tags
     fn deserialize_metadata_value_heuristic(
         val_bytes: &[u8],
     ) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
-        // For non-filterable metadata, we use heuristics (no type info available)
-        // Could also just store everything as strings like Parquet's extra_meta
+        if val_bytes.is_empty() {
+            return SqlValue { value: None };
+        }
+
+        // Check for type tag format (new v2 format)
+        let type_tag = val_bytes[0];
+        let payload = &val_bytes[1..];
+
+        match type_tag {
+            0x01 => {
+                // String
+                let s = String::from_utf8_lossy(payload).to_string();
+                SqlValue {
+                    value: Some(Value::StringValue(s)),
+                }
+            }
+            0x02 if payload.len() == 8 => {
+                // Number (f64)
+                let num = f64::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]));
+                SqlValue {
+                    value: Some(Value::NumberValue(num)),
+                }
+            }
+            0x03 if payload.len() == 8 => {
+                // Int64
+                let i = i64::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]));
+                SqlValue {
+                    value: Some(Value::Int64Value(i)),
+                }
+            }
+            0x04 if payload.len() == 1 => {
+                // Bool
+                SqlValue {
+                    value: Some(Value::BoolValue(payload[0] != 0)),
+                }
+            }
+            0x00 => {
+                // None
+                SqlValue { value: None }
+            }
+            _ => {
+                // Legacy format fallback (no type tag) - use old heuristic
+                // This ensures backward compatibility with existing SST files
+                Self::deserialize_metadata_value_legacy_heuristic(val_bytes)
+            }
+        }
+    }
+
+    /// Legacy heuristic for data without type tags (backward compatibility)
+    fn deserialize_metadata_value_legacy_heuristic(
+        val_bytes: &[u8],
+    ) -> crate::proto::proximadb_v1::SqlValue {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+
         let val_len = val_bytes.len();
 
         if val_len == 8 {
-            // 8 bytes: could be f64 or i64
-            // Default to f64 (most common for non-filterable metadata)
+            // 8 bytes: could be f64 or i64 - check if it looks like valid UTF-8 string first
+            if let Ok(s) = std::str::from_utf8(val_bytes) {
+                if s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                {
+                    // Looks like a string identifier (e.g., "inactive", "category")
+                    return SqlValue {
+                        value: Some(Value::StringValue(s.to_string())),
+                    };
+                }
+            }
+            // Default to f64 for numeric data
             let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
             SqlValue {
                 value: Some(Value::NumberValue(num)),
@@ -2179,15 +2816,21 @@ impl ProximaDataBlock {
             );
         }
 
+        // TIMING: Start vector decode timing
+        let decode_start = std::time::Instant::now();
+        let format_name;
+
         let mut records = if vector_data.len() >= 2
             && vector_data[0] == 0x46
             && vector_data[1] == 0x56
         {
             // FullVector format detected (FV marker)
+            format_name = "FullVector";
             trace!("[DECODE] FullVector format detected, decoding...");
             Self::decode_full_vector(&vector_data, dimension, record_count)?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x56 {
             // GroupedFieldEncodedAndCompressedVector format detected (GV marker)
+            format_name = "GroupedField";
             trace!("[DECODE] GroupedFieldEncodedAndCompressedVector format detected, decoding...");
             Self::decode_grouped_field_encoded_and_compressed_vector(
                 &vector_data,
@@ -2196,6 +2839,7 @@ impl ProximaDataBlock {
             )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x42 {
             // GroupedFieldEncodedBlockCompressedVector format detected (GB marker)
+            format_name = "GroupedBlock";
             trace!(
                 "[DECODE] GroupedFieldEncodedBlockCompressedVector format detected, decoding..."
             );
@@ -2206,6 +2850,7 @@ impl ProximaDataBlock {
             )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x56 {
             // TransposeFieldEncodedAndCompressedVector format detected (TV marker)
+            format_name = "TransposeField";
             trace!(
                 "[DECODE] TransposeFieldEncodedAndCompressedVector format detected, decoding..."
             );
@@ -2216,6 +2861,7 @@ impl ProximaDataBlock {
             )?
         } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x42 {
             // TransposeFieldEncodedBlockCompressedVector format detected (TB marker)
+            format_name = "TransposeBlock";
             trace!(
                 "[DECODE] TransposeFieldEncodedBlockCompressedVector format detected, decoding..."
             );
@@ -2226,9 +2872,21 @@ impl ProximaDataBlock {
             )?
         } else {
             // Legacy format: decode using existing columnar logic
+            format_name = "Legacy";
             trace!("[DECODE] Legacy format detected, decoding...");
             Self::decode_existing_columnar_format(&vector_data, encoding_marker)?
         };
+
+        // TIMING: Log vector decode timing
+        let decode_elapsed = decode_start.elapsed();
+        info!(
+            "📊 DECODE_TIMING: {} format, {}D x {} vectors, {:.2}ms ({:.1} vectors/ms)",
+            format_name,
+            dimension,
+            record_count,
+            decode_elapsed.as_secs_f64() * 1000.0,
+            record_count as f64 / (decode_elapsed.as_secs_f64() * 1000.0)
+        );
 
         // ============ CRITICAL: Decode the remaining sections that encoder wrote ============
 
@@ -2761,7 +3419,7 @@ impl ProximaDataBlock {
 
         let mut metadata_bytes = vec![0u8; metadata_len];
         cursor.read_exact(&mut metadata_bytes)?;
-        let metadata: ProximaBlockMetadata = bincode::deserialize(&metadata_bytes)?;
+        let metadata = ProximaBlockMetadata::deserialize(&metadata_bytes)?;
         trace!("[DECODE] Block metadata deserialized successfully");
 
         // ============ RECONSTRUCT COMPLETE VECTORRECORDS FROM COLUMNAR DATA ============
@@ -2805,7 +3463,7 @@ impl ProximaDataBlock {
                     id_dict_index,
                     id_dictionary.len()
                 );
-                record.id = format!("corrupted_id_{}", i);
+                record.id = format!("corrupted_id_{i}");
             }
 
             // Set the correct source from dictionary
@@ -2887,7 +3545,7 @@ impl ProximaDataBlock {
         let bloom_filter = Self::generate_bloom_filter(&records);
 
         Ok(Self {
-            encoding_marker: encoding_marker,
+            encoding_marker,
             encoding_metadata: None, // Will be reconstructed if needed
             block_id,
             records,
@@ -2918,7 +3576,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+
         use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
@@ -3097,9 +3755,10 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+
         use crate::core::compression::{CompressionContext, compress};
 
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
         let mut field_data = Vec::new();
 
@@ -3315,9 +3974,10 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+
         use crate::core::compression::{CompressionContext, compress};
 
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
         let mut field_data = Vec::new();
 
@@ -3500,7 +4160,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use super::engine_profile::EngineProfile;
+
         use crate::core::compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
@@ -3661,7 +4321,7 @@ impl ProximaDataBlock {
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
-        use super::engine_profile::EngineProfile;
+
         use crate::core::compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
         use crate::storage::engines::core::ops::proximacodec::{
@@ -4019,6 +4679,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<VectorRecord>> {
         use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
 
         trace!(
@@ -4388,7 +5049,7 @@ impl ProximaDataBlock {
     /// Decode existing TransposeFieldEncodedAndCompressed (columnar) format
     fn decode_existing_columnar_format(
         data: &[u8],
-        encoding_marker: u8,
+        _encoding_marker: u8,
     ) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
 
@@ -4409,7 +5070,7 @@ impl ProximaDataBlock {
         // Read all dimension data
         let mut all_dimensions = Vec::with_capacity(dimension);
 
-        for dim_idx in 0..dimension {
+        for _dim_idx in 0..dimension {
             // Read length of this dimension's encoded data
             let mut len_bytes = [0u8; 4];
             cursor.read_exact(&mut len_bytes)?;
@@ -4455,6 +5116,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<VectorRecord>> {
         use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
+        #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
 
         trace!(
@@ -4777,6 +5439,7 @@ impl SuperBlock {
             id_range: ("".to_string(), "".to_string()),
             timestamp_range: (0, 0),
             centroid: None,
+            centroid_fp16: None,
             quantized_signature: Vec::new(),
             bloom_filter: None,
             layout: BlockLayout::default(),
@@ -4993,7 +5656,7 @@ mod tests {
                     .map(|d| ((i as f32 * 0.1) + (d as f32 * 0.01)).sin())
                     .collect();
                 VectorRecord {
-                    id: format!("vec_{}", i),
+                    id: format!("vec_{i}"),
                     vector,
                     metadata: std::collections::HashMap::new(),
                     expires_at: None,
@@ -5067,7 +5730,7 @@ mod tests {
         // Create constant vectors (all 42.0)
         let records: Vec<VectorRecord> = (0..count)
             .map(|i| VectorRecord {
-                id: format!("const_{}", i),
+                id: format!("const_{i}"),
                 vector: vec![42.0; dimension],
                 metadata: HashMap::new(),
                 expires_at: None,
@@ -5129,7 +5792,7 @@ mod tests {
         // Create random vectors
         let records: Vec<VectorRecord> = (0..count)
             .map(|i| VectorRecord {
-                id: format!("random_{}", i),
+                id: format!("random_{i}"),
                 vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
                 metadata: HashMap::new(),
                 expires_at: None,
@@ -5236,7 +5899,7 @@ mod tests {
                 };
 
                 VectorRecord {
-                    id: format!("mixed_{}", i),
+                    id: format!("mixed_{i}"),
                     vector,
                     metadata: HashMap::new(),
                     expires_at: None,
@@ -5472,7 +6135,7 @@ mod tests {
                         _ => vec![0.0; dims],
                     };
                     VectorRecord {
-                        id: format!("vec_{}", i),
+                        id: format!("vec_{i}"),
                         vector,
                         metadata: std::collections::HashMap::new(),
                         expires_at: None,

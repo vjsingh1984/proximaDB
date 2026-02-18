@@ -5,6 +5,7 @@
 
 #[derive(Debug, Clone)]
 pub struct CompetitiveIntelligence {
+    #[allow(dead_code)]
     competitor_data: std::collections::HashMap<String, CompetitorProfile>,
 }
 

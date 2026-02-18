@@ -202,7 +202,7 @@ impl EntityService for EntityServiceImpl {
             // TODO: Handle different query types (text, vector, raw_data)
             // For now, we assume vector is provided
             match similar_query.query {
-                Some(query) => {
+                Some(_query) => {
                     // Extract vector from query
                     // This is a placeholder - actual implementation would handle all cases
                     None
@@ -259,8 +259,6 @@ impl EntityService for EntityServiceImpl {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // TODO: Add unit tests for EntityServiceImpl
 
     #[test]

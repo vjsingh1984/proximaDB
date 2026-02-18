@@ -1,25 +1,15 @@
 //! Search operations module for NOVA engine
 //! Handles all search-related logic including hierarchical pruning and progressive refinement
 
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::search::unified_interface::SearchPlan;
-use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
-use crate::storage::engines::core::search::search_common::SearchConfig;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-
-use crate::storage::engines::impls::nova::progressive_search::{
-    ProgressiveColumnarSearch, ProgressiveSearchConfig,
-};
-use crate::storage::engines::impls::nova::streaming_search::{
-    StreamingSearchConfig, StreamingSearchEngine,
-};
 
 /// Handles all search operations for NOVA engine
 pub struct NovaSearchOperations {
@@ -50,7 +40,7 @@ impl NovaSearchOperations {
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
         let k = ctx.top_k();
-        let distance_metric = ctx.distance_metric();
+        let _distance_metric = ctx.distance_metric();
         let collection_id = &ctx.collection.id;
         let filter_expression = ctx.search_params.filter_expression.as_ref();
 
@@ -99,13 +89,11 @@ impl NovaSearchOperations {
     async fn search_standard(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
-        collection_id: &str,
+        _collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::core::search::results::OptimizedSearchRecord;
         use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
         use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-        use std::cmp::Reverse;
-        use std::collections::BinaryHeap;
 
         // Get search parameters from context
         let query_vector = ctx
@@ -179,7 +167,13 @@ impl NovaSearchOperations {
         let mut priority_queue = BoundedPriorityQueue::new(k);
         let dimension = query_vector.len();
 
+        // Track search statistics
+        let mut files_scanned = 0usize;
+        let total_files = files.len();
+
         for file_path in files {
+            files_scanned += 1;
+
             // Create unified caching filesystem
             let fs = self.filesystem.get_filesystem(&file_path)?;
             let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
@@ -198,7 +192,7 @@ impl NovaSearchOperations {
             )?;
 
             // Convert filter if provided
-            let metadata_filter = filter_expression.as_ref().map(|_f| {
+            let _metadata_filter = filter_expression.as_ref().map(|_f| {
                 // Convert FilterExpression to MetadataFilter
                 // This is a simplified conversion - real implementation would be more complex
                 crate::storage::engines::core::formats::columnar::MetadataFilter {
@@ -243,6 +237,14 @@ impl NovaSearchOperations {
             }
         }
 
+        // Log search statistics
+        if total_files > 1 {
+            debug!(
+                "📊 NOVA search: scanned {}/{} files",
+                files_scanned, total_files
+            );
+        }
+
         // Get sorted results from bounded queue
         let results = priority_queue.into_sorted_vec();
 
@@ -271,7 +273,7 @@ impl NovaSearchOperations {
     /// Search by vector ID
     pub async fn vector_by_id(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
         // Implement ID-based search using bloom filters and hierarchical index

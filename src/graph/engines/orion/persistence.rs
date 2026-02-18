@@ -24,7 +24,7 @@
 use crate::core::error::ProximaDBError;
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::engines::orion::OrionGraphEngine;
-use crate::graph::{Edge, Node, NodeId};
+use crate::graph::{Edge, EdgeId, Node, NodeId};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
@@ -75,9 +75,11 @@ pub struct OrionPersistence {
     base_url: String,
 
     /// Filesystem factory for creating appropriate filesystem
+    #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// Unified caching filesystem wrapper
+    #[allow(dead_code)]
     filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// WAL path for future implementation
@@ -178,11 +180,13 @@ impl OrionPersistence {
 
             // Initialize WAL writer with path (not URL)
             tracing::debug!("Creating WAL writer with path: {}", wal_path_str);
-            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone()).await.map_err(|e| {
-                ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
-                    e.to_string(),
-                ))
-            })?;
+            let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
             tracing::debug!("WAL writer created successfully");
 
             (
@@ -227,8 +231,14 @@ impl OrionPersistence {
             .collect::<Vec<_>>();
 
         // Get CSR data
-        let csr_outgoing = engine.csr_outgoing.read().await;
-        let csr_incoming = engine.csr_incoming.read().await;
+        let csr_outgoing = engine
+            .csr_outgoing
+            .read()
+            .expect("CSR outgoing read lock poisoned");
+        let csr_incoming = engine
+            .csr_incoming
+            .read()
+            .expect("CSR incoming read lock poisoned");
 
         // Build node_to_index mapping
         let node_to_index = engine
@@ -351,13 +361,19 @@ impl OrionPersistence {
 
         // Restore CSR structures
         {
-            let mut csr_out = engine.csr_outgoing.write().await;
+            let mut csr_out = engine
+                .csr_outgoing
+                .write()
+                .expect("CSR outgoing write lock poisoned");
             csr_out.offsets = snapshot.csr_outgoing_offsets;
             csr_out.targets = snapshot.csr_outgoing_targets;
         }
 
         {
-            let mut csr_in = engine.csr_incoming.write().await;
+            let mut csr_in = engine
+                .csr_incoming
+                .write()
+                .expect("CSR incoming write lock poisoned");
             csr_in.offsets = snapshot.csr_incoming_offsets;
             csr_in.targets = snapshot.csr_incoming_sources;
         }
@@ -369,7 +385,10 @@ impl OrionPersistence {
 
         // Rebuild index_to_node
         {
-            let mut index_to_node = engine.index_to_node.write().await;
+            let mut index_to_node = engine
+                .index_to_node
+                .write()
+                .expect("index_to_node write lock poisoned");
             index_to_node.clear();
             let mut node_indices: Vec<(NodeId, usize)> = engine
                 .node_to_index
@@ -385,7 +404,7 @@ impl OrionPersistence {
 
         // Update stats
         {
-            let mut stats = engine.stats.write().await;
+            let mut stats = engine.stats.write().expect("stats write lock poisoned");
             stats.nodes_created = engine.memory_pool.nodes.len() as u64;
             stats.edges_created = engine.edge_metadata.len() as u64;
         }
@@ -453,6 +472,224 @@ impl OrionPersistence {
                         e.to_string(),
                     ))
                 })?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a batch of edge operations to WAL in a single record
+    pub async fn write_edge_batch_operation(&self, edges: &[Edge]) -> Result<()> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            // Wrap all CreateEdge operations in a single batch GraphOp to reduce WAL traffic
+            let batch = GraphOperation::BatchOperation {
+                operations: edges
+                    .iter()
+                    .cloned()
+                    .map(|edge| GraphOperation::CreateEdge {
+                        graph_id: self.graph_id.clone(),
+                        edge,
+                    })
+                    .collect(),
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(batch);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a batch of node operations to WAL in a single record
+    pub async fn write_node_batch_operation(&self, nodes: &[Node]) -> Result<()> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            // Wrap all CreateNode operations in a single batch GraphOp to reduce WAL traffic
+            let batch = GraphOperation::BatchOperation {
+                operations: nodes
+                    .iter()
+                    .cloned()
+                    .map(|node| GraphOperation::CreateNode {
+                        graph_id: self.graph_id.clone(),
+                        node,
+                    })
+                    .collect(),
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(batch);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+        }
+
+        Ok(())
+    }
+
+    /// Write node update operation to WAL
+    /// For updates, we write the full updated node (upsert semantic)
+    pub async fn write_update_node_operation(&self, node: Node) -> Result<()> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            tracing::debug!("Writing update node operation to WAL for node: {}", node.id);
+
+            // Use CreateNode with upsert semantic - during recovery, this will overwrite existing node
+            let graph_op = GraphOperation::CreateNode {
+                graph_id: self.graph_id.clone(),
+                node,
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    tracing::error!("WAL append failed for update node: {:?}", e);
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+
+            tracing::debug!("Update node WAL write completed");
+        } else {
+            tracing::warn!(
+                "No WAL writer available - update node operation will not be persisted!"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Write node delete operation to WAL
+    pub async fn write_delete_node_operation(&self, node_id: &NodeId) -> Result<()> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            tracing::debug!("Writing delete node operation to WAL for node: {}", node_id);
+
+            let graph_op = GraphOperation::DeleteNode {
+                graph_id: self.graph_id.clone(),
+                node_id: node_id.clone(),
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    tracing::error!("WAL append failed for delete node: {:?}", e);
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+
+            tracing::debug!("Delete node WAL write completed");
+        } else {
+            tracing::warn!(
+                "No WAL writer available - delete node operation will not be persisted!"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Write edge update operation to WAL
+    /// For updates, we write the full updated edge (upsert semantic)
+    pub async fn write_update_edge_operation(&self, edge: Edge) -> Result<()> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            tracing::debug!("Writing update edge operation to WAL for edge: {}", edge.id);
+
+            // Use CreateEdge with upsert semantic - during recovery, this will overwrite existing edge
+            let graph_op = GraphOperation::CreateEdge {
+                graph_id: self.graph_id.clone(),
+                edge,
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    tracing::error!("WAL append failed for update edge: {:?}", e);
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+
+            tracing::debug!("Update edge WAL write completed");
+        } else {
+            tracing::warn!(
+                "No WAL writer available - update edge operation will not be persisted!"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Write edge delete operation to WAL
+    pub async fn write_delete_edge_operation(&self, edge_id: &EdgeId) -> Result<()> {
+        if let Some(ref wal_writer) = self.wal_writer {
+            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+
+            tracing::debug!("Writing delete edge operation to WAL for edge: {}", edge_id);
+
+            let graph_op = GraphOperation::DeleteEdge {
+                graph_id: self.graph_id.clone(),
+                edge_id: edge_id.clone(),
+            };
+
+            let unified_op = UnifiedWALOperation::GraphOp(graph_op);
+            wal_writer
+                .lock()
+                .await
+                .append(unified_op)
+                .await
+                .map_err(|e| {
+                    tracing::error!("WAL append failed for delete edge: {:?}", e);
+                    ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(
+                        e.to_string(),
+                    ))
+                })?;
+
+            tracing::debug!("Delete edge WAL write completed");
+        } else {
+            tracing::warn!(
+                "No WAL writer available - delete edge operation will not be persisted!"
+            );
         }
 
         Ok(())
@@ -550,11 +787,31 @@ impl OrionPersistence {
                 }
                 GraphOperation::UpdateNode {
                     graph_id: _,
-                    node_id: _,
-                    update: _,
+                    node_id,
+                    update,
                 } => {
-                    // Update operations need to be implemented in OrionGraphEngine
-                    warn!("Update node operation not yet implemented in ORION engine");
+                    // Get existing node from memory pool and apply update
+                    if let Some(existing_node) = engine.memory_pool.get_node(&node_id) {
+                        let mut updated_node = (*existing_node).clone();
+
+                        // Apply updates
+                        if let Some(labels) = update.labels {
+                            updated_node.labels = labels;
+                        }
+                        if let Some(properties) = update.properties {
+                            updated_node.properties = properties;
+                        }
+                        if let Some(embedding) = update.embedding {
+                            updated_node.embedding = Some(embedding);
+                        }
+
+                        // Update the node (without re-logging to WAL during replay)
+                        engine.memory_pool.remove_node(&node_id);
+                        engine.memory_pool.insert_node(updated_node);
+                        debug!("Replayed UpdateNode for node_id: {}", node_id);
+                    } else {
+                        warn!("UpdateNode replay: node {} not found, skipping", node_id);
+                    }
                 }
                 GraphOperation::DeleteNode {
                     graph_id: _,
@@ -584,11 +841,28 @@ impl OrionPersistence {
                 }
                 GraphOperation::UpdateEdge {
                     graph_id: _,
-                    edge_id: _,
-                    update: _,
+                    edge_id,
+                    update,
                 } => {
-                    // Update operations need to be implemented in OrionGraphEngine
-                    warn!("Update edge operation not yet implemented in ORION engine");
+                    // Get existing edge from memory pool and apply update
+                    if let Some(existing_edge) = engine.memory_pool.get_edge(&edge_id) {
+                        let mut updated_edge = (*existing_edge).clone();
+
+                        // Apply updates
+                        if let Some(properties) = update.properties {
+                            updated_edge.properties = properties;
+                        }
+                        if let Some(weight) = update.weight {
+                            updated_edge.weight = Some(weight);
+                        }
+
+                        // Update the edge (without re-logging to WAL during replay)
+                        engine.memory_pool.remove_edge(&edge_id);
+                        engine.memory_pool.insert_edge(updated_edge);
+                        debug!("Replayed UpdateEdge for edge_id: {}", edge_id);
+                    } else {
+                        warn!("UpdateEdge replay: edge {} not found, skipping", edge_id);
+                    }
                 }
                 GraphOperation::BatchOperation { operations } => {
                     // Apply each operation in the batch

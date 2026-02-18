@@ -5,14 +5,12 @@
 
 use anyhow::Result;
 use arrow::datatypes::{DataType, Field, Fields, Schema};
-use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
-use parquet::file::properties::{WriterProperties, WriterPropertiesBuilder};
+use parquet::file::properties::WriterProperties;
 use std::sync::Arc;
 
 use super::writer_config::ParquetWriterConfig;
-use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb_v1::{FilterableColumnSpec, QuantizationConfig};
+use crate::proto::proximadb_v1::FilterableColumnSpec;
 use crate::storage::engines::core::formats::columnar::constants::*;
 
 /// Schema builder for Parquet files

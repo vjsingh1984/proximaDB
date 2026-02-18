@@ -2,6 +2,7 @@
 
 pub mod bounded_queue;
 pub mod engine_benchmarks;
+pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
 pub mod metadata_filter_pushdown;
@@ -13,6 +14,7 @@ pub mod query_preprocessing;
 pub mod results;
 pub mod smart_execution_strategy;
 pub mod sql_value_filter;
+pub mod strategies;
 pub mod typesafe_filter;
 pub mod unified_interface;
 pub mod unified_progressive_pipeline;
@@ -30,6 +32,99 @@ pub struct ProgressiveRecalls {
     pub binary_recall: Option<f32>,
     pub int8_recall: Option<f32>,
     pub pq_recall: Option<f32>,
+}
+
+/// Search mode for controlling accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
+///
+/// This enum allows users to choose between exact search (100% recall) and
+/// approximate search (faster but potentially lower recall).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SearchMode {
+    /// Exact search with 100% recall - searches all partitions (current default behavior)
+    /// This is the safest option for accuracy-critical applications.
+    Exact,
+
+    /// Approximate search using IVF-style partition pruning.
+    /// Searches only `nprobe` closest partitions for faster queries.
+    /// - `nprobe`: Number of partitions to search (None = auto-calculate as sqrt(num_partitions))
+    /// - Typical recall: 95-98% with nprobe=sqrt(n)
+    Approximate { nprobe: Option<usize> },
+
+    /// Adaptive mode: automatically selects Exact or Approximate based on dataset size.
+    /// - Uses Exact for small datasets (< threshold vectors)
+    /// - Uses Approximate for large datasets
+    Adaptive { threshold: usize },
+}
+
+impl Default for SearchMode {
+    fn default() -> Self {
+        // Default to Exact mode to preserve 100% recall for accuracy-critical applications
+        SearchMode::Exact
+    }
+}
+
+/// Hybrid search mode controlling how BM25 text and vector results are combined
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum HybridSearchMode {
+    /// Vector search only (default, ignores text_query)
+    VectorOnly,
+    /// Keyword/BM25 search only (ignores query vectors)
+    KeywordOnly,
+    /// Hybrid: combine BM25 + vector results using Reciprocal Rank Fusion
+    Hybrid,
+    /// Hybrid with custom RRF k parameter (default k=60)
+    HybridCustom { rrf_k: u32 },
+}
+
+impl Default for HybridSearchMode {
+    fn default() -> Self {
+        Self::VectorOnly
+    }
+}
+
+impl SearchMode {
+    /// Create approximate search mode with auto-calculated nprobe
+    pub fn approximate() -> Self {
+        SearchMode::Approximate { nprobe: None }
+    }
+
+    /// Create approximate search mode with specific nprobe value
+    pub fn approximate_with_nprobe(nprobe: usize) -> Self {
+        SearchMode::Approximate {
+            nprobe: Some(nprobe),
+        }
+    }
+
+    /// Create adaptive mode with default threshold (10,000 vectors)
+    pub fn adaptive() -> Self {
+        SearchMode::Adaptive { threshold: 10_000 }
+    }
+
+    /// Check if this is exact search mode
+    pub fn is_exact(&self) -> bool {
+        matches!(self, SearchMode::Exact)
+    }
+
+    /// Calculate the effective nprobe value for a given number of partitions
+    pub fn effective_nprobe(&self, num_partitions: usize, dataset_size: usize) -> usize {
+        match self {
+            SearchMode::Exact => num_partitions, // Search all partitions
+            SearchMode::Approximate { nprobe } => {
+                nprobe.unwrap_or_else(|| {
+                    // LanceDB-style: sqrt(num_partitions) for ~95% recall
+                    3.max((num_partitions as f32).sqrt().ceil() as usize)
+                })
+            }
+            SearchMode::Adaptive { threshold } => {
+                if dataset_size < *threshold {
+                    num_partitions // Use exact for small datasets
+                } else {
+                    // Use approximate for large datasets
+                    3.max((num_partitions as f32).sqrt().ceil() as usize)
+                }
+            }
+        }
+    }
 }
 
 /// Unified search parameters for all storage engines
@@ -97,6 +192,77 @@ pub struct SearchParams {
 
     /// Optimization hint for search strategy
     pub optimization_hint: Option<String>,
+
+    /// Search mode for accuracy vs speed tradeoff (LanceDB-inspired IVF optimization)
+    /// Defaults to Exact (100% recall). Use Approximate for faster queries with ~95-98% recall.
+    pub search_mode: SearchMode,
+
+    /// Block-level pruning configuration (applies to SST/HELIX/SWIFT engines)
+    pub block_prune: BlockPruneConfig,
+
+    // Hybrid search parameters (BM25 + vector)
+    /// Text query for BM25 keyword search (used in hybrid mode)
+    pub text_query: Option<String>,
+
+    /// Hybrid search mode: how to combine vector and text results
+    pub hybrid_mode: HybridSearchMode,
+
+    /// Weight for vector scores in hybrid fusion (0.0-1.0, default 0.5)
+    pub vector_weight: Option<f32>,
+}
+
+/// Configuration for block-level centroid pruning.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BlockPruneConfig {
+    /// Disable all block-level pruning (force brute-force scan).
+    pub force_exact: bool,
+    /// Pruning mode: "sqrt" (default), "ratio", or "fixed".
+    pub mode: BlockPruneMode,
+    /// Ratio of blocks to keep when mode == Ratio (0.0–1.0).
+    pub ratio: f32,
+    /// Minimum number of blocks to keep.
+    pub min_keep: usize,
+    /// Maximum number of blocks to keep (0 = no cap).
+    pub max_keep: usize,
+    /// Override the minimum blocks threshold for pruning.
+    /// When set, bypasses the production MIN_BLOCKS_FOR_PRUNING (100) threshold.
+    /// Use `Some(0)` in tests to always apply pruning regardless of block count.
+    /// None = use production default (100 blocks).
+    #[serde(default)]
+    pub min_blocks_override: Option<usize>,
+}
+
+impl Default for BlockPruneConfig {
+    fn default() -> Self {
+        Self {
+            force_exact: false,
+            mode: BlockPruneMode::Sqrt,
+            ratio: 0.2,
+            min_keep: 1,
+            max_keep: 0,
+            min_blocks_override: None,
+        }
+    }
+}
+
+impl BlockPruneConfig {
+    /// Create a config for testing that bypasses the MIN_BLOCKS_FOR_PRUNING threshold.
+    /// Always applies pruning logic regardless of block count.
+    #[cfg(test)]
+    pub fn for_testing() -> Self {
+        Self {
+            min_blocks_override: Some(0),
+            ..Default::default()
+        }
+    }
+}
+
+/// Block pruning mode.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum BlockPruneMode {
+    Sqrt,
+    Ratio,
+    Fixed(usize),
 }
 
 impl Default for SearchParams {
@@ -122,6 +288,11 @@ impl Default for SearchParams {
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
+            search_mode: SearchMode::default(), // Exact mode by default for 100% recall
+            block_prune: BlockPruneConfig::default(),
+            text_query: None,
+            hybrid_mode: HybridSearchMode::default(),
+            vector_weight: None,
         }
     }
 }
@@ -242,6 +413,13 @@ pub use unified_interface::{
 
 // Provide a distinct export for the advanced optimizer to avoid name collisions
 pub use integrated_search_optimization::{AdvancedSearchOptimizer, SearchOptimizer};
+
+// Re-export search strategy pattern (Phase 2 of ISP compliance)
+pub use strategies::{
+    AdaptiveSearchStrategy, ApproximateSearchStrategy, CandidateProvider, ExactSearchStrategy,
+    ScoredCandidate, SearchContext, SearchContextImpl, SearchCostEstimate, SearchStrategy,
+    SearchStrategyRegistry,
+};
 
 /// JSON Value Comparison Utilities
 ///
@@ -656,7 +834,7 @@ pub mod protocol_conversions {
                     if let Value::Array(cond_array) = conditions {
                         let logic = obj.get("logic").and_then(|v| v.as_str()).unwrap_or("and");
                         let expressions: Result<Vec<FilterExpression>, String> =
-                            cond_array.iter().map(|c| parse_rest_condition(c)).collect();
+                            cond_array.iter().map(parse_rest_condition).collect();
 
                         match expressions {
                             Ok(exprs) => {

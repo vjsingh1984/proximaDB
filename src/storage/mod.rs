@@ -101,7 +101,7 @@
 //!
 //! ### Strategy Pattern
 //! All engines implement `UnifiedStorageEngine` trait:
-//! ```rust
+//! ```rust,ignore
 //! trait UnifiedStorageEngine {
 //!     async fn insert(&self, records: Vec<VectorRecord>) -> Result<InsertResult>;
 //!     async fn search(&self, query: SearchQuery) -> Result<SearchResult>;
@@ -181,6 +181,8 @@
 //! - `StorageError::Configuration` - Invalid configuration
 
 pub mod builder;
+pub mod error;
+pub mod trait_components;
 pub mod traits;
 pub mod types;
 pub mod unified_scan_strategy;
@@ -220,6 +222,12 @@ pub mod cache;
 // Multi-tenant architecture modules
 pub mod tenant;
 
+// Auto-tiering policy engine for data lifecycle management
+pub mod tiering;
+
+// Multi-model transaction coordinator for ACID transactions across stores
+pub mod transaction;
+
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
 pub mod provenance;
@@ -227,6 +235,21 @@ pub mod relations;
 
 // Key-value storage interface
 pub mod kv;
+
+// Unified operations coordination (flush, compaction, re-quantization)
+pub mod operations;
+
+// Document storage for MongoDB-like JSON document capabilities
+pub mod document;
+
+// Multi-model storage facade for unified access to all specialized stores
+pub mod multimodel;
+
+// Storage format abstraction layer for Hadoop-style storage-compute separation
+pub mod formats;
+
+// Arrow-native schema system for compute engine compatibility
+pub mod schema;
 
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations
@@ -241,6 +264,12 @@ pub use validation::ConfigValidator;
 pub use traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult as TraitFlushResult, StorageEngineStrategy, UnifiedStorageEngine,
+};
+
+// New decomposed trait hierarchy (ISP-compliant)
+pub use trait_components::{
+    StorageCompactor, StorageIdentity, StorageLifecycle, StorageMetrics, StorageReader,
+    StorageScan, StorageWriter,
 };
 
 // Engine exports
@@ -264,9 +293,185 @@ use crate::core::StorageError;
 pub use metadata::{MetadataStore, SystemMetadata};
 pub use persistence::write_ahead_log::{BatchId, WALConfig, WALOperation, WriteAheadLogManager};
 
+// Multi-model transaction exports
+pub use transaction::{
+    ConflictResolution, DocumentOperation, GraphOperation, IsolationLevel,
+    MultiModelTransactionManager, ObservabilityOperation, OperationType, TransactionConfig,
+    TransactionContext, TransactionOperation, VectorOperation,
+};
+
 // ResultProcessor has naming conflicts, import explicitly when needed
 
+// Multi-model storage exports
+pub use multimodel::{
+    AggregationFunction,
+    CardinalityConfig,
+    CardinalityLimiter,
+    CheckResult,
+    CommitResult,
+    DocumentStore,
+    GraphStore,
+    // Isolation management
+    IsolationLevel as MultiModelIsolationLevel,
+    IsolationManager,
+    LabelStats,
+    LimitAction,
+    ModelType,
+    MultiModelStorageEngine,
+    MultiModelStorageFacade,
+    ObservabilityStore,
+    Partition,
+    PartitionConfig,
+    PartitionGranularity,
+    PartitionRange,
+    PrepareResult,
+    QueryCharacteristics,
+    RDBMSStore,
+    ReadSnapshot,
+    ReplicationConfig,
+    // HTAP replication and routing
+    ReplicationCoordinator,
+    ReplicationStats,
+    RollupConfig,
+    RollupInterval,
+    RollupManager,
+    RollupView,
+    RoutingDecision,
+    StoreCapabilities,
+    // Observability time series management
+    TimePartitioner,
+    Transaction as MultiModelTransaction,
+    TransactionConfig as MultiModelTxConfig,
+    // Transaction coordination (aliased to avoid conflict with transaction_coordinator.rs)
+    TransactionCoordinator as MultiModelTransactionCoordinator,
+    TransactionState,
+    TransactionStats,
+    TwoPhaseCommitProtocol,
+    VectorStore,
+    WorkloadRouter,
+    WorkloadType,
+    WriteSet,
+};
+
 pub type Result<T> = std::result::Result<T, StorageError>;
+
+// Format abstraction layer exports
+pub use formats::{
+    CacheStatus,
+    ColumnBounds as FormatColumnBounds,
+    ColumnStats,
+    CompactionContext as FormatCompactionContext,
+    CompactionResult as FormatCompactionResult,
+    ComparisonOp,
+    CompressionCodec as FormatCompressionCodec,
+    DefaultFormatDetector,
+    FileEntry,
+    // File splits for parallel reading (Arrow-Native FileFormat API)
+    FileSplit,
+    FileStats,
+    FilterExpression,
+    FormatDetector,
+    // Registry
+    FormatRegistry,
+    FormatStatistics,
+    // Types
+    FormatType,
+    InternalFormat,
+    MergeAction,
+    OpenTableFormat,
+    OptimizeContext,
+    OptimizeResult,
+    ReadContext,
+    RecordBatchStream,
+    ScalarPredicate as FormatScalarPredicate,
+    ScalarValue,
+    Snapshot,
+    SpatialBounds as FormatSpatialBounds,
+    SplitCost,
+    SplitGenerator,
+    SplitLocality,
+    SplitPlanner,
+    SplitStatistics,
+    SplitType,
+    // Core traits
+    StorageFormat,
+    StorageTier,
+    VectorBatch,
+    VectorBatchStream,
+    VectorReadContext,
+    VectorWriteContext,
+    WriteContext,
+    WriteMode,
+    WriteResult as FormatWriteResult,
+    global_registry,
+};
+
+// Schema system exports (Arrow-native for compute engine compatibility)
+pub use schema::{
+    AutoGenerateType,
+    AvroStyleField,
+    AvroStyleSchema,
+    AvroStyleType,
+    // Bloom filter consolidation (WS1)
+    BloomConsolidator,
+    CacheStats,
+    CachedHeader,
+    CachingHeaderLoader,
+    CentroidNode,
+    // CentroidTree for O(log n) vector pruning (WS1)
+    CentroidTree,
+    CentroidTreeConfig,
+    ColumnBounds,
+    ColumnValue,
+    ConsolidatedBloom,
+    DefaultSchemaEvolution,
+    DefaultValue,
+    DefaultVectorRecordBridge,
+    EncodingInfo,
+    // Enhanced header cache with CentroidTree integration
+    EnhancedCachedHeader,
+    EvolutionValidation,
+    HeaderLoader,
+    HeaderLoaderRegistry,
+    InMemorySchemaRegistry,
+    IncrementalBloomBuilder,
+    IoSavingsEstimate,
+    MetadataMode,
+    MigrationCost,
+    MigrationPlan,
+    MigrationStep,
+    // Header loaders (bridges to existing readers)
+    ParquetHeaderLoader,
+    PersistentSchemaRegistry,
+    ProximaBlocksHeaderLoader,
+    ProximaColumn,
+    ProximaDataType,
+    // Header cache for smart I/O
+    ProximaHeaderCache,
+    // Core schema types
+    ProximaSchema,
+    RowGroupMeta,
+    ScalarPredicate,
+    // Schema evolution
+    SchemaEvolution,
+    SchemaEvolutionOp,
+    // Schema registry
+    SchemaRegistry,
+    SchemaVersionInfo,
+    SharedCentroidTree,
+    SharedConsolidatedBloom,
+    SpatialRange,
+    TimeUnit,
+    TypeCompatibility,
+    // Type mapping
+    TypeMapper,
+    VectorElementType,
+    // VectorRecord bridge (WS5: VectorRecord to Arrow RecordBatch conversion)
+    VectorRecordBridge,
+    global_header_cache,
+    infer_schema_from_vector_records,
+    init_global_header_cache,
+};
 
 // Tests module
 #[cfg(test)]

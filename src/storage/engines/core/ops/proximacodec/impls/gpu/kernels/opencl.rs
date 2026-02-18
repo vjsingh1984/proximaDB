@@ -71,7 +71,7 @@ impl OpenCLContext {
 ///         output[gid] = (long)(input[gid] - base);
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn opencl_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     trace!(
         "🔧 [OpenCL] Delta encode: {} values, base={}",
@@ -106,7 +106,7 @@ pub fn opencl_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 ///         output[gid] = (float)input[gid] + base;
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn opencl_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     trace!(
         "🔧 [OpenCL] Delta decode: {} deltas, base={}",
@@ -152,7 +152,7 @@ pub fn opencl_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 ///         atomic_or(&output[byte_offset], packed << bit_in_byte);
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn opencl_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!(
         "🔧 [OpenCL] BitPacked encode: {} values, {}b/val",
@@ -365,7 +365,7 @@ pub fn opencl_frame_of_reference_decode_f32(
 ///         output[gid] = (n << 1) ^ (n >> 31);
 ///     }
 /// }
-/// ```
+/// ```text
 pub fn opencl_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!(
         "🔧 [OpenCL] Zigzag encode: {} values, {}b/val",

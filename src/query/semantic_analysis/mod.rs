@@ -5,4 +5,6 @@
 
 pub mod analyzer;
 pub mod scope;
-pub mod tests;
+
+#[cfg(test)]
+mod tests;

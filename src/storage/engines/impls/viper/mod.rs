@@ -19,7 +19,7 @@
 //! VIPER excels in production scenarios requiring high throughput and analytical capabilities:
 //!
 //! ### ✅ **High-Volume E-commerce Platforms**
-//! ```rust
+//! ```rust,ignore
 //! // Product recommendation systems with millions of products
 //! let product_embeddings = load_product_catalog(); // 100M+ products
 //! viper_engine.flush_batch(product_embeddings, BatchConfig::new()
@@ -37,7 +37,7 @@
 //! ```
 //!
 //! ### ✅ **Media and Content Analytics**
-//! ```rust
+//! ```rust,ignore
 //! // Content similarity analysis for media platforms
 //! let content_embeddings = load_media_library(); // 50M+ media items
 //! viper_engine.configure_analytics_mode(
@@ -56,7 +56,7 @@
 //! ```
 //!
 //! ### ✅ **Financial Data Processing**
-//! ```rust
+//! ```rust,ignore
 //! // Risk analysis with complex filtering requirements
 //! let market_vectors = load_financial_data(); // Real-time market embeddings
 //! viper_engine.flush_with_compression(market_vectors,
@@ -76,7 +76,7 @@
 //! ```
 //!
 //! ### ✅ **IoT and Sensor Data Analytics**
-//! ```rust
+//! ```rust,ignore
 //! // Time-series sensor data with massive scale
 //! let sensor_embeddings = load_iot_data(); // Billions of sensor readings
 //! viper_engine.configure_iot_optimizations(
@@ -191,7 +191,7 @@
 //!
 //! ## Usage Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::viper::ViperEngine;
 //!
 //! let viper = ViperEngine::new(config)?;
@@ -225,12 +225,14 @@
 //! - Cost-aware storage tiering
 
 pub mod eventlog_flush;
+pub mod extraction;
 pub mod factory;
 pub mod pipeline;
 pub mod pipeline_tests;
 pub mod readers; // Pipeline tests module
 // Quantization now handled by unified compute module
-pub mod utilities;
+pub mod progressive_stages;
+pub mod utilities; // ISP-compliant progressive search stages
 // Removed indexed_reader - use columnar/parquet_query_engine instead
 // Removed vector_writer - use columnar/parquet_writer instead
 pub mod column_filter;
@@ -244,6 +246,7 @@ pub mod engine;
 pub mod flush;
 pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
+pub mod viper_meta_collector;
 
 // Test modules
 

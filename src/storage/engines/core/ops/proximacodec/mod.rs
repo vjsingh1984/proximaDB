@@ -35,7 +35,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::storage::engines::core::ops::proximacodec::{ProximaCodec, ProximaScheme};
 //!
 //! let codec = ProximaCodec::global();
@@ -53,12 +53,16 @@ pub mod analysis;
 pub mod codec;
 pub mod registry;
 pub mod simd_analysis;
+pub mod strategy;
 pub mod traits;
 pub mod types;
 pub mod wire_format;
 
 // Hardware-accelerated implementations (SIMD + GPU)
 pub mod simd;
+// Experimental SIMD prototype lives under archive; opt-in only.
+#[cfg(feature = "simd-experimental")]
+pub mod simd_experimental;
 
 // Hardware-aware batching framework (common across SIMD, GPU, Scalar)
 pub mod batching;
@@ -66,6 +70,10 @@ pub mod batching;
 // Re-export main types
 pub use codec::ProximaCodec;
 pub use registry::ImplementationRegistry;
+pub use strategy::{
+    CodecSelectionStrategy, DataAnalysis, DataDomain, IntegerAnalysisStrategy, MlEmbeddingStrategy,
+    SelectionContext, SparseDataStrategy, StrategyRegistry, TimeSeriesStrategy,
+};
 pub use traits::{RawDecoder, RawEncoder};
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
 pub use wire_format::{WIRE_FORMAT_VERSION, WireFormatManager, WireHeader};

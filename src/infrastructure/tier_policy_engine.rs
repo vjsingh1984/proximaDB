@@ -429,12 +429,15 @@ impl CollectionStorageConfig {
 #[derive(Debug, Clone)]
 pub struct SmartTierPolicy {
     /// Workload type determines default behavior
+    #[allow(dead_code)]
     workload_type: WorkloadType,
 
     /// Collection storage configuration (determines baseline and constraints)
+    #[allow(dead_code)]
     collection_config: CollectionStorageConfig,
 
     /// Available storage tiers filtered by collection constraints
+    #[allow(dead_code)]
     available_tiers: Vec<InfrastructureTier>,
 
     /// Tier configuration with capacity limits and costs
@@ -444,9 +447,11 @@ pub struct SmartTierPolicy {
     placement_rules: Vec<PlacementRule>,
 
     /// Memory pressure thresholds
+    #[allow(dead_code)]
     memory_thresholds: MemoryThresholds,
 
     /// Cost optimization settings
+    #[allow(dead_code)]
     cost_optimization: CostOptimization,
 }
 
@@ -495,6 +500,7 @@ pub enum DurabilityPreference {
 #[derive(Debug, Clone)]
 pub struct TierConfig {
     /// Maximum capacity for this tier (bytes)
+    #[allow(dead_code)]
     max_capacity_bytes: Option<usize>,
 
     /// Cost per GB per month (USD)
@@ -504,9 +510,11 @@ pub struct TierConfig {
     access_latency: Duration,
 
     /// Retrieval latency (for archived tiers)
+    #[allow(dead_code)]
     retrieval_latency: Option<Duration>,
 
     /// Minimum storage duration (for cost optimization)
+    #[allow(dead_code)]
     min_storage_duration: Option<Duration>,
 }
 
@@ -563,27 +571,34 @@ pub enum PlacementCondition {
 #[derive(Debug, Clone)]
 pub struct MemoryThresholds {
     /// Start promoting data to next tier (0.0-1.0)
+    #[allow(dead_code)]
     promotion_threshold: f64,
 
     /// Urgent promotion/eviction threshold (0.0-1.0)
+    #[allow(dead_code)]
     critical_threshold: f64,
 
     /// Target utilization after cleanup (0.0-1.0)
+    #[allow(dead_code)]
     target_utilization: f64,
 }
 
 #[derive(Debug, Clone)]
 pub struct CostOptimization {
     /// Maximum total monthly cost (USD)
+    #[allow(dead_code)]
     max_monthly_cost: Option<f64>,
 
     /// Cost per operation budget (USD)
+    #[allow(dead_code)]
     cost_per_operation_budget: Option<f64>,
 
     /// Enable automatic cost optimization
+    #[allow(dead_code)]
     auto_optimize: bool,
 
     /// Cost tracking window for optimization decisions
+    #[allow(dead_code)]
     cost_tracking_window_days: u32,
 }
 
@@ -592,18 +607,23 @@ pub struct CostOptimization {
 #[derive(Debug, Clone)]
 pub struct RuleBasedTierPolicy {
     /// Default disk partition path (configurable via server config)
+    #[allow(dead_code)]
     default_disk_path: String,
 
     /// Maximum tier level for local storage (Memory=1, NVMe=2, HDD=3)
+    #[allow(dead_code)]
     max_local_tier_level: u8,
 
     /// Default rules for data placement
+    #[allow(dead_code)]
     default_rules: Vec<DefaultPlacementRule>,
 
     /// Memory pressure thresholds
+    #[allow(dead_code)]
     memory_thresholds: MemoryPressureThresholds,
 
     /// Age-based rules for automatic demotion
+    #[allow(dead_code)]
     aging_rules: AgingRules,
 }
 
@@ -611,9 +631,11 @@ pub struct RuleBasedTierPolicy {
 #[derive(Debug, Clone)]
 pub struct DefaultPlacementRule {
     /// Rule name for debugging
+    #[allow(dead_code)]
     name: String,
 
     /// Target workload pattern
+    #[allow(dead_code)]
     workload_pattern: WorkloadPattern,
 
     /// Placement condition
@@ -623,6 +645,7 @@ pub struct DefaultPlacementRule {
     target_tier_level: u8,
 
     /// Rule priority (higher = more important)
+    #[allow(dead_code)]
     priority: u32,
 }
 
@@ -630,12 +653,15 @@ pub struct DefaultPlacementRule {
 #[derive(Debug, Clone)]
 pub struct MemoryPressureThresholds {
     /// Promote to faster tier threshold (0.0-1.0)
+    #[allow(dead_code)]
     promote_threshold: f64,
 
     /// Demote to slower tier threshold (0.0-1.0)
+    #[allow(dead_code)]
     demote_threshold: f64,
 
     /// Emergency eviction threshold (0.0-1.0)
+    #[allow(dead_code)]
     emergency_threshold: f64,
 }
 
@@ -643,12 +669,15 @@ pub struct MemoryPressureThresholds {
 #[derive(Debug, Clone)]
 pub struct AgingRules {
     /// Demote to HDD after this many days of no access
+    #[allow(dead_code)]
     hdd_demotion_days: u32,
 
     /// Demote from memory after this many hours of no access
+    #[allow(dead_code)]
     memory_demotion_hours: u32,
 
     /// Enable automatic aging (can be disabled)
+    #[allow(dead_code)]
     enable_automatic_aging: bool,
 }
 
@@ -656,18 +685,23 @@ pub struct AgingRules {
 #[derive(Debug, Clone)]
 pub struct ServerTierConfig {
     /// Base path for disk storage (/tmp by default, configurable via server config.toml)
+    #[allow(dead_code)]
     base_disk_path: String,
 
     /// Base path for NVMe storage (if available)
+    #[allow(dead_code)]
     base_nvme_path: Option<String>,
 
     /// Maximum memory allocation for tier management (bytes)
+    #[allow(dead_code)]
     max_memory_bytes: usize,
 
     /// Enable cloud storage (requires cloud provider configuration)
+    #[allow(dead_code)]
     enable_cloud_storage: bool,
 
     /// Default cloud provider (if enabled)
+    #[allow(dead_code)]
     default_cloud_provider: Option<CloudProvider>,
 }
 
@@ -792,15 +826,11 @@ impl RuleBasedTierPolicy {
                 min_accesses_per_day,
                 max_accesses_per_day,
             } => {
-                if let Some(min) = min_accesses_per_day {
-                    if access_frequency < *min {
-                        return false;
-                    }
+                if min_accesses_per_day.is_some_and(|min| access_frequency < min) {
+                    return false;
                 }
-                if let Some(max) = max_accesses_per_day {
-                    if access_frequency > *max {
-                        return false;
-                    }
+                if max_accesses_per_day.is_some_and(|max| access_frequency > max) {
+                    return false;
                 }
                 true
             }
@@ -808,15 +838,11 @@ impl RuleBasedTierPolicy {
                 min_age_days,
                 max_age_days,
             } => {
-                if let Some(min) = min_age_days {
-                    if age_days < *min {
-                        return false;
-                    }
+                if min_age_days.is_some_and(|min| age_days < min) {
+                    return false;
                 }
-                if let Some(max) = max_age_days {
-                    if age_days > *max {
-                        return false;
-                    }
+                if max_age_days.is_some_and(|max| age_days > max) {
+                    return false;
                 }
                 true
             }
@@ -869,18 +895,22 @@ pub struct GlobalMemory {
     total_memory_budget: usize,
 
     /// Current memory usage by collection
+    #[allow(dead_code)]
     collection_usage: HashMap<String, usize>,
 
     /// Memory allocation priorities
+    #[allow(dead_code)]
     collection_priorities: HashMap<String, u8>,
 }
 
 #[derive(Debug)]
 pub struct GlobalMetricsCollector {
     /// Cross-collection tier usage metrics
+    #[allow(dead_code)]
     tier_usage_stats: HashMap<InfrastructureTier, TierUsageStats>,
 
     /// Collection performance metrics
+    #[allow(dead_code)]
     collection_metrics: HashMap<String, CollectionTierMetrics>,
 }
 
@@ -1874,15 +1904,11 @@ impl SmartTierPolicy {
                 min_bytes,
                 max_bytes,
             } => {
-                if let Some(min) = min_bytes {
-                    if size_bytes < *min {
-                        return false;
-                    }
+                if min_bytes.is_some_and(|min| size_bytes < min) {
+                    return false;
                 }
-                if let Some(max) = max_bytes {
-                    if size_bytes > *max {
-                        return false;
-                    }
+                if max_bytes.is_some_and(|max| size_bytes > max) {
+                    return false;
                 }
                 true
             }
@@ -1891,15 +1917,11 @@ impl SmartTierPolicy {
                 min_accesses_per_day,
                 max_accesses_per_day,
             } => {
-                if let Some(min) = min_accesses_per_day {
-                    if access_frequency < *min {
-                        return false;
-                    }
+                if min_accesses_per_day.is_some_and(|min| access_frequency < min) {
+                    return false;
                 }
-                if let Some(max) = max_accesses_per_day {
-                    if access_frequency > *max {
-                        return false;
-                    }
+                if max_accesses_per_day.is_some_and(|max| access_frequency > max) {
+                    return false;
                 }
                 true
             }
@@ -1908,15 +1930,11 @@ impl SmartTierPolicy {
                 min_age_days,
                 max_age_days,
             } => {
-                if let Some(min) = min_age_days {
-                    if age_days < *min {
-                        return false;
-                    }
+                if min_age_days.is_some_and(|min| age_days < min) {
+                    return false;
                 }
-                if let Some(max) = max_age_days {
-                    if age_days > *max {
-                        return false;
-                    }
+                if max_age_days.is_some_and(|max| age_days > max) {
+                    return false;
                 }
                 true
             }
@@ -1935,15 +1953,11 @@ impl SmartTierPolicy {
                 max_priority,
             } => {
                 if let Some(prio) = priority {
-                    if let Some(min) = min_priority {
-                        if prio < *min {
-                            return false;
-                        }
+                    if min_priority.is_some_and(|min| prio < min) {
+                        return false;
                     }
-                    if let Some(max) = max_priority {
-                        if prio > *max {
-                            return false;
-                        }
+                    if max_priority.is_some_and(|max| prio > max) {
+                        return false;
                     }
                     true
                 } else {

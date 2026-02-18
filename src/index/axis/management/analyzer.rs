@@ -34,6 +34,7 @@ pub struct CollectionAnalyzer {
     metadata_analyzer: Arc<MetadataComplexityAnalyzer>,
 
     /// Temporal pattern detector
+    #[allow(dead_code)]
     temporal_detector: Arc<TemporalPatternDetector>,
 }
 
@@ -60,10 +61,13 @@ struct QueryPatternTracker {
 #[derive(Debug, Clone)]
 struct QueryEvent {
     pub query_type: QueryType,
+    #[allow(dead_code)]
     pub timestamp: DateTime<Utc>,
     pub latency_ms: f64,
     pub k_value: Option<usize>,
+    #[allow(dead_code)]
     pub metadata_filters_count: usize,
+    #[allow(dead_code)]
     pub result_count: usize,
     pub success: bool,
 }
@@ -87,6 +91,7 @@ struct QueryStatistics {
     pub hybrid_queries: u64,
     pub average_k: f32,
     pub average_latency_ms: f64,
+    #[allow(dead_code)]
     pub p99_latency_ms: f64,
     pub success_rate: f32,
     pub last_updated: DateTime<Utc>,
@@ -105,6 +110,7 @@ struct PerformanceMetricsCollector {
 /// Timestamped performance metrics
 #[derive(Debug, Clone)]
 struct TimestampedMetrics {
+    #[allow(dead_code)]
     pub metrics: PerformanceMetrics,
     pub timestamp: DateTime<Utc>,
 }
@@ -119,6 +125,7 @@ struct VectorCharacteristicsAnalyzer {
 #[derive(Debug, Clone)]
 struct VectorCharacteristics {
     pub vector_count: u64,
+    #[allow(dead_code)]
     pub dimension: usize,
     pub average_sparsity: f32,
     pub sparsity_variance: f32,
@@ -136,25 +143,34 @@ struct MetadataComplexityAnalyzer {
 /// Temporal pattern detector
 struct TemporalPatternDetector {
     /// Access patterns per collection
+    #[allow(dead_code)]
     access_patterns: Arc<RwLock<HashMap<String, AccessPattern>>>,
 }
 
 /// Access pattern information
 #[derive(Debug, Clone)]
 struct AccessPattern {
+    #[allow(dead_code)]
     pub hourly_distribution: [f32; 24],
+    #[allow(dead_code)]
     pub daily_distribution: [f32; 7],
+    #[allow(dead_code)]
     pub recent_activity: Vec<ActivityBurst>,
     pub temporal_pattern: TemporalPattern,
+    #[allow(dead_code)]
     pub last_updated: DateTime<Utc>,
 }
 
 /// Activity burst detection
 #[derive(Debug, Clone)]
 struct ActivityBurst {
+    #[allow(dead_code)]
     pub start_time: DateTime<Utc>,
+    #[allow(dead_code)]
     pub duration: ChronoDuration,
+    #[allow(dead_code)]
     pub intensity: f32,
+    #[allow(dead_code)]
     pub query_count: u64,
 }
 
@@ -313,7 +329,7 @@ impl QueryPatternTracker {
         let history = self
             .query_history
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         history.push(event.clone());
 
         // Maintain history size
@@ -325,7 +341,7 @@ impl QueryPatternTracker {
         let stats = self
             .query_stats
             .entry(collection_id.to_string())
-            .or_insert_with(QueryStatistics::default);
+            .or_default();
 
         stats.total_queries += 1;
 
@@ -618,6 +634,7 @@ impl TemporalPatternDetector {
     }
 
     /// Detect temporal patterns for a collection
+    #[allow(dead_code)]
     async fn detect_patterns(&self, collection_id: &str) -> TemporalPattern {
         let patterns = self.access_patterns.read().await;
         if let Some(pattern) = patterns.get(collection_id) {

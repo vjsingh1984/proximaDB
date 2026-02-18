@@ -16,7 +16,7 @@
 
 //! Integration tests for atomic write patterns with TransactionCoordinator
 
-use crate::core::{VectorId, VectorRecord};
+use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemConfig;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{
@@ -81,7 +81,7 @@ async fn test_atomic_write_with_sync() {
     assert!(result.is_ok());
 
     // Verify data exists at final location
-    let final_path = format!("{}/test_data.bin", storage_url);
+    let _final_path = format!("{}/test_data.bin", storage_url);
     // In a real test, we'd verify the file exists at the final location
 }
 

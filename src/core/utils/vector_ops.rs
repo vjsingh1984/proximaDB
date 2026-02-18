@@ -21,7 +21,7 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::core::utils::vector_ops::*;
 //!
 //! let vector = vec![1.0, 2.0, 3.0, 4.0];

@@ -17,19 +17,33 @@
 //! # Graph Engines Demo
 //!
 //! Demonstrates the usage of PULSAR and QUASAR graph engines
+//!
+//! **Note**: This example requires feature flags to be enabled:
+//! ```bash
+//! cargo run --example graph_engines_demo --features distributed-graph,tiered-graph
+//! ```
 
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 use proximadb::graph::PropertyValue;
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 use proximadb::graph::engines::GraphEngine;
+#[cfg(feature = "distributed-graph")]
 use proximadb::graph::engines::pulsar::PulsarConfig;
+#[cfg(feature = "tiered-graph")]
 use proximadb::graph::engines::quasar::QuasarConfig;
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 use proximadb::graph::{
     Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node, PulsarGraphEngine,
     QuasarGraphEngine,
 };
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 use proximadb::proto::proximadb_v1::property_value::Value;
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 use std::collections::HashMap;
+#[cfg(feature = "tiered-graph")]
 use tempfile::TempDir;
 
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 ProximaDB Graph Engines Demo");
@@ -43,6 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
     println!("📡 PULSAR Engine Demo (Distributed Graph)");
     println!("-----------------------------------------");
@@ -168,6 +183,7 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 async fn demo_quasar_engine() -> Result<(), Box<dyn std::error::Error>> {
     println!("🌟 QUASAR Engine Demo (Hybrid Hot/Cold Storage)");
     println!("----------------------------------------------");
@@ -265,6 +281,7 @@ async fn demo_quasar_engine() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(all(feature = "distributed-graph", feature = "tiered-graph"))]
 async fn demo_engine_factory() -> Result<(), Box<dyn std::error::Error>> {
     println!("🏭 Engine Factory Demo");
     println!("---------------------");
@@ -312,4 +329,27 @@ async fn demo_engine_factory() -> Result<(), Box<dyn std::error::Error>> {
 
     println!();
     Ok(())
+}
+
+#[cfg(not(all(feature = "distributed-graph", feature = "tiered-graph")))]
+fn main() {
+    println!("⚠️  Graph Engines Demo requires feature flags to be enabled.");
+    println!();
+    println!("Run with:");
+    println!("  cargo run --example graph_engines_demo --features distributed-graph,tiered-graph");
+    println!();
+    println!("For now, demonstrating that ORION engine works without feature flags...");
+
+    use proximadb::graph::engines::GraphEngine;
+    use proximadb::graph::{GraphEngineConfig, GraphEngineFactory, GraphEngineType};
+
+    match GraphEngineFactory::create_engine(GraphEngineType::Orion, GraphEngineConfig::default()) {
+        Ok(engine) => {
+            println!("✓ ORION engine created successfully");
+            println!("  Node count: {}", engine.node_count().unwrap_or(0));
+        }
+        Err(e) => {
+            println!("✗ Failed to create ORION engine: {}", e);
+        }
+    }
 }

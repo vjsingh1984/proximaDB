@@ -14,7 +14,7 @@ use tracing::info;
 /// Insight generator for automated business intelligence
 #[derive(Clone)]
 pub struct InsightGenerator {
-    llm_engine: Arc<LLMIntegrationEngine>,
+    _llm_engine: Arc<LLMIntegrationEngine>,
     config: InsightGeneratorConfig,
 }
 
@@ -59,7 +59,10 @@ impl InsightGenerator {
     pub async fn new(llm_engine: Arc<LLMIntegrationEngine>) -> Result<Self> {
         let config = InsightGeneratorConfig::default();
 
-        Ok(Self { llm_engine, config })
+        Ok(Self {
+            _llm_engine: llm_engine,
+            config,
+        })
     }
 
     /// Generate business insights from metrics and trends

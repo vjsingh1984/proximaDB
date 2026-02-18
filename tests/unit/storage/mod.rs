@@ -24,6 +24,8 @@ pub mod unified_index_tests;
 // pub mod viper_flush_compaction_tests; // Removed - obsolete API
 // SST tests - now using unified test utilities
 pub mod sst_atomic_operations_test;
+// pub mod sst_bplustree_integration_test; // Commented: Uses deprecated SstableWriter/SstQueryEngine APIs
+pub mod sst_bplustree_tests; // B+ tree index tests - fixed for new API
 pub mod sst_core_tests;
 pub mod sst_sstable_format_test;
 // pub mod sst_flush_test; // Removed - duplicate of integration tests
@@ -48,5 +50,20 @@ pub mod test_threshold_triggers;
 // MVCC resolution tests
 pub mod mvcc_resolution_tests;
 
+// SST flush and recovery TDD tests - moved to src/storage/engines/impls/sst/tests/
+// pub mod sst_flush_recovery_tdd_test;
+
 // Assignment service recovery tests
 // pub mod assignment_service_recovery_test; // File not found - commented for now
+
+// CentroidTree and pruning strategies tests (WS-1: Enhanced ProximaHeaderCache)
+pub mod centroid_tree_test;
+
+// DataFusion TableProvider integration tests (WS-4: DataFusion TableProvider)
+pub mod table_provider_test;
+
+// ProximaSchema migration and VectorRecord compatibility tests (WS-5)
+pub mod schema_test;
+
+// Engine-specific TableProvider adapters tests (WS-6: Engine TableProvider Adapters)
+pub mod engine_adapters_test;

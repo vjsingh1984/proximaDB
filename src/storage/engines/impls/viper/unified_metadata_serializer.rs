@@ -54,6 +54,13 @@ pub struct RowGroupMetadata {
     pub file_offset: u64,
     pub total_byte_size: u64,
     pub compressed_size: u64,
+    /// Centroid vector for this row group (average of all vectors)
+    /// Used for centroid-based pruning during vector search
+    #[serde(default)]
+    pub centroid: Option<Vec<f32>>,
+    /// Radius from centroid to furthest vector (for bounding sphere pruning)
+    #[serde(default)]
+    pub radius: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +194,8 @@ mod tests {
                 file_offset: 0,
                 total_byte_size: 1024000,
                 compressed_size: 512000,
+                centroid: Some(vec![0.1, 0.2, 0.3]),
+                radius: Some(0.5),
             }],
             column_stats: HashMap::new(),
             cluster_metadata: Some(vec![ClusterInfo {

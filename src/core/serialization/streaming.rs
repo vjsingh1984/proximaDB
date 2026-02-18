@@ -116,6 +116,7 @@ pub struct CompressionResult {
 /// Streaming vector compressor for real-time workloads
 pub struct StreamingCompressor {
     config: StreamingConfig,
+    #[allow(dead_code)]
     memory_pool: Arc<VectorMemoryPool>,
     work_tx: mpsc::Sender<CompressionWork>,
     metrics: Arc<RwLock<StreamingMetrics>>,

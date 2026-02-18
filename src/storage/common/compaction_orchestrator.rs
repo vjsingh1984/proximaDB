@@ -112,6 +112,7 @@ pub trait StorageEngine: Send + Sync {
     ) -> Self::CompactionTask;
 
     /// Execute the actual compaction operation
+    #[allow(async_fn_in_trait)]
     async fn execute_compaction(
         &self,
         task: Self::CompactionTask,
@@ -359,7 +360,7 @@ impl CompactionCoordinator {
         let mut collection_ops = self
             .active_operations
             .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         // Check collection limit
         if collection_ops.len() >= self.config.max_concurrent_per_collection {
@@ -572,7 +573,7 @@ impl CompactionCoordinator {
 
         // Process collections that are now ready
         for (collection_id, defer_count) in ready_collections {
-            if let Some((_, deferred)) = self.deferred_compactions.remove(&collection_id) {
+            if let Some((_, _deferred)) = self.deferred_compactions.remove(&collection_id) {
                 let message = format!(
                     "Resuming deferred compaction for {} (was deferred {} times, indexes now hydrated)",
                     collection_id, defer_count
@@ -768,10 +769,7 @@ impl TieredFileRegistry {
                     extension: extension.to_string(),
                 };
 
-                files_by_level
-                    .entry(level)
-                    .or_insert_with(Vec::new)
-                    .push(metadata);
+                files_by_level.entry(level).or_default().push(metadata);
             } else {
                 debug!("❌ Skipping non-tiered file: {}", entry.name);
             }

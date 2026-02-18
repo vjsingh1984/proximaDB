@@ -106,8 +106,10 @@ impl std::hash::Hash for CustomQuantization {
     }
 }
 
+#[allow(non_upper_case_globals)]
 impl UnifiedQuantizationLevel {
     /// Common quantization level constants for easy access
+    /// Using PascalCase for API consistency with enum variant style
     pub const Binary: Self = Self {
         level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
             threshold: None,
@@ -212,7 +214,7 @@ impl UnifiedQuantizationLevel {
             }
             Some(QuantizationLevel::Scalar(sq)) => dimension * ((sq.bits + 7) / 8) as usize,
             Some(QuantizationLevel::Binary(_)) => {
-                (dimension + 7) / 8 // 1 bit per dimension
+                dimension.div_ceil(8) // 1 bit per dimension
             }
             Some(QuantizationLevel::Uniform(uq)) => dimension * ((uq.bits + 7) / 8) as usize,
             Some(QuantizationLevel::Custom(cq)) => {

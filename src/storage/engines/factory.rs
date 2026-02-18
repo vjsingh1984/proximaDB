@@ -21,10 +21,85 @@
 //! | Swift | SWIFT | Fast traversal | Row-based optimized |
 //! | Nova | NOVA | Advanced analytics | Enhanced columnar |
 //! | Helix | HELIX | PCA+Hilbert | Dimension-reduced |
+//!
+//! ## Engine Maturity Levels:
+//!
+//! **Production-Ready (Recommended for production use):**
+//! - **SST**: Most mature, write-optimized, 253+ tests (unit + async)
+//! - **VIPER**: Production columnar engine, 120+ tests, Parquet-based
+//!
+//! **Production-Ready (Specialized use cases):**
+//! - **NOVA**: Advanced columnar analytics, 66+ tests, zone maps & predicate pushdown
+//! - **HELIX**: High-dimensional data, 38+ tests, PCA dimension reduction
+//!
+//! **Experimental (Requires `experimental-engines` feature flag):**
+//! - **SWIFT**: Fast traversal, 41+ tests, some methods return errors
+//! - **RAPTOR**: Matrix Trinity navigation, 23+ tests, several TODOs for optimization
+//!
+//! To enable experimental engines: `cargo build --features experimental-engines`
+//!
+//! ## Selection Criteria:
+//!
+//! Choose your engine based on these workload characteristics:
+//!
+//! ### Write-Heavy Workloads:
+//! - **SST**: Best for high write throughput, real-time ingestion, streaming data
+//! - Performance: ~5.32ms for 10K vectors with LZ4 compression
+//!
+//! ### Analytical Workloads:
+//! - **VIPER**: Best for batch analytics, read-heavy, Parquet ecosystem integration
+//! - **NOVA**: Best for advanced analytics with predicate pushdown, zone maps
+//! - Performance: VIPER ~89.5ms, NOVA ~101.6ms for 10K vectors
+//!
+//! ### Point Lookup Workloads:
+//! - **SWIFT**: Best for low-latency ID lookups (<5K vectors optimal)
+//! - Performance: ~95ms for 10K vectors, optimized for cache-friendly access
+//!
+//! ### High-Dimensional Data:
+//! - **HELIX**: Best for dimensions > 512, uses PCA reduction + Hilbert curves
+//! - Performance: ~13.2ms for 10K vectors with locality optimization
+//!
+//! ### Mixed/Hybrid Workloads:
+//! - **RAPTOR**: Adaptive row-group sizing, Matrix Trinity navigation
+//! - Performance: ~9.36ms for 10K vectors with dynamic optimization
+//!
+//! ## Usage Examples:
+//!
+//! ### Basic Engine Creation:
+//! ```rust,ignore
+//! use crate::storage::engines::factory::StorageEngineFactory;
+//! use crate::proto::proximadb_v1::StorageEngine;
+//!
+//! // Create from proto enum (API requests)
+//! let engine = StorageEngineFactory::create_from_proto(StorageEngine::Sst)?;
+//!
+//! // Create async version for async contexts
+//! let engine = StorageEngineFactory::create_sst_async().await?;
+//! ```
+//!
+//! ### Workload-Based Selection:
+//! ```rust,ignore
+//! use crate::storage::engines::factory::{StorageEngineFactory, WorkloadType};
+//!
+//! // Automatic selection based on workload
+//! let engine = StorageEngineFactory::create_for_workload(WorkloadType::Analytics)?;
+//! ```
+//!
+//! ### Requirements-Based Recommendation:
+//! ```rust,ignore
+//! use crate::storage::engines::factory::{StorageEngineFactory, EngineRequirements};
+//!
+//! let requirements = EngineRequirements {
+//!     needs_columnar: true,
+//!     needs_predicate_pushdown: true,
+//!     needs_batch_operations: true,
+//!     ..Default::default()
+//! };
+//! let recommended = StorageEngineFactory::recommend_engine(&requirements);
+//! let engine = StorageEngineFactory::create_from_proto(recommended)?;
+//! ```
 
-use crate::storage::engines::impls::raptor;
-use crate::storage::engines::impls::sst::error::SstError;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -32,9 +107,9 @@ use crate::metrics::collectors::EngineMetricsCollector;
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
-use super::impls::{
-    nova::NovaEngine, raptor::RaptorEngine, sst::SstEngine, swift::SwiftEngine, viper::ViperEngine,
-};
+use super::impls::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
+#[cfg(feature = "experimental-engines")]
+use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
 
 /// Storage engine factory for creating engine instances
 ///
@@ -73,19 +148,42 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Viper => Self::create_viper(),
             ProtoStorageEngine::Sst => Self::create_sst(),
+            ProtoStorageEngine::Helix => Self::create_helix(),
+            ProtoStorageEngine::Swift => {
+                #[cfg(feature = "experimental-engines")]
+                {
+                    Self::create_swift()
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "SWIFT engine is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
+            }
+            ProtoStorageEngine::Nova => Self::create_nova(),
+            ProtoStorageEngine::Raptor => {
+                #[cfg(feature = "experimental-engines")]
+                {
+                    Self::create_raptor()
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "RAPTOR engine is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
+            }
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst()
             }
             ProtoStorageEngine::Hybrid => {
                 warn!("Hybrid engine not yet implemented, using SST");
-                Self::create_sst()
-            }
-            ProtoStorageEngine::Swift => Self::create_swift(),
-            ProtoStorageEngine::Nova => Self::create_nova(),
-            // Add RAPTOR for cloud-optimized workloads
-            _ => {
-                warn!("Unknown storage engine type, defaulting to SST");
                 Self::create_sst()
             }
         }
@@ -102,18 +200,42 @@ impl StorageEngineFactory {
             }
             ProtoStorageEngine::Viper => Self::create_viper_async().await,
             ProtoStorageEngine::Sst => Self::create_sst_async().await,
+            ProtoStorageEngine::Helix => Self::create_helix_async().await,
+            ProtoStorageEngine::Swift => {
+                #[cfg(feature = "experimental-engines")]
+                {
+                    Self::create_swift_async().await
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "SWIFT engine is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
+            }
+            ProtoStorageEngine::Nova => Self::create_nova_async().await,
+            ProtoStorageEngine::Raptor => {
+                #[cfg(feature = "experimental-engines")]
+                {
+                    Self::create_raptor_async().await
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "RAPTOR engine is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
+            }
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst_async().await
             }
             ProtoStorageEngine::Hybrid => {
                 warn!("Hybrid engine not yet implemented, using SST");
-                Self::create_sst_async().await
-            }
-            ProtoStorageEngine::Swift => Self::create_swift_async().await,
-            ProtoStorageEngine::Nova => Self::create_nova_async().await,
-            _ => {
-                warn!("Unknown storage engine type, defaulting to SST");
                 Self::create_sst_async().await
             }
         }
@@ -140,21 +262,54 @@ impl StorageEngineFactory {
             StorageEngineStrategy::Viper => Self::create_viper(),
             StorageEngineStrategy::Sst => Self::create_sst(),
             StorageEngineStrategy::Hybrid => {
-                // RAPTOR uses hybrid strategy (row-aligned with columnar benefits)
-                info!("Creating RAPTOR engine for hybrid strategy");
-                Self::create_raptor()
+                #[cfg(feature = "experimental-engines")]
+                {
+                    // RAPTOR uses hybrid strategy (row-aligned with columnar benefits)
+                    info!("Creating RAPTOR engine for hybrid strategy");
+                    Self::create_raptor()
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "RAPTOR engine (hybrid strategy) is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
             }
             StorageEngineStrategy::Swift => {
-                info!("Creating SWIFT engine");
-                Self::create_swift()
+                #[cfg(feature = "experimental-engines")]
+                {
+                    info!("Creating SWIFT engine");
+                    Self::create_swift()
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "SWIFT engine is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
             }
             StorageEngineStrategy::Nova => {
                 info!("Creating NOVA engine");
                 Self::create_nova()
             }
             StorageEngineStrategy::Raptor => {
-                info!("Creating RAPTOR engine");
-                Self::create_raptor()
+                #[cfg(feature = "experimental-engines")]
+                {
+                    info!("Creating RAPTOR engine");
+                    Self::create_raptor()
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    anyhow::bail!(
+                        "RAPTOR engine is experimental and disabled in default builds. \
+                         Use SST, VIPER, HELIX, or NOVA instead. \
+                         To enable: cargo build --features experimental-engines"
+                    )
+                }
             }
             StorageEngineStrategy::Helix => {
                 info!("Creating HELIX engine");
@@ -224,7 +379,11 @@ impl StorageEngineFactory {
     ///
     /// SWIFT is optimized for low-latency point lookups while
     /// maintaining good scan performance.
+    ///
+    /// **Requires `experimental-engines` feature flag.**
+    #[cfg(feature = "experimental-engines")]
     pub fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { SwiftEngine::new().await })?;
@@ -232,7 +391,11 @@ impl StorageEngineFactory {
     }
 
     /// Async version for use within async contexts (e.g., tests)
+    ///
+    /// **Requires `experimental-engines` feature flag.**
+    #[cfg(feature = "experimental-engines")]
     pub async fn create_swift_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT storage engine");
         let engine = SwiftEngine::new().await?;
         Ok(Arc::new(engine))
@@ -304,14 +467,22 @@ impl StorageEngineFactory {
     /// This provides 3x faster navigation with 50% less memory than HNSW.
     ///
     /// Note: Requires async initialization with collection metadata.
+    ///
+    /// **Requires `experimental-engines` feature flag.**
+    #[cfg(feature = "experimental-engines")]
     pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        warn!("RAPTOR engine is experimental and not production-ready");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { RaptorEngine::new().await })?;
         Ok(Arc::new(engine))
     }
 
     /// Async version for use within async contexts (e.g., tests)
+    ///
+    /// **Requires `experimental-engines` feature flag.**
+    #[cfg(feature = "experimental-engines")]
     pub async fn create_raptor_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        warn!("RAPTOR engine is experimental and not production-ready");
         info!("Creating RAPTOR storage engine");
         let engine = RaptorEngine::new().await?;
         Ok(Arc::new(engine))
@@ -372,8 +543,18 @@ impl StorageEngineFactory {
                 Self::create_nova()
             }
             WorkloadType::Transactional => {
-                info!("Transactional workload detected, using SWIFT for fast ID lookups");
-                Self::create_swift()
+                #[cfg(feature = "experimental-engines")]
+                {
+                    info!("Transactional workload detected, using SWIFT for fast ID lookups");
+                    Self::create_swift()
+                }
+                #[cfg(not(feature = "experimental-engines"))]
+                {
+                    info!(
+                        "Transactional workload detected, using SST (SWIFT requires experimental-engines feature)"
+                    );
+                    Self::create_sst()
+                }
             }
             WorkloadType::Mixed => {
                 info!("Mixed workload detected, using VIPER for balanced performance");
@@ -532,14 +713,32 @@ impl Default for EngineRequirements {
     }
 }
 
-/// Engine comparison result
+/// Engine comparison result for decision-making
+///
+/// ## Maturity Score Interpretation:
+/// - 90+: Production-ready, extensively tested
+/// - 70-89: Production-ready for specialized use cases
+/// - 50-69: Experimental, use with caution
+/// - <50: Development/prototype stage
+///
+/// ## Performance Score Interpretation:
+/// - 90+: Best-in-class for target workload
+/// - 75-89: Good performance
+/// - 60-74: Acceptable with trade-offs
+/// - <60: Not optimized for this workload
 #[derive(Debug)]
 pub struct EngineComparison {
+    /// Engine identifier (e.g., "SST", "VIPER")
     pub engine_name: String,
+    /// Key advantages of this engine
     pub pros: Vec<String>,
+    /// Limitations and trade-offs
     pub cons: Vec<String>,
+    /// Workload types this engine excels at
     pub best_for: Vec<String>,
+    /// Performance score (0-100) for optimal workloads
     pub performance_score: i32,
+    /// Maturity score (0-100) based on test coverage and production use
     pub maturity_score: i32,
 }
 
@@ -612,16 +811,57 @@ impl StorageEngineFactory {
                     "Best compression".to_string(),
                 ],
                 cons: vec![
-                    "Newest engine".to_string(),
+                    "Newer engine (66+ tests)".to_string(),
                     "Complex configuration".to_string(),
                 ],
                 best_for: vec![
                     "Advanced analytics".to_string(),
                     "Large-scale deployments".to_string(),
-                    "R&D experiments".to_string(),
+                    "Predicate-heavy queries".to_string(),
                 ],
                 performance_score: 90,
-                maturity_score: 50,
+                maturity_score: 75,
+            },
+            EngineComparison {
+                engine_name: "HELIX".to_string(),
+                pros: vec![
+                    "PCA dimension reduction (768 -> 128)".to_string(),
+                    "Hilbert curve locality optimization".to_string(),
+                    "95%+ variance preservation".to_string(),
+                    "Liquid clustering".to_string(),
+                ],
+                cons: vec![
+                    "Only optimal for high dimensions (>512)".to_string(),
+                    "PCA training overhead".to_string(),
+                ],
+                best_for: vec![
+                    "High-dimensional embeddings".to_string(),
+                    "LLM vector storage".to_string(),
+                    "Dimension-reduced search".to_string(),
+                ],
+                performance_score: 85,
+                maturity_score: 75,
+            },
+            EngineComparison {
+                engine_name: "RAPTOR".to_string(),
+                pros: vec![
+                    "Matrix Trinity navigation (P2+K2+PxK)".to_string(),
+                    "Adaptive row-group sizing".to_string(),
+                    "3x faster than HNSW navigation".to_string(),
+                    "50% less memory than HNSW".to_string(),
+                ],
+                cons: vec![
+                    "Experimental (23+ tests)".to_string(),
+                    "Several TODOs remaining".to_string(),
+                    "Complex matrix computation".to_string(),
+                ],
+                best_for: vec![
+                    "Graph-like traversal patterns".to_string(),
+                    "Mixed read/write workloads".to_string(),
+                    "Dynamic clustering scenarios".to_string(),
+                ],
+                performance_score: 80,
+                maturity_score: 55,
             },
         ]
     }
@@ -675,7 +915,8 @@ mod tests {
     fn test_engine_comparison() {
         let comparisons = StorageEngineFactory::compare_engines();
 
-        assert_eq!(comparisons.len(), 4);
+        // Now includes all 6 engines: SST, VIPER, SWIFT, NOVA, HELIX, RAPTOR
+        assert_eq!(comparisons.len(), 6);
 
         // NOVA should have highest performance score
         let nova = comparisons
@@ -690,5 +931,12 @@ mod tests {
             .find(|c| c.engine_name == "VIPER")
             .unwrap();
         assert_eq!(viper.maturity_score, 90);
+
+        // RAPTOR should be marked as experimental (lower maturity)
+        let raptor = comparisons
+            .iter()
+            .find(|c| c.engine_name == "RAPTOR")
+            .unwrap();
+        assert!(raptor.maturity_score < 70);
     }
 }

@@ -127,6 +127,7 @@ pub struct GraphProfiler {
     /// Completed profiles
     completed_profiles: Arc<RwLock<VecDeque<ProfileSummary>>>,
     /// Configuration
+    #[allow(dead_code)]
     config: Arc<MonitoringConfig>,
 }
 
@@ -657,7 +658,7 @@ impl GraphMonitor {
 
                     let histogram = histograms
                         .entry(operation)
-                        .or_insert_with(|| LatencyHistogram::new());
+                        .or_insert_with(LatencyHistogram::new);
 
                     histogram.record(duration.as_millis() as f64);
                 }

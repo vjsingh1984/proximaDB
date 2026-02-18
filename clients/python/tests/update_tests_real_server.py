@@ -17,28 +17,28 @@ from typing import List, Tuple
 def find_test_files_with_mocks(test_dir: Path) -> List[Path]:
     """Find all test files that use mocks"""
     mock_patterns = [
-        r'from unittest\.mock import',
-        r'import mock',
-        r'@patch\(',
-        r'MagicMock',
-        r'Mock\(',
-        r'AsyncMock',
-        r'mock\.',
-        r'patch\(',
+        r"from unittest\.mock import",
+        r"import mock",
+        r"@patch\(",
+        r"MagicMock",
+        r"Mock\(",
+        r"AsyncMock",
+        r"mock\.",
+        r"patch\(",
     ]
-    
+
     test_files = []
     for file_path in test_dir.rglob("test_*.py"):
         content = file_path.read_text()
         if any(re.search(pattern, content) for pattern in mock_patterns):
             test_files.append(file_path)
-    
+
     return test_files
 
 
 def create_real_server_template(test_type: str) -> str:
     """Create template for real server tests based on test type"""
-    
+
     base_template = '''"""
 {description}
 
@@ -58,14 +58,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb import ProximaDBClient
-from proximadb.config import ClientConfig
-from proximadb.models import VectorRecord, Protocol
+from proximadb_sdk import ProximaDBClient
+from proximadb_sdk.config import ClientConfig
+from proximadb_sdk.models import VectorRecord, Protocol
 
 '''
 
     templates = {
-        "batching": base_template + '''from proximadb.batching import (
+        "batching": base_template
+        + '''from proximadb_sdk.batching import (
     BatchStrategy,
     BatchOperationType, 
     BatchConfig,
@@ -94,7 +95,7 @@ class TestBatching(BaseProximaDBTest):
         
         # Search to verify
         query_vector = vectors[0].vector
-        results = self.rest_client.search_vectors(
+        results = self.rest_client.search(
             collection_name,
             query_vector,
             top_k=10
@@ -103,8 +104,8 @@ class TestBatching(BaseProximaDBTest):
         self.verify_search_results(results, 10)
         assert results[0]["id"] == vectors[0].id
 ''',
-
-        "connection_pool": base_template + '''from proximadb.connection_pool import (
+        "connection_pool": base_template
+        + '''from proximadb_sdk.connection_pool import (
     ConnectionPool,
     GrpcConnectionPool,
     RestConnectionPool,
@@ -135,14 +136,14 @@ class TestConnectionPool(BaseProximaDBTest):
         assert metrics.connections_created <= 5
         assert metrics.connections_reused >= 5
 ''',
-
-        "semantic_chunking": base_template + '''from proximadb.semantic_chunking import (
+        "semantic_chunking": base_template
+        + '''from proximadb_sdk.semantic_chunking import (
     EnhancedSemanticChunker,
     SemanticChunkingConfig,
     create_enhanced_semantic_chunker
 )
-from proximadb.chunking import TextChunk, ChunkingConfig
-from proximadb.embedding_interface import create_embedding_provider
+from proximadb_sdk.chunking import TextChunk, ChunkingConfig
+from proximadb_sdk.embedding_interface import create_embedding_provider
 
 
 class TestSemanticChunking(BaseProximaDBTest):
@@ -181,16 +182,16 @@ class TestSemanticChunking(BaseProximaDBTest):
             assert isinstance(chunk, TextChunk)
             assert chunk.text
             assert chunk.metadata.get("coherence_score") is not None
-'''
+''',
     }
-    
+
     return templates.get(test_type, base_template)
 
 
 def extract_test_type(file_path: Path) -> str:
     """Extract test type from filename"""
     name = file_path.stem.replace("test_", "")
-    
+
     # Map common test names to types
     type_mapping = {
         "batching": "batching",
@@ -201,11 +202,11 @@ def extract_test_type(file_path: Path) -> str:
         "semantic_chunking": "semantic_chunking",
         "chunking": "semantic_chunking",
     }
-    
+
     for key, value in type_mapping.items():
         if key in name:
             return value
-    
+
     return "generic"
 
 
@@ -213,57 +214,60 @@ def update_test_file(file_path: Path) -> bool:
     """Update a single test file to use real server"""
     try:
         content = file_path.read_text()
-        
+
         # Skip if already updated
         if "BaseProximaDBTest" in content and "from utils.base_test import" in content:
             print(f"✓ Already updated: {file_path.name}")
             return False
-        
+
         # Extract existing test content
         test_type = extract_test_type(file_path)
-        
+
         # Get description from docstring
         desc_match = re.search(r'"""(.*?)"""', content, re.DOTALL)
-        description = desc_match.group(1).strip() if desc_match else f"Tests for {file_path.stem}"
-        
+        description = (
+            desc_match.group(1).strip() if desc_match else f"Tests for {file_path.stem}"
+        )
+
         # Create new content
         template = create_real_server_template(test_type)
         new_content = template.format(description=description)
-        
+
         # Extract and adapt existing test methods
         class_matches = re.findall(
-            r'class (Test\w+).*?:\s*\n(.*?)(?=class|\Z)',
-            content,
-            re.DOTALL
+            r"class (Test\w+).*?:\s*\n(.*?)(?=class|\Z)", content, re.DOTALL
         )
-        
+
         for class_name, class_body in class_matches:
             # Extract test methods
             method_matches = re.findall(
-                r'(    def test_\w+.*?\n(?:        .*\n)*)',
-                class_body
+                r"(    def test_\w+.*?\n(?:        .*\n)*)", class_body
             )
-            
+
             if method_matches and test_type == "generic":
                 # For generic tests, preserve structure but update to use real server
                 new_class = f"\n\nclass {class_name}(BaseProximaDBTest):\n"
-                new_class += '    """' + class_name.replace('Test', '') + ' tests with real server"""\n\n'
-                
+                new_class += (
+                    '    """'
+                    + class_name.replace("Test", "")
+                    + ' tests with real server"""\n\n'
+                )
+
                 for method in method_matches[:3]:  # Limit to avoid huge files
                     # Remove mock-related lines
-                    cleaned_method = re.sub(r'.*(@patch|Mock|mock).*\n', '', method)
-                    new_class += cleaned_method + '\n'
-                
+                    cleaned_method = re.sub(r".*(@patch|Mock|mock).*\n", "", method)
+                    new_class += cleaned_method + "\n"
+
                 new_content += new_class
-        
+
         # Save updated file
-        backup_path = file_path.with_suffix('.py.bak')
+        backup_path = file_path.with_suffix(".py.bak")
         file_path.rename(backup_path)
         file_path.write_text(new_content)
-        
+
         print(f"✅ Updated: {file_path.name}")
         return True
-        
+
     except Exception as e:
         print(f"❌ Error updating {file_path.name}: {e}")
         return False
@@ -272,30 +276,32 @@ def update_test_file(file_path: Path) -> bool:
 def main():
     """Main function to update all tests"""
     test_dir = Path(__file__).parent
-    
+
     print("🔍 Finding test files with mocks...")
     test_files = find_test_files_with_mocks(test_dir)
-    
+
     print(f"\n📝 Found {len(test_files)} test files to update:")
     for f in test_files:
         print(f"  - {f.relative_to(test_dir)}")
-    
+
     if not test_files:
         print("\n✅ No test files with mocks found!")
         return
-    
+
     # Ask for confirmation
-    response = input("\n⚠️  This will update test files to use real server. Continue? (y/N): ")
-    if response.lower() != 'y':
+    response = input(
+        "\n⚠️  This will update test files to use real server. Continue? (y/N): "
+    )
+    if response.lower() != "y":
         print("❌ Aborted")
         return
-    
+
     print("\n🔄 Updating test files...")
     updated = 0
     for file_path in test_files:
         if update_test_file(file_path):
             updated += 1
-    
+
     print(f"\n✅ Updated {updated}/{len(test_files)} files")
     print("\n📌 Next steps:")
     print("1. Review the updated test files")

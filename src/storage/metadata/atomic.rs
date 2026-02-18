@@ -31,12 +31,16 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 // Import CollectionMetadata from proxima
 
 /// Transaction identifier
+///
+/// Unique identifier for metadata transactions.
 pub type TransactionId = Uuid;
 
 /// Transaction state
+///
+/// Represents the lifecycle state of a transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransactionState {
-    /// Transaction is active
+    /// Transaction is active and can accept operations
     Active,
     /// Transaction is preparing to commit
     Preparing,
@@ -49,17 +53,27 @@ pub enum TransactionState {
 }
 
 /// Metadata transaction for atomic operations
+///
+/// Groups multiple metadata operations into a single atomic transaction.
 #[derive(Debug)]
 pub struct MetadataTransaction {
+    /// Unique transaction identifier
     pub id: TransactionId,
+    /// Operations in this transaction
     pub operations: Vec<MetadataOperation>,
+    /// Current transaction state
     pub state: TransactionState,
+    /// When the transaction was created
     pub timestamp: DateTime<Utc>,
+    /// When the transaction will timeout
     pub timeout_at: DateTime<Utc>,
+    /// Isolation level for this transaction
     pub isolation_level: IsolationLevel,
 }
 
 /// Transaction isolation levels
+///
+/// Defines the isolation guarantees for transaction operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IsolationLevel {
     /// Read committed - can see committed changes from other transactions
@@ -95,29 +109,49 @@ impl MetadataTransaction {
 }
 
 /// Version information for MVCC
+///
+/// Stores metadata version information for multi-version concurrency control.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct VersionInfo {
+    /// Version number
     version: u64,
+    /// Transaction that created this version
     transaction_id: TransactionId,
+    /// When this version was committed
     committed_at: DateTime<Utc>,
+    /// Collection metadata
     metadata: crate::proto::proximadb_v1::Collection,
 }
 
 /// Lock information for concurrent access
+///
+/// Tracks locks held by transactions on metadata keys.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct LockInfo {
+    /// Transaction holding the lock
     transaction_id: TransactionId,
+    /// Type of lock
     lock_type: LockType,
+    /// When the lock was acquired
     acquired_at: DateTime<Utc>,
 }
 
+/// Lock types for concurrent access control
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum LockType {
+    /// Shared lock (allows reads)
     Shared,
+    /// Exclusive lock (allows writes)
     Exclusive,
 }
 
 /// Atomic metadata store with MVCC and transactions
+///
+/// Provides ACID guarantees for metadata operations using multi-version
+/// concurrency control and write-ahead logging.
 pub struct AtomicMetadataStore {
     /// Write buffer manager for persistence
     write_buffer_manager: Arc<MetadataWriteAheadLog>,
@@ -153,13 +187,23 @@ impl std::fmt::Debug for AtomicMetadataStore {
     }
 }
 
+/// Atomic store statistics
+///
+/// Tracks operational statistics for the atomic metadata store.
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct AtomicStoreStats {
+    /// Total transactions started
     transactions_started: u64,
+    /// Total transactions committed
     transactions_committed: u64,
+    /// Total transactions aborted
     transactions_aborted: u64,
+    /// Total transactions timed out
     transactions_timed_out: u64,
+    /// Total lock conflicts
     lock_conflicts: u64,
+    /// Total MVCC reads
     mvcc_reads: u64,
 }
 

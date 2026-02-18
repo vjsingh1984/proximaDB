@@ -14,40 +14,74 @@
  * limitations under the License.
  */
 
-//! # QUASAR Graph Engine - Hybrid Hot/Cold Storage
+//! # QUASAR Graph Engine - EXPERIMENTAL (Tiered Storage)
 //!
-//! QUASAR (Quantum Ultra-fast Storage with Adaptive Retrieval) is ProximaDB's
-//! hybrid graph engine that automatically tiers data between hot (memory) and
-//! cold (disk) storage based on access patterns for cost optimization.
+//! **WARNING**: QUASAR is experimental and not production-ready.
+//!
+//! QUASAR provides hot/cold tiering for graph data but the tiering logic is minimal
+//! and not fully integrated with ProximaDB's storage engines.
+//!
+//! **For production use, use ORION.**
+//!
+//! ## Status
+//!
+//! | Feature | Status |
+//! |---------|--------|
+//! | Hot tier (ORION) | Implemented |
+//! | Cold tier storage | Basic (JSON/SST) |
+//! | Access tracking | Implemented |
+//! | Automatic tiering | Minimal |
+//! | WAL persistence | Implemented (hot tier via ORION) |
+//! | Cross-tier queries | Partial |
+//!
+//! ## Known Limitations
+//!
+//! 1. **Hot tier WAL only**: Cold tier uses file-based persistence
+//! 2. **Sync path limitations**: Cold tier access skipped in sync methods
+//! 3. **Simple tiering logic**: LRU-based, no ML-based prediction
+//! 4. **Not integrated with storage engines**: Uses separate cold storage
+//!
+//! ## When to Consider QUASAR
+//!
+//! - Experimental cost optimization for large, sparse graphs
+//! - Research and development environments
+//! - When memory constraints are critical and data loss is acceptable
+//!
+//! ## Recommended Alternative
+//!
+//! For production tiered storage:
+//! - Use ORION with appropriate memory sizing
+//! - Implement application-level caching
+//! - Consider external caching layers (Redis, Memcached)
 //!
 //! ## Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────┐
-//! │            QUASAR Engine                 │
-//! ├─────────────────────────────────────────┤
-//! │              Hot Tier                    │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │        ORION Engine                 │ │
-//! │  │       (In-Memory CSR)               │ │
-//! │  └─────────────────────────────────────┘ │
-//! ├─────────────────────────────────────────┤
-//! │             Tiering Logic                │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │      LRU Cache Manager              │ │
-//! │  │    Access Pattern Tracker           │ │
-//! │  │   Background Migration Worker       │ │
-//! │  └─────────────────────────────────────┘ │
-//! ├─────────────────────────────────────────┤
-//! │              Cold Tier                   │
-//! │  ┌─────────────────────────────────────┐ │
-//! │  │      Disk Storage Backend           │ │
-//! │  │       (SST/Parquet Files)           │ │
-//! │  └─────────────────────────────────────┘ │
-//! └─────────────────────────────────────────┘
+//! +------------------------------------------+
+//! |            QUASAR Engine                 |
+//! +------------------------------------------+
+//! |              Hot Tier                    |
+//! |  +-------------------------------------+ |
+//! |  |        ORION Engine                 | |
+//! |  |       (In-Memory CSR)               | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
+//! |             Tiering Logic                |
+//! |  +-------------------------------------+ |
+//! |  |      LRU Cache Manager              | |
+//! |  |    Access Pattern Tracker           | |
+//! |  |   Background Migration Worker       | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
+//! |              Cold Tier                   |
+//! |  +-------------------------------------+ |
+//! |  |      Disk Storage Backend           | |
+//! |  |       (SST/Parquet Files)           | |
+//! |  +-------------------------------------+ |
+//! +------------------------------------------+
 //! ```
 //!
-//! ## Key Features
+//! ## Key Features (Experimental)
 //!
 //! - **Automatic Tiering**: Data moves between hot/cold based on access patterns
 //! - **LRU Eviction**: Least recently used nodes/edges moved to cold storage
@@ -155,11 +189,52 @@ impl Default for QuasarConfig {
 }
 
 impl QuasarGraphEngine {
-    /// Create a new QUASAR hybrid graph engine
+    /// Create a new QUASAR hybrid graph engine (hot tier without persistence)
     pub async fn new(config: QuasarConfig) -> Result<Self> {
-        // Initialize hot tier (ORION engine)
+        // Initialize hot tier (ORION engine) without persistence
         let hot_tier = Arc::new(OrionGraphEngine::new());
+        Self::finish_initialization(config, hot_tier).await
+    }
 
+    /// Create a new QUASAR hybrid graph engine with persistence enabled
+    ///
+    /// The hot tier (ORION) will have WAL enabled for durability.
+    ///
+    /// # Arguments
+    /// * `config` - QUASAR configuration
+    /// * `graph_id` - Unique identifier for this graph (used in WAL path)
+    /// * `base_url` - Base storage URL (e.g., "file:///data" or "s3://bucket")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let engine = QuasarGraphEngine::with_persistence(
+    ///     QuasarConfig::default(),
+    ///     "my_graph".to_string(),
+    ///     "file:///tmp/proximadb".to_string(),
+    /// ).await?;
+    /// ```
+    pub async fn with_persistence(
+        config: QuasarConfig,
+        graph_id: String,
+        base_url: String,
+    ) -> Result<Self> {
+        // Initialize hot tier with persistence enabled
+        let hot_tier = Arc::new(
+            OrionGraphEngine::with_persistence_for_graph(
+                format!("{}_hot", graph_id),
+                base_url,
+                true, // Enable WAL
+            )
+            .await?,
+        );
+        Self::finish_initialization(config, hot_tier).await
+    }
+
+    /// Common initialization logic for both constructors
+    async fn finish_initialization(
+        config: QuasarConfig,
+        hot_tier: Arc<OrionGraphEngine>,
+    ) -> Result<Self> {
         // Initialize cold storage backend
         let cold_tier = Arc::new(
             storage_backend::ColdStorageBackend::new(
@@ -398,6 +473,29 @@ impl QuasarGraphEngine {
     pub async fn get_access_stats(&self) -> cache::AccessStats {
         self.access_cache.get_stats().await
     }
+
+    /// Flush WAL to ensure durability
+    ///
+    /// This flushes the WAL buffer of the hot tier (ORION engine) to persistent storage.
+    /// Cold tier data is already on disk, so no additional flush is needed there.
+    /// Should be called during graceful shutdown or before critical operations.
+    pub async fn flush_wal(&self) -> Result<()> {
+        tracing::debug!("Flushing WAL for QUASAR hot tier");
+        self.hot_tier.flush_wal().await?;
+        tracing::debug!("QUASAR WAL flush complete");
+        Ok(())
+    }
+
+    /// Recover hot tier from WAL
+    ///
+    /// This replays the WAL entries for the hot tier to recover state after restart.
+    /// Cold tier data is already on disk and doesn't need recovery.
+    pub async fn recover(&self) -> Result<()> {
+        tracing::info!("Recovering QUASAR hot tier from WAL");
+        self.hot_tier.recover().await?;
+        tracing::info!("QUASAR recovery complete");
+        Ok(())
+    }
 }
 
 impl Drop for QuasarGraphEngine {
@@ -422,17 +520,25 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // Simple sync implementation: check hot tier first for test compatibility
+        // Check hot tier first (non-blocking)
         if let Ok(Some(node)) = self.hot_tier.get_node(id) {
-            Ok(Some(node))
-        } else {
-            // For tests, just return None if not in hot tier to avoid async complexity
-            Ok(None)
+            let access_cache = Arc::clone(&self.access_cache);
+            let node_id = id.clone();
+            tokio::spawn(async move {
+                let _ = access_cache
+                    .record_access(node_id.as_str(), Instant::now())
+                    .await;
+            });
+            return Ok(Some(node));
         }
+
+        // Cold-tier access is intentionally skipped in this sync path to avoid blocking
+        Ok(None)
     }
 
     async fn update_node(&self, node: Node) -> Result<Arc<Node>> {
-        // TODO: Add WAL support for update_node
+        // WAL writes happen automatically via ORION hot tier delegation
+        // (ORION's update_node writes to WAL if persistence is enabled)
         let node_id = node.id.clone();
 
         // Try to update in hot tier first
@@ -463,9 +569,12 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     async fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
-        // TODO: Add WAL support for delete_node
+        // WAL writes happen automatically via ORION hot tier delegation
+        // (ORION's delete_node writes to WAL if persistence is enabled)
         // Try deleting from hot tier first
-        if let Some(node) = crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id).await? {
+        if let Some(node) =
+            crate::graph::engines::GraphEngine::delete_node(&*self.hot_tier, id).await?
+        {
             // Update stats
             {
                 let mut stats = self.stats.write().await;
@@ -495,12 +604,18 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        // Return hot-tier edge synchronously; skip cold tier to avoid blocking
-        self.hot_tier.get_edge(id)
+        if let Ok(Some(edge)) = self.hot_tier.get_edge(id) {
+            let _ = self.access_cache.record_access(id.as_str(), Instant::now());
+            return Ok(Some(edge));
+        }
+
+        // Cold-tier access is intentionally skipped in this sync path to avoid blocking
+        Ok(None)
     }
 
     async fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
-        // TODO: Add WAL support for update_edge
+        // WAL writes happen automatically via ORION hot tier delegation
+        // (ORION's update_edge writes to WAL if persistence is enabled)
         let edge_id = edge.id.clone();
 
         // Similar logic to update_node
@@ -530,9 +645,12 @@ impl GraphEngine for QuasarGraphEngine {
     }
 
     async fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
-        // TODO: Add WAL support for delete_edge
+        // WAL writes happen automatically via ORION hot tier delegation
+        // (ORION's delete_edge writes to WAL if persistence is enabled)
         // Try hot tier first
-        if let Some(edge) = crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id).await? {
+        if let Some(edge) =
+            crate::graph::engines::GraphEngine::delete_edge(&*self.hot_tier, id).await?
+        {
             {
                 let mut stats = self.stats.write().await;
                 stats.hot_tier_edges = stats.hot_tier_edges.saturating_sub(1);
@@ -596,13 +714,11 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn node_count(&self) -> Result<usize> {
         let hot_count = self.hot_tier.node_count()?;
-        // For test compatibility, only count hot tier to avoid async complexity
         Ok(hot_count)
     }
 
     fn edge_count(&self) -> Result<usize> {
         let hot_count = self.hot_tier.edge_count()?;
-        // For test compatibility, only count hot tier to avoid async complexity
         Ok(hot_count)
     }
 
@@ -611,6 +727,60 @@ impl GraphEngine for QuasarGraphEngine {
         // Cold-tier enumeration is skipped here to keep this method safe for sync contexts
         // (benchmarks and other non-async callers).
         self.hot_tier.get_all_nodes()
+    }
+
+    // ===== Bulk Operations - Delegate to hot tier (ORION) for performance =====
+
+    async fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+        let count = nodes.len();
+        let results = self.hot_tier.bulk_insert_nodes(nodes).await?;
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_nodes += count as u64;
+        }
+
+        Ok(results)
+    }
+
+    async fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+        let count = edges.len();
+        let results = self.hot_tier.bulk_insert_edges(edges).await?;
+
+        // Update stats
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_edges += count as u64;
+        }
+
+        Ok(results)
+    }
+
+    async fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+        let results = self.hot_tier.bulk_delete_nodes(node_ids).await?;
+
+        // Update stats for deleted nodes
+        let deleted_count = results.iter().filter(|r| r.is_some()).count();
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_nodes = stats.hot_tier_nodes.saturating_sub(deleted_count as u64);
+        }
+
+        Ok(results)
+    }
+
+    async fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+        let results = self.hot_tier.bulk_delete_edges(edge_ids).await?;
+
+        // Update stats for deleted edges
+        let deleted_count = results.iter().filter(|r| r.is_some()).count();
+        {
+            let mut stats = self.stats.write().await;
+            stats.hot_tier_edges = stats.hot_tier_edges.saturating_sub(deleted_count as u64);
+        }
+
+        Ok(results)
     }
 }
 
@@ -691,5 +861,56 @@ mod tests {
         assert_eq!(config.hot_tier_max_nodes, 100);
         assert_eq!(config.cold_migration_threshold, Duration::from_secs(10));
         assert_eq!(config.hot_promotion_threshold, Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_cold_hit_promotes_to_hot() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = QuasarConfig {
+            cold_tier_path: temp_dir.path().to_path_buf(),
+            hot_tier_max_nodes: 1,
+            ..QuasarConfig::default()
+        };
+
+        let engine = QuasarGraphEngine::new(config).await.unwrap();
+
+        // Insert a node directly into cold tier to simulate eviction
+        let cold_node = Node {
+            id: "cold_node".to_string(),
+            labels: vec!["Cold".to_string()],
+            properties: std::collections::HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        engine
+            .cold_tier
+            .store_node(cold_node.clone())
+            .await
+            .unwrap();
+        {
+            let mut stats = engine.stats.write().await;
+            stats.cold_tier_nodes += 1;
+        }
+
+        // Should miss hot, hit cold, and schedule promotion
+        // Use get_node_from_tiers which checks both tiers (sync get_node skips cold tier)
+        let retrieved = engine
+            .get_node_from_tiers(&"cold_node".to_string())
+            .await
+            .unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id, "cold_node");
+
+        // Give promotion task a moment to complete
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Verify hot tier has the node now
+        let hot_has = engine
+            .hot_tier
+            .get_node(&"cold_node".to_string())
+            .unwrap()
+            .is_some();
+        assert!(hot_has, "Node should have been promoted to hot tier");
     }
 }

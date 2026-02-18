@@ -1,454 +1,387 @@
 #!/usr/bin/env python3
+# Copyright 2025 Vijaykumar Singh
+# SPDX-License-Identifier: Apache-2.0
 """
 Performance Report Generator for ProximaDB
 
-Generates comprehensive performance reports from benchmark results
-according to task_3_performance_validation_design.adoc
+Orchestrates the generation of comprehensive performance reports from benchmark
+results using modular components for data collection, processing, and reporting.
+
+This script follows the design specified in task_3_performance_validation_design.adoc
+and uses the component-based architecture for improved maintainability.
 """
 
-import json
-import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime
+from __future__ import annotations
+
 import argparse
-import os
-import glob
-from typing import Dict, List, Optional
-import numpy as np
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-class PerformanceReportGenerator:
-    def __init__(self, results_dir: str):
-        self.results_dir = results_dir
-        self.benchmark_data = self.load_benchmark_data()
+# Import modular components
+from components import (
+    BenchmarkDataCollector,
+    ComparisonProcessor,
+    ConsoleReporter,
+    EnvironmentCollector,
+    HTMLReporter,
+    JSONReporter,
+    MetricsProcessor,
+)
 
-    def load_benchmark_data(self) -> Dict:
-        """Load all benchmark results from JSON files"""
-        data = {
-            'qps_benchmarks': [],
-            'multi_tenant_benchmarks': [],
-            'cache_benchmarks': [],
-            'sustained_load_results': []
+if TYPE_CHECKING:
+    from components.collectors import BenchmarkDataset
+    from components.processors import ProcessedMetrics
+
+
+class PerformanceReportOrchestrator:
+    """
+    Orchestrates the performance report generation workflow.
+
+    This class coordinates the data collection, processing, and reporting
+    phases using the modular component architecture.
+    """
+
+    def __init__(
+        self,
+        results_dir: str | Path,
+        verbose: bool = False,
+        include_environment: bool = True,
+    ):
+        """
+        Initialize the orchestrator.
+
+        Args:
+            results_dir: Directory containing benchmark result files
+            verbose: Enable verbose output during processing
+            include_environment: Include environment information in reports
+        """
+        self.results_dir = Path(results_dir)
+        self.verbose = verbose
+        self.include_environment = include_environment
+
+        # Initialize components
+        self._data_collector = BenchmarkDataCollector(self.results_dir)
+        self._env_collector = EnvironmentCollector()
+
+        # Lazy-initialized after data collection
+        self._dataset: BenchmarkDataset | None = None
+        self._metrics: ProcessedMetrics | None = None
+
+    def collect_data(self) -> "BenchmarkDataset":
+        """
+        Collect benchmark data from the results directory.
+
+        Returns:
+            BenchmarkDataset containing all collected benchmark results
+        """
+        if self._log("Collecting benchmark data..."):
+            pass
+
+        self._dataset = self._data_collector.collect()
+
+        # Log collection results
+        if self._dataset.is_empty():
+            self._log("No benchmark data found in results directory.")
+        else:
+            self._log(f"Collected {self._dataset.total_results()} benchmark results:")
+            if self._dataset.qps_benchmarks:
+                self._log(f"  - QPS benchmarks: {len(self._dataset.qps_benchmarks)}")
+            if self._dataset.multi_tenant_benchmarks:
+                self._log(
+                    f"  - Multi-tenant benchmarks: {len(self._dataset.multi_tenant_benchmarks)}"
+                )
+            if self._dataset.cache_benchmarks:
+                self._log(f"  - Cache benchmarks: {len(self._dataset.cache_benchmarks)}")
+            if self._dataset.sustained_load_results:
+                self._log(
+                    f"  - Sustained load results: {len(self._dataset.sustained_load_results)}"
+                )
+            if self._dataset.engine_benchmarks:
+                self._log(
+                    f"  - Engine benchmarks: {len(self._dataset.engine_benchmarks)}"
+                )
+
+        # Log any collection errors
+        for error in self._data_collector.errors:
+            self._log(f"Warning: {error}")
+
+        return self._dataset
+
+    def process_metrics(self) -> "ProcessedMetrics":
+        """
+        Process collected data into aggregated metrics.
+
+        Returns:
+            ProcessedMetrics containing analyzed benchmark results
+
+        Raises:
+            RuntimeError: If data has not been collected yet
+        """
+        if self._dataset is None:
+            raise RuntimeError("Must call collect_data() before process_metrics()")
+
+        self._log("Processing metrics...")
+
+        processor = MetricsProcessor(self._dataset)
+        self._metrics = processor.process()
+
+        # Log processing results
+        if self._metrics.executive_summary:
+            summary = self._metrics.executive_summary
+            self._log(f"Performance rating: {summary.performance_rating.value}")
+            self._log(f"Enterprise readiness: {summary.enterprise_readiness.value}")
+            if summary.peak_qps > 0:
+                self._log(f"Peak QPS: {summary.peak_qps:.0f}")
+
+        return self._metrics
+
+    def generate_comparison(self, baseline_dir: str | Path | None = None) -> dict:
+        """
+        Generate comparison metrics against a baseline.
+
+        Args:
+            baseline_dir: Optional directory containing baseline benchmark results
+
+        Returns:
+            Dictionary containing comparison results
+        """
+        if self._dataset is None:
+            raise RuntimeError("Must call collect_data() before generate_comparison()")
+
+        comparison_processor = ComparisonProcessor(self._dataset)
+
+        if baseline_dir:
+            baseline_collector = BenchmarkDataCollector(baseline_dir)
+            baseline_dataset = baseline_collector.collect()
+            comparison_processor = ComparisonProcessor(self._dataset, baseline_dataset)
+
+        return {
+            "qps_comparison": [r.__dict__ for r in comparison_processor.compare_qps()],
+            "engine_comparison": {
+                engine: [r.__dict__ for r in results]
+                for engine, results in comparison_processor.compare_engines().items()
+            },
         }
 
-        try:
-            # Load QPS benchmark results
-            qps_files = glob.glob(f"{self.results_dir}/qps_*.json")
-            for file in qps_files:
-                with open(file) as f:
-                    data['qps_benchmarks'].extend(json.load(f))
-            print(f"✅ Loaded {len(data['qps_benchmarks'])} QPS benchmark results")
-        except Exception as e:
-            print(f"⚠️ Warning: Could not load QPS benchmarks: {e}")
-
-        try:
-            # Load multi-tenant benchmark results
-            mt_files = glob.glob(f"{self.results_dir}/multi_tenant_*.json")
-            for file in mt_files:
-                with open(file) as f:
-                    data['multi_tenant_benchmarks'].extend(json.load(f))
-            print(f"✅ Loaded {len(data['multi_tenant_benchmarks'])} multi-tenant benchmark results")
-        except Exception as e:
-            print(f"⚠️ Warning: Could not load multi-tenant benchmarks: {e}")
-
-        try:
-            # Load cache benchmark results
-            cache_files = glob.glob(f"{self.results_dir}/cache_*.json")
-            for file in cache_files:
-                with open(file) as f:
-                    data['cache_benchmarks'].extend(json.load(f))
-            print(f"✅ Loaded {len(data['cache_benchmarks'])} cache benchmark results")
-        except Exception as e:
-            print(f"⚠️ Warning: Could not load cache benchmarks: {e}")
-
-        return data
-
-    def generate_executive_summary(self) -> Dict:
-        """Generate executive-level performance summary"""
-        summary = {
-            'peak_qps': 0,
-            'average_qps': 0,
-            'multi_tenant_qps_per_tenant': 0,
-            'cache_hit_rate': 0,
-            'sustained_load_stability': 'Not Tested',
-            'recommended_production_capacity': 'Unknown',
-            'performance_rating': 'Unknown',
-            'enterprise_readiness': 'Unknown'
-        }
-
-        # Analyze QPS benchmarks
-        if self.benchmark_data['qps_benchmarks']:
-            qps_values = [b['qps'] for b in self.benchmark_data['qps_benchmarks'] if 'qps' in b]
-            if qps_values:
-                summary['peak_qps'] = max(qps_values)
-                summary['average_qps'] = sum(qps_values) / len(qps_values)
-
-                # Performance rating based on peak QPS
-                if summary['peak_qps'] > 5000:
-                    summary['performance_rating'] = 'Excellent'
-                    summary['enterprise_readiness'] = 'Production Ready'
-                elif summary['peak_qps'] > 2000:
-                    summary['performance_rating'] = 'Good'
-                    summary['enterprise_readiness'] = 'Enterprise Suitable'
-                elif summary['peak_qps'] > 1000:
-                    summary['performance_rating'] = 'Acceptable'
-                    summary['enterprise_readiness'] = 'Development Ready'
-                else:
-                    summary['performance_rating'] = 'Needs Improvement'
-                    summary['enterprise_readiness'] = 'Optimization Required'
-
-        # Analyze multi-tenant performance
-        if self.benchmark_data['multi_tenant_benchmarks']:
-            mt_results = self.benchmark_data['multi_tenant_benchmarks']
-            avg_per_tenant_values = [b['avg_qps_per_tenant'] for b in mt_results if 'avg_qps_per_tenant' in b]
-            if avg_per_tenant_values:
-                summary['multi_tenant_qps_per_tenant'] = sum(avg_per_tenant_values) / len(avg_per_tenant_values)
-
-        # Analyze cache performance
-        if self.benchmark_data['cache_benchmarks']:
-            cache_rates = [b['hit_rate'] for b in self.benchmark_data['cache_benchmarks'] if 'hit_rate' in b]
-            if cache_rates:
-                summary['cache_hit_rate'] = sum(cache_rates) / len(cache_rates)
-
-        # Calculate recommended production capacity (conservative estimate)
-        if summary['average_qps'] > 0:
-            # Recommend 70% of peak performance for production safety margin
-            summary['recommended_production_capacity'] = int(summary['peak_qps'] * 0.7)
-
-        return summary
-
-    def generate_html_report(self, output_file: str):
-        """Generate comprehensive HTML performance report"""
-        summary = self.generate_executive_summary()
-
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>ProximaDB Performance Validation Report</title>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                body {{
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    margin: 0;
-                    padding: 20px;
-                    background-color: #f5f5f5;
-                }}
-                .container {{ max-width: 1200px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                .header {{
-                    background: linear-gradient(135deg, #1e88e5, #42a5f5);
-                    color: white;
-                    padding: 30px;
-                    text-align: center;
-                    border-radius: 8px 8px 0 0;
-                }}
-                .header h1 {{ margin: 0; font-size: 2.5em; font-weight: 300; }}
-                .header p {{ margin: 10px 0 0 0; opacity: 0.9; }}
-                .summary {{
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                    gap: 20px;
-                    padding: 30px;
-                    background: #f8f9fa;
-                }}
-                .metric {{
-                    text-align: center;
-                    padding: 20px;
-                    background: white;
-                    border-radius: 6px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                }}
-                .metric-value {{
-                    font-size: 2.5em;
-                    font-weight: bold;
-                    color: #1e88e5;
-                    margin: 0;
-                }}
-                .metric-label {{
-                    font-size: 0.9em;
-                    color: #666;
-                    margin: 10px 0 0 0;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                }}
-                .section {{
-                    margin: 0;
-                    padding: 30px;
-                    border-top: 1px solid #eee;
-                }}
-                .section h2 {{
-                    color: #333;
-                    margin: 0 0 20px 0;
-                    font-size: 1.8em;
-                    font-weight: 400;
-                }}
-                .benchmark-table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                    font-size: 0.9em;
-                }}
-                .benchmark-table th {{
-                    background: #1e88e5;
-                    color: white;
-                    padding: 12px;
-                    text-align: left;
-                    font-weight: 500;
-                }}
-                .benchmark-table td {{
-                    border: 1px solid #ddd;
-                    padding: 12px;
-                    text-align: left;
-                }}
-                .benchmark-table tr:nth-child(even) {{ background: #f8f9fa; }}
-                .status-excellent {{ color: #4caf50; font-weight: bold; }}
-                .status-good {{ color: #2196f3; font-weight: bold; }}
-                .status-acceptable {{ color: #ff9800; font-weight: bold; }}
-                .status-poor {{ color: #f44336; font-weight: bold; }}
-                .chart-container {{ margin: 20px 0; text-align: center; }}
-                .footer {{
-                    background: #333;
-                    color: white;
-                    text-align: center;
-                    padding: 20px;
-                    border-radius: 0 0 8px 8px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>ProximaDB Performance Validation Report</h1>
-                    <p>Comprehensive Performance Analysis | Generated on {datetime.now().strftime('%B %d, %Y at %H:%M UTC')}</p>
-                </div>
-
-                <div class="summary">
-                    <div class="metric">
-                        <div class="metric-value">{summary['peak_qps']:.0f}</div>
-                        <div class="metric-label">Peak QPS</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{summary['average_qps']:.0f}</div>
-                        <div class="metric-label">Average QPS</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{summary['multi_tenant_qps_per_tenant']:.0f}</div>
-                        <div class="metric-label">QPS per Tenant</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{summary['cache_hit_rate']:.1f}%</div>
-                        <div class="metric-label">Cache Hit Rate</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value">{summary['recommended_production_capacity']}</div>
-                        <div class="metric-label">Production QPS<br>Recommendation</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-value status-{summary['performance_rating'].lower()}">{summary['performance_rating']}</div>
-                        <div class="metric-label">Performance Rating</div>
-                    </div>
-                </div>
+    def generate_report(
+        self,
+        output_path: str | Path,
+        format: str = "html",
+        title: str | None = None,
+    ) -> None:
         """
+        Generate a performance report in the specified format.
 
-        # Add detailed benchmark sections
-        html_content += self._generate_qps_benchmark_section()
-        html_content += self._generate_multi_tenant_section()
-        html_content += self._generate_recommendations_section(summary)
-
-        html_content += f"""
-                <div class="footer">
-                    <p>ProximaDB Performance Validation Report | {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
-                    <p>Benchmark Infrastructure: ✅ Complete | Validation Status: ✅ Executed | Enterprise Readiness: {summary['enterprise_readiness']}</p>
-                </div>
-            </div>
-        </body>
-        </html>
+        Args:
+            output_path: Path for the output report file
+            format: Report format ('html', 'json', 'console')
+            title: Optional custom title for the report
         """
+        if self._metrics is None:
+            raise RuntimeError("Must call process_metrics() before generate_report()")
 
-        # Write report to file
-        with open(output_file, 'w') as f:
-            f.write(html_content)
+        output_path = Path(output_path)
+        self._log(f"Generating {format.upper()} report...")
 
-        print(f"📊 Performance report generated: {output_file}")
+        # Add environment info if requested
+        if self.include_environment:
+            env_info = self._env_collector.collect()
+            self._metrics.environment_info = env_info.to_dict()
 
-    def _generate_qps_benchmark_section(self) -> str:
-        """Generate QPS benchmark results section"""
-        if not self.benchmark_data['qps_benchmarks']:
-            return '<div class="section"><h2>QPS Benchmarks</h2><p>No QPS benchmark data available.</p></div>'
-
-        # Group results by storage engine
-        engine_results = {}
-        for result in self.benchmark_data['qps_benchmarks']:
-            engine = result.get('storage_engine', 'Unknown')
-            if engine not in engine_results:
-                engine_results[engine] = []
-            engine_results[engine].append(result)
-
-        html = '<div class="section"><h2>QPS Performance by Storage Engine</h2>'
-
-        if engine_results:
-            html += '<table class="benchmark-table"><tr><th>Storage Engine</th><th>Peak QPS</th><th>Avg QPS</th><th>Best Latency (P95)</th><th>Optimal Dataset Size</th><th>Status</th></tr>'
-
-            for engine, results in engine_results.items():
-                qps_values = [r['qps'] for r in results if 'qps' in r]
-                if qps_values:
-                    peak_qps = max(qps_values)
-                    avg_qps = sum(qps_values) / len(qps_values)
-
-                    # Find best latency
-                    latencies = [r.get('p95_latency_ms', 100) for r in results if 'p95_latency_ms' in r]
-                    best_latency = min(latencies) if latencies else 'N/A'
-
-                    # Find optimal dataset size
-                    best_result = max(results, key=lambda r: r.get('qps', 0))
-                    optimal_size = best_result.get('dataset_size', 'Unknown')
-
-                    # Determine status
-                    if peak_qps > 3000:
-                        status = '<span class="status-excellent">Excellent</span>'
-                    elif peak_qps > 2000:
-                        status = '<span class="status-good">Good</span>'
-                    elif peak_qps > 1000:
-                        status = '<span class="status-acceptable">Acceptable</span>'
-                    else:
-                        status = '<span class="status-poor">Needs Optimization</span>'
-
-                    html += f'<tr><td>{engine}</td><td>{peak_qps:.0f}</td><td>{avg_qps:.0f}</td><td>{best_latency:.1f}ms</td><td>{optimal_size:,}</td><td>{status}</td></tr>'
-
-            html += '</table>'
+        # Select and use appropriate reporter
+        if format == "html":
+            reporter = HTMLReporter(
+                title=title or "ProximaDB Performance Validation Report"
+            )
+            reporter.generate(self._metrics, output_path)
+        elif format == "json":
+            reporter = JSONReporter(pretty=True)
+            reporter.generate(self._metrics, output_path)
+        elif format == "console":
+            reporter = ConsoleReporter(use_colors=True)
+            reporter.generate(self._metrics, sys.stdout)
         else:
-            html += '<p>No QPS benchmark results found.</p>'
+            raise ValueError(f"Unsupported format: {format}")
 
-        html += '</div>'
-        return html
+        if format != "console":
+            self._log(f"Report generated: {output_path}")
 
-    def _generate_multi_tenant_section(self) -> str:
-        """Generate multi-tenant performance section"""
-        if not self.benchmark_data['multi_tenant_benchmarks']:
-            return '<div class="section"><h2>Multi-Tenant Performance</h2><p>No multi-tenant benchmark data available.</p></div>'
+    def run_full_pipeline(
+        self,
+        output_path: str | Path,
+        format: str = "html",
+        title: str | None = None,
+    ) -> "ProcessedMetrics":
+        """
+        Run the complete report generation pipeline.
 
-        html = '<div class="section"><h2>Multi-Tenant Performance Isolation</h2>'
+        This is a convenience method that runs all phases in sequence:
+        1. Collect data
+        2. Process metrics
+        3. Generate report
 
-        # Create table of multi-tenant results
-        html += '<table class="benchmark-table"><tr><th>Tenant Count</th><th>Total QPS</th><th>Avg QPS/Tenant</th><th>Min QPS/Tenant</th><th>Max QPS/Tenant</th><th>Isolation Status</th></tr>'
+        Args:
+            output_path: Path for the output report file
+            format: Report format ('html', 'json', 'console')
+            title: Optional custom title for the report
 
-        for result in self.benchmark_data['multi_tenant_benchmarks']:
-            tenant_count = result.get('tenant_count', 0)
-            total_qps = result.get('total_qps', 0)
-            avg_qps = result.get('avg_qps_per_tenant', 0)
-            min_qps = result.get('min_qps_per_tenant', 0)
-            max_qps = result.get('max_qps_per_tenant', 0)
-            isolation = result.get('isolation_maintained', False)
+        Returns:
+            ProcessedMetrics from the processing phase
+        """
+        self.collect_data()
+        self.process_metrics()
+        self.generate_report(output_path, format, title)
+        return self._metrics
 
-            isolation_status = '<span class="status-excellent">✅ Maintained</span>' if isolation else '<span class="status-poor">❌ Violated</span>'
+    def get_execution_summary(self) -> str:
+        """
+        Get a summary of what benchmarks were executed.
 
-            html += f'<tr><td>{tenant_count}</td><td>{total_qps:.0f}</td><td>{avg_qps:.0f}</td><td>{min_qps:.0f}</td><td>{max_qps:.0f}</td><td>{isolation_status}</td></tr>'
+        Returns:
+            Human-readable summary string
+        """
+        if self._dataset is None:
+            return "No benchmark data collected yet."
 
-        html += '</table></div>'
-        return html
+        if self._dataset.is_empty():
+            return (
+                "No benchmark results found - execute performance validation "
+                "benchmarks to generate metrics."
+            )
 
-    def _generate_recommendations_section(self, summary: Dict) -> str:
-        """Generate performance recommendations"""
-        recommendations = []
+        lines = ["Benchmark Execution Status:"]
 
-        # QPS-based recommendations
-        if summary['peak_qps'] > 5000:
-            recommendations.append("✅ <strong>Excellent Performance:</strong> ProximaDB delivers outstanding query throughput suitable for high-scale enterprise deployments.")
-        elif summary['peak_qps'] > 2000:
-            recommendations.append("✅ <strong>Enterprise-Ready Performance:</strong> Query throughput meets enterprise requirements for most workloads.")
-        elif summary['peak_qps'] > 1000:
-            recommendations.append("⚠️ <strong>Optimization Opportunity:</strong> Performance is acceptable but could benefit from optimization for large-scale deployments.")
-        else:
-            recommendations.append("🔴 <strong>Performance Optimization Required:</strong> Query throughput below enterprise expectations - optimization critical.")
+        if self._dataset.qps_benchmarks:
+            lines.append(f"  QPS Benchmarks: {len(self._dataset.qps_benchmarks)} results")
 
-        # Cache performance recommendations
-        if summary['cache_hit_rate'] > 90:
-            recommendations.append("✅ <strong>Excellent Cache Performance:</strong> Cache hit rate exceeds 90% - optimal for production workloads.")
-        elif summary['cache_hit_rate'] > 80:
-            recommendations.append("✅ <strong>Good Cache Performance:</strong> Cache efficiency is acceptable for production deployment.")
-        elif summary['cache_hit_rate'] > 0:
-            recommendations.append("⚠️ <strong>Cache Optimization Needed:</strong> Cache hit rate below optimal - consider cache tuning.")
-        else:
-            recommendations.append("📊 <strong>Cache Performance Validation Needed:</strong> Execute cache benchmarks to measure efficiency.")
+        if self._dataset.multi_tenant_benchmarks:
+            lines.append(
+                f"  Multi-Tenant Benchmarks: {len(self._dataset.multi_tenant_benchmarks)} results"
+            )
 
-        # Multi-tenant recommendations
-        if summary['multi_tenant_qps_per_tenant'] > 1000:
-            recommendations.append("✅ <strong>Multi-Tenant Performance Excellent:</strong> Per-tenant QPS exceeds 1000 - meets enterprise SLA requirements.")
-        elif summary['multi_tenant_qps_per_tenant'] > 500:
-            recommendations.append("✅ <strong>Multi-Tenant Performance Good:</strong> Per-tenant performance suitable for most enterprise deployments.")
-        elif summary['multi_tenant_qps_per_tenant'] > 0:
-            recommendations.append("⚠️ <strong>Multi-Tenant Optimization Needed:</strong> Per-tenant QPS below optimal for enterprise SLAs.")
-        else:
-            recommendations.append("📊 <strong>Multi-Tenant Validation Needed:</strong> Execute multi-tenant benchmarks to validate isolation performance.")
+        if self._dataset.cache_benchmarks:
+            lines.append(
+                f"  Cache Benchmarks: {len(self._dataset.cache_benchmarks)} results"
+            )
 
-        # Enterprise readiness assessment
-        recommendations.append(f"🎯 <strong>Enterprise Readiness Assessment:</strong> {summary['enterprise_readiness']}")
+        if self._dataset.sustained_load_results:
+            lines.append(
+                f"  Sustained Load Results: {len(self._dataset.sustained_load_results)} results"
+            )
 
-        # Production capacity recommendation
-        if summary['recommended_production_capacity'] != 'Unknown':
-            recommendations.append(f"🚀 <strong>Production Capacity Recommendation:</strong> {summary['recommended_production_capacity']} QPS for production deployment with 30% safety margin.")
+        if self._dataset.engine_benchmarks:
+            lines.append(
+                f"  Engine Benchmarks: {len(self._dataset.engine_benchmarks)} results"
+            )
 
-        recommendations_html = '<div class="section"><h2>Performance Recommendations</h2><ul style="line-height: 1.8;">'
-        for rec in recommendations:
-            recommendations_html += f'<li style="margin: 10px 0;">{rec}</li>'
-        recommendations_html += '</ul></div>'
+        return "\n".join(lines)
 
-        return recommendations_html
+    def _log(self, message: str) -> bool:
+        """Log a message if verbose mode is enabled."""
+        if self.verbose:
+            print(message)
+        return True
 
-    def generate_benchmark_execution_summary(self) -> str:
-        """Generate summary of what benchmarks were executed"""
-        executed_benchmarks = []
-
-        if self.benchmark_data['qps_benchmarks']:
-            executed_benchmarks.append(f"✅ QPS Benchmarks: {len(self.benchmark_data['qps_benchmarks'])} results")
-
-        if self.benchmark_data['multi_tenant_benchmarks']:
-            executed_benchmarks.append(f"✅ Multi-Tenant Benchmarks: {len(self.benchmark_data['multi_tenant_benchmarks'])} results")
-
-        if self.benchmark_data['cache_benchmarks']:
-            executed_benchmarks.append(f"✅ Cache Benchmarks: {len(self.benchmark_data['cache_benchmarks'])} results")
-
-        if not executed_benchmarks:
-            return "📊 No benchmark results found - execute performance validation benchmarks to generate metrics."
-
-        return "Benchmark Execution Status:\n" + "\n".join(executed_benchmarks)
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate ProximaDB performance validation report')
-    parser.add_argument('--results-dir', default='benchmark_results', help='Directory containing benchmark results')
-    parser.add_argument('--output', default='performance_report.html', help='Output HTML file path')
-    parser.add_argument('--format', choices=['html', 'json', 'text'], default='html', help='Output format')
+    """Main entry point for the performance report generator."""
+    parser = argparse.ArgumentParser(
+        description="Generate ProximaDB performance validation report",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --results-dir benchmark_results --output report.html
+  %(prog)s --results-dir benchmark_results --format json --output metrics.json
+  %(prog)s --results-dir benchmark_results --format console
+        """,
+    )
+    parser.add_argument(
+        "--results-dir",
+        default="benchmark_results",
+        help="Directory containing benchmark results (default: benchmark_results)",
+    )
+    parser.add_argument(
+        "--output",
+        default="performance_report.html",
+        help="Output file path (default: performance_report.html)",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["html", "json", "console"],
+        default="html",
+        help="Output format (default: html)",
+    )
+    parser.add_argument(
+        "--title",
+        help="Custom title for the report",
+    )
+    parser.add_argument(
+        "--baseline-dir",
+        help="Directory containing baseline benchmark results for comparison",
+    )
+    parser.add_argument(
+        "--no-environment",
+        action="store_true",
+        help="Exclude environment information from the report",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output",
+    )
 
     args = parser.parse_args()
 
-    print("🔍 ProximaDB Performance Report Generator")
-    print("=========================================")
+    print("ProximaDB Performance Report Generator")
+    print("=" * 40)
 
-    if not os.path.exists(args.results_dir):
-        print(f"⚠️ Results directory not found: {args.results_dir}")
-        print("💡 Run performance benchmarks first:")
-        print("   cargo bench --bench comprehensive_qps_benchmark")
-        print("   cargo bench --bench multi_tenant_isolation_benchmark")
-        return
+    # Check if results directory exists
+    results_path = Path(args.results_dir)
+    if not results_path.exists():
+        print(f"\nWarning: Results directory not found: {args.results_dir}")
+        print("\nTo generate benchmark data, run:")
+        print("  cargo bench --bench comprehensive_qps_benchmark")
+        print("  cargo bench --bench multi_tenant_isolation_benchmark")
+        return 1
 
-    generator = PerformanceReportGenerator(args.results_dir)
+    # Create orchestrator and run pipeline
+    orchestrator = PerformanceReportOrchestrator(
+        results_dir=args.results_dir,
+        verbose=args.verbose,
+        include_environment=not args.no_environment,
+    )
 
-    if args.format == 'html':
-        generator.generate_html_report(args.output)
-        print(f"\n✅ HTML report generated: {args.output}")
-    elif args.format == 'json':
-        summary = generator.generate_executive_summary()
-        with open(args.output, 'w') as f:
-            json.dump(summary, f, indent=2)
-        print(f"\n✅ JSON report generated: {args.output}")
-    else:
-        summary = generator.generate_executive_summary()
-        print("\n📊 PERFORMANCE SUMMARY:")
-        print("======================")
-        for key, value in summary.items():
-            print(f"{key.replace('_', ' ').title()}: {value}")
+    try:
+        # Run the full pipeline
+        metrics = orchestrator.run_full_pipeline(
+            output_path=args.output,
+            format=args.format,
+            title=args.title,
+        )
 
-    print(f"\n{generator.generate_benchmark_execution_summary()}")
+        # Print summary
+        print(f"\n{orchestrator.get_execution_summary()}")
+
+        if args.format != "console":
+            print(f"\nReport generated: {args.output}")
+
+        # Print comparison if baseline provided
+        if args.baseline_dir:
+            comparison = orchestrator.generate_comparison(args.baseline_dir)
+            print(f"\nComparison with baseline: {len(comparison['qps_comparison'])} QPS comparisons")
+
+        return 0
+
+    except Exception as e:
+        print(f"\nError generating report: {e}")
+        if args.verbose:
+            import traceback
+
+            traceback.print_exc()
+        return 1
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -4,16 +4,19 @@ Test embedding utilities using sentence-transformers for realistic vectors.
 Falls back to a clear error if the dependency is missing. To install:
     pip install sentence-transformers
 """
-from typing import List, Dict, Tuple
+
+from typing import Dict, List, Tuple
 
 try:
     from sentence_transformers import SentenceTransformer
 except Exception as e:
-    raise SystemExit("sentence-transformers is required for test embeddings.\n"
-                     "Install: pip install sentence-transformers\n"
-                     f"Error: {e}")
+    raise SystemExit(
+        "sentence-transformers is required for test embeddings.\n"
+        "Install: pip install sentence-transformers\n"
+        f"Error: {e}"
+    )
 
-_MODEL = SentenceTransformer('all-MiniLM-L6-v2')  # 384D
+_MODEL = SentenceTransformer("all-MiniLM-L6-v2")  # 384D
 _BASE_DIM = _MODEL.get_sentence_embedding_dimension()
 
 # Simple in-memory cache: {(text, dim): vector}

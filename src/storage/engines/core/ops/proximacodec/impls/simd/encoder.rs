@@ -11,7 +11,7 @@ use anyhow::Result;
 use tracing::{debug, trace};
 
 use crate::storage::engines::core::ops::proximacodec::simd::{
-    get_simd_backend, simd_bitpack_encode_f32, simd_delta_encode_f32,
+    get_simd_backend, simd_bitpack_encode_f32,
 };
 use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;

@@ -1,7 +1,31 @@
 //! Orchestration-level EXPLAIN plan structures for SQL queries.
+//!
+//! This module provides:
+//! - `ExplainPlan`: Basic EXPLAIN output with orchestration steps and hints
+//! - `EnhancedExplainPlan`: Detailed execution plan explanation including:
+//!   - RL planner decision details
+//!   - Optimization rules applied
+//!   - Per-model cost estimates
+//!   - Parallelization opportunities
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use proximadb::query::explain::{EnhancedExplainPlan, OptimizationRule, ParallelStage};
+//!
+//! // Get enhanced explain plan
+//! let plan = EnhancedExplainPlan::builder()
+//!     .with_rl_explanation(rl_explanation)
+//!     .with_rule(OptimizationRule::predicate_pushdown("filter pushed to vector scan"))
+//!     .with_model_cost(ModelType::Vector, 10.5)
+//!     .with_parallel_stage(stage)
+//!     .build();
+//! ```
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::storage::multimodel::ModelType;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExplainPlan {
@@ -326,5 +350,993 @@ impl AnalyzeMetrics {
             operator_timings: vec![],
             resource_usage: ResourceUsage::default(),
         }
+    }
+}
+
+// ============================================================================
+// A4: Enhanced Query Explanation
+// ============================================================================
+
+/// Serializable model type for use in enhanced explain plans
+/// (Wraps the internal ModelType which doesn't derive Serde traits)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ExplainModelType {
+    /// Vector embeddings storage
+    Vector,
+    /// Semi-structured JSON documents
+    Document,
+    /// Graph nodes and edges
+    Graph,
+    /// Relational tables
+    Relational,
+    /// Observability data: logs, metrics, traces
+    Observability,
+}
+
+impl From<ModelType> for ExplainModelType {
+    fn from(model: ModelType) -> Self {
+        match model {
+            ModelType::Vector => ExplainModelType::Vector,
+            ModelType::Document => ExplainModelType::Document,
+            ModelType::Graph => ExplainModelType::Graph,
+            ModelType::Relational => ExplainModelType::Relational,
+            ModelType::Observability => ExplainModelType::Observability,
+        }
+    }
+}
+
+impl From<ExplainModelType> for ModelType {
+    fn from(model: ExplainModelType) -> Self {
+        match model {
+            ExplainModelType::Vector => ModelType::Vector,
+            ExplainModelType::Document => ModelType::Document,
+            ExplainModelType::Graph => ModelType::Graph,
+            ExplainModelType::Relational => ModelType::Relational,
+            ExplainModelType::Observability => ModelType::Observability,
+        }
+    }
+}
+
+/// Enhanced EXPLAIN plan with detailed debugging information.
+///
+/// Provides comprehensive query execution plan explanation including:
+/// - RL planner decision details (what the planner chose and why)
+/// - Optimization rules applied (predicate pushdown, join reordering, etc.)
+/// - Estimated costs per model type (vector, graph, document, observability)
+/// - Parallelization opportunities identified
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EnhancedExplainPlan {
+    /// Basic explain plan (orchestration steps, hints, etc.)
+    pub base_plan: ExplainPlan,
+
+    /// RL planner decision explanation (if RL planner was used)
+    pub rl_planner_decision: Option<RLPlannerExplanation>,
+
+    /// List of optimization rules that were applied to the query
+    pub optimization_rules_applied: Vec<OptimizationRule>,
+
+    /// Estimated cost breakdown per data model type
+    pub estimated_costs_per_model: HashMap<ExplainModelType, f64>,
+
+    /// Identified parallelization opportunities in the plan
+    pub parallelization_opportunities: Vec<ParallelStage>,
+
+    /// Query complexity analysis
+    pub complexity_analysis: Option<ComplexityAnalysis>,
+
+    /// Warnings and recommendations for query improvement
+    pub warnings: Vec<PlanWarning>,
+}
+
+impl EnhancedExplainPlan {
+    /// Create a new builder for EnhancedExplainPlan
+    pub fn builder() -> EnhancedExplainPlanBuilder {
+        EnhancedExplainPlanBuilder::default()
+    }
+
+    /// Create from a basic ExplainPlan
+    pub fn from_base(base_plan: ExplainPlan) -> Self {
+        Self {
+            base_plan,
+            ..Default::default()
+        }
+    }
+
+    /// Get total estimated cost across all models
+    pub fn total_estimated_cost(&self) -> f64 {
+        self.estimated_costs_per_model.values().sum()
+    }
+
+    /// Check if the plan involves multiple data models
+    pub fn is_cross_model(&self) -> bool {
+        self.estimated_costs_per_model.len() > 1
+    }
+
+    /// Get the dominant (highest cost) model type
+    pub fn dominant_model(&self) -> Option<(ExplainModelType, f64)> {
+        self.estimated_costs_per_model
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(k, v)| (*k, *v))
+    }
+
+    /// Get parallel execution speedup estimate
+    pub fn estimated_parallel_speedup(&self) -> f64 {
+        if self.parallelization_opportunities.is_empty() {
+            return 1.0;
+        }
+
+        // Calculate speedup based on parallel stages
+        let max_parallel_work: f64 = self
+            .parallelization_opportunities
+            .iter()
+            .map(|s| s.estimated_speedup)
+            .fold(1.0, |acc, s| acc * s);
+
+        max_parallel_work.max(1.0)
+    }
+
+    /// Generate a human-readable summary of the plan
+    pub fn summary(&self) -> String {
+        let mut lines = Vec::new();
+
+        lines.push("=== Enhanced Query Execution Plan ===".to_string());
+        lines.push(String::new());
+
+        // RL Planner Decision
+        if let Some(ref rl) = self.rl_planner_decision {
+            lines.push("RL Planner Decision:".to_string());
+            lines.push(format!("  Action: {}", rl.selected_action));
+            lines.push(format!("  Confidence: {:.2}%", rl.confidence * 100.0));
+            if let Some(ref reason) = rl.selection_reason {
+                lines.push(format!("  Reason: {}", reason));
+            }
+            lines.push(String::new());
+        }
+
+        // Optimization Rules
+        if !self.optimization_rules_applied.is_empty() {
+            lines.push("Optimization Rules Applied:".to_string());
+            for rule in &self.optimization_rules_applied {
+                lines.push(format!("  - {} ({:?})", rule.rule_name, rule.rule_type));
+                if let Some(ref desc) = rule.description {
+                    lines.push(format!("    {}", desc));
+                }
+            }
+            lines.push(String::new());
+        }
+
+        // Cost per Model
+        if !self.estimated_costs_per_model.is_empty() {
+            lines.push("Estimated Cost per Model:".to_string());
+            let mut costs: Vec<_> = self.estimated_costs_per_model.iter().collect();
+            costs.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (model, cost) in costs {
+                lines.push(format!("  {:?}: {:.2}", model, cost));
+            }
+            lines.push(format!("  Total: {:.2}", self.total_estimated_cost()));
+            lines.push(String::new());
+        }
+
+        // Parallelization
+        if !self.parallelization_opportunities.is_empty() {
+            lines.push("Parallelization Opportunities:".to_string());
+            for stage in &self.parallelization_opportunities {
+                lines.push(format!(
+                    "  Stage '{}': {} parallel units, {:.1}x speedup",
+                    stage.stage_name, stage.parallel_units, stage.estimated_speedup
+                ));
+            }
+            lines.push(format!(
+                "  Total Speedup: {:.1}x",
+                self.estimated_parallel_speedup()
+            ));
+            lines.push(String::new());
+        }
+
+        // Warnings
+        if !self.warnings.is_empty() {
+            lines.push("Warnings:".to_string());
+            for warning in &self.warnings {
+                lines.push(format!("  [{:?}] {}", warning.severity, warning.message));
+                if let Some(ref rec) = warning.recommendation {
+                    lines.push(format!("    Recommendation: {}", rec));
+                }
+            }
+        }
+
+        lines.join("\n")
+    }
+}
+
+/// Builder for EnhancedExplainPlan
+#[derive(Debug, Default)]
+pub struct EnhancedExplainPlanBuilder {
+    plan: EnhancedExplainPlan,
+}
+
+impl EnhancedExplainPlanBuilder {
+    /// Set the base explain plan
+    pub fn base_plan(mut self, plan: ExplainPlan) -> Self {
+        self.plan.base_plan = plan;
+        self
+    }
+
+    /// Set the RL planner explanation
+    pub fn with_rl_explanation(mut self, explanation: RLPlannerExplanation) -> Self {
+        self.plan.rl_planner_decision = Some(explanation);
+        self
+    }
+
+    /// Add an optimization rule that was applied
+    pub fn with_rule(mut self, rule: OptimizationRule) -> Self {
+        self.plan.optimization_rules_applied.push(rule);
+        self
+    }
+
+    /// Add multiple optimization rules
+    pub fn with_rules(mut self, rules: Vec<OptimizationRule>) -> Self {
+        self.plan.optimization_rules_applied.extend(rules);
+        self
+    }
+
+    /// Set cost for a specific model type
+    pub fn with_model_cost(mut self, model: ExplainModelType, cost: f64) -> Self {
+        self.plan.estimated_costs_per_model.insert(model, cost);
+        self
+    }
+
+    /// Set cost for a specific model type using ModelType (convenience method)
+    pub fn with_model_cost_from_type(mut self, model: ModelType, cost: f64) -> Self {
+        self.plan
+            .estimated_costs_per_model
+            .insert(ExplainModelType::from(model), cost);
+        self
+    }
+
+    /// Set all model costs at once
+    pub fn with_model_costs(mut self, costs: HashMap<ExplainModelType, f64>) -> Self {
+        self.plan.estimated_costs_per_model = costs;
+        self
+    }
+
+    /// Add a parallelization opportunity
+    pub fn with_parallel_stage(mut self, stage: ParallelStage) -> Self {
+        self.plan.parallelization_opportunities.push(stage);
+        self
+    }
+
+    /// Add multiple parallelization opportunities
+    pub fn with_parallel_stages(mut self, stages: Vec<ParallelStage>) -> Self {
+        self.plan.parallelization_opportunities.extend(stages);
+        self
+    }
+
+    /// Set complexity analysis
+    pub fn with_complexity(mut self, analysis: ComplexityAnalysis) -> Self {
+        self.plan.complexity_analysis = Some(analysis);
+        self
+    }
+
+    /// Add a warning
+    pub fn with_warning(mut self, warning: PlanWarning) -> Self {
+        self.plan.warnings.push(warning);
+        self
+    }
+
+    /// Build the enhanced explain plan
+    pub fn build(self) -> EnhancedExplainPlan {
+        self.plan
+    }
+}
+
+/// Explanation of RL planner decision
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RLPlannerExplanation {
+    /// The action selected by the RL planner
+    pub selected_action: String,
+
+    /// Confidence score (0.0 to 1.0) in the selected action
+    pub confidence: f32,
+
+    /// Human-readable reason for the selection
+    pub selection_reason: Option<String>,
+
+    /// Alternative actions that were considered
+    pub alternatives_considered: Vec<AlternativeAction>,
+
+    /// State features that influenced the decision
+    pub influential_features: Vec<InfluentialFeature>,
+
+    /// Whether exploration or exploitation was used
+    pub exploration_mode: ExplorationMode,
+
+    /// Historical performance of this action in similar contexts
+    pub historical_performance: Option<HistoricalPerformance>,
+}
+
+impl Default for RLPlannerExplanation {
+    fn default() -> Self {
+        Self {
+            selected_action: "Unknown".to_string(),
+            confidence: 0.0,
+            selection_reason: None,
+            alternatives_considered: Vec::new(),
+            influential_features: Vec::new(),
+            exploration_mode: ExplorationMode::Exploitation,
+            historical_performance: None,
+        }
+    }
+}
+
+impl RLPlannerExplanation {
+    /// Create new explanation with selected action
+    pub fn new(action: impl Into<String>, confidence: f32) -> Self {
+        Self {
+            selected_action: action.into(),
+            confidence,
+            ..Default::default()
+        }
+    }
+
+    /// Builder-style method to add reason
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.selection_reason = Some(reason.into());
+        self
+    }
+
+    /// Builder-style method to add alternative
+    pub fn with_alternative(mut self, alt: AlternativeAction) -> Self {
+        self.alternatives_considered.push(alt);
+        self
+    }
+
+    /// Builder-style method to add influential feature
+    pub fn with_feature(mut self, feature: InfluentialFeature) -> Self {
+        self.influential_features.push(feature);
+        self
+    }
+
+    /// Builder-style method to set exploration mode
+    pub fn with_exploration_mode(mut self, mode: ExplorationMode) -> Self {
+        self.exploration_mode = mode;
+        self
+    }
+
+    /// Builder-style method to add historical performance
+    pub fn with_history(mut self, history: HistoricalPerformance) -> Self {
+        self.historical_performance = Some(history);
+        self
+    }
+}
+
+/// Alternative action that was considered by the RL planner
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlternativeAction {
+    /// Action name/description
+    pub action: String,
+    /// Expected reward/score for this action
+    pub expected_reward: f32,
+    /// Reason it was not selected
+    pub rejection_reason: Option<String>,
+}
+
+impl AlternativeAction {
+    /// Create new alternative action
+    pub fn new(action: impl Into<String>, expected_reward: f32) -> Self {
+        Self {
+            action: action.into(),
+            expected_reward,
+            rejection_reason: None,
+        }
+    }
+
+    /// Builder-style method to add rejection reason
+    pub fn with_rejection_reason(mut self, reason: impl Into<String>) -> Self {
+        self.rejection_reason = Some(reason.into());
+        self
+    }
+}
+
+/// Feature that influenced the RL planner decision
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InfluentialFeature {
+    /// Feature name
+    pub feature_name: String,
+    /// Feature value
+    pub value: f64,
+    /// Influence weight (positive = favored action, negative = disfavored)
+    pub influence_weight: f64,
+    /// Human-readable interpretation
+    pub interpretation: Option<String>,
+}
+
+impl InfluentialFeature {
+    /// Create new influential feature
+    pub fn new(name: impl Into<String>, value: f64, weight: f64) -> Self {
+        Self {
+            feature_name: name.into(),
+            value,
+            influence_weight: weight,
+            interpretation: None,
+        }
+    }
+
+    /// Builder-style method to add interpretation
+    pub fn with_interpretation(mut self, interp: impl Into<String>) -> Self {
+        self.interpretation = Some(interp.into());
+        self
+    }
+}
+
+/// Exploration vs exploitation mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExplorationMode {
+    /// Selected action based on learned policy (best expected reward)
+    Exploitation,
+    /// Selected action for exploration (trying less-visited actions)
+    Exploration,
+    /// Thompson sampling (probabilistic selection)
+    ThompsonSampling,
+    /// Epsilon-greedy with random selection
+    EpsilonGreedy,
+}
+
+/// Historical performance statistics for an action
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalPerformance {
+    /// Number of times this action was selected in similar contexts
+    pub execution_count: u64,
+    /// Average reward achieved
+    pub average_reward: f32,
+    /// Average latency in milliseconds
+    pub average_latency_ms: f64,
+    /// Average recall achieved
+    pub average_recall: f32,
+    /// Success rate (fraction of executions that met targets)
+    pub success_rate: f32,
+}
+
+impl HistoricalPerformance {
+    /// Create new historical performance record
+    pub fn new(count: u64, avg_reward: f32) -> Self {
+        Self {
+            execution_count: count,
+            average_reward: avg_reward,
+            average_latency_ms: 0.0,
+            average_recall: 0.0,
+            success_rate: 0.0,
+        }
+    }
+
+    /// Builder-style method to add latency
+    pub fn with_latency(mut self, latency_ms: f64) -> Self {
+        self.average_latency_ms = latency_ms;
+        self
+    }
+
+    /// Builder-style method to add recall
+    pub fn with_recall(mut self, recall: f32) -> Self {
+        self.average_recall = recall;
+        self
+    }
+
+    /// Builder-style method to add success rate
+    pub fn with_success_rate(mut self, rate: f32) -> Self {
+        self.success_rate = rate;
+        self
+    }
+}
+
+/// Optimization rule that was applied to the query
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationRule {
+    /// Name of the optimization rule
+    pub rule_name: String,
+    /// Type/category of the rule
+    pub rule_type: OptimizationRuleType,
+    /// Description of what the rule did
+    pub description: Option<String>,
+    /// Estimated cost reduction from applying this rule
+    pub estimated_cost_reduction: Option<f64>,
+    /// Nodes in the plan that were affected
+    pub affected_nodes: Vec<String>,
+}
+
+impl OptimizationRule {
+    /// Create new optimization rule
+    pub fn new(name: impl Into<String>, rule_type: OptimizationRuleType) -> Self {
+        Self {
+            rule_name: name.into(),
+            rule_type,
+            description: None,
+            estimated_cost_reduction: None,
+            affected_nodes: Vec::new(),
+        }
+    }
+
+    /// Create predicate pushdown rule
+    pub fn predicate_pushdown(description: impl Into<String>) -> Self {
+        Self {
+            rule_name: "PredicatePushdown".to_string(),
+            rule_type: OptimizationRuleType::PredicatePushdown,
+            description: Some(description.into()),
+            estimated_cost_reduction: None,
+            affected_nodes: Vec::new(),
+        }
+    }
+
+    /// Create join reordering rule
+    pub fn join_reordering(description: impl Into<String>) -> Self {
+        Self {
+            rule_name: "JoinReordering".to_string(),
+            rule_type: OptimizationRuleType::JoinReordering,
+            description: Some(description.into()),
+            estimated_cost_reduction: None,
+            affected_nodes: Vec::new(),
+        }
+    }
+
+    /// Create projection pushdown rule
+    pub fn projection_pushdown(description: impl Into<String>) -> Self {
+        Self {
+            rule_name: "ProjectionPushdown".to_string(),
+            rule_type: OptimizationRuleType::ProjectionPushdown,
+            description: Some(description.into()),
+            estimated_cost_reduction: None,
+            affected_nodes: Vec::new(),
+        }
+    }
+
+    /// Create index selection rule
+    pub fn index_selection(description: impl Into<String>) -> Self {
+        Self {
+            rule_name: "IndexSelection".to_string(),
+            rule_type: OptimizationRuleType::IndexSelection,
+            description: Some(description.into()),
+            estimated_cost_reduction: None,
+            affected_nodes: Vec::new(),
+        }
+    }
+
+    /// Builder-style method to add cost reduction
+    pub fn with_cost_reduction(mut self, reduction: f64) -> Self {
+        self.estimated_cost_reduction = Some(reduction);
+        self
+    }
+
+    /// Builder-style method to add affected nodes
+    pub fn with_affected_nodes(mut self, nodes: Vec<String>) -> Self {
+        self.affected_nodes = nodes;
+        self
+    }
+}
+
+/// Types of optimization rules
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OptimizationRuleType {
+    /// Push predicates (filters) closer to data sources
+    PredicatePushdown,
+    /// Reorder joins for better performance
+    JoinReordering,
+    /// Push projections to read only needed columns
+    ProjectionPushdown,
+    /// Select optimal index for query
+    IndexSelection,
+    /// Eliminate common subexpressions
+    CommonSubexpressionElimination,
+    /// Rewrite subqueries for better execution
+    SubqueryUnnesting,
+    /// Apply constant folding
+    ConstantFolding,
+    /// Remove dead/unreachable code
+    DeadCodeElimination,
+    /// Combine multiple aggregations
+    AggregationPushdown,
+    /// Partition pruning based on predicates
+    PartitionPruning,
+    /// Rewrite for parallelism
+    ParallelizationRewrite,
+    /// Model-specific optimization (vector, graph, etc.)
+    ModelSpecific,
+    /// Custom/other optimization rule
+    Custom,
+}
+
+/// A stage in the query that can be parallelized
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelStage {
+    /// Name/identifier of the stage
+    pub stage_name: String,
+    /// Node IDs in this parallel stage
+    pub node_ids: Vec<usize>,
+    /// Number of parallel execution units
+    pub parallel_units: usize,
+    /// Type of parallelism
+    pub parallelism_type: ParallelismType,
+    /// Estimated speedup factor from parallelization
+    pub estimated_speedup: f64,
+    /// Data dependencies that limit parallelism
+    pub dependencies: Vec<String>,
+    /// Resource requirements per unit
+    pub resource_per_unit: Option<ResourceRequirements>,
+}
+
+impl ParallelStage {
+    /// Create new parallel stage
+    pub fn new(name: impl Into<String>, units: usize, parallelism: ParallelismType) -> Self {
+        Self {
+            stage_name: name.into(),
+            node_ids: Vec::new(),
+            parallel_units: units,
+            parallelism_type: parallelism,
+            estimated_speedup: units as f64 * 0.8, // Assume 80% efficiency by default
+            dependencies: Vec::new(),
+            resource_per_unit: None,
+        }
+    }
+
+    /// Builder-style method to add node IDs
+    pub fn with_nodes(mut self, nodes: Vec<usize>) -> Self {
+        self.node_ids = nodes;
+        self
+    }
+
+    /// Builder-style method to set speedup
+    pub fn with_speedup(mut self, speedup: f64) -> Self {
+        self.estimated_speedup = speedup;
+        self
+    }
+
+    /// Builder-style method to add dependencies
+    pub fn with_dependencies(mut self, deps: Vec<String>) -> Self {
+        self.dependencies = deps;
+        self
+    }
+
+    /// Builder-style method to add resource requirements
+    pub fn with_resources(mut self, resources: ResourceRequirements) -> Self {
+        self.resource_per_unit = Some(resources);
+        self
+    }
+}
+
+/// Type of parallelism used
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParallelismType {
+    /// Data parallelism (same operation on different data partitions)
+    DataParallel,
+    /// Pipeline parallelism (different stages run concurrently)
+    Pipeline,
+    /// Task parallelism (independent operations run concurrently)
+    TaskParallel,
+    /// Intra-operator parallelism (within a single operator)
+    IntraOperator,
+    /// SIMD vectorization
+    Simd,
+}
+
+/// Resource requirements for parallel execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceRequirements {
+    /// Memory requirement in MB
+    pub memory_mb: f64,
+    /// CPU cores needed
+    pub cpu_cores: f32,
+    /// Expected I/O bandwidth in MB/s
+    pub io_bandwidth_mbps: f64,
+    /// GPU memory if applicable
+    pub gpu_memory_mb: Option<f64>,
+}
+
+impl Default for ResourceRequirements {
+    fn default() -> Self {
+        Self {
+            memory_mb: 16.0,
+            cpu_cores: 1.0,
+            io_bandwidth_mbps: 100.0,
+            gpu_memory_mb: None,
+        }
+    }
+}
+
+/// Query complexity analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplexityAnalysis {
+    /// Estimated time complexity (e.g., "O(n log n)")
+    pub time_complexity: String,
+    /// Estimated space complexity
+    pub space_complexity: String,
+    /// Number of data models involved
+    pub models_involved: usize,
+    /// Number of joins in the query
+    pub join_count: usize,
+    /// Maximum join depth
+    pub max_join_depth: usize,
+    /// Total number of plan nodes
+    pub total_plan_nodes: usize,
+    /// Whether the query requires sorting
+    pub requires_sorting: bool,
+    /// Whether the query requires aggregation
+    pub requires_aggregation: bool,
+    /// Estimated selectivity of all filters combined
+    pub combined_selectivity: f64,
+}
+
+impl Default for ComplexityAnalysis {
+    fn default() -> Self {
+        Self {
+            time_complexity: "O(n)".to_string(),
+            space_complexity: "O(1)".to_string(),
+            models_involved: 1,
+            join_count: 0,
+            max_join_depth: 0,
+            total_plan_nodes: 1,
+            requires_sorting: false,
+            requires_aggregation: false,
+            combined_selectivity: 1.0,
+        }
+    }
+}
+
+/// Warning or recommendation about the query plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanWarning {
+    /// Warning severity
+    pub severity: WarningSeverity,
+    /// Warning message
+    pub message: String,
+    /// Optional recommendation for improvement
+    pub recommendation: Option<String>,
+    /// Code for programmatic handling
+    pub warning_code: String,
+}
+
+impl PlanWarning {
+    /// Create new warning
+    pub fn new(severity: WarningSeverity, message: impl Into<String>) -> Self {
+        Self {
+            severity,
+            message: message.into(),
+            recommendation: None,
+            warning_code: "UNKNOWN".to_string(),
+        }
+    }
+
+    /// Create info-level warning
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::new(WarningSeverity::Info, message)
+    }
+
+    /// Create low-severity warning
+    pub fn low(message: impl Into<String>) -> Self {
+        Self::new(WarningSeverity::Low, message)
+    }
+
+    /// Create medium-severity warning
+    pub fn medium(message: impl Into<String>) -> Self {
+        Self::new(WarningSeverity::Medium, message)
+    }
+
+    /// Create high-severity warning
+    pub fn high(message: impl Into<String>) -> Self {
+        Self::new(WarningSeverity::High, message)
+    }
+
+    /// Builder-style method to add recommendation
+    pub fn with_recommendation(mut self, rec: impl Into<String>) -> Self {
+        self.recommendation = Some(rec.into());
+        self
+    }
+
+    /// Builder-style method to set warning code
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.warning_code = code.into();
+        self
+    }
+}
+
+/// Warning severity levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WarningSeverity {
+    /// Informational only
+    Info,
+    /// Minor issue, query will work but could be improved
+    Low,
+    /// Moderate issue, may affect performance
+    Medium,
+    /// Serious issue, likely to cause poor performance
+    High,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enhanced_explain_plan_builder() {
+        let plan = EnhancedExplainPlan::builder()
+            .base_plan(ExplainPlan::with_steps(vec!["Step 1".to_string()]))
+            .with_model_cost(ExplainModelType::Vector, 10.0)
+            .with_model_cost(ExplainModelType::Graph, 5.0)
+            .with_rule(OptimizationRule::predicate_pushdown(
+                "Pushed filter to vector scan",
+            ))
+            .with_parallel_stage(ParallelStage::new(
+                "VectorSearch",
+                4,
+                ParallelismType::DataParallel,
+            ))
+            .build();
+
+        assert_eq!(plan.total_estimated_cost(), 15.0);
+        assert!(plan.is_cross_model());
+        assert_eq!(plan.optimization_rules_applied.len(), 1);
+        assert_eq!(plan.parallelization_opportunities.len(), 1);
+    }
+
+    #[test]
+    fn test_rl_planner_explanation() {
+        let explanation = RLPlannerExplanation::new("HNSW(ef=100)", 0.85)
+            .with_reason("Best historical performance")
+            .with_exploration_mode(ExplorationMode::Exploitation)
+            .with_alternative(
+                AlternativeAction::new("IVF(nprobe=16)", 0.75)
+                    .with_rejection_reason("Lower expected reward"),
+            )
+            .with_feature(
+                InfluentialFeature::new("collection_size", 0.8, 0.6)
+                    .with_interpretation("Large collection favors HNSW"),
+            );
+
+        assert_eq!(explanation.confidence, 0.85);
+        assert_eq!(explanation.alternatives_considered.len(), 1);
+        assert_eq!(explanation.influential_features.len(), 1);
+        assert_eq!(explanation.exploration_mode, ExplorationMode::Exploitation);
+    }
+
+    #[test]
+    fn test_optimization_rule_creation() {
+        let rule = OptimizationRule::predicate_pushdown("Filter moved to scan")
+            .with_cost_reduction(50.0)
+            .with_affected_nodes(vec!["scan_1".to_string(), "filter_1".to_string()]);
+
+        assert_eq!(rule.rule_type, OptimizationRuleType::PredicatePushdown);
+        assert_eq!(rule.estimated_cost_reduction, Some(50.0));
+        assert_eq!(rule.affected_nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_parallel_stage() {
+        let stage = ParallelStage::new("HashJoin", 8, ParallelismType::DataParallel)
+            .with_nodes(vec![1, 2, 3])
+            .with_speedup(6.4)
+            .with_dependencies(vec!["scan_1".to_string()]);
+
+        assert_eq!(stage.parallel_units, 8);
+        assert_eq!(stage.estimated_speedup, 6.4);
+        assert_eq!(stage.node_ids.len(), 3);
+        assert_eq!(stage.dependencies.len(), 1);
+    }
+
+    #[test]
+    fn test_plan_warning() {
+        let warning = PlanWarning::high("Missing index on column 'id'")
+            .with_recommendation("Create index on 'id' for better performance")
+            .with_code("MISSING_INDEX");
+
+        assert_eq!(warning.severity, WarningSeverity::High);
+        assert!(warning.recommendation.is_some());
+        assert_eq!(warning.warning_code, "MISSING_INDEX");
+    }
+
+    #[test]
+    fn test_explain_model_type_conversion() {
+        // Test conversion from ModelType to ExplainModelType
+        assert_eq!(
+            ExplainModelType::from(ModelType::Vector),
+            ExplainModelType::Vector
+        );
+        assert_eq!(
+            ExplainModelType::from(ModelType::Graph),
+            ExplainModelType::Graph
+        );
+        assert_eq!(
+            ExplainModelType::from(ModelType::Document),
+            ExplainModelType::Document
+        );
+
+        // Test conversion from ExplainModelType to ModelType
+        assert_eq!(ModelType::from(ExplainModelType::Vector), ModelType::Vector);
+    }
+
+    #[test]
+    fn test_enhanced_explain_plan_summary() {
+        let plan = EnhancedExplainPlan::builder()
+            .with_rl_explanation(RLPlannerExplanation::new("HNSW(ef=100)", 0.9))
+            .with_model_cost(ExplainModelType::Vector, 10.0)
+            .with_rule(OptimizationRule::predicate_pushdown("Filter pushed"))
+            .with_parallel_stage(ParallelStage::new(
+                "VectorSearch",
+                4,
+                ParallelismType::DataParallel,
+            ))
+            .with_warning(PlanWarning::info("Query may benefit from caching"))
+            .build();
+
+        let summary = plan.summary();
+        assert!(summary.contains("Enhanced Query Execution Plan"));
+        assert!(summary.contains("RL Planner Decision"));
+        assert!(summary.contains("HNSW(ef=100)"));
+        assert!(summary.contains("Optimization Rules Applied"));
+        assert!(summary.contains("Estimated Cost per Model"));
+        assert!(summary.contains("Parallelization Opportunities"));
+        assert!(summary.contains("Warnings"));
+    }
+
+    #[test]
+    fn test_dominant_model() {
+        let plan = EnhancedExplainPlan::builder()
+            .with_model_cost(ExplainModelType::Vector, 100.0)
+            .with_model_cost(ExplainModelType::Graph, 50.0)
+            .with_model_cost(ExplainModelType::Document, 25.0)
+            .build();
+
+        let dominant = plan.dominant_model();
+        assert!(dominant.is_some());
+        let (model, cost) = dominant.unwrap();
+        assert_eq!(model, ExplainModelType::Vector);
+        assert_eq!(cost, 100.0);
+    }
+
+    #[test]
+    fn test_historical_performance() {
+        let history = HistoricalPerformance::new(100, 0.85)
+            .with_latency(10.5)
+            .with_recall(0.98)
+            .with_success_rate(0.95);
+
+        assert_eq!(history.execution_count, 100);
+        assert_eq!(history.average_reward, 0.85);
+        assert_eq!(history.average_latency_ms, 10.5);
+        assert_eq!(history.average_recall, 0.98);
+        assert_eq!(history.success_rate, 0.95);
+    }
+
+    #[test]
+    fn test_complexity_analysis() {
+        let complexity = ComplexityAnalysis {
+            time_complexity: "O(n log n)".to_string(),
+            space_complexity: "O(n)".to_string(),
+            models_involved: 3,
+            join_count: 2,
+            max_join_depth: 2,
+            total_plan_nodes: 7,
+            requires_sorting: true,
+            requires_aggregation: false,
+            combined_selectivity: 0.15,
+        };
+
+        assert_eq!(complexity.time_complexity, "O(n log n)");
+        assert_eq!(complexity.models_involved, 3);
+        assert!(complexity.requires_sorting);
+    }
+
+    #[test]
+    fn test_serialization() {
+        let plan = EnhancedExplainPlan::builder()
+            .with_model_cost(ExplainModelType::Vector, 10.0)
+            .with_rule(OptimizationRule::predicate_pushdown("Test"))
+            .build();
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&plan).expect("Failed to serialize");
+        assert!(json.contains("Vector"));
+        assert!(json.contains("PredicatePushdown"));
+
+        // Deserialize from JSON
+        let deserialized: EnhancedExplainPlan =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+        assert_eq!(deserialized.optimization_rules_applied.len(), 1);
     }
 }

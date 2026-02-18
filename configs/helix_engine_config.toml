@@ -14,7 +14,7 @@ proxima_block_size = 128                  # Vectors per Proxima block (default: 
 enable_liquid_clustering = true           # Adaptive clustering based on query patterns
 
 # Quantization settings
-storage_quantization = false              # Enable storage quantization (false for FP32)
+storage_quantization = true               # Progressive quantization (Binary → INT8 → FP32)
 
 # Performance settings
 bloom_filter_bits_per_key = 10           # Bloom filter bits per key

@@ -2,8 +2,6 @@
 //!
 //! Tests for VIPER's column filter, parquet reconstructor, and core functionality.
 
-use super::helpers::*;
-
 // Tests from column_filter.rs
 
 #[tokio::test]
@@ -12,10 +10,10 @@ async fn test_viper_predicate_pushdown() {
     use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let mut evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
+    let _evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Simple equality filter
-    let filter = FilterExpression::Comparison {
+    let _filter = FilterExpression::Comparison {
         field: "category".to_string(),
         operator: ComparisonOperator::Equals,
         value: serde_json::json!("electronics"),
@@ -33,10 +31,10 @@ async fn test_parallel_column_evaluation() {
     use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
-    let mut evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
+    let _evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
 
     // Complex AND/OR filter
-    let filter = FilterExpression::And(vec![
+    let _filter = FilterExpression::And(vec![
         FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
@@ -62,7 +60,7 @@ fn test_reconstructor_creation() {
     };
 
     let config = ReconstructorConfig::default();
-    let reconstructor = ParquetReconstructor::new(config);
+    let _reconstructor = ParquetReconstructor::new(config);
 
     // Cannot access private config field
     // assert!(reconstructor.config.enable_schema_validation);
@@ -75,7 +73,7 @@ fn test_reconstructor_creation() {
 #[ignore = "accesses private method `detect_compression`"]
 fn test_compression_detection() {
     use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
-        CompressionType, FileSeekRange, ParquetReconstructor, ReconstructorConfig,
+        FileSeekRange, ParquetReconstructor, ReconstructorConfig,
     };
 
     let _reconstructor = ParquetReconstructor::new(ReconstructorConfig::default());

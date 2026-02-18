@@ -4,8 +4,6 @@
 // operations used in encoding scheme selection. Falls back to scalar operations
 // when SIMD is unavailable.
 
-use std::arch::is_x86_feature_detected;
-
 /// SIMD-accelerated min/max detection for f32 slices
 ///
 /// Uses AVX2 on x86_64 or NEON on ARM64 for 6-8x speedup over scalar operations.
@@ -123,33 +121,35 @@ unsafe fn horizontal_max_f32_avx2(vec: std::arch::x86_64::__m256) -> f32 {
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn simd_min_max_f32_neon(data: &[f32]) -> (f32, f32) {
-    use std::arch::aarch64::*;
+    unsafe {
+        use std::arch::aarch64::*;
 
-    if data.is_empty() {
-        return (f32::INFINITY, f32::NEG_INFINITY);
+        if data.is_empty() {
+            return (f32::INFINITY, f32::NEG_INFINITY);
+        }
+
+        let mut min_vec = vdupq_n_f32(f32::INFINITY);
+        let mut max_vec = vdupq_n_f32(f32::NEG_INFINITY);
+
+        let chunks = data.chunks_exact(4);
+        let remainder = chunks.remainder();
+
+        // Process 4 f32 values per iteration (NEON is 128-bit)
+        for chunk in chunks {
+            let vals = vld1q_f32(chunk.as_ptr());
+            min_vec = vminq_f32(min_vec, vals);
+            max_vec = vmaxq_f32(max_vec, vals);
+        }
+
+        // Horizontal reduction: 4 lanes -> 1 value
+        let min = vminvq_f32(min_vec);
+        let max = vmaxvq_f32(max_vec);
+
+        // Handle remainder
+        remainder.iter().fold((min, max), |(a_min, a_max), &b| {
+            (a_min.min(b), a_max.max(b))
+        })
     }
-
-    let mut min_vec = vdupq_n_f32(f32::INFINITY);
-    let mut max_vec = vdupq_n_f32(f32::NEG_INFINITY);
-
-    let chunks = data.chunks_exact(4);
-    let remainder = chunks.remainder();
-
-    // Process 4 f32 values per iteration (NEON is 128-bit)
-    for chunk in chunks {
-        let vals = vld1q_f32(chunk.as_ptr());
-        min_vec = vminq_f32(min_vec, vals);
-        max_vec = vmaxq_f32(max_vec, vals);
-    }
-
-    // Horizontal reduction: 4 lanes -> 1 value
-    let min = vminvq_f32(min_vec);
-    let max = vmaxvq_f32(max_vec);
-
-    // Handle remainder
-    remainder.iter().fold((min, max), |(a_min, a_max), &b| {
-        (a_min.min(b), a_max.max(b))
-    })
 }
 
 /// SIMD-accelerated zero counting for f32 slices
@@ -221,37 +221,39 @@ unsafe fn simd_zero_count_f32_avx2(data: &[f32], threshold: f32) -> usize {
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn simd_zero_count_f32_neon(data: &[f32], threshold: f32) -> usize {
-    use std::arch::aarch64::*;
+    unsafe {
+        use std::arch::aarch64::*;
 
-    let threshold_vec = vdupq_n_f32(threshold);
-    let neg_threshold_vec = vdupq_n_f32(-threshold);
-    let mut count = 0;
+        let threshold_vec = vdupq_n_f32(threshold);
+        let neg_threshold_vec = vdupq_n_f32(-threshold);
+        let mut count = 0;
 
-    let chunks = data.chunks_exact(4);
-    let remainder = chunks.remainder();
+        let chunks = data.chunks_exact(4);
+        let remainder = chunks.remainder();
 
-    for chunk in chunks {
-        let vals = vld1q_f32(chunk.as_ptr());
+        for chunk in chunks {
+            let vals = vld1q_f32(chunk.as_ptr());
 
-        // Check if -threshold < val < threshold
-        let gt_neg = vcgtq_f32(vals, neg_threshold_vec);
-        let lt_pos = vcltq_f32(vals, threshold_vec);
-        let is_near_zero = vandq_u32(gt_neg, lt_pos);
+            // Check if -threshold < val < threshold
+            let gt_neg = vcgtq_f32(vals, neg_threshold_vec);
+            let lt_pos = vcltq_f32(vals, threshold_vec);
+            let is_near_zero = vandq_u32(gt_neg, lt_pos);
 
-        // Count set lanes - each true lane has all bits set (0xFFFFFFFF)
-        // Extract individual lanes and count how many are non-zero
-        let lane0 = vgetq_lane_u32(is_near_zero, 0);
-        let lane1 = vgetq_lane_u32(is_near_zero, 1);
-        let lane2 = vgetq_lane_u32(is_near_zero, 2);
-        let lane3 = vgetq_lane_u32(is_near_zero, 3);
+            // Count set lanes - each true lane has all bits set (0xFFFFFFFF)
+            // Extract individual lanes and count how many are non-zero
+            let lane0 = vgetq_lane_u32(is_near_zero, 0);
+            let lane1 = vgetq_lane_u32(is_near_zero, 1);
+            let lane2 = vgetq_lane_u32(is_near_zero, 2);
+            let lane3 = vgetq_lane_u32(is_near_zero, 3);
 
-        count += (lane0 != 0) as usize;
-        count += (lane1 != 0) as usize;
-        count += (lane2 != 0) as usize;
-        count += (lane3 != 0) as usize;
+            count += (lane0 != 0) as usize;
+            count += (lane1 != 0) as usize;
+            count += (lane2 != 0) as usize;
+            count += (lane3 != 0) as usize;
+        }
+
+        count + remainder.iter().filter(|&&v| v.abs() < threshold).count()
     }
-
-    count + remainder.iter().filter(|&&v| v.abs() < threshold).count()
 }
 
 #[cfg(test)]

@@ -512,7 +512,7 @@ impl ZoneMap {
         // Very rough approximation - could be improved with tighter bounds
         let min_possible_cosine = 1.0 - max_similarity;
         let max_possible_dot = query_norm * self.norm_bounds.1;
-        let min_possible_dot = query_norm * self.norm_bounds.0;
+        let _min_possible_dot = query_norm * self.norm_bounds.0;
 
         // Conservative check
         max_possible_dot >= min_possible_cosine * query_norm * self.norm_bounds.0
@@ -606,7 +606,7 @@ impl EnhancedRowGroupStats {
         min_values: Vec<f32>,
         max_values: Vec<f32>,
         centroid: Vec<f32>,
-        null_counts: Vec<u64>,
+        _null_counts: Vec<u64>,
         estimated_selectivity: f32,
         compression_ratio: f32,
         access_frequency: u64,

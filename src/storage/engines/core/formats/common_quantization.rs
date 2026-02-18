@@ -9,9 +9,10 @@
 //! - Memory-efficient storage of quantized representations
 //! - Integration with existing quantization infrastructure
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::storage::engines::core::formats::columnar::constants::DEFAULT_ROW_GROUP_SIZE;
 
 // Define simple enum for quantization levels for this module
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -23,7 +24,6 @@ pub enum QuantizationLevel {
     PQ16,
     PQ32,
 }
-use crate::core::VectorRecord;
 
 /// Unified quantized file structure for all storage engines
 ///
@@ -472,7 +472,7 @@ impl EngineQuantizationConfig {
         Self::Parquet {
             separate_columns: true,
             quantized_compression: "lz4".to_string(),
-            row_group_size: 10000, // 10K vectors per row group
+            row_group_size: DEFAULT_ROW_GROUP_SIZE,
         }
     }
 }

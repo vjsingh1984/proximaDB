@@ -16,6 +16,14 @@ ____
 *"Details live in module docs. Top-level docs reference them."*
 ____
 
+[NOTE]
+====
+Keep top-level docs aligned with current system status:
+- WAL recovery has a known pool metadata propagation bug; wherever recovery is described, reference `URGENT_FIX_INSTRUCTIONS.md` / `FINAL_FIX_NEEDED.md` and the validation script `RECOVERY_TEST_FRESH.sh`.
+- Cloud and GPU features are feature-gated/experimental; highlight this in any docs that mention them.
+- For commands/standards, defer to `AGENTS.md` to avoid drift.
+====
+
 === Benefits
 
 * **No Duplication**: Implementation details exist in one place (module docs)

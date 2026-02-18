@@ -3,9 +3,7 @@
 //! Tests the core MVCC version resolution logic used by both
 //! VIPER and SST engines to ensure consistency.
 
-use proximadb::proto::proximadb_v1::{SearchVectorRecord, SqlValue};
-use proximadb::services::VectorOperationsService;
-use serde_json::json;
+use proximadb::proto::proximadb_v1::SearchVectorRecord;
 use std::collections::HashMap;
 
 /// Test helper to create a SearchVectorRecord with specific ID, version, and timestamp

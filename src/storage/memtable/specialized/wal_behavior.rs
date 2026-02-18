@@ -168,6 +168,15 @@ impl BatchCoordinator {
         ))
     }
 
+    /// List all collections that have unflushed data (for shutdown flush)
+    fn list_collections_with_unflushed_data(&self) -> Vec<String> {
+        self.batches
+            .iter()
+            .filter(|(_, batches)| batches.values().any(|batch| !batch.is_flushed))
+            .map(|(collection_id, _)| collection_id.clone())
+            .collect()
+    }
+
     /// Clear flushed batches from coordinator
     fn clear_flushed_batches(&mut self, collection_id: &str) -> Result<usize> {
         let mut cleared_count = 0;
@@ -228,6 +237,7 @@ pub struct WALBehaviorWrapper {
     wal_metrics: Arc<RwLock<WriteBufferMetrics>>,
 
     /// Flush coordination state
+    #[allow(dead_code)]
     flush_state: Arc<RwLock<FlushState>>,
 
     /// Distributed mode: idempotency tokens per collection
@@ -663,6 +673,13 @@ impl WALBehaviorWrapper {
         self.inner.clear_flushed_batches(collection_id).await
     }
 
+    /// List all collections that have unflushed data in memtable
+    /// Used for graceful shutdown to flush all pending data to storage engines
+    pub async fn list_collections_with_unflushed_data(&self) -> Vec<String> {
+        let coordinator = self.batch_coordinator.read().await;
+        coordinator.list_collections_with_unflushed_data()
+    }
+
     /// Get statistics for WAL collection management (MODERN)
     pub async fn get_stats(&self) -> Result<HashMap<String, WALStats>> {
         let all_stats = self.inner.get_all_collection_stats().await;
@@ -689,6 +706,7 @@ impl WALBehaviorWrapper {
         Ok(stats_map)
     }
 
+    #[allow(dead_code)]
     fn get_operation_type(&self, operation: &WALOperation) -> u8 {
         // Map operation types to numeric codes
         match operation.operation_type.as_str() {
@@ -698,6 +716,7 @@ impl WALBehaviorWrapper {
         }
     }
 
+    #[allow(dead_code)]
     async fn serialize_operation(&self, operation: &WALOperation) -> Result<Vec<u8>> {
         Ok(bincode::serialize(operation)?)
     }
@@ -1095,8 +1114,11 @@ pub struct WriteBufferMetrics {
 /// Flush coordination state
 #[derive(Debug, Clone, Default)]
 struct FlushState {
+    #[allow(dead_code)]
     last_flush_sequence: u64,
+    #[allow(dead_code)]
     flush_in_progress: bool,
+    #[allow(dead_code)]
     flush_start_time: Option<std::time::Instant>,
 }
 

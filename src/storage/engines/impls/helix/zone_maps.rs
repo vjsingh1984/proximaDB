@@ -4,7 +4,6 @@
 //! to enable fine-grained pruning during query execution.
 
 use anyhow::Result;
-use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::VectorRecord;
@@ -131,7 +130,7 @@ impl ZoneMap {
     }
 
     /// Calculate pruning score for a query
-    pub fn pruning_score(&self, query_vector: &[f32], radius: f32) -> f32 {
+    pub fn pruning_score(&self, query_vector: &[f32], _radius: f32) -> f32 {
         if query_vector.len() != self.dim_min.len() {
             return f32::INFINITY;
         }
@@ -233,7 +232,8 @@ impl ZoneMapIndex {
             .collect();
 
         // Sort by score (lower is better)
-        block_scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        // Use total_cmp for safe NaN handling
+        block_scores.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         // Select blocks likely to contain top-k results
         let blocks_to_scan = (k as f32 * 1.5).ceil() as usize; // Scan 1.5x blocks

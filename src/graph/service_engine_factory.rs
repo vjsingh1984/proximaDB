@@ -1,10 +1,40 @@
-//! Engine Factory (extracted from service.rs)
+//! # Graph Engine Factory
 //!
 //! Centralizes graph engine creation, selection, and first-time initialization.
-//! Responsibilities:
+//!
+//! ## Engine Selection
+//!
+//! | Engine | Status | Recommended |
+//! |--------|--------|-------------|
+//! | ORION | Production | Yes (default) |
+//! | PULSAR | Experimental | No |
+//! | QUASAR | Experimental | No |
+//!
+//! ## Default Engine
+//!
+//! **ORION is the default and recommended graph engine for all workloads.**
+//!
+//! When no engine type is specified in collection metadata, ORION is automatically
+//! selected. ORION provides:
+//! - Production-grade reliability with WAL persistence
+//! - High performance (1M+ edges/sec traversal, <1us node lookup)
+//! - Full feature support (graph algorithms, label indexes, concurrent access)
+//!
+//! ## Experimental Engines
+//!
+//! PULSAR and QUASAR are experimental and should only be used for research/development:
+//!
+//! - **PULSAR**: Distributed sharding with incomplete cross-shard query support
+//! - **QUASAR**: Hot/cold tiering with minimal tiering logic and no WAL
+//!
+//! Requesting an experimental engine will log a warning.
+//!
+//! ## Responsibilities
+//!
 //! - Resolve engine type from collection metadata (ORION/PULSAR/QUASAR)
 //! - Normalize storage root URL and pass through to persistence layer
 //! - Initialize schema-derived unique/multi-unique indexes on first load
+//! - Log warnings when experimental engines are requested
 
 use super::Result;
 use crate::core::error::ProximaDBError;
@@ -13,7 +43,7 @@ use std::sync::Arc;
 
 impl super::GraphOperationsService {
     /// Get or create a graph engine for the specified graph ID
-    pub(super) async fn get_or_create_graph_engine(
+    pub(crate) async fn get_or_create_graph_engine(
         &self,
         graph_id: &str,
     ) -> Result<Arc<crate::graph::engines::GraphEngineImpl>> {
@@ -47,17 +77,56 @@ impl super::GraphOperationsService {
             storage_root_url
         );
 
-        // Create engine based on type (default ORION)
+        // Create engine based on type (default ORION - production-ready)
+        // PULSAR and QUASAR are experimental and log warnings
         let engine_impl = match engine_type_str.to_ascii_uppercase().as_str() {
             "PULSAR" => {
-                let cfg = crate::graph::engines::pulsar::PulsarConfig::default();
-                let pulsar = crate::graph::engines::pulsar::PulsarGraphEngine::new(cfg)?;
-                crate::graph::engines::GraphEngineImpl::Pulsar(pulsar)
+                #[cfg(feature = "distributed-graph")]
+                {
+                    // WARNING: PULSAR is experimental
+                    tracing::warn!(
+                        "PULSAR engine requested for graph '{}' - PULSAR is EXPERIMENTAL. \
+                         Cross-shard queries may be incomplete. For production, use ORION.",
+                        graph_id
+                    );
+                    let cfg = crate::graph::engines::pulsar::PulsarConfig::default();
+                    let pulsar = crate::graph::engines::pulsar::PulsarGraphEngine::new(cfg)?;
+                    crate::graph::engines::GraphEngineImpl::Pulsar(pulsar)
+                }
+                #[cfg(not(feature = "distributed-graph"))]
+                {
+                    return Err(crate::core::error::ProximaDBError::NotImplemented(
+                        "PULSAR engine requires 'distributed-graph' feature".to_string(),
+                    ));
+                }
             }
             "QUASAR" => {
-                let cfg = crate::graph::engines::quasar::QuasarConfig::default();
-                let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
-                crate::graph::engines::GraphEngineImpl::Quasar(quasar)
+                #[cfg(feature = "tiered-graph")]
+                {
+                    // WARNING: QUASAR is experimental
+                    tracing::warn!(
+                        "QUASAR engine requested for graph '{}' - QUASAR is EXPERIMENTAL. \
+                         No WAL persistence, data loss possible. For production, use ORION.",
+                        graph_id
+                    );
+                    // Derive a graph-scoped cold tier path under the configured storage root
+                    let mut cfg = crate::graph::engines::quasar::QuasarConfig::default();
+                    if storage_root_url.starts_with("file://") {
+                        let base_path = storage_root_url.trim_start_matches("file://");
+                        cfg.cold_tier_path = std::path::PathBuf::from(base_path)
+                            .join("graphs")
+                            .join(graph_id)
+                            .join("quasar_cold");
+                    }
+                    let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
+                    crate::graph::engines::GraphEngineImpl::Quasar(quasar)
+                }
+                #[cfg(not(feature = "tiered-graph"))]
+                {
+                    return Err(crate::core::error::ProximaDBError::NotImplemented(
+                        "QUASAR engine requires 'tiered-graph' feature".to_string(),
+                    ));
+                }
             }
             _ => {
                 let orion = crate::graph::OrionGraphEngine::with_persistence_for_graph(

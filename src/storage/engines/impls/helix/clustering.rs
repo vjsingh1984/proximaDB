@@ -34,12 +34,216 @@ pub struct PCAModel {
 }
 
 impl PCAModel {
-    /// Train a PCA model from vector records
+    /// Train a PCA model from vector records using real SVD-based PCA
+    ///
+    /// This implementation uses nalgebra's SVD to compute principal components,
+    /// providing true dimensionality reduction that preserves maximum variance.
     pub fn train(records: &[VectorRecord], n_components: usize) -> Result<Self> {
         if records.is_empty() {
             anyhow::bail!("Cannot train PCA on empty records");
         }
 
+        let original_dim = records[0].vector.len();
+        let n_samples = records.len();
+
+        // For very small datasets, use randomized projection as fallback
+        // (SVD on tiny datasets may be unstable)
+        if n_samples < n_components * 2 {
+            tracing::warn!(
+                "[HELIX PCA] Too few samples ({}) for {} components, using fallback",
+                n_samples,
+                n_components
+            );
+            return Self::train_randomized_fallback(records, n_components);
+        }
+
+        tracing::info!(
+            "[HELIX PCA] Training real SVD-based PCA: {} samples, {} dims -> {} components",
+            n_samples,
+            original_dim,
+            n_components
+        );
+
+        // Step 1: Calculate mean
+        let mean: Vec<f32> = (0..original_dim)
+            .map(|j| {
+                let sum: f32 = records.iter().map(|r| r.vector[j]).sum();
+                sum / n_samples as f32
+            })
+            .collect();
+
+        // Step 2: Build centered data matrix and compute SVD
+        // For large datasets (>10K samples), use power iteration/randomized SVD
+        let (components, explained_variance) = if n_samples > 10_000 || original_dim > 1024 {
+            Self::compute_pca_power_iteration(records, &mean, n_components, original_dim)?
+        } else {
+            Self::compute_pca_svd(records, &mean, n_components, n_samples, original_dim)?
+        };
+
+        tracing::info!(
+            "[HELIX PCA] Training complete: top eigenvalue ratio = {:.4}",
+            explained_variance.first().unwrap_or(&0.0)
+                / explained_variance.iter().sum::<f32>().max(1e-10)
+        );
+
+        Ok(Self {
+            components,
+            mean,
+            explained_variance,
+            n_components,
+            original_dim,
+            version: 1,
+        })
+    }
+
+    /// Compute PCA using full SVD (for moderate-sized datasets)
+    fn compute_pca_svd(
+        records: &[VectorRecord],
+        mean: &[f32],
+        n_components: usize,
+        n_samples: usize,
+        original_dim: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<f32>)> {
+        use nalgebra::DMatrix;
+
+        // Build centered data matrix (n_samples x original_dim)
+        let mut data = DMatrix::<f64>::zeros(n_samples, original_dim);
+        for (i, record) in records.iter().enumerate() {
+            for (j, &val) in record.vector.iter().enumerate() {
+                data[(i, j)] = (val - mean[j]) as f64;
+            }
+        }
+
+        // Compute SVD: X = U * S * V^T
+        // The right singular vectors V are the principal components
+        let svd = data.svd(false, true);
+
+        let v_t = svd
+            .v_t
+            .ok_or_else(|| anyhow::anyhow!("SVD failed to compute V^T"))?;
+        let singular_values = svd.singular_values;
+
+        // Extract top n_components from V^T (V^T is original_dim x original_dim)
+        // Each row of V^T is a principal component
+        let mut components = Vec::with_capacity(n_components);
+        let mut explained_variance = Vec::with_capacity(n_components);
+
+        // Total variance for normalization
+        let total_variance: f64 =
+            singular_values.iter().map(|s| s * s).sum::<f64>() / (n_samples - 1) as f64;
+
+        for i in 0..n_components.min(v_t.nrows()) {
+            // Extract i-th row of V^T as the i-th principal component
+            let component: Vec<f32> = (0..original_dim).map(|j| v_t[(i, j)] as f32).collect();
+            components.push(component);
+
+            // Explained variance = singular_value^2 / (n-1)
+            let variance = singular_values[i] * singular_values[i] / (n_samples - 1) as f64;
+            explained_variance.push((variance / total_variance.max(1e-10)) as f32);
+        }
+
+        Ok((components, explained_variance))
+    }
+
+    /// Compute PCA using power iteration (for large datasets)
+    /// This is more memory-efficient for very large datasets
+    fn compute_pca_power_iteration(
+        records: &[VectorRecord],
+        mean: &[f32],
+        n_components: usize,
+        original_dim: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<f32>)> {
+        use rand::{Rng, SeedableRng};
+
+        let n_samples = records.len();
+        let n_iterations = 10; // Usually converges in 5-10 iterations
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let mut components = Vec::with_capacity(n_components);
+        let mut explained_variance = Vec::with_capacity(n_components);
+
+        // Deflation-based power iteration for multiple components
+        let mut deflated_records: Vec<Vec<f32>> = records
+            .iter()
+            .map(|r| {
+                r.vector
+                    .iter()
+                    .zip(mean.iter())
+                    .map(|(v, m)| v - m)
+                    .collect()
+            })
+            .collect();
+
+        for _comp_idx in 0..n_components {
+            // Initialize random vector
+            let mut v: Vec<f64> = (0..original_dim)
+                .map(|_| rng.gen_range(-1.0..1.0))
+                .collect();
+
+            // Normalize
+            let norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            v.iter_mut().for_each(|x| *x /= norm.max(1e-10));
+
+            // Power iteration: v = X^T * X * v, normalized
+            for _ in 0..n_iterations {
+                // Compute X * v (project onto v)
+                let xv: Vec<f64> = deflated_records
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .zip(&v)
+                            .map(|(&r, &vi)| r as f64 * vi)
+                            .sum::<f64>()
+                    })
+                    .collect();
+
+                // Compute X^T * (X * v)
+                let mut new_v = vec![0.0_f64; original_dim];
+                for (row, &xvi) in deflated_records.iter().zip(&xv) {
+                    for (j, &r) in row.iter().enumerate() {
+                        new_v[j] += r as f64 * xvi;
+                    }
+                }
+
+                // Normalize
+                let norm: f64 = new_v.iter().map(|x| x * x).sum::<f64>().sqrt();
+                v = new_v.iter().map(|x| x / norm.max(1e-10)).collect();
+            }
+
+            // Compute eigenvalue (variance explained)
+            let xv: Vec<f64> = deflated_records
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .zip(&v)
+                        .map(|(&r, &vi)| r as f64 * vi)
+                        .sum::<f64>()
+                })
+                .collect();
+            let eigenvalue: f64 = xv.iter().map(|x| x * x).sum::<f64>() / (n_samples - 1) as f64;
+
+            components.push(v.iter().map(|&x| x as f32).collect());
+            explained_variance.push(eigenvalue as f32);
+
+            // Deflate: remove component from data
+            for (row, &proj) in deflated_records.iter_mut().zip(&xv) {
+                for (j, r) in row.iter_mut().enumerate() {
+                    *r -= (proj * v[j]) as f32;
+                }
+            }
+        }
+
+        // Normalize explained variance to sum to 1
+        let total: f32 = explained_variance.iter().sum();
+        if total > 1e-10 {
+            explained_variance.iter_mut().for_each(|e| *e /= total);
+        }
+
+        Ok((components, explained_variance))
+    }
+
+    /// Fallback to randomized projection for very small datasets
+    fn train_randomized_fallback(records: &[VectorRecord], n_components: usize) -> Result<Self> {
         let original_dim = records[0].vector.len();
         let n_samples = records.len();
 
@@ -51,9 +255,8 @@ impl PCAModel {
             })
             .collect();
 
-        // For now, use random projection as a placeholder
-        // In production, use proper PCA with eigendecomposition
-        let components = Self::random_projection(original_dim, n_components);
+        // Use random projection with orthogonalization for better quality
+        let components = Self::random_orthogonal_projection(original_dim, n_components);
         let explained_variance = vec![1.0 / n_components as f32; n_components];
 
         Ok(Self {
@@ -66,18 +269,37 @@ impl PCAModel {
         })
     }
 
-    /// Random projection for dimensionality reduction (placeholder)
-    fn random_projection(original_dim: usize, n_components: usize) -> Vec<Vec<f32>> {
+    /// Random orthogonal projection (better than pure random for fallback)
+    fn random_orthogonal_projection(original_dim: usize, n_components: usize) -> Vec<Vec<f32>> {
         use rand::{Rng, SeedableRng};
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 
-        (0..n_components)
-            .map(|_| {
-                (0..original_dim)
-                    .map(|_| rng.gen_range(-1.0..1.0))
-                    .collect()
-            })
-            .collect()
+        let mut components: Vec<Vec<f32>> = Vec::with_capacity(n_components);
+
+        for _ in 0..n_components {
+            // Generate random vector
+            let mut v: Vec<f32> = (0..original_dim)
+                .map(|_| rng.gen_range(-1.0..1.0))
+                .collect();
+
+            // Orthogonalize against previous components (Gram-Schmidt)
+            for prev in &components {
+                let dot: f32 = v.iter().zip(prev).map(|(a, b)| a * b).sum();
+                for (vi, &pi) in v.iter_mut().zip(prev) {
+                    *vi -= dot * pi;
+                }
+            }
+
+            // Normalize
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 1e-10 {
+                v.iter_mut().for_each(|x| *x /= norm);
+            }
+
+            components.push(v);
+        }
+
+        components
     }
 
     /// Transform a vector (alias for project)

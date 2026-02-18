@@ -13,7 +13,6 @@ use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, QuantizationCodebookMetadata,
 };
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// VIPER-specific codebook sidecar manager
 pub struct ViperCodebookSidecarManager {
@@ -240,7 +239,7 @@ impl ViperCodebookSidecarManager {
 /// NOVA-specific extensions for progressive columnar storage
 pub struct NovaCodebookSidecarManager {
     base: ViperCodebookSidecarManager,
-    enable_progressive: bool,
+    _enable_progressive: bool,
 }
 
 impl NovaCodebookSidecarManager {
@@ -252,7 +251,7 @@ impl NovaCodebookSidecarManager {
     ) -> Self {
         Self {
             base: ViperCodebookSidecarManager::new(collection_id, filesystem),
-            enable_progressive,
+            _enable_progressive: enable_progressive,
         }
     }
 

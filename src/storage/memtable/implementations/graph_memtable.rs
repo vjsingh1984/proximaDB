@@ -373,7 +373,7 @@ impl GraphMemtable {
             let mut offsets = self.csr_offsets.write();
 
             // Find insertion point for this edge
-            let start = offsets[from_idx];
+            let _start = offsets[from_idx];
             let end = offsets[from_idx + 1];
 
             // Insert target node ID

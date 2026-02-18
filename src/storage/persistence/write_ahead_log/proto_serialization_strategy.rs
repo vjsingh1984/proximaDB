@@ -41,6 +41,7 @@ pub struct ProtoSerializationStrategy {
     storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
 
     /// Flush coordinator
+    #[allow(dead_code)]
     flush_coordinator: Arc<WALFlushCoordinator>,
 
     /// Distance computation
@@ -181,7 +182,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         &self,
         batch: WALVectorBatch,
         collection_id: &str,
-        base_location: &str,
+        _base_location: &str,
     ) -> Result<Vec<u64>> {
         debug!(
             "📝 Writing native batch {} with {} vectors",
@@ -310,10 +311,12 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
+                file_paths: vec![],
                 duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
+                compaction_error: None,
                 flushed_batch_ids: Vec::new(),
             });
         }
@@ -390,10 +393,12 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
+            file_paths: flush_result.file_paths.clone(),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
+            compaction_error: None,
             flushed_batch_ids: flush_result.flushed_batch_ids.clone(),
         })
     }
@@ -566,6 +571,7 @@ impl ProtoSerializationStrategy {
     }
 
     /// Trigger background flush for a collection
+    #[allow(dead_code)]
     fn trigger_background_flush(&self, collection_id: &str) {
         let collection_id = collection_id.to_string();
         let _memtable = self.memtable_manager.clone();
@@ -604,10 +610,12 @@ impl ProtoSerializationStrategy {
             entries_flushed: Some(0), // TODO: Track actual entries
             bytes_written: Some(0),   // TODO: Track actual bytes
             files_created: Some(0),
+            file_paths: vec![],
             duration_ms: Some(0),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: Vec::new(),
         })
     }

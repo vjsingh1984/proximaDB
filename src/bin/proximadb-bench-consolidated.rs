@@ -1369,6 +1369,7 @@ enum EmbeddingModel {
     /// Generic normalized embeddings: unit norm (L2 = 1)
     Normalized,
     /// Random uniform distribution
+    #[allow(dead_code)]
     RandomUniform,
 }
 
@@ -2445,7 +2446,7 @@ fn benchmark_batch_memory(
         clone_time_us: clone_times.0,
         arc_time_us: arc_times.0,
         clone_memory_mb: total_memory_mb,
-        arc_memory_mb: arc_memory_mb,
+        arc_memory_mb,
         speedup: clone_times.0 / arc_times.0,
         memory_saved_percent: (1.0 - arc_memory_mb / total_memory_mb) * 100.0,
     })
@@ -3323,7 +3324,7 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
             .map(|(name, _, _, comp, _)| (*name, *comp))
             .unwrap_or(("N/A", 0.0));
 
-        let cloud_winner = strategies
+        let _cloud_winner = strategies
             .iter()
             .filter(|(_, _, _, _, size)| *size > 0.0)
             .min_by(|a, b| a.4.partial_cmp(&b.4).unwrap())
@@ -3500,22 +3501,22 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
     println!("{}", "=".repeat(100));
 
     // Calculate key metrics
-    let avg_transpose_field_compression = results
+    let _avg_transpose_field_compression = results
         .iter()
         .map(|r| r.transpose_field_compression)
         .sum::<f64>()
         / results.len() as f64;
-    let avg_fullvector_compression = results
+    let _avg_fullvector_compression = results
         .iter()
         .map(|r| r.fullvector_compression)
         .sum::<f64>()
         / results.len() as f64;
-    let avg_grouped_field_compression = results
+    let _avg_grouped_field_compression = results
         .iter()
         .map(|r| r.grouped_field_compression)
         .sum::<f64>()
         / results.len() as f64;
-    let avg_transpose_block_compression = results
+    let _avg_transpose_block_compression = results
         .iter()
         .map(|r| r.transpose_block_compression)
         .sum::<f64>()
@@ -3584,7 +3585,7 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
 
     // OpenAI embeddings (1536D) - CORRECTED ANALYSIS WITH COMPRESSION CAVEATS
     if !openai_results.is_empty() {
-        let openai_best_compression = openai_results
+        let _openai_best_compression = openai_results
             .iter()
             .max_by(|a, b| {
                 a.transpose_block_compression
@@ -3592,7 +3593,7 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
                     .unwrap()
             })
             .unwrap();
-        let openai_fastest_encode = openai_results
+        let _openai_fastest_encode = openai_results
             .iter()
             .min_by(|a, b| {
                 a.transpose_block_encode_ms
@@ -3600,7 +3601,7 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
                     .unwrap()
             })
             .unwrap();
-        let openai_fastest_decode = openai_results
+        let _openai_fastest_decode = openai_results
             .iter()
             .min_by(|a, b| {
                 a.transpose_block_decode_ms
@@ -3631,7 +3632,7 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
 
     // BERT Large (1024D) - CORRECTED ANALYSIS WITH COMPRESSION CAVEATS
     if !bert_large_results.is_empty() {
-        let bert_large_best_result = bert_large_results
+        let _bert_large_best_result = bert_large_results
             .iter()
             .max_by(|a, b| {
                 a.transpose_block_compression
@@ -3664,7 +3665,7 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
 
     // BERT Base (768D) - CORRECTED ANALYSIS WITH COMPRESSION CAVEATS
     if !bert_base_results.is_empty() {
-        let bert_base_best_result = bert_base_results
+        let _bert_base_best_result = bert_base_results
             .iter()
             .max_by(|a, b| {
                 a.transpose_block_compression
@@ -4172,6 +4173,7 @@ where
     Ok(((mean, std_dev), result.unwrap()))
 }
 
+#[allow(dead_code)]
 fn benchmark_encoding_statistical(
     vector_count: usize,
     dimension: usize,
@@ -5039,6 +5041,7 @@ fn benchmark_simd_encoding_schemes(
         encode_ms: f64, // Encoding time with ProximaCodec
         compression_ratio: f64,
         compressed_size: usize,
+        #[allow(dead_code)]
         success: bool,
         pattern_detection_us: f64, // Pattern detection time in microseconds
         detected_scheme: String,

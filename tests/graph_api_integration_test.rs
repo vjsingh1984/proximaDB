@@ -19,11 +19,11 @@
 //! Tests the complete flow from graph collection creation through node/edge operations,
 //! verifying that the GraphCollectionService and GraphOperationsService are properly wired.
 
+use proximadb::graph::GraphOperationsService;
 use proximadb::proto::proximadb_v1::{CreateGraphRequest, Node, PropertyValue};
 use proximadb::services::GraphCollectionService;
-use proximadb::graph::GraphOperationsService;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_graph_collection_service_isolation_bug() {
@@ -32,11 +32,9 @@ async fn test_graph_collection_service_isolation_bug() {
 
     // Simulate UnifiedHandlers::new() which creates TWO instances
     let graph_collection_service_external = Arc::new(GraphCollectionService::new());
-    let graph_operations_service = Arc::new(
-        GraphOperationsService::new_with_collection_service(
-            Arc::new(GraphCollectionService::new()), // BUG: This is a DIFFERENT instance!
-        ),
-    );
+    let graph_operations_service = Arc::new(GraphOperationsService::new_with_collection_service(
+        Arc::new(GraphCollectionService::new()), // BUG: This is a DIFFERENT instance!
+    ));
 
     // Create graph collection using external service (simulates REST /graphs endpoint)
     let create_request = CreateGraphRequest {
@@ -68,9 +66,11 @@ async fn test_graph_collection_service_isolation_bug() {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                "Alice".to_string(),
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
+                    "Alice".to_string(),
+                ),
+            ),
         },
     );
 
@@ -110,9 +110,9 @@ async fn test_graph_collection_service_shared_correctly() {
     let graph_collection_service = Arc::new(GraphCollectionService::new());
 
     // Share it with GraphOperationsService
-    let graph_operations_service = Arc::new(
-        GraphOperationsService::new_with_collection_service(graph_collection_service.clone()),
-    );
+    let graph_operations_service = Arc::new(GraphOperationsService::new_with_collection_service(
+        graph_collection_service.clone(),
+    ));
 
     // Create graph collection
     let create_request = CreateGraphRequest {
@@ -137,9 +137,11 @@ async fn test_graph_collection_service_shared_correctly() {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                "Alice".to_string(),
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
+                    "Alice".to_string(),
+                ),
+            ),
         },
     );
 
@@ -171,9 +173,9 @@ async fn test_end_to_end_graph_operations() {
     // Full end-to-end test simulating real API usage
 
     let graph_collection_service = Arc::new(GraphCollectionService::new());
-    let graph_operations_service = Arc::new(
-        GraphOperationsService::new_with_collection_service(graph_collection_service.clone()),
-    );
+    let graph_operations_service = Arc::new(GraphOperationsService::new_with_collection_service(
+        graph_collection_service.clone(),
+    ));
 
     // 1. Create graph collection
     let create_request = CreateGraphRequest {
@@ -248,9 +250,11 @@ fn create_person_node(id: &str, name: &str) -> Node {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                name.to_string(),
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
+                    name.to_string(),
+                ),
+            ),
         },
     );
 

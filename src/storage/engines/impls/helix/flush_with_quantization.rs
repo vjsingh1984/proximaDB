@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use tracing::{info, debug};
 
 use crate::storage::engines::impls::helix::HelixEngine;
-use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, quantization_trait::ProximaBlockQuantization};
+use crate::storage::engines::core::formats::proximablocks::{
+    quantization_trait::ProximaBlockQuantization, utils::recommend_block_size_for_dimension,
+    ProximaDataBlock,
+};
 use crate::storage::engines::core::ops::unified_proxima_simd::EngineProfile;
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::compute::clustering::hilbert_curve::{HilbertCurve, HilbertPoint};
@@ -17,8 +20,13 @@ impl ProximaBlockQuantization for HelixEngine {
     }
 
     fn block_size_kb(&self) -> usize {
-        // HELIX uses adaptive block sizes based on clustering
-        self.config.base_block_size_kb
+        // HELIX uses adaptive block sizes based on clustering; prefer configured value, fall back to a dimension-aware baseline
+        let configured = self.config.base_block_size_kb;
+        if configured > 0 {
+            configured
+        } else {
+            recommend_block_size_for_dimension(384, 200) / 1024
+        }
     }
 
     fn engine_name(&self) -> &str {
@@ -52,16 +60,19 @@ impl ProximaBlockQuantization for HelixEngine {
         }
 
         // Create flush result
+        // Note: file_paths not tracked in this quantization path - main do_flush handles it
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
             entries_flushed: Some(total_entries),
             bytes_written: Some(total_bytes),
             files_created: Some(files_created),
+            file_paths: vec![],
             duration_ms: None,
             completed_at: chrono::Utc::now(),
             engine_metrics: self.collect_helix_metrics(),
             compaction_triggered: self.should_trigger_compaction(total_entries),
+            compaction_error: None,
             flushed_batch_ids: params.batch_ids.clone(),
         })
     }

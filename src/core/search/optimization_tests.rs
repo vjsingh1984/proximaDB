@@ -1,20 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::hardware_capabilities::HardwareCapabilities;
     use crate::core::search::integrated_search_optimization::BufferPool;
-    use crate::core::search::metadata_filter_pushdown::{ColumnStatistics, MetadataFilterPushdown};
-    use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
+    use crate::core::search::metadata_filter_pushdown::MetadataFilterPushdown;
+    use crate::core::search::query_preprocessing::QueryPreprocessor;
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::core::search::{ComparisonOperator, FilterExpression};
     // use crate::core::search::unified_progressive_pipeline::{
     //     PipelineConfig, UnifiedProgressiveSearchPipeline,
     // };
-    use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-    use crate::storage::cache::specialized::{MetadataStore, QueryCache};
     // use crate::storage::persistence::write_ahead_log::parallel_search::ParallelWALSearch;
-    use std::collections::HashMap;
     use std::sync::Arc;
     use tokio;
 
@@ -151,13 +146,13 @@ mod tests {
     async fn test_metadata_filter_pushdown() {
         init_test_environment();
 
-        let filter_pushdown = MetadataFilterPushdown::new();
+        let _filter_pushdown = MetadataFilterPushdown::new();
 
         // Test basic creation - the advanced methods tested here don't exist yet
         // TODO: Implement add_column_bloom_filter, update_column_stats methods
 
         // Test basic filter creation and selectivity estimation
-        let filter = FilterExpression::Comparison {
+        let _filter = FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
             value: serde_json::json!("electronics"),

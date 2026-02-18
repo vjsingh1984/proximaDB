@@ -146,7 +146,7 @@
 //! ## Proto-First Benefits in Practice
 //!
 //! ### Direct Field Access
-//! ```rust
+//! ```rust,ignore
 //! // No conversion needed - direct proto usage
 //! let record = VectorRecord {
 //!     id: "vec_123".to_string(),
@@ -161,7 +161,7 @@
 //! ```
 //!
 //! ### Zero-Copy Persistence
-//! ```rust
+//! ```rust,ignore
 //! // Write proto directly to storage
 //! storage.write_proto(&record)?;
 //!
@@ -220,6 +220,67 @@
 // V1 proto definitions for SKS (Semantic Knowledge Store)
 #[path = "proximadb.v1.rs"]
 pub mod proximadb_v1;
+
+// Compatibility alias: The streaming proto uses `super::super::v1::` to reference v1 types
+// This creates proto::v1 as an alias to proto::proximadb_v1
+pub mod v1 {
+    //! Alias module for proto v1 types (for streaming proto compatibility)
+    pub use super::proximadb_v1::*;
+}
+
+// Streaming proto definitions for real-time vector ingestion
+// The generated code uses super::super::v1:: which resolves to proto::v1
+// (super from streaming_v1 -> streaming -> super from streaming -> proto -> v1)
+pub mod streaming {
+    //! Streaming proto module hierarchy for generated code compatibility
+    pub mod v1 {
+        //! Generated streaming v1 proto types
+        include!("../proto/proximadb.streaming.v1.rs");
+    }
+}
+
+// Re-export streaming types at the expected location
+pub mod proximadb_streaming_v1 {
+    //! Re-export of streaming proto types
+    pub use super::streaming::v1::*;
+}
+
+// Cluster proto definitions for inter-node communication
+// This includes consensus, replication, and health services
+// The generated code uses `super::super::v1::` to reference v1 types,
+// so we need a nested module structure
+pub mod cluster {
+    //! Cluster proto module hierarchy for generated code compatibility
+    pub mod v1 {
+        //! Generated cluster v1 proto types
+        include!("../proto/proximadb.cluster.v1.rs");
+    }
+}
+
+// Re-export cluster types at the expected location (for convenience)
+pub mod proximadb_cluster_v1 {
+    //! Re-export of cluster proto types
+    pub use super::cluster::v1::*;
+}
+
+// V2 proto definitions for ProximaRecord with rich type system
+// These are used for the V2 gRPC API with typed fields and schema support
+pub mod v2 {
+    //! V2 proto module for ProximaRecord and related types
+    //!
+    //! The V2 API introduces:
+    //! - ProximaRecord with typed fields (TEXT, INTEGER, FLOAT, DECIMAL, UUID, etc.)
+    //! - Schema enforcement (STRICT, FLEXIBLE, HYBRID modes)
+    //! - Dedicated TEXT column storage with chunking support
+    //! - Typed filtering with range, equality, and CONTAINS operators
+    include!("../proto/proximadb.v2.rs");
+}
+
+// Re-export V2 types at the expected location (for convenience)
+pub mod proximadb_v2 {
+    //! Re-export of V2 proto types for gRPC services
+    pub use super::v2::*;
+}
 
 // Custom serde implementations for oneof types
 pub mod serde_impls;

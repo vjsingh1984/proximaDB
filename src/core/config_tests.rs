@@ -3,7 +3,8 @@
 #[cfg(test)]
 mod tests {
     use crate::core::config::{
-        AssignmentConfig, BloomFilterConfig, StorageConfig, StorageLocation, WriteBufferUserConfig,
+        AssignmentConfig, BloomFilterConfig, OptimizationConfig, StorageConfig, StorageLocation,
+        WriteBufferUserConfig,
     };
 
     #[test]
@@ -35,6 +36,8 @@ mod tests {
             }),
             filesystem_config: Default::default(),
             compaction_config: Default::default(),
+            prune_mode: None,
+            optimization: OptimizationConfig::default(),
         };
 
         let storage_urls = config.storage_urls();

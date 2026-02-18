@@ -207,10 +207,14 @@ struct CentroidStore {
     cluster_stats: Vec<ClusterStats>,
 }
 
+/// Statistics for a single cluster
 #[derive(Debug, Clone, Default)]
-struct ClusterStats {
+pub struct ClusterStats {
+    /// Number of vectors in this cluster
     pub vector_count: usize,
+    /// When this cluster was last updated
     pub last_updated: Option<Instant>,
+    /// Variance of vectors in this cluster
     pub variance: f32,
 }
 
@@ -1044,6 +1048,11 @@ impl UnifiedIvfIndex {
         })
     }
 
+    /// Check if the index has been trained with centroids
+    pub fn is_trained(&self) -> bool {
+        self.centroids.is_trained()
+    }
+
     /// Train the index with sample vectors
     pub async fn train(&mut self, training_vectors: Vec<Vec<f32>>) -> Result<()> {
         if self.centroids.is_trained() {
@@ -1238,7 +1247,7 @@ impl UnifiedIvfIndex {
             return Err(anyhow!("Index must be trained before searching"));
         }
 
-        let n_probe = n_probe.unwrap_or(1); // Default to 1 probe if not specified
+        let n_probe = n_probe.unwrap_or(self.config.n_probe); // Use configured n_probe for recall
         self.search_count.fetch_add(1, Ordering::Relaxed);
 
         // Step 1: Find nearest centroids (always in memory - fast)
@@ -1307,12 +1316,12 @@ impl UnifiedIvfIndex {
                 // Update correlation score
                 self.access_correlations
                     .entry(cluster_i)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((cluster_j, 0.9)); // Decay over time
 
                 self.access_correlations
                     .entry(cluster_j)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((cluster_i, 0.9));
             }
         }
@@ -1442,6 +1451,7 @@ impl UnifiedIvfIndex {
     }
 
     /// NEW: Process a single IndexEvent based on representation type
+    #[allow(dead_code)]
     async fn process_index_payload(&self, payload: IndexEvent) -> Result<()> {
         // Handle based on what type of vectors are available
         match (payload.has_fp32, payload.has_quantized) {
@@ -1491,6 +1501,7 @@ impl UnifiedIvfIndex {
     }
 
     /// Process FP32 vectors from file paths
+    #[allow(dead_code)]
     async fn process_fp32_vectors(&self, file_paths: &[String]) -> Result<()> {
         for file_path in file_paths {
             // TODO: Load vectors from file and add to IVF index
@@ -1501,6 +1512,7 @@ impl UnifiedIvfIndex {
     }
 
     /// Process quantized vectors from file paths
+    #[allow(dead_code)]
     async fn process_quantized_vectors(&self, file_paths: &[String]) -> Result<()> {
         for file_path in file_paths {
             // TODO: Load quantized vectors, dequantize, and add to IVF index
@@ -1511,6 +1523,7 @@ impl UnifiedIvfIndex {
     }
 
     /// Process mixed FP32 and quantized vectors from file paths
+    #[allow(dead_code)]
     async fn process_mixed_vectors(&self, file_paths: &[String]) -> Result<()> {
         for file_path in file_paths {
             // TODO: Load both FP32 and quantized vectors
@@ -1522,6 +1535,7 @@ impl UnifiedIvfIndex {
 
     /// NEW: Dequantize vector for IVF clustering
     /// TODO: Integrate with actual quantization module from storage engines
+    #[allow(dead_code)]
     fn dequantize_vector(
         &self,
         _quantized: &[u8],

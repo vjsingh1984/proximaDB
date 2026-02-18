@@ -16,24 +16,38 @@ and sentence-transformers installation. Enable with --run-slow flag or remove sk
 
 import pytest
 
-pytest.skip("Tests require sentence-transformers and model downloads. Use --run-slow to enable.", allow_module_level=True)
-import numpy as np
+pytest.skip(
+    "Tests require sentence-transformers and model downloads. Use --run-slow to enable.",
+    allow_module_level=True,
+)
 from typing import List
+
+import numpy as np
 
 try:
     import sentence_transformers
+
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
-from proximadb.embedding_providers.core import ProviderConfig, ModelMetadata
-from proximadb.embedding_providers.providers.local.gte_qwen import GTEQwenProvider, GTE_QWEN_MODELS
-from proximadb.embedding_providers.providers.local.sfr import SFRProvider, SFR_MODELS
-from proximadb.embedding_providers.providers.local.bge import BGEProvider, BGE_MODELS
-from proximadb.embedding_providers.providers.local.e5 import E5Provider, E5_MODELS
-from proximadb.embedding_providers.providers.local.sentence_transformer import (
+from proximadb_sdk.embedding_providers.core import ModelMetadata, ProviderConfig
+from proximadb_sdk.embedding_providers.providers.local.bge import (
+    BGE_MODELS,
+    BGEProvider,
+)
+from proximadb_sdk.embedding_providers.providers.local.e5 import E5_MODELS, E5Provider
+from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
+    GTE_QWEN_MODELS,
+    GTEQwenProvider,
+)
+from proximadb_sdk.embedding_providers.providers.local.sentence_transformer import (
+    SENTENCE_TRANSFORMER_MODELS,
     SentenceTransformerProvider,
-    SENTENCE_TRANSFORMER_MODELS
+)
+from proximadb_sdk.embedding_providers.providers.local.sfr import (
+    SFR_MODELS,
+    SFRProvider,
 )
 
 # Mark all tests in this module as requiring models
@@ -51,7 +65,7 @@ def sample_texts():
     return [
         "This is a test sentence about machine learning.",
         "Python is a popular programming language.",
-        "Vector databases store high-dimensional embeddings."
+        "Vector databases store high-dimensional embeddings.",
     ]
 
 
@@ -59,15 +73,22 @@ def sample_texts():
 def sample_documents():
     """Sample documents with metadata"""
     return [
-        {"text": "Machine learning is a subset of artificial intelligence.", "category": "tech"},
-        {"text": "Python supports multiple programming paradigms.", "category": "programming"},
-        {"text": "Embeddings capture semantic meaning of text.", "category": "nlp"}
+        {
+            "text": "Machine learning is a subset of artificial intelligence.",
+            "category": "tech",
+        },
+        {
+            "text": "Python supports multiple programming paradigms.",
+            "category": "programming",
+        },
+        {"text": "Embeddings capture semantic meaning of text.", "category": "nlp"},
     ]
 
 
 # ============================================================================
 # GTE-Qwen Provider Tests (#1 MTEB Multilingual)
 # ============================================================================
+
 
 class TestGTEQwenProvider:
     """Test suite for GTE-Qwen embedding provider"""
@@ -79,7 +100,7 @@ class TestGTEQwenProvider:
             model_name="Alibaba-NLP/gte-Qwen2-1.5B-instruct",
             dimension=1536,
             batch_size=16,
-            normalize=True
+            normalize=True,
             # Note: trust_remote_code is automatically set to False for compatibility
         )
 
@@ -125,7 +146,7 @@ class TestGTEQwenProvider:
             "Bonjour le monde",  # French
             "Hola mundo",  # Spanish
             "你好世界",  # Chinese
-            "こんにちは世界"  # Japanese
+            "こんにちは世界",  # Japanese
         ]
 
         embeddings = provider.embed_texts(multilingual_texts)
@@ -146,6 +167,7 @@ class TestGTEQwenProvider:
 # SFR Provider Tests (Top English Accuracy)
 # ============================================================================
 
+
 class TestSFRProvider:
     """Test suite for SFR embedding provider"""
 
@@ -156,7 +178,7 @@ class TestSFRProvider:
             model_name="Salesforce/SFR-Embedding-2_R",
             dimension=4096,
             batch_size=16,
-            normalize=True
+            normalize=True,
         )
 
     @pytest.mark.slow
@@ -200,6 +222,7 @@ class TestSFRProvider:
 # BGE Provider Tests (Best Retrieval)
 # ============================================================================
 
+
 class TestBGEProvider:
     """Test suite for BGE embedding provider"""
 
@@ -210,7 +233,7 @@ class TestBGEProvider:
             model_name="BAAI/bge-large-en-v1.5",
             dimension=1024,
             batch_size=32,
-            normalize=True
+            normalize=True,
         )
 
     @pytest.fixture
@@ -220,7 +243,7 @@ class TestBGEProvider:
             model_name="BAAI/bge-small-en-v1.5",
             dimension=384,
             batch_size=64,
-            normalize=True
+            normalize=True,
         )
 
     def test_initialization_small(self, bge_small_config):
@@ -276,6 +299,7 @@ class TestBGEProvider:
 # E5 Provider Tests (General Purpose)
 # ============================================================================
 
+
 class TestE5Provider:
     """Test suite for E5 embedding provider"""
 
@@ -286,7 +310,7 @@ class TestE5Provider:
             model_name="intfloat/e5-base-v2",
             dimension=768,
             batch_size=32,
-            normalize=True
+            normalize=True,
         )
 
     def test_initialization(self, e5_base_config):
@@ -311,7 +335,7 @@ class TestE5Provider:
 
         passages = [
             "Python is a high-level programming language",
-            "It supports multiple programming paradigms"
+            "It supports multiple programming paradigms",
         ]
 
         passage_embs = provider.embed_passages(passages)
@@ -342,6 +366,7 @@ class TestE5Provider:
 # Sentence-Transformers Provider Tests (Most Versatile)
 # ============================================================================
 
+
 class TestSentenceTransformerProvider:
     """Test suite for Sentence-Transformers provider"""
 
@@ -349,20 +374,14 @@ class TestSentenceTransformerProvider:
     def minilm_config(self):
         """Configuration for MiniLM model (fastest)"""
         return ProviderConfig(
-            model_name="all-MiniLM-L6-v2",
-            dimension=384,
-            batch_size=64,
-            normalize=True
+            model_name="all-MiniLM-L6-v2", dimension=384, batch_size=64, normalize=True
         )
 
     @pytest.fixture
     def mpnet_config(self):
         """Configuration for MPNet model (better quality)"""
         return ProviderConfig(
-            model_name="all-mpnet-base-v2",
-            dimension=768,
-            batch_size=32,
-            normalize=True
+            model_name="all-mpnet-base-v2", dimension=768, batch_size=32, normalize=True
         )
 
     def test_initialization_minilm(self, minilm_config):
@@ -407,6 +426,7 @@ class TestSentenceTransformerProvider:
 # Cross-Provider Comparison Tests
 # ============================================================================
 
+
 class TestCrossProviderComparison:
     """Tests comparing different providers"""
 
@@ -414,20 +434,16 @@ class TestCrossProviderComparison:
         """Test that semantic similarity is preserved across providers"""
         # Use small/fast models for comparison
         bge_config = ProviderConfig(
-            model_name="BAAI/bge-small-en-v1.5",
-            dimension=384,
-            normalize=True
+            model_name="BAAI/bge-small-en-v1.5", dimension=384, normalize=True
         )
 
         minilm_config = ProviderConfig(
-            model_name="all-MiniLM-L6-v2",
-            dimension=384,
-            normalize=True
+            model_name="all-MiniLM-L6-v2", dimension=384, normalize=True
         )
 
         similar_texts = [
             "machine learning algorithms",
-            "artificial intelligence methods"  # Semantically similar
+            "artificial intelligence methods",  # Semantically similar
         ]
 
         different_text = "apple pie recipe"  # Semantically different
@@ -452,10 +468,19 @@ class TestCrossProviderComparison:
     def test_dimension_consistency(self):
         """Test that each provider returns consistent dimensions"""
         configs = [
-            (GTEQwenProvider, {"model_name": "Alibaba-NLP/gte-Qwen2-1.5B-instruct", "dimension": 1536}),
+            (
+                GTEQwenProvider,
+                {
+                    "model_name": "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
+                    "dimension": 1536,
+                },
+            ),
             (BGEProvider, {"model_name": "BAAI/bge-small-en-v1.5", "dimension": 384}),
             (E5Provider, {"model_name": "intfloat/e5-base-v2", "dimension": 768}),
-            (SentenceTransformerProvider, {"model_name": "all-MiniLM-L6-v2", "dimension": 384})
+            (
+                SentenceTransformerProvider,
+                {"model_name": "all-MiniLM-L6-v2", "dimension": 384},
+            ),
         ]
 
         test_texts = ["test sentence one", "test sentence two"]
@@ -473,6 +498,7 @@ class TestCrossProviderComparison:
 # Performance and Edge Case Tests
 # ============================================================================
 
+
 class TestEdgeCases:
     """Test edge cases and error handling"""
 
@@ -480,9 +506,7 @@ class TestEdgeCases:
     def fast_provider(self):
         """Fast provider for edge case testing"""
         config = ProviderConfig(
-            model_name="all-MiniLM-L6-v2",
-            dimension=384,
-            normalize=True
+            model_name="all-MiniLM-L6-v2", dimension=384, normalize=True
         )
         return SentenceTransformerProvider(config)
 
@@ -508,18 +532,14 @@ class TestEdgeCases:
             "Hello! How are you?",
             "Price: $99.99",
             "Email: test@example.com",
-            "Code: if (x > 0) { return true; }"
+            "Code: if (x > 0) { return true; }",
         ]
         embeddings = fast_provider.embed_texts(special_texts)
         assert embeddings.shape == (4, 384)
 
     def test_unicode_text(self, fast_provider):
         """Test embedding unicode text"""
-        unicode_texts = [
-            "Hello 世界",
-            "Café résumé",
-            "Emoji: 😀 🚀 ✨"
-        ]
+        unicode_texts = ["Hello 世界", "Café résumé", "Emoji: 😀 🚀 ✨"]
         embeddings = fast_provider.embed_texts(unicode_texts)
         assert embeddings.shape == (3, 384)
 

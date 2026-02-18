@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // ============================================================================
 // PERFECTED: 1-TO-1 CENTROID-ROWGROUP MAPPING FOR PERFECT PARALLELISM
 // ============================================================================
@@ -94,19 +95,24 @@ pub struct RaptorWriter {
 
     // Configuration
     config: RaptorConfig,
+    #[allow(dead_code)]
     collection_id: String,
     dimension: usize,
 
     // Reuse platform capabilities
     compression: Arc<StandardCompression>,
     quantization_engine: Arc<StorageQuantizationEngine>,
+    #[allow(dead_code)]
     memory_pool: Arc<VectorMemoryPool>,
+    #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
     distance_compute: Arc<UnifiedDistanceCompute>,
+    #[allow(dead_code)]
     matrix_builder: MatrixBuilder,
 
     // Current state
     current_row_page: Option<RowPageBuffer>,
+    #[allow(dead_code)]
     current_rowgroup: Option<CurrentRowgroup>, // For RecordBatch compatibility
     row_groups: Vec<RowGroupMetadata>,
     file_metadata: RaptorFileMetadata,
@@ -118,13 +124,16 @@ pub struct RaptorWriter {
     column_projections: ColumnProjectionsBuilder,
 
     // Track if file has been created
+    #[allow(dead_code)]
     file_created: bool,
 }
 
 /// Buffer for accumulating rows into pages
 struct RowPageBuffer {
     rows: Vec<CompactRow>,
+    #[allow(dead_code)]
     page_id: u16,
+    #[allow(dead_code)]
     start_offset: u64,
 }
 
@@ -132,17 +141,25 @@ struct RowPageBuffer {
 /// Stores both FP32 and quantized vectors for full reconstruction
 struct CompactRow {
     // Core fields from VectorRecord
-    id: String,                // VectorRecord.id (string)
-    vector: Vec<f32>,          // VectorRecord.vector (original FP32)
-    quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized)
+    #[allow(dead_code)]
+    id: String, // VectorRecord.id (string)
+    vector: Vec<f32>, // VectorRecord.vector (original FP32)
+    #[allow(dead_code)]
+    quantized_vector: Vec<u8>, // VectorRecord.quantized_vector (pre-quantized INT8)
+    #[allow(dead_code)]
+    binary_sketch: Vec<u8>, // Binary sketch for progressive search (1-bit per dimension)
     // TODO: Migrate to HashMap<String, SqlValue> for typed metadata (requires refactoring encoding/decoding logic)
     metadata: Vec<(String, Vec<u8>)>, // VectorRecord.metadata (key-value pairs as byte arrays)
 
     // Timestamp fields
-    timestamp: u32,          // VectorRecord.timestamp
+    #[allow(dead_code)]
+    timestamp: u32, // VectorRecord.timestamp
+    #[allow(dead_code)]
     updated_at: Option<u32>, // VectorRecord.updated_at
+    #[allow(dead_code)]
     expires_at: Option<u32>, // VectorRecord.expires_at
-    version: Option<u32>,    // VectorRecord.version
+    #[allow(dead_code)]
+    version: Option<u32>, // VectorRecord.version
 
     // Source content for RAG
     source_content: Option<Vec<u8>>, // VectorRecord.source (serialized SourceContent)
@@ -183,6 +200,7 @@ impl BloomFilterBuilder {
     }
 
     /// Get the number of IDs collected
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.ids.len()
     }
@@ -193,6 +211,7 @@ impl BloomFilterBuilder {
     }
 
     /// Clear all collected IDs
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.ids.clear();
     }
@@ -213,8 +232,10 @@ struct IvfClusteringBuilder {
     /// Map from vector ID to node index for quick lookup
     id_to_node: HashMap<String, u32>,
     /// Target row group size (p in the p²+k×p formula)
+    #[allow(dead_code)]
     target_rowgroup_size: usize,
     /// Hardware capabilities for optimization
+    #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
     /// AXIS clustering engine for reusable k-means implementation
     axis_clustering: Arc<AxisClusteringEngine>,
@@ -275,11 +296,13 @@ impl Default for BoostingConfig {
 /// Centroid with statistics for boosting calculations
 #[derive(Clone, Debug)]
 struct Centroid {
+    #[allow(dead_code)]
     id: usize,
     vector: Vec<f32>,
     member_ids: Vec<String>,
     mean_distance: f32,
     std_deviation: f32,
+    #[allow(dead_code)]
     radius: f32, // 95th percentile distance
 }
 
@@ -421,7 +444,7 @@ impl IvfClusteringBuilder {
             .max(p_min)
             .max(self.target_rowgroup_size);
 
-        let k = (n + p - 1) / p; // Number of clusters needed: k = ceil(n/p)
+        let k = n.div_ceil(p); // Number of clusters needed: k = ceil(n/p)
 
         let k_means_calcs = k * n; // AXIS k-means clustering
         let centroid_matrix_calcs = k * k; // K² matrix: Centroid-to-centroid distances
@@ -653,7 +676,7 @@ impl IvfClusteringBuilder {
             let p = self
                 .target_rowgroup_size
                 .max(constants::clustering::MIN_ROWGROUP_SIZE);
-            let k = (n + p - 1) / p;
+            let k = n.div_ceil(p);
             let mut clusters = vec![Vec::new(); k];
             for (idx, _node) in self.nodes.iter().enumerate() {
                 clusters[idx % k].push(idx as u32);
@@ -705,6 +728,8 @@ impl IvfClusteringBuilder {
             .iter()
             .enumerate()
             .map(|(node_idx, node)| {
+                // SAFETY: node.vector_id is guaranteed to be in id_to_node map because
+                // nodes are only created via add_node() which inserts into id_to_node.
                 let source_idx = *self.id_to_node.get(&node.vector_id).unwrap() as usize;
                 let source_cluster = Self::find_cluster_for_node_static(source_idx, clusters);
                 (node_idx, source_idx, source_cluster)
@@ -1043,6 +1068,16 @@ impl IvfClusteringBuilder {
     fn build_inter_centroid_matrix(&self) -> InterCentroidMatrix {
         let k = self.centroids.len();
 
+        // Handle edge case: no centroids or single centroid
+        if k <= 1 {
+            return InterCentroidMatrix {
+                num_centroids: k as u32,
+                compressed_data: Vec::new(),
+                compression_metadata: InterCentroidCompressionMetadata::default(),
+                lookup_table: Vec::new(),
+            };
+        }
+
         // Calculate all pairwise distances (upper triangle only)
         let upper_triangle_size = k * (k - 1) / 2;
         let mut distances = Vec::with_capacity(upper_triangle_size);
@@ -1080,7 +1115,7 @@ impl IvfClusteringBuilder {
         let mut idx = 0;
         for i in 0..k {
             lookup_table[i] = offset;
-            for j in (i + 1)..k {
+            for _j in (i + 1)..k {
                 let quantized = ((distances[idx] - min_distance) * scale_factor) as u16;
                 compressed_data.extend_from_slice(&quantized.to_le_bytes());
                 offset += 2;
@@ -1142,6 +1177,12 @@ impl IvfClusteringBuilder {
     /// Build P×K vector-to-centroid distance matrices for all rowgroups
     fn build_vector_centroid_matrices(&self, rowgroups: &[RowGroup]) -> Vec<VectorCentroidMatrix> {
         let k = self.centroids.len();
+
+        // Handle edge case: no centroids
+        if k == 0 {
+            return Vec::new();
+        }
+
         let k_f32 = k as f32;
         let dimension = self.centroids[0].vector.len() as f32;
 
@@ -1149,7 +1190,7 @@ impl IvfClusteringBuilder {
         let (storage_strategy, coverage_ratio) =
             self.determine_adaptive_pk_strategy(k_f32, dimension);
 
-        let coverage_percent = (coverage_ratio * 100.0) as u8;
+        let _coverage_percent = (coverage_ratio * 100.0) as u8;
 
         tracing::info!(
             "Building P×K matrices with strategy {:?} (K={}, D={}, ratio={:.2})",
@@ -1894,7 +1935,7 @@ impl RaptorWriter {
     }
 
     /// Find vector furthest from centroid (for diverse seed selection)
-    fn find_furthest_from_centroid(&self, candidates: &[usize], centroid: &Centroid) -> usize {
+    fn find_furthest_from_centroid(&self, candidates: &[usize], _centroid: &Centroid) -> usize {
         let mut max_dist = 0.0;
         let mut best_idx = 0;
 
@@ -1920,7 +1961,7 @@ impl RaptorWriter {
         let mut best_score = f32::INFINITY;
 
         // Get cluster centroid for boosting
-        let cluster_centroid = &self.ivf_builder.centroids[cluster_idx];
+        let _cluster_centroid = &self.ivf_builder.centroids[cluster_idx];
 
         // Step 1: Evaluate each candidate
         for (cand_idx, &candidate) in candidates.iter().enumerate() {
@@ -1946,7 +1987,7 @@ impl RaptorWriter {
                     // Estimate boosted distance using centroid distances
                     // Since both are in same cluster, use simplified formula
                     let d1 = candidate_node.centroid_distance;
-                    let d2 = 0.0; // Same cluster, so inter-centroid distance is 0
+                    let _d2 = 0.0; // Same cluster, so inter-centroid distance is 0
                     let d3 = member_node.centroid_distance;
 
                     // Simplified boosting for same-cluster vectors
@@ -2022,13 +2063,17 @@ impl RaptorWriter {
 /// Column projections builder
 struct ColumnProjectionsBuilder {
     metadata_columns: HashMap<String, Vec<Vec<u8>>>,
+    #[allow(dead_code)]
     filter_bitmaps: HashMap<String, Vec<bool>>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct RowLocation {
+    #[allow(dead_code)]
     row_group_id: u32,
+    #[allow(dead_code)]
     page_id: u16,
+    #[allow(dead_code)]
     offset_in_page: u16,
 }
 
@@ -2043,6 +2088,7 @@ struct IvfNode {
     /// Cluster assignment (0 to k-1) for IVF routing
     cluster_id: u32,
     /// Location in row group (row_group_id, row_offset)
+    #[allow(dead_code)]
     row_location: RowLocation,
     /// Distance to assigned centroid for boosting
     centroid_distance: f32,
@@ -2053,7 +2099,9 @@ struct IvfNode {
 /// Edge with distance for intelligent row group clustering
 #[derive(Debug, Clone)]
 struct EdgeWithDistance {
+    #[allow(dead_code)]
     target_node_id: u32,
+    #[allow(dead_code)]
     target_vector_id: String,
     distance: f32, // Similarity distance for clustering decisions
 }
@@ -2061,15 +2109,20 @@ struct EdgeWithDistance {
 /// Enhanced edge with pre-computed boosted distance (serialized)
 #[derive(Debug, Clone)]
 struct BoostedEdge {
+    #[allow(dead_code)]
     target_node_id: u32,
+    #[allow(dead_code)]
     target_vector_id: String,
-    raw_distance: f32,                   // Original distance
-    boosted_distance: f32,               // Pre-computed boosted distance
+    #[allow(dead_code)]
+    raw_distance: f32, // Original distance
+    boosted_distance: f32, // Pre-computed boosted distance
+    #[allow(dead_code)]
     boost_components: Option<BoostInfo>, // Optional: store component breakdown
 }
 
 /// Boost component breakdown for debugging/tuning
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BoostInfo {
     d1: f32, // Source to its centroid
     d2: f32, // Centroid to centroid
@@ -2082,11 +2135,14 @@ struct BoostInfo {
 
 // Additional fields for tracking current state
 struct CurrentRowgroup {
+    #[allow(dead_code)]
     batch: RecordBatch,
+    #[allow(dead_code)]
     size: usize,
 }
 
 // Metadata column analysis for intelligent encoding
+#[allow(dead_code)]
 struct MetadataColumn {
     name: String,
     values: Vec<String>,
@@ -2108,6 +2164,7 @@ impl MetadataColumn {
         }
     }
 
+    #[allow(dead_code)]
     fn add_value(&mut self, value: String) {
         // Check type compatibility
         if self.all_integers {
@@ -2124,6 +2181,7 @@ impl MetadataColumn {
         self.values.push(value);
     }
 
+    #[allow(dead_code)]
     fn analyze_and_choose_encoding(&mut self) -> MetadataEncoding {
         use std::collections::HashSet;
 
@@ -2148,12 +2206,14 @@ impl MetadataColumn {
         }
     }
 
+    #[allow(dead_code)]
     fn build_dictionary(&self) -> Vec<String> {
         use std::collections::BTreeSet;
         let unique: BTreeSet<_> = self.values.iter().cloned().collect();
         unique.into_iter().collect()
     }
 
+    #[allow(dead_code)]
     fn encode_as_indices(&self, dict: &[String]) -> Vec<usize> {
         let dict_map: HashMap<_, _> = dict
             .iter()
@@ -2168,6 +2228,7 @@ impl MetadataColumn {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 enum MetadataEncoding {
     Dictionary, // Low cardinality strings
@@ -2184,6 +2245,8 @@ enum MetadataEncoding {
 type BloomFilterMetadata = super::common::BloomFilterMetadata;
 
 impl MetadataEncoding {
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn to_byte(&self) -> u8 {
         match self {
             Self::Dictionary => 0x10,
@@ -2398,7 +2461,7 @@ impl RaptorWriter {
         let hardware = get_hardware_capabilities();
 
         // Initialize unified compression
-        let compression_algo = match &config.compression {
+        let _compression_algo = match &config.compression {
             RaptorCompressionCodec::None => CompressionAlgorithm::None,
             RaptorCompressionCodec::Lz4 => CompressionAlgorithm::Lz4,
             RaptorCompressionCodec::Zstd(_level) => CompressionAlgorithm::Zstd,
@@ -2500,7 +2563,7 @@ impl RaptorWriter {
 
         Ok(Self {
             file_path: file_path.clone(),
-            filesystem: filesystem,
+            filesystem,
             config,
             collection_id,
             dimension,
@@ -2554,8 +2617,8 @@ impl RaptorWriter {
         // Store original FP32 vector for reconstruction
         let fp32_vector = vector.vector.clone();
 
-        // Get quantized vector - quantization internalized in storage
-        let quantized_vector = {
+        // Get quantized vectors - both INT8 (primary) and binary sketch for progressive search
+        let (quantized_vector, binary_sketch) = {
             // Quantize vector using unified engine
             let quantized_batch = self
                 .quantization_engine
@@ -2565,8 +2628,25 @@ impl RaptorWriter {
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("Failed to quantize vector"))?;
-            // Get the primary quantized data
-            quantized.primary.map(|q| q.data).unwrap_or_else(Vec::new)
+
+            // Get the primary quantized data (INT8)
+            let int8_data = quantized.primary.map(|q| q.data).unwrap_or_else(Vec::new);
+
+            // Get binary sketch for progressive search (1-bit per dimension)
+            // Fall back to computing it directly if not available from quantization engine
+            let binary_data = quantized.filter.map(|q| q.data).unwrap_or_else(|| {
+                // Compute binary sketch: 1 bit per dimension (sign-based)
+                let dim = vector.vector.len();
+                let mut binary = vec![0u8; (dim + 7) / 8];
+                for (i, &val) in vector.vector.iter().enumerate() {
+                    if val > 0.0 {
+                        binary[i / 8] |= 1 << (i % 8);
+                    }
+                }
+                binary
+            });
+
+            (int8_data, binary_data)
         };
 
         // Extract metadata as key-value pairs (byte arrays for custom binary format)
@@ -2614,6 +2694,7 @@ impl RaptorWriter {
             id: id.clone(),
             vector: fp32_vector.clone(), // Clone for CompactRow, original used for IVF
             quantized_vector,
+            binary_sketch, // Binary sketch for progressive search (1-bit per dimension)
             metadata,
             timestamp: vector.timestamp.unwrap_or(0) as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
@@ -2905,7 +2986,14 @@ impl RaptorWriter {
                 },
             );
 
-            // Update rowgroup metadata with column pages
+            // Compute centroid for this rowgroup (CRITICAL for hierarchical search)
+            let centroid = if !page_vectors.is_empty() {
+                Some(self.compute_rowgroup_centroid(&page_vectors))
+            } else {
+                None
+            };
+
+            // Update rowgroup metadata with column pages AND centroid
             let rg_metadata = RowGroupMetadata {
                 id: rowgroup_id as u16,
                 vector_count: page.rows.len(),
@@ -2916,7 +3004,7 @@ impl RaptorWriter {
                 metadata_stats: HashMap::new(),
                 min_timestamp: None,
                 max_timestamp: None,
-                centroid: None,
+                centroid, // FIXED: Set centroid for EACH rowgroup, not just the last
                 centroid_stats: None,
                 bloom_filter_offset: None, // Will be set when bloom filter is written
             };
@@ -3014,7 +3102,7 @@ impl RaptorWriter {
     }
 
     /// Helper: Encode metadata column with dictionary encoding
-    fn encode_metadata_column(&self, key: &str, values: &[Option<Vec<u8>>]) -> Result<Vec<u8>> {
+    fn encode_metadata_column(&self, _key: &str, values: &[Option<Vec<u8>>]) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
 
         // Build dictionary of unique values
@@ -3147,7 +3235,7 @@ impl RaptorWriter {
             match quant_level {
                 1 => {
                     // Binary: pack bits columnar
-                    let bits_per_dim = 1;
+                    let _bits_per_dim = 1;
                     let packed_dims = (self.dimension + 7) / 8;
                     for dim_byte in 0..packed_dims {
                         let mut column = Vec::with_capacity(num_rows);
@@ -3301,7 +3389,7 @@ impl RaptorWriter {
         encoded.extend(&encoded_timestamps);
 
         // Updated_at column (optional)
-        let has_updated: Vec<bool> = page.rows.iter().map(|r| r.updated_at.is_some()).collect();
+        let _has_updated: Vec<bool> = page.rows.iter().map(|r| r.updated_at.is_some()).collect();
         let updated_values: Vec<u32> = page.rows.iter().filter_map(|r| r.updated_at).collect();
 
         encoded.push(if updated_values.len() == num_rows {
@@ -3806,7 +3894,7 @@ impl RaptorWriter {
         Ok(result)
     }
 
-    fn encode_batch_with_proxima(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
+    fn encode_batch_with_proxima(&self, batch: &RecordBatch, _marker: u8) -> Result<Vec<u8>> {
         use std::io::Write;
 
         // Extract vectors from RecordBatch
@@ -3990,7 +4078,7 @@ impl RaptorWriter {
         }
 
         // Write column projections for the current row group
-        let projections_offset = self.write_column_projections().await?;
+        let _projections_offset = self.write_column_projections().await?;
 
         // Compute centroid and cluster statistics before modifying row group
         let centroid = if !self.ivf_builder.vectors.is_empty() {
@@ -4382,7 +4470,7 @@ impl RaptorWriter {
         // Step 4: Create the columnar centroids structure
         let columnar_centroids = ColumnarCentroids {
             count: num_centroids as u32,
-            dimension: dimension,
+            dimension,
             rowgroup_ids,
             transposed_data,
             encoding_metadata,
@@ -4466,6 +4554,10 @@ impl RaptorWriter {
             .append(&self.file_path, &constants::RAPTOR_MAGIC)
             .await?;
 
+        // CRITICAL: Sync file to ensure footer is written to disk before engine closes
+        // This fixes the 0% recall bug where footer wasn't flushed before reopen
+        self.filesystem.sync_file(&self.file_path).await?;
+
         tracing::info!(
             "Wrote centralized footer: {} centroids, {} bytes at offset {}, total file size approx {}",
             num_centroids,
@@ -4490,14 +4582,14 @@ impl RaptorWriter {
     }
 
     /// Update column projections for filtering
-    fn update_column_projections(&mut self, vector: &VectorRecord, location: RowLocation) {
+    fn update_column_projections(&mut self, vector: &VectorRecord, _location: RowLocation) {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
             for (key, value) in &vector.metadata {
                 self.column_projections
                     .metadata_columns
                     .entry(key.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(bincode::serialize(&value).expect("Failed to serialize metadata value"));
             }
         }
@@ -4546,10 +4638,11 @@ impl RaptorWriter {
     }
 
     // HNSW removed - Matrix Trinity handles navigation
-    // Build IVF clusters but store as matrices, not graph
+    // Write matrix segment data (IVF clusters already built by flush())
     async fn write_matrix_segment(&mut self) -> Result<()> {
-        // Build IVF clusters for Matrix Trinity
-        self.build_ivf_clusters()?;
+        // NOTE: IVF clusters are built by flush() before this method is called
+        // Do NOT call build_ivf_clusters() here - it was causing duplicate clustering
+        // taking ~200s for 50K vectors (100s x 2)
 
         // Matrices are written as part of rowgroup metadata
         // P² matrix: Stored per rowgroup
@@ -5010,7 +5103,7 @@ impl RaptorWriter {
     }
 
     /// Pack indices with minimal bits
-    fn pack_indices(&self, indices: &[usize], bits: u8) -> Vec<u8> {
+    fn pack_indices(&self, indices: &[usize], _bits: u8) -> Vec<u8> {
         // Simplified bit packing - in production would use proper bit packing
         indices.iter().map(|&i| i as u8).collect()
     }
@@ -5040,10 +5133,10 @@ impl RaptorWriter {
         }
 
         // Create bloom filter structure
-        let bloom_filter = RowGroupBloomFilter {
+        let _bloom_filter = RowGroupBloomFilter {
             bits: vec![0u8; num_bytes],
             num_hashes: 7, // Optimal for 1% false positive
-            num_ids: num_ids,
+            num_ids,
             size_bits: num_bits,
             false_positive_rate: 0.01,
         };
@@ -5130,7 +5223,7 @@ impl RaptorWriter {
         self.filesystem.append(&self.file_path, &compressed).await?;
 
         // Create and store bloom filter metadata
-        let bloom_filter = RowGroupBloomFilter {
+        let _bloom_filter = RowGroupBloomFilter {
             bits: bloom_bits.clone(),
             num_hashes,
             num_ids,
@@ -5164,7 +5257,7 @@ impl RaptorWriter {
     }
 
     async fn flush_rowgroup(&mut self) -> Result<()> {
-        if let Some(rowgroup) = self.current_rowgroup.take() {
+        if let Some(_rowgroup) = self.current_rowgroup.take() {
             // Convert RecordBatch to row pages and flush
             // This is handled by flush_row_page() already
         }

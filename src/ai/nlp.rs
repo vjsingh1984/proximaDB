@@ -38,16 +38,16 @@ pub struct BusinessEntityRecognizer {
     technology_patterns: HashMap<String, EntityPattern>,
 
     /// Custom entity patterns by tenant
-    custom_patterns: Arc<DashMap<String, HashMap<String, EntityPattern>>>,
+    _custom_patterns: Arc<DashMap<String, HashMap<String, EntityPattern>>>,
 }
 
 /// Enterprise intent classifier
 pub struct EnterpriseIntentClassifier {
     /// Pre-trained intent models by industry
-    industry_intent_models: Arc<DashMap<String, IntentModel>>,
+    _industry_intent_models: Arc<DashMap<String, IntentModel>>,
 
     /// Business operation classifiers
-    operation_classifiers: HashMap<String, OperationClassifier>,
+    _operation_classifiers: HashMap<String, OperationClassifier>,
 
     /// Regulatory intent recognition
     regulatory_intent_recognizer: Arc<RegulatoryIntentRecognizer>,
@@ -206,7 +206,7 @@ impl BusinessEntityRecognizer {
             financial_patterns,
             healthcare_patterns,
             technology_patterns,
-            custom_patterns: Arc::new(DashMap::new()),
+            _custom_patterns: Arc::new(DashMap::new()),
         })
     }
 
@@ -257,8 +257,8 @@ impl BusinessEntityRecognizer {
 impl EnterpriseIntentClassifier {
     async fn new() -> Result<Self> {
         Ok(Self {
-            industry_intent_models: Arc::new(DashMap::new()),
-            operation_classifiers: HashMap::new(),
+            _industry_intent_models: Arc::new(DashMap::new()),
+            _operation_classifiers: HashMap::new(),
             regulatory_intent_recognizer: Arc::new(RegulatoryIntentRecognizer::new().await?),
         })
     }
@@ -623,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_enterprise_nlp_engine_creation() {
-        let nlp_engine = EnterpriseNLPEngine::new().await.unwrap();
+        let _nlp_engine = EnterpriseNLPEngine::new().await.unwrap();
         // Basic validation that NLP engine was created
         assert!(true);
     }

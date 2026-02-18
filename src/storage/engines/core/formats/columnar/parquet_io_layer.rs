@@ -65,6 +65,7 @@ use crate::core::search::FilterExpression;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024; // 8MB max footer size
+#[allow(dead_code)]
 const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column indexes
 
 /// Shared Parquet format reader with zero-copy cache-first architecture
@@ -93,6 +94,7 @@ pub struct SharedParquetFormatReader {
 
     /// Memory mapping strategy for Parquet files
     /// Controls which columns to mmap based on access patterns
+    #[allow(dead_code)]
     mmap_strategy: ParquetMmapStrategy,
 
     /// UNIFIED CACHE: Zero-copy system replaces all specialized caches
@@ -192,7 +194,9 @@ pub struct ReaderStats {
 /// Local disk cache for Parquet data
 pub struct LocalDiskCache {
     cache_dir: PathBuf,
+    #[allow(dead_code)]
     max_cache_size: u64,
+    #[allow(dead_code)]
     current_size: AtomicU64,
 
     /// Track cached row groups per file
@@ -234,11 +238,11 @@ impl SharedParquetFormatReader {
     /// Read columns using cached metadata (avoids footer download)
     async fn read_with_cached_metadata(
         &self,
-        cached_metadata: Arc<
+        _cached_metadata: Arc<
             Box<dyn crate::storage::engines::core::io::zero_copy::traits::EngineMetadata>,
         >,
-        columns: &[String],
-        row_filter: Option<&FilterExpression>,
+        _columns: &[String],
+        _row_filter: Option<&FilterExpression>,
     ) -> Result<Vec<RecordBatch>, ProximaDBError> {
         if let Some(orch) = &self.orchestrator {
             let key = format!("{}::parquet::metadata_cached", self.collection_id);
@@ -478,23 +482,23 @@ impl SharedParquetFormatReader {
         &self,
         collection_id: &str,
     ) -> Result<(), ProximaDBError> {
-        let mut invalidated = 0;
+        let mut _invalidated = 0;
 
         // Remove from footer cache
         // TODO: Implement cache invalidation using zero_copy_system
         // For now, track invalidation count
-        invalidated = 0;
+        _invalidated = 0;
 
         // TODO: Invalidate in zero_copy_system cache
         // self.zero_copy_system.invalidate_collection(collection_id).await?;
 
         self.stats
             .cache_invalidations
-            .fetch_add(invalidated, Ordering::Relaxed);
+            .fetch_add(_invalidated, Ordering::Relaxed);
 
         info!(
             "Invalidated {} Parquet cache entries for collection {} during compaction",
-            invalidated, collection_id
+            _invalidated, collection_id
         );
 
         Ok(())
@@ -746,12 +750,12 @@ impl LocalDiskCache {
         // Update tracking
         self.cached_row_groups
             .entry(file_path.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(rg_idx);
 
         self.cached_columns
             .entry(file_path.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(rg_idx, column_data.keys().cloned().collect());
 
         Ok(())
@@ -812,7 +816,7 @@ impl LocalDiskCache {
             .replace(':', "_")
             .replace("\\", "_");
 
-        self.cache_dir.join(format!("{}_rg_{}", safe_name, rg_idx))
+        self.cache_dir.join(format!("{safe_name}_rg_{rg_idx}"))
     }
 }
 
@@ -832,6 +836,7 @@ impl Default for ReaderStats {
 }
 
 /// Access pattern tracker (reuse from cache module)
+#[allow(unused_imports)]
 pub use crate::storage::cache::AccessPatternTracker;
 
 /// Memory pressure monitor placeholder (define locally if needed)

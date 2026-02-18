@@ -13,7 +13,7 @@
 //! - Simple and maintainable implementation
 //!
 //! # Example
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::utils::skiplist::SkipList;
 //!
 //! let list = SkipList::new();

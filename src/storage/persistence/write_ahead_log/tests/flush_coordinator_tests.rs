@@ -53,10 +53,12 @@ impl UnifiedStorageEngine for MockStorageEngine {
             entries_flushed: Some(entries_count),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
+            file_paths: vec![],
             duration_ms: Some(10),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
+            compaction_error: None,
             flushed_batch_ids: vec![],
         })
     }

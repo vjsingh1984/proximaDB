@@ -178,10 +178,7 @@ impl CompositeBloomFilterBuilder {
         column: String,
         item: crate::proto::proximadb_v1::MetadataItem,
     ) {
-        self.metadata_values
-            .entry(column)
-            .or_insert_with(Vec::new)
-            .push(item);
+        self.metadata_values.entry(column).or_default().push(item);
     }
 
     /// Build the composite filter
@@ -208,7 +205,6 @@ impl CompositeBloomFilterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::bloom::BloomStrategy;
 
     #[test]
     fn test_composite_filter() {

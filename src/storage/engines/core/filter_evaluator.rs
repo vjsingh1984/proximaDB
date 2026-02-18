@@ -89,6 +89,7 @@ impl UnifiedFilterEvaluator {
 #[derive(Debug, Clone)]
 enum CompiledFilter {
     /// Always returns true (no filter)
+    #[allow(dead_code)]
     All,
 
     /// Comparison operations
@@ -614,6 +615,7 @@ fn evaluate_comparison_op(
     }
 }
 
+#[allow(dead_code)]
 fn compare_json_values(v1: &Value, v2: &Value) -> Ordering {
     match (v1, v2) {
         (Value::Number(n1), Value::Number(n2)) => n1

@@ -11,6 +11,7 @@ use tracing::{debug, info};
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
 use super::config::RaptorConfig;
 use super::consolidated_reader::RaptorReader;
+use super::smart_rowgroup_sizing::BalancedMatrixTrinitySizing;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
     AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
@@ -18,7 +19,6 @@ use crate::index::axis::clustering::{
 };
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec is now used in writer.rs for encoding
-use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -28,10 +28,10 @@ pub struct RaptorCompactor {
     reader: Arc<RaptorReader>,
 
     // DIRECT references to unified modules
-    distance_compute: Arc<UnifiedDistanceCompute>,
+    _distance_compute: Arc<UnifiedDistanceCompute>,
     // Note: proxima_encoder removed - encoding now done via ProximaCodec in writer.rs
     filesystem: Arc<dyn FileSystem>,
-    transaction_coordinator: Arc<TransactionCoordinator>,
+    _transaction_coordinator: Arc<TransactionCoordinator>,
 }
 
 impl RaptorCompactor {
@@ -44,10 +44,10 @@ impl RaptorCompactor {
         Self {
             config,
             reader,
-            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
+            _distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             // Note: proxima_encoder removed - encoding now done via ProximaCodec in writer.rs
             filesystem,
-            transaction_coordinator,
+            _transaction_coordinator: transaction_coordinator,
         }
     }
 
@@ -96,13 +96,30 @@ impl RaptorCompactor {
         // Step 3: Apply MVCC resolution - keep only latest versions
         let deduplicated = self.apply_mvcc_resolution(all_vectors);
 
-        // Step 4: Group into row groups (10K vectors each)
-        let row_groups = self.create_row_groups(deduplicated, 10000);
+        // Step 4: Calculate optimal row group size using Matrix Trinity balanced sizing
+        // This uses p = k = √N for optimal query complexity
+        let sizing =
+            BalancedMatrixTrinitySizing::calculate(deduplicated.len(), self.config.dimension);
+        let group_size = self
+            .config
+            .target_rowgroup_size
+            .unwrap_or(sizing.vectors_per_rowgroup);
 
-        // Step 5: Write compacted file - DIRECT filesystem operations
+        debug!(
+            "Standard compaction: {} vectors -> {} rowgroups of ~{} vectors (speedup: {:.1}x)",
+            deduplicated.len(),
+            sizing.num_rowgroups,
+            group_size,
+            sizing.speedup_vs_naive
+        );
+
+        // Step 5: Group into row groups with balanced sizing
+        let row_groups = self.create_row_groups(deduplicated, group_size);
+
+        // Step 6: Write compacted file - DIRECT filesystem operations
         self.write_compacted_file(output_file, row_groups).await?;
 
-        // Step 6: Clean up input files
+        // Step 7: Clean up input files
         for file_path in input_files {
             self.filesystem.delete(&file_path).await?;
         }
@@ -113,6 +130,7 @@ impl RaptorCompactor {
     /// Clustering-based compaction matching writer's flush behavior
     /// Key principle: k (number of clusters) = number of rowgroups
     /// Each rowgroup contains vectors from exactly one cluster
+    #[allow(dead_code)]
     async fn compact_with_matrix_preservation(
         &self,
         input_files: Vec<String>,
@@ -141,20 +159,20 @@ impl RaptorCompactor {
             return Ok(());
         }
 
-        // Step 2: Calculate k using same logic as writer's build_ivf_clusters
-        // k = sqrt(n) for optimal complexity k² + p×(k+p)
-        let sqrt_n = (n as f64).sqrt() as usize;
-        let k = self.config.num_clusters.unwrap_or(sqrt_n.max(1));
+        // Step 2: Calculate optimal k and p using Matrix Trinity balanced sizing
+        // This uses p = k = √N for optimal complexity: k² + nprobe*p + k ≈ O(√N) per query
+        let sizing = BalancedMatrixTrinitySizing::calculate(n, self.config.dimension);
 
-        // p = rowgroup size (from config or auto-calculated based on L3 cache)
+        // Allow config overrides if specified, otherwise use optimal values
+        let k = self.config.num_clusters.unwrap_or(sizing.num_rowgroups);
         let p = self
             .config
             .target_rowgroup_size
-            .unwrap_or(self.config.rowgroup_size);
+            .unwrap_or(sizing.vectors_per_rowgroup);
 
         info!(
-            "Compacting {} vectors: k={} clusters (sqrt(n)), p={} vectors/rowgroup",
-            n, k, p
+            "Compacting {} vectors: k={} clusters, p={} vectors/rowgroup (speedup: {:.1}x vs naive)",
+            n, k, p, sizing.speedup_vs_naive
         );
 
         // Step 3: Run clustering to assign vectors to k clusters (same as writer)
@@ -166,7 +184,7 @@ impl RaptorCompactor {
             let cluster_id_u16 = cluster_id as u16;
             vectors_by_cluster
                 .entry(cluster_id_u16)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(vector);
         }
 
@@ -176,6 +194,8 @@ impl RaptorCompactor {
 
         let mut row_groups = Vec::new();
         for (rg_idx, cluster_id) in sorted_cluster_ids.iter().enumerate() {
+            // SAFETY: cluster_id is obtained from vectors_by_cluster.keys(), so it must
+            // exist. We iterate in sorted order and remove() each key exactly once.
             let vectors = vectors_by_cluster.remove(cluster_id).unwrap();
 
             // Create rowgroup - rowgroup_id matches position in sorted order
@@ -202,6 +222,7 @@ impl RaptorCompactor {
 
     /// Run fast-converging K-means++ clustering for high-dimensional data
     /// Uses the same algorithm as the writer for consistency
+    #[allow(dead_code)]
     fn cluster_vectors(&self, vectors: &[VectorRecord], k: usize) -> Result<Vec<usize>> {
         // Use AXIS clustering engine with K-means++ initialization
         // This provides fast convergence for high-dimensional data
@@ -338,6 +359,8 @@ impl RaptorCompactor {
     }
 
     /// Create row group from vector list
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn create_row_group_from_vectors(&self, vectors: Vec<VectorRecord>) -> RowGroup {
         let mut row_group = RowGroup::new(0);
         row_group.vector_count = vectors.len();

@@ -6,7 +6,6 @@
 //! This eliminates the ~50 lines of boilerplate collection setup code
 //! found in 10+ test files.
 
-use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -184,6 +183,10 @@ impl TestCollectionBuilder {
                 auto_index_selection: None,
                 owner: None,
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: None,
             created_at: 0,
@@ -202,7 +205,7 @@ impl TestCollectionBuilder {
     }
 
     /// Build with a specific path (no temp directory created)
-    pub fn build_with_path(mut self, path: PathBuf) -> Collection {
+    pub fn build_with_path(self, path: PathBuf) -> Collection {
         let id = self.id.clone().unwrap_or_else(|| {
             use uuid::Uuid;
             format!("test_{}", Uuid::new_v4().simple())
@@ -233,6 +236,10 @@ impl TestCollectionBuilder {
                 auto_index_selection: None,
                 owner: None,
                 embedding_models: vec![],
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
             }),
             stats: None,
             created_at: 0,

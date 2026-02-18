@@ -1,0 +1,272 @@
+# =============================================================================
+# ProximaDB Pre-Release CI Pipeline (Optimized)
+# =============================================================================
+# Validates release readiness by building all artifacts without publishing.
+# Uses reusable workflows to avoid code duplication.
+#
+# Triggers:
+#   - Push to main branch
+#   - Manual workflow_dispatch
+#
+# =============================================================================
+
+name: Pre-Release CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to validate (e.g., 0.2.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  # ============================================================================
+  # VERSION CHECK - Validate version consistency
+  # ============================================================================
+  version-check:
+    name: Version Consistency Check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      cache-key: ${{ steps.cache.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Validating version: $VERSION"
+
+      - name: Run Version Consistency Check
+        run: bash scripts/version-sync.sh check
+
+      - name: Generate Cache Key
+        id: cache
+        run: |
+          SHA="${{ github.sha }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "key=prerelease-${VERSION}-${SHA:0:12}" >> $GITHUB_OUTPUT
+
+  # ============================================================================
+  # CALL SHARED BUILD - Build all artifacts (with caching)
+  # ============================================================================
+  build:
+    name: Build Artifacts
+    needs: version-check
+    uses: ./.github/workflows/_shared-build.yml
+    with:
+      version: ${{ needs.version-check.outputs.version }}
+      cache-key: ${{ needs.version-check.outputs.cache-key }}
+      upload-artifacts: true
+      skip-cache: false
+
+  # ============================================================================
+  # BUILD PLATFORM PACKAGES - RPM, DEB, DMG, MSI
+  # ============================================================================
+  platform-packages:
+    name: Build Platform Packages
+    needs: version-check
+    uses: ./.github/workflows/_platform-packages.yml
+    with:
+      version: ${{ needs.version-check.outputs.version }}
+      cache-key: ${{ needs.version-check.outputs.cache-key }}
+      upload-artifacts: true
+
+  # ============================================================================
+  # VALIDATE ARTIFACTS - Comprehensive validation
+  # ============================================================================
+  validate-artifacts:
+    name: Validate Release Artifacts
+    needs: [version-check, build, platform-packages]
+    runs-on: ubuntu-latest
+    outputs:
+      validation_passed: ${{ steps.validate.outputs.passed }}
+      artifact_report: ${{ steps.validate.outputs.report }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Validate Artifact Manifest
+        id: validate
+        run: |
+          VERSION="${{ needs.version-check.outputs.version }}"
+          VALIDATION_PASSED=true
+
+          echo "=============================================="
+          echo "ProximaDB Pre-Release Artifact Validation"
+          echo "Version: $VERSION"
+          echo "=============================================="
+          echo ""
+
+          # Binary validation
+          echo "## Binary Artifacts"
+          EXPECTED_BINARIES=(
+            "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+            "proximadb-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
+            "proximadb-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
+            "proximadb-${VERSION}-x86_64-apple-darwin.tar.gz"
+            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
+            "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
+          )
+
+          BINARY_COUNT=0
+          for binary in "${EXPECTED_BINARIES[@]}"; do
+            if find artifacts -name "$binary" -type f | grep -q .; then
+              echo "  [OK] $binary"
+              ((BINARY_COUNT++))
+            else
+              echo "  [MISSING] $binary"
+              VALIDATION_PASSED=false
+            fi
+          done
+          echo "  Binary Summary: $BINARY_COUNT/${#EXPECTED_BINARIES[@]} found"
+          echo ""
+
+          # Wheel validation
+          echo "## Python Wheel Artifacts"
+          LINUX_X64_WHEELS=$(find artifacts -name "*manylinux*x86_64*.whl" -type f 2>/dev/null | wc -l)
+          LINUX_ARM64_WHEELS=$(find artifacts -name "*manylinux*aarch64*.whl" -type f 2>/dev/null | wc -l)
+          MACOS_X64_WHEELS=$(find artifacts -name "*macosx*x86_64*.whl" -type f 2>/dev/null | wc -l)
+          MACOS_ARM64_WHEELS=$(find artifacts -name "*macosx*arm64*.whl" -type f 2>/dev/null | wc -l)
+          WINDOWS_WHEELS=$(find artifacts -name "*win_amd64*.whl" -type f 2>/dev/null | wc -l)
+
+          echo "  Linux x86_64: $LINUX_X64_WHEELS, Linux aarch64: $LINUX_ARM64_WHEELS"
+          echo "  macOS x86_64: $MACOS_X64_WHEELS, macOS arm64: $MACOS_ARM64_WHEELS"
+          echo "  Windows: $WINDOWS_WHEELS"
+          TOTAL_WHEELS=$((LINUX_X64_WHEELS + LINUX_ARM64_WHEELS + MACOS_X64_WHEELS + MACOS_ARM64_WHEELS + WINDOWS_WHEELS))
+          echo "  Total wheels: $TOTAL_WHEELS"
+          echo ""
+
+          if [ "$TOTAL_WHEELS" -lt 15 ]; then
+            echo "  [WARNING] Fewer than expected wheels"
+            VALIDATION_PASSED=false
+          fi
+
+          # Platform packages
+          echo "## Platform Packages"
+          RPM_COUNT=$(find artifacts -name "*.rpm" -type f 2>/dev/null | wc -l)
+          DEB_COUNT=$(find artifacts -name "*.deb" -type f 2>/dev/null | wc -l)
+          DMG_COUNT=$(find artifacts -name "*.dmg" -type f 2>/dev/null | wc -l)
+          MSI_COUNT=$(find artifacts -name "*.msi" -type f 2>/dev/null | wc -l)
+
+          echo "  RPM: $RPM_COUNT, DEB: $DEB_COUNT, DMG: $DMG_COUNT, MSI: $MSI_COUNT"
+          echo ""
+
+          if [ "$RPM_COUNT" -lt 1 ] || [ "$DEB_COUNT" -lt 1 ] || [ "$DMG_COUNT" -lt 1 ] || [ "$MSI_COUNT" -lt 1 ]; then
+            echo "  [WARNING] Missing platform packages"
+            VALIDATION_PASSED=false
+          fi
+
+          # Source distributions
+          echo "## Source Distributions"
+          SDIST_COUNT=$(find artifacts -path "*/sdist/*.tar.gz" -type f 2>/dev/null | wc -l)
+          echo "  Source distributions: $SDIST_COUNT"
+          if [ "$SDIST_COUNT" -lt 1 ]; then
+            VALIDATION_PASSED=false
+          fi
+          echo ""
+
+          # Final Summary
+          echo "=============================================="
+          echo "VALIDATION SUMMARY"
+          echo "=============================================="
+
+          if [ "$VALIDATION_PASSED" = "true" ]; then
+            echo "  STATUS: PASSED"
+            echo "  All expected artifacts are present."
+            echo "passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "  STATUS: FAILED"
+            echo "  Some expected artifacts are missing."
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Report
+          echo "report<<EOF" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION" >> $GITHUB_OUTPUT
+          echo "Binaries: $BINARY_COUNT/6" >> $GITHUB_OUTPUT
+          echo "Wheels: $TOTAL_WHEELS" >> $GITHUB_OUTPUT
+          echo "SDists: $SDIST_COUNT" >> $GITHUB_OUTPUT
+          echo "RPM: $RPM_COUNT, DEB: $DEB_COUNT" >> $GITHUB_OUTPUT
+          echo "DMG: $DMG_COUNT, MSI: $MSI_COUNT" >> $GITHUB_OUTPUT
+          echo "Status: $VALIDATION_PASSED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate Validation Summary
+        run: |
+          echo "## Pre-Release CI Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.version-check.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Cache Key:** ${{ needs.version-check.outputs.cache-key }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.validate.outputs.passed }}" = "true" ]; then
+            echo ":white_check_mark: **All validations passed**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo ":x: **Validation failed**" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.validate.outputs.report }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if Validation Failed
+        if: steps.validate.outputs.passed != 'true'
+        run: |
+          echo "::error::Pre-release CI validation failed"
+          exit 1
+
+  # ============================================================================
+  # PRERELEASE SUMMARY - Upload release readiness report
+  # ============================================================================
+  prerelease-summary:
+    name: Pre-Release Summary
+    needs: [version-check, validate-artifacts]
+    runs-on: ubuntu-latest
+    if: always() && needs.validate-artifacts.outputs.validation_passed == 'true'
+    steps:
+      - name: Generate Summary Report
+        run: |
+          cat << 'EOF' > release-ready.json
+          {
+            "version": "${{ needs.version-check.outputs.version }}",
+            "status": "ready",
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "cache_key": "${{ needs.version-check.outputs.cache-key }}",
+            "validation": "${{ needs.validate-artifacts.outputs.validation_passed }}",
+            "artifacts": "${{ needs.validate-artifacts.outputs.artifact_report }}"
+          }
+          EOF
+          cat release-ready.json
+
+      - name: Upload Release Ready Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ready
+          path: release-ready.json
+          retention-days: 30
+
+      - name: Cache Info for Release Workflow
+        run: |
+          echo "::notice::Pre-release CI passed with cache key: ${{ needs.version-check.outputs.cache-key }}"
+          echo "::notice::Release workflow can reuse cached artifacts with this key"

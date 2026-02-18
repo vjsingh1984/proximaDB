@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
+use crate::storage::persistence::filesystem::FileSystem;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::MetadataFilter;
 use super::unified_reader::SwiftReaderConfig;
@@ -132,10 +133,12 @@ impl UnifiedSWIFTReader {
     }
 
     /// Convert to legacy SwiftReadStrategy for compatibility
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn to_swift_strategy(&self) -> super::unified_reader::SwiftReadStrategy {
         match &self.strategy {
             ReadAccessStrategy::DirectStream => super::unified_reader::SwiftReadStrategy::StreamAll,
-            ReadAccessStrategy::CachedSelective { filter } => {
+            ReadAccessStrategy::CachedSelective { filter: _ } => {
                 super::unified_reader::SwiftReadStrategy::HierarchicalPrune {
                     metadata_filter: None, // TODO: Convert FilterExpression to MetadataFilter
                     id_filter: None,
@@ -259,14 +262,9 @@ impl UnifiedSWIFTReader {
     /// Check bloom filter for potential matches
     fn check_bloom_filter(
         &self,
-        bloom: &crate::core::bloom::SstableBloomFilter,
-        filter: &Option<crate::core::search::FilterExpression>,
+        _bloom: &crate::core::bloom::SstableBloomFilter,
+        _filter: &Option<crate::core::search::FilterExpression>,
     ) -> bool {
-        // If no filter, always check the block
-        if filter.is_none() {
-            return true;
-        }
-
         // TODO: Implement bloom filter check based on filter expression
         // For now, conservatively return true (check the block)
         true
@@ -276,12 +274,8 @@ impl UnifiedSWIFTReader {
     fn apply_filter_to_block(
         &self,
         records: &[VectorRecord],
-        filter: &Option<crate::core::search::FilterExpression>,
+        _filter: &Option<crate::core::search::FilterExpression>,
     ) -> Result<Vec<VectorRecord>> {
-        if filter.is_none() {
-            return Ok(records.to_vec());
-        }
-
         // TODO: Implement actual filter evaluation
         // For now, return all records
         Ok(records.to_vec())
@@ -336,7 +330,9 @@ impl StrategyAwareReader for UnifiedSWIFTReader {
 /// - Sequential reads of entire files
 pub struct DirectSWIFTReader {
     filesystem_factory: Arc<FilesystemFactory>,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     config: SwiftReaderConfig,
 }
 
@@ -360,7 +356,7 @@ impl DirectSWIFTReader {
     /// Stream superblocks directly without caching
     pub async fn stream_superblocks(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
-        let _data = fs.read(file_path).await?;
+        let _ = fs.read(file_path).await?;
 
         // TODO: Implement SWIFT superblock streaming
         Ok(vec![])
@@ -376,7 +372,9 @@ impl DirectSWIFTReader {
 /// - Any operation that benefits from caching superblock metadata
 pub struct CachedSWIFTReader {
     cached_filesystem: Arc<UnifiedCachingFilesystem>,
+    #[allow(dead_code)]
     collection_id: String,
+    #[allow(dead_code)]
     config: SwiftReaderConfig,
 }
 
@@ -408,9 +406,9 @@ impl CachedSWIFTReader {
     pub async fn read_with_pruning(
         &self,
         file_path: &str,
-        metadata_filter: Option<MetadataFilter>,
+        _metadata_filter: Option<MetadataFilter>,
     ) -> Result<Vec<VectorRecord>> {
-        let _data = self.cached_filesystem.read(file_path).await?;
+        let _ = self.cached_filesystem.read(file_path).await?;
 
         // TODO: Implement hierarchical pruning with metadata filter
         Ok(vec![])
@@ -443,10 +441,10 @@ mod tests {
         // Search should use CachedSearch
         let search_reader =
             UnifiedSWIFTReader::for_search(factory.clone(), "test_collection".to_string()).unwrap();
-        matches!(
+        assert!(matches!(
             search_reader.strategy(),
             ReadAccessStrategy::CachedSearch { .. }
-        );
+        ));
         assert!(search_reader.is_using_cache());
     }
 

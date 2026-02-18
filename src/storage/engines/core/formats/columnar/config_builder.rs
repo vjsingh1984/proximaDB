@@ -5,7 +5,11 @@
 //! disable or tune them based on their specific requirements.
 
 use crate::proto::proximadb_v1::QuantizationConfig;
+use crate::storage::engines::core::formats::columnar::constants::{
+    DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
+use crate::storage::engines::core::formats::columnar::utilities::recommend_page_size_for_dimension;
 use crate::storage::engines::core::formats::columnar::{
     FooterCacheConfig, HybridWriterConfig, WriterMode,
 };
@@ -13,7 +17,6 @@ use parquet::basic::Compression;
 use std::time::Duration;
 
 // Import CompressionAlgorithm for the compression method
-use crate::core::compression::CompressionAlgorithm;
 
 /// Builder for Parquet writer configuration with all optimizations enabled by default
 pub struct ParquetConfigBuilder {
@@ -33,8 +36,8 @@ impl ParquetConfigBuilder {
     pub fn minimal() -> Self {
         Self {
             config: ParquetWriterConfig {
-                row_group_size: 10000,
-                page_size: 524288, // 512KB
+                row_group_size: DEFAULT_ROW_GROUP_SIZE,
+                page_size: DEFAULT_PAGE_SIZE,
                 write_batch_size: 1000,
                 compression: Compression::UNCOMPRESSED,
                 compression_level: None,
@@ -95,14 +98,14 @@ impl ParquetConfigBuilder {
     }
 
     /// Disable PQ sorting (not recommended if compression is important)
-    pub fn disable_pq_sorting(mut self) -> Self {
+    pub fn disable_pq_sorting(self) -> Self {
         // Note: enable_pq_sorting doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
     }
 
     /// Disable native metadata types (not recommended for complex metadata)
-    pub fn disable_native_metadata(mut self) -> Self {
+    pub fn disable_native_metadata(self) -> Self {
         // Note: enable_native_metadata doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
@@ -120,6 +123,21 @@ impl ParquetConfigBuilder {
         self
     }
 
+    /// Tune page size based on dimension and current row group size (targets ~2–8 pages/row group)
+    pub fn tune_pages_for_dimension(
+        mut self,
+        dimension: usize,
+        metadata_overhead_bytes: usize,
+    ) -> Self {
+        let page_size = recommend_page_size_for_dimension(
+            self.config.row_group_size,
+            dimension,
+            metadata_overhead_bytes,
+        );
+        self.config.page_size = page_size;
+        self
+    }
+
     /// Set page size
     pub fn page_size(mut self, size: usize) -> Self {
         self.config.page_size = size;
@@ -133,21 +151,21 @@ impl ParquetConfigBuilder {
     }
 
     /// Set specific columns for bloom filters
-    pub fn bloom_filter_columns(mut self, _columns: Vec<String>) -> Self {
+    pub fn bloom_filter_columns(self, _columns: Vec<String>) -> Self {
         // Note: bloom_filter_columns doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
     }
 
     /// Configure PQ sorting parameters
-    pub fn pq_sorting_config(mut self, _segments: usize, _codebook_size: usize) -> Self {
+    pub fn pq_sorting_config(self, _segments: usize, _codebook_size: usize) -> Self {
         // Note: pq_sorting fields don't exist in ParquetWriterConfig
         // This is a no-op for now
         self
     }
 
     /// Set metadata inference sample size
-    pub fn metadata_inference_samples(mut self, _samples: usize) -> Self {
+    pub fn metadata_inference_samples(self, _samples: usize) -> Self {
         // Note: metadata_inference_samples doesn't exist in ParquetWriterConfig
         // This is a no-op for now
         self
@@ -334,7 +352,7 @@ impl ParquetPresets {
     pub fn balanced() -> ParquetWriterConfig {
         ParquetConfigBuilder::new()
             .row_group_size(5000)
-            .page_size(512 * 1024) // 512KB pages
+            .page_size(DEFAULT_PAGE_SIZE * 2) // 512KB pages
             .bloom_filter_fpp(0.05) // 5% FPP
             .build()
     }
@@ -345,7 +363,7 @@ impl ParquetPresets {
             .disable_bloom_filters()
             .disable_pq_sorting()
             .row_group_size(1000)
-            .page_size(256 * 1024) // 256KB pages
+            .page_size(DEFAULT_PAGE_SIZE) // 256KB pages
             .metadata_inference_samples(100)
             .build()
     }
@@ -364,7 +382,7 @@ impl ParquetPresets {
     pub fn real_time() -> ParquetWriterConfig {
         ParquetConfigBuilder::new()
             .row_group_size(1000) // Small row groups for quick flushes
-            .page_size(256 * 1024) // Smaller pages
+            .page_size(DEFAULT_PAGE_SIZE) // Smaller pages
             .compression(Compression::LZ4) // Fast compression
             .build()
     }

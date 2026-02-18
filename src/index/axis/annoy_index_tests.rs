@@ -35,7 +35,7 @@ mod tests {
     fn create_test_record(
         id: String,
         vector: Vec<f32>,
-        metadata: Vec<MetadataItem>,
+        _metadata: Vec<MetadataItem>,
     ) -> Arc<VectorRecord> {
         Arc::new(VectorRecord {
             id,
@@ -108,7 +108,7 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
         };
 
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Add normalized vectors
         let vectors = vec![
@@ -147,7 +147,7 @@ mod tests {
             distance_metric: DistanceMetric::Euclidean,
         };
 
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Add vectors with metadata
         for i in 0..10 {
@@ -189,7 +189,7 @@ mod tests {
     #[tokio::test]
     async fn test_annoy_static_index_behavior() {
         let config = AxisAnnoyConfig::default();
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         let record1 = create_test_record("v1".to_string(), vec![1.0, 0.0, 0.0, 0.0], vec![]);
         let record2 = create_test_record("v2".to_string(), vec![0.0, 1.0, 0.0, 0.0], vec![]);
@@ -240,7 +240,7 @@ mod tests {
             distance_metric: DistanceMetric::Euclidean,
         };
 
-        let mut index1 = AxisAnnoyIndex::new(config.clone(), 8).unwrap();
+        let index1 = AxisAnnoyIndex::new(config.clone(), 8).unwrap();
 
         // Add vectors
         let vectors = create_test_vectors(50, 8);
@@ -253,7 +253,7 @@ mod tests {
 
         // Create another index with auto search_k
         config.search_k = -1; // Auto
-        let mut index2 = AxisAnnoyIndex::new(config, 8).unwrap();
+        let index2 = AxisAnnoyIndex::new(config, 8).unwrap();
 
         for (id, vec) in &vectors {
             let record = create_test_record(id.clone(), vec.clone(), vec![]);
@@ -290,7 +290,7 @@ mod tests {
             distance_metric: DistanceMetric::Euclidean,
         };
 
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Add only 10 vectors (less than max_leaf_size)
         for i in 0..10 {
@@ -316,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn test_annoy_empty_index() {
         let config = AxisAnnoyConfig::default();
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Build empty index
         index.build().await.unwrap();
@@ -330,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn test_annoy_dimension_mismatch() {
         let config = AxisAnnoyConfig::default();
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Try to add vector with wrong dimension
         let record = create_test_record("v1".to_string(), vec![1.0, 0.0], vec![]); // Wrong dimension
@@ -366,7 +366,7 @@ mod tests {
             distance_metric: DistanceMetric::Euclidean,
         };
 
-        let mut index = AxisAnnoyIndex::new(config, 4).unwrap();
+        let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Check stats before adding vectors
         let stats = index.stats();

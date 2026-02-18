@@ -215,10 +215,10 @@ mod tests {
         let optimizer = MetadataProjectionOptimizer::new();
 
         // Should use projection for subset of fields
-        assert!(optimizer.should_use_projection(&vec!["f1".to_string(), "f2".to_string()], 10));
+        assert!(optimizer.should_use_projection(&["f1".to_string(), "f2".to_string()], 10));
 
         // Should not use projection for all fields
-        assert!(!optimizer.should_use_projection(&vec!["f1".to_string(), "f2".to_string()], 2));
+        assert!(!optimizer.should_use_projection(&["f1".to_string(), "f2".to_string()], 2));
     }
 
     #[tokio::test]
@@ -284,7 +284,7 @@ mod tests {
         let optimizer = MetadataProjectionOptimizer::with_config(config);
 
         // Should not use projection when disabled
-        assert!(!optimizer.should_use_projection(&vec!["f1".to_string()], 10));
+        assert!(!optimizer.should_use_projection(&["f1".to_string()], 10));
     }
 
     #[test]

@@ -116,6 +116,7 @@ impl InMemoryRelationsStore {
     }
 
     /// Generate storage key for a relationship
+    #[allow(dead_code)]
     fn relation_key(
         collection_id: &str,
         source_id: &str,
@@ -148,6 +149,7 @@ impl InMemoryRelationsStore {
     }
 
     /// Convert ORION Edge to SKS Relation
+    #[allow(dead_code)]
     fn convert_edge_to_relation(
         &self,
         edge: &crate::proto::proximadb_v1::Edge,
@@ -188,8 +190,7 @@ impl InMemoryRelationsStore {
     async fn persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         // Use ORION graph engine for persistence instead of direct file I/O
         {
-            let _graph_engine = &self.storage_engine;
-            let edge = crate::proto::proximadb_v1::Edge {
+            let _edge = crate::proto::proximadb_v1::Edge {
                 id: format!(
                     "{}:{}:{}",
                     relation.source_entity_id, relation.relation_type, relation.target_entity_id
@@ -219,27 +220,31 @@ impl InMemoryRelationsStore {
             };
 
             // TODO: Implement graph persistence when graph storage is available
-            // graph_engine.insert_edge(Arc::new(edge))?;
+            let _graph_engine = &self.storage_engine;
             debug!(
-                "Persisted relation to ORION: {} -> {}",
-                relation.source_entity_id, relation.target_entity_id
+                "Persisted relation to ORION: {} -> {} (collection: {})",
+                relation.source_entity_id, relation.target_entity_id, collection_id
             );
         }
 
         Ok(())
     }
 
-    /// Remove a relationship from storage using ORION engine  
+    /// Remove a relationship from storage using ORION engine
+    #[allow(dead_code)]
     async fn remove_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         {
-            let graph_engine = &self.storage_engine;
+            let _graph_engine = &self.storage_engine;
             let edge_id = format!(
                 "{}:{}:{}",
                 relation.source_entity_id, relation.relation_type, relation.target_entity_id
             );
             // TODO: Implement graph deletion when graph storage is available
             // graph_engine.delete_edge(&edge_id)?;
-            debug!("Removed relation from ORION: {}", edge_id);
+            debug!(
+                "Removed relation from ORION: {} (collection: {})",
+                edge_id, collection_id
+            );
         }
         Ok(())
     }

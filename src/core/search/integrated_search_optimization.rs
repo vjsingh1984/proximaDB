@@ -41,6 +41,7 @@ use crate::storage::traits::StorageQueryContext;
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer
 pub struct AdvancedSearchOptimizer {
     /// Query preprocessor (Phase 1)
+    #[allow(dead_code)]
     query_preprocessor: Arc<QueryPreprocessor>,
 
     /// Metadata filter pushdown (Phase 3)
@@ -56,6 +57,7 @@ pub struct AdvancedSearchOptimizer {
     query_cache: Arc<QueryCache>,
 
     /// Metadata cache
+    #[allow(dead_code)]
     metadata_store: Arc<MetadataStore>,
 
     /// Cross-cache orchestrator
@@ -69,22 +71,27 @@ pub struct AdvancedSearchOptimizer {
     progressive_config: ProgressiveSearchConfig,
 
     /// Stage size calculator for progressive search
+    #[allow(dead_code)]
     stage_selector: StageSelector,
 
     /// Performance tracking for adaptive optimization
+    #[allow(dead_code)]
     performance_tracker: Arc<PerformanceTracker>,
 
     // === Merged from IntegratedSearchOptimizer ===
     /// Cost estimation for strategy selection
+    #[allow(dead_code)]
     cost_estimator: Arc<SearchCostEstimator>,
 
     /// AXIS index integration
     axis_manager: Option<Arc<AxisManager>>,
 
     /// Routing engine for intelligent path selection
+    #[allow(dead_code)]
     routing_engine: Arc<RoutingEngine>,
 
     /// Hardware profile for optimization decisions
+    #[allow(dead_code)]
     hardware_profile: HardwareProfile,
 
     /// Configuration
@@ -140,9 +147,11 @@ pub struct ZeroCopyVectorView {
     dimension: usize,
 
     /// Number of vectors
+    #[allow(dead_code)]
     count: usize,
 }
 
+#[allow(dead_code)]
 enum VectorData {
     Owned(Vec<f32>),
     Mapped(Arc<Mmap>),
@@ -152,9 +161,11 @@ enum VectorData {
 /// Streaming search results for memory efficiency
 pub struct StreamingSearchResults {
     /// Result stream
+    #[allow(dead_code)]
     stream: Pin<Box<dyn futures::Stream<Item = Result<OptimizedSearchRecord>> + Send>>,
 
     /// Total expected results
+    #[allow(dead_code)]
     total_results: Option<usize>,
 }
 
@@ -162,14 +173,19 @@ pub struct StreamingSearchResults {
 
 /// Stage selector for progressive search (from IntegratedSearchOptimizer)
 pub struct StageSelector {
+    #[allow(dead_code)]
     config: ProgressiveSearchConfig,
+    #[allow(dead_code)]
     observed_recalls: HashMap<UnifiedQuantizationLevel, f32>,
 }
 
 /// Performance tracker for adaptive optimization (from IntegratedSearchOptimizer)
 pub struct PerformanceTracker {
+    #[allow(dead_code)]
     stage_timings: RwLock<HashMap<String, Vec<Duration>>>,
+    #[allow(dead_code)]
     stage_recalls: RwLock<HashMap<String, Vec<f32>>>,
+    #[allow(dead_code)]
     last_update: RwLock<Instant>,
 }
 
@@ -192,7 +208,9 @@ pub struct PerformanceStats {
 
 /// Routing engine for intelligent path selection (from IntegratedSearchOptimizer)
 pub struct RoutingEngine {
+    #[allow(dead_code)]
     strategies: HashMap<String, ExecutionStrategy>,
+    #[allow(dead_code)]
     fallback_chain: Vec<String>,
 }
 

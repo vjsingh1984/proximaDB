@@ -32,6 +32,7 @@ use anyhow::Result;
 use arrow::record_batch::RecordBatch;
 
 /// Common trait for all Parquet readers
+#[allow(async_fn_in_trait)]
 pub trait ParquetQueryEngine: Send + Sync {
     /// Query with metadata filters
     async fn query_with_filters(

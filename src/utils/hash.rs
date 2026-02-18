@@ -239,8 +239,7 @@ impl Hasher for Fnv1a64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::hash::{Hash, Hasher as StdHasher};
+    use std::hash::Hasher as StdHasher;
     use std::sync::Arc;
     use std::thread;
 
@@ -646,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_xxhash_round_function() {
-        let mut hasher = XxHash64::new(0);
+        let hasher = XxHash64::new(0);
 
         // Test the internal round function with known values
         let input = 0x123456789ABCDEF0;

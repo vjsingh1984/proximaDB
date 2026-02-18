@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 use super::zone_maps::PruningStrategy;
 
@@ -158,8 +158,6 @@ impl UnifiedNOVAReader {
 
     /// Cached read with zone map pruning (for selective queries)
     async fn read_with_zone_maps(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        use crate::core::search::FilterExpression;
-
         // Create reader with cached filesystem for metadata caching
         let dimension = 128; // TODO: Get from collection config
         let cached_fs = self
@@ -176,7 +174,7 @@ impl UnifiedNOVAReader {
         )?;
 
         // Apply filter based on strategy
-        let metadata_filter = match &self.strategy {
+        let _metadata_filter = match &self.strategy {
             ReadAccessStrategy::CachedSelective { filter } => {
                 filter.as_ref().map(|f| self.convert_to_metadata_filter(f))
             }
@@ -192,7 +190,7 @@ impl UnifiedNOVAReader {
     /// Convert FilterExpression to MetadataFilter for columnar module
     fn convert_to_metadata_filter(
         &self,
-        filter: &crate::core::search::FilterExpression,
+        _filter: &crate::core::search::FilterExpression,
     ) -> crate::storage::engines::core::formats::columnar::MetadataFilter {
         // Simple conversion - expand as needed
         // NOVA uses Parquet's built-in statistics and bloom filters for pruning
@@ -206,10 +204,11 @@ impl UnifiedNOVAReader {
     }
 
     /// Check if a row group should be read based on zone maps
+    #[allow(dead_code)]
     fn should_read_row_group(
         &self,
-        metadata: &parquet::file::metadata::ParquetMetaData,
-        rg_idx: usize,
+        _metadata: &parquet::file::metadata::ParquetMetaData,
+        _rg_idx: usize,
         filter: &Option<crate::core::search::FilterExpression>,
     ) -> Result<bool> {
         // If no filter, read all row groups
@@ -223,10 +222,11 @@ impl UnifiedNOVAReader {
     }
 
     /// Evaluate filter against metadata
+    #[allow(dead_code)]
     fn evaluate_filter(
         &self,
-        filter: &crate::core::search::FilterExpression,
-        metadata: &std::collections::HashMap<String, serde_json::Value>,
+        _filter: &crate::core::search::FilterExpression,
+        _metadata: &std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<bool> {
         // TODO: Implement actual filter evaluation
         // For now, accept all records
@@ -268,6 +268,7 @@ impl UnifiedNOVAReader {
     }
 
     /// Convert Arrow RecordBatch to VectorRecords
+    #[allow(dead_code)]
     fn arrow_batch_to_vector_records(
         &self,
         batch: arrow_array::RecordBatch,

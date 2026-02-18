@@ -3,13 +3,8 @@
 //! This test demonstrates metadata filtering without hitting the bincode
 //! deserialization issue by using concrete types instead of serde_json::Value.
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::info;
@@ -46,9 +41,9 @@ async fn test_metadata_filtering_with_sstable_reader() {
 
     // Create temp directory and filesystem
     let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path();
+    let _temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
+    let _filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
 
     // Instead of creating an SSTable, we'll test the metadata filtering logic directly
     // This avoids the bincode serialization issue
@@ -240,7 +235,7 @@ async fn test_metadata_bloom_filter_functionality() {
     // Test the composite bloom filter with metadata support
     use crate::core::bloom::strategies::composite::CompositeBloomFilter;
     use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
-    use tracing::{debug, error, info};
+    use tracing::{error, info};
 
     let config = BloomFilterConfig {
         bits_per_key: 10,

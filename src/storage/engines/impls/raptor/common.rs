@@ -11,10 +11,6 @@ pub use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
-fn default_vector_count() -> usize {
-    0
-}
-
 /// Primary RowGroup structure used throughout RAPTOR
 /// Unified RowGroup structure consolidating all variants
 ///
@@ -802,7 +798,7 @@ impl RowGroupBloomFilter {
             hash_algorithm: HashAlgorithm::Murmur3,
         };
 
-        let filter = BloomFilterFactory::create(&config);
+        let _filter = BloomFilterFactory::create(&config);
 
         // TODO: Restore state from self.bits (optimization needed)
         // For now, this is a simplified implementation
@@ -1221,7 +1217,8 @@ impl InterCentroidMatrix {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let config = StorageQuantizationConfig::default();
 
-        let quant_engine = StorageQuantizationEngine::new(unified_engine, distance_compute, config);
+        let _quant_engine =
+            StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
         // Prepare quantized values
         let mut quantized_values = Vec::with_capacity(pairs.len());
@@ -1245,7 +1242,7 @@ impl InterCentroidMatrix {
 
         // Create quantized vector wrapper for unified engine processing
         use crate::compute::quantization::unified::QuantizationMetadata;
-        let quantized_vector = QuantizedVector {
+        let _quantized_vector = QuantizedVector {
             data: quantized_values
                 .iter()
                 .flat_map(|&v| v.to_le_bytes())
@@ -1273,9 +1270,10 @@ impl InterCentroidMatrix {
         };
 
         for chunk in quantized_values.chunks(batch_size) {
-            // Create temporary vectors for dequantization
+            // Dequantize: d = min + q / scale_factor
             for &quantized_u16 in chunk {
-                let dequantized = quantized_u16 as f32 / self.compression_metadata.scale_factor;
+                let dequantized = self.compression_metadata.min_distance
+                    + quantized_u16 as f32 / self.compression_metadata.scale_factor;
                 results.push(dequantized);
             }
         }
@@ -1328,7 +1326,9 @@ impl InterCentroidMatrix {
     }
 
     /// Decompress single distance value at specific linear index in upper triangle
-    /// Uses Proxima bit-unpacking with 16-bit quantization reconstruction
+    /// Uses 16-bit quantization reconstruction
+    /// Quantization: q = (d - min) * scale, where scale = 65535 / (max - min)
+    /// Dequantization: d = min + q / scale
     fn decompress_single_distance_at_index(&self, linear_index: usize) -> f32 {
         if linear_index * 2 >= self.compressed_data.len() {
             return 0.0; // Out of bounds
@@ -1342,8 +1342,9 @@ impl InterCentroidMatrix {
         ]);
 
         // Reconstruct f32 distance from quantized value
+        // Formula: d = min + q / scale_factor (scale_factor = 65535 / range)
         self.compression_metadata.min_distance
-            + (quantized as f32 * self.compression_metadata.scale_factor)
+            + (quantized as f32 / self.compression_metadata.scale_factor)
     }
 
     /// Compress upper triangle data using 16-bit quantization + optional Proxima
@@ -1892,7 +1893,7 @@ impl RowGroupBloomFilter {
     ) -> Vec<Vec<u16>> {
         let mut results = Vec::with_capacity(vector_ids.len());
 
-        for vector_id in vector_ids {
+        for _vector_id in vector_ids {
             let mut candidates = Vec::new();
 
             // Check each rowgroup's bloom filter offset (actual bloom filter needs to be loaded)
@@ -1932,7 +1933,7 @@ impl RowGroupBloomFilter {
 
         // Process in hardware-optimized batches
         for chunk in vector_ids.chunks(batch_size) {
-            for id in chunk {
+            for _id in chunk {
                 let mut candidates = Vec::new();
 
                 for rowgroup in &footer.file_metadata.row_groups {

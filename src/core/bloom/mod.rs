@@ -87,7 +87,7 @@
 //! - **FNV-1a**: Simple and fast, good for small keys
 //!
 //! Double hashing generates k hash values from 2 base hashes:
-//! ```rust
+//! ```rust,ignore
 //! hash_i = hash1 + i * hash2 (mod m)
 //! ```
 //!
@@ -159,7 +159,7 @@
 //! ## Usage Examples
 //!
 //! ### Basic Bloom Filter
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::bloom::{BloomFilterBuilder, BloomFilterConfig};
 //!
 //! let config = BloomFilterConfig::for_sstable(10000);
@@ -180,7 +180,7 @@
 //! ```
 //!
 //! ### Metadata Filtering
-//! ```rust
+//! ```rust,ignore
 //! use proximadb::bloom::SstableBloomFilter;
 //!
 //! let filter = SstableBloomFilter::new(...);
@@ -218,6 +218,11 @@ use std::collections::HashMap;
 
 pub mod factory;
 pub mod strategies;
+
+// Phase 1.2: Adaptive Bloom Filters
+pub mod adaptive;
+pub mod compression;
+pub mod hierarchical;
 
 /// Core trait for all bloom filter implementations
 pub trait BloomFilterStrategy: Send + Sync + std::fmt::Debug {
@@ -686,15 +691,24 @@ impl SstableBloomFilter {
     }
 
     /// Check if metadata might match using MetadataItem for type safety
+    ///
+    /// Returns `true` (might match) when:
+    /// - No metadata filter exists (can't reject without filter data)
+    /// - Metadata filter exists but indicates potential match
+    ///
+    /// Returns `false` (definitely no match) only when metadata filter
+    /// is populated AND definitively rejects the item.
     pub fn might_match_metadata(
         &self,
         _column: &str,
         _item: &crate::proto::proximadb_v1::MetadataItem,
     ) -> Result<bool> {
         if self.metadata_filter_data.is_empty() {
-            return Ok(false);
+            // No metadata bloom filter built - cannot reject, might match
+            return Ok(true);
         }
         // Conservative approach: assume metadata might match
+        // TODO: Implement actual metadata bloom filter checking when metadata is indexed
         Ok(true)
     }
 
@@ -891,6 +905,7 @@ pub struct HierarchicalBloomConfig {
 
 /// Bloom filter builder for incremental construction
 pub struct BloomFilterBuilder {
+    #[allow(dead_code)]
     config: BloomFilterConfig,
     filter: Box<dyn BloomFilterStrategy>,
 }

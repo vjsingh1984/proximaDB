@@ -35,6 +35,7 @@ pub enum WorkloadPattern {
 /// Time series data point
 #[derive(Debug, Clone)]
 pub struct TimeSeriesPoint {
+    #[allow(dead_code)]
     timestamp: Instant,
     value: f64,
 }

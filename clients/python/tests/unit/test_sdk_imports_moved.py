@@ -3,9 +3,10 @@
 Test module to verify all ProximaDB SDK imports are working correctly
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add the src directory to path if running directly
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -13,134 +14,172 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestImports:
     """Test all ProximaDB SDK imports"""
-    
+
     def test_basic_imports(self):
         """Test basic module imports"""
-        import proximadb
-        assert proximadb.__version__
-        assert proximadb.__author__
-    
+        import proximadb_sdk
+
+        assert proximadb_sdk.__version__
+        assert proximadb_sdk.__author__
+
     def test_client_imports(self):
         """Test client imports"""
-        from proximadb import ProximaDBClient, connect, connect_grpc, connect_rest, Protocol
+        from proximadb_sdk import (
+            Protocol,
+            ProximaDBClient,
+            connect,
+            connect_grpc,
+            connect_rest,
+        )
+
         assert ProximaDBClient is not None
         assert callable(connect)
         assert callable(connect_grpc)
         assert callable(connect_rest)
         assert Protocol.REST.value == "rest"
         assert Protocol.GRPC.value == "grpc"
-    
+
     def test_config_imports(self):
         """Test configuration imports"""
-        from proximadb import ClientConfig, CompressionConfig
-        from proximadb.config import Protocol, LogLevel, RetryConfig
-        
+        from proximadb_sdk import ClientConfig, CompressionConfig
+        from proximadb_sdk.config import LogLevel, Protocol, RetryConfig
+
         # Test ClientConfig
         config = ClientConfig(url="http://localhost:5678")
         assert config.url == "http://localhost:5678"
-        
+
         # Test CompressionConfig with actual API
         compression = CompressionConfig(enabled=True, algorithm="gzip")
         assert compression.enabled is True
         assert compression.algorithm == "gzip"
-    
+
     def test_model_imports(self):
         """Test model imports"""
-        from proximadb import (
-            Collection, CollectionConfig, IndexConfiguration,
-            SearchResult, VectorOperationResponse, OperationMetrics,
-            DistanceMetric, IndexingAlgorithm, StorageEngine,
-            VectorRecord, HealthStatus, VectorArray, MetadataDict,
-            FilterDict, QuantizationConfig, QuantizationType,
-            SearchOptimization
+        from proximadb_sdk import (
+            Collection,
+            CollectionConfig,
+            DistanceMetric,
+            FilterDict,
+            HealthStatus,
+            IndexConfiguration,
+            IndexingAlgorithm,
+            MetadataDict,
+            OperationMetrics,
+            QuantizationConfig,
+            QuantizationType,
+            SearchOptimization,
+            SearchResult,
+            StorageEngine,
+            VectorArray,
+            VectorOperationResponse,
+            VectorRecord,
         )
-        
+
         # Test enums
         assert DistanceMetric.COSINE
         assert IndexingAlgorithm.HNSW
         assert StorageEngine.VIPER
         assert QuantizationType.UNIFORM
-    
+
     def test_exception_imports(self):
         """Test exception imports"""
-        from proximadb import (
-            ProximaDBError, AuthenticationError, CollectionNotFoundError,
-            VectorDimensionError, RateLimitError, ServerError, NetworkError
+        from proximadb_sdk import (
+            AuthenticationError,
+            CollectionNotFoundError,
+            NetworkError,
+            ProximaDBError,
+            RateLimitError,
+            ServerError,
+            VectorDimensionError,
         )
-        
+
         # Test exception hierarchy
         assert issubclass(AuthenticationError, ProximaDBError)
         assert issubclass(CollectionNotFoundError, ProximaDBError)
-    
+
     def test_chunking_imports(self):
         """Test text chunking imports"""
-        from proximadb import (
-            TextChunker, ChunkingStrategy, ChunkingConfig,
-            TextChunk, create_chunker, chunk_by_sentences,
-            chunk_by_paragraphs, chunk_sliding_window
+        from proximadb_sdk import (
+            ChunkingConfig,
+            ChunkingStrategy,
+            TextChunk,
+            TextChunker,
+            chunk_by_paragraphs,
+            chunk_by_sentences,
+            chunk_sliding_window,
+            create_chunker,
         )
-        
+
         # Test ChunkingStrategy enum
         assert ChunkingStrategy.SENTENCE
         assert ChunkingStrategy.SLIDING_WINDOW
-        
+
         # Test callable functions
         assert callable(create_chunker)
         assert callable(chunk_by_sentences)
-    
+
     def test_filter_imports(self):
         """Test filter API imports"""
-        from proximadb import (
-            FilterBuilder, FilterOp, LogicalOp,
-            eq, gt, lt, in_list, and_filters, or_filters
+        from proximadb_sdk import (
+            FilterBuilder,
+            FilterOp,
+            LogicalOp,
+            and_filters,
+            eq,
+            gt,
+            in_list,
+            lt,
+            or_filters,
         )
-        
+
         # Test enums
         assert FilterOp.EQUALS
         assert LogicalOp.AND
-        
+
         # Test callable functions
         assert callable(eq)
         assert callable(and_filters)
-    
+
     def test_all_exports(self):
         """Test that all items in __all__ are importable"""
-        import proximadb
-        
-        for item in proximadb.__all__:
-            assert hasattr(proximadb, item), f"Missing export: {item}"
-    
+        import proximadb_sdk
+
+        for item in proximadb_sdk.__all__:
+            assert hasattr(proximadb_sdk, item), f"Missing export: {item}"
+
     def test_optional_grpc_imports(self):
         """Test optional gRPC imports"""
         try:
-            from proximadb import proximadb_pb2, proximadb_pb2_grpc
+            from proximadb_sdk import proximadb_pb2, proximadb_pb2_grpc
+
             # If we get here, gRPC is available
-            assert proximadb_pb2 is not None or proximadb_pb2 is None  # Could be None if not installed
+            assert (
+                proximadb_pb2 is not None or proximadb_pb2 is None
+            )  # Could be None if not installed
             assert proximadb_pb2_grpc is not None or proximadb_pb2_grpc is None
         except ImportError:
             # gRPC not available, which is fine
             pass
-    
+
     def test_backwards_compatibility(self):
         """Test backwards compatibility aliases"""
-        from proximadb import IndexConfig, Vector
-        from proximadb import IndexConfiguration, VectorRecord
-        
+        from proximadb_sdk import IndexConfig, IndexConfiguration, Vector, VectorRecord
+
         # These should be the same
         assert IndexConfig is IndexConfiguration
         assert Vector is VectorRecord
-    
+
     def test_from_import_patterns(self):
         """Test common from-import patterns"""
         # Pattern 1: Import everything from proximadb
-        from proximadb import ProximaDBClient, CollectionConfig, DistanceMetric
-        
+        from proximadb_sdk import CollectionConfig, DistanceMetric, ProximaDBClient
+        from proximadb_sdk.chunking import TextChunker
+
         # Pattern 2: Import from submodules
-        from proximadb.config import ClientConfig, CompressionConfig
-        from proximadb.models import Collection, SearchResult
-        from proximadb.exceptions import ProximaDBError
-        from proximadb.chunking import TextChunker
-        
+        from proximadb_sdk.config import ClientConfig, CompressionConfig
+        from proximadb_sdk.exceptions import ProximaDBError
+        from proximadb_sdk.models import Collection, SearchResult
+
         # All imports should work
         assert ClientConfig is not None
         assert Collection is not None

@@ -1,7 +1,7 @@
 //! Tenant manager implementation - clean and simple
 
 use super::resources::TenantResourceUsageSnapshot;
-use super::{ResourceLimits, TenantConfig, TenantContext, TenantResourceTracker, TenantStatus};
+use super::{TenantConfig, TenantContext, TenantResourceTracker, TenantStatus};
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -185,6 +185,7 @@ pub struct TenantResourceUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::tenant::context::ResourceLimits;
     use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies};
 
     #[tokio::test]

@@ -4,7 +4,6 @@ use crate::compute::quantization::types::{
     BinaryQuantization, NoQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
     UnifiedQuantizationLevel, UniformQuantization,
 };
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
 use std::sync::Once;
 

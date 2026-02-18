@@ -18,11 +18,10 @@
 //! - Loading/processing sidecar adds overhead without pruning benefit
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::hierarchical_stats::{BasicZoneMaps, EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use super::nova_meta_collector::NovaMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -259,7 +258,7 @@ impl NovaMetaReader {
         &self,
         metadata: &NovaMetadata,
         query_vector: &[f32],
-        top_k: usize,
+        _top_k: usize,
     ) -> QueryOptimizationHints {
         // Prune row groups
         let all_row_groups: Vec<usize> = (0..metadata.row_group_stats.len()).collect();

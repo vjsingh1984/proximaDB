@@ -13,22 +13,40 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use anyhow::Result;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::time::{Duration, sleep};
-    use tracing::{debug, error, info};
+    use tracing::{debug, info};
+
+    /// Counter for generating unique test paths
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Generate a unique test path for test isolation
+    fn generate_unique_test_path() -> String {
+        let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!(
+            "/tmp/proximadb_metrics_updater_test_{}_{}",
+            counter, timestamp
+        )
+    }
 
     async fn create_test_updater() -> Result<Arc<MetricsUpdateService>> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        // Clean up test directory if it exists
-        let test_path = "/tmp/proximadb_metrics_updater_test";
-        if std::path::Path::new(test_path).exists() {
-            std::fs::remove_dir_all(test_path).ok();
+        let unique_path = generate_unique_test_path();
+
+        // Clean up test directory if it exists (unique per test, no conflicts)
+        if std::path::Path::new(&unique_path).exists() {
+            std::fs::remove_dir_all(&unique_path).ok();
         }
 
         let config = MetricsConfig {
             enabled: true,
             collection_partitions: 4,
-            storage_path: "file:///tmp/proximadb_metrics_updater_test".to_string(),
+            storage_path: format!("file://{}", unique_path),
             flush_interval_seconds: 30,
             retention_days: 7,
             parallel_scan_threshold: 10,
@@ -38,8 +56,8 @@ mod tests {
             max_memory_mb: 512,
         };
 
-        // Clean up test directory
-        let _ = tokio::fs::remove_dir_all("/tmp/proximadb_metrics_updater_test").await;
+        // Clean up test directory (unique per test)
+        let _ = tokio::fs::remove_dir_all(&unique_path).await;
 
         let filesystem_config = Default::default();
         let filesystem_factory = Arc::new(FilesystemFactory::create(filesystem_config).await?);

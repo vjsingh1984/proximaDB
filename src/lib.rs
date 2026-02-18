@@ -16,6 +16,8 @@
 
 // SIMD optimization features (using stable AVX2 instead of unstable AVX-512)
 
+// Increase recursion limit for complex types with serde
+#![recursion_limit = "1024"]
 // Enforce error handling best practices
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
@@ -89,7 +91,6 @@
 
 /// REST and gRPC API definitions and protocol contracts
 // pub mod api; // Removed - using proto types directly with serde compatibility
-
 /// Shared infrastructure components for cross-cutting concerns
 pub mod infrastructure;
 
@@ -136,7 +137,8 @@ pub mod sales_enablement;
 /// License management and tier enforcement for all deployment models
 pub mod licensing;
 
-/// Executive intelligence platform for C-level strategic analytics
+/// Executive intelligence platform for C-level strategic analytics (opt-in)
+#[cfg(feature = "executive_intel")]
 pub mod executive;
 
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
@@ -145,12 +147,24 @@ pub mod index;
 /// AutoML Framework for automated optimization and tuning
 pub mod automl;
 
+/// LLM Integration for embeddings, RAG, and semantic caching
+/// Leverages Victor (codingagent) framework for embedding generation
+pub mod llm;
+
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
 pub mod metrics;
 pub mod monitoring;
 pub mod network;
 pub mod proto;
 pub mod query;
+
+/// DataFusion integration for compute engine compatibility.
+/// Provides TableProvider implementations for SQL queries over ProximaDB collections.
+/// NOTE: Feature-gated due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x,
+/// ProximaDB uses Arrow 57.x). Enable with `--features datafusion-integration`.
+#[cfg(feature = "datafusion-integration")]
+pub mod datafusion;
+
 pub mod schema;
 // NOTE: schema_constants module removed - using hardcoded schema_types.rs instead
 // schema_types removed - use core::avro_unified instead
@@ -159,7 +173,36 @@ pub mod server;
 pub mod services;
 pub mod storage;
 pub mod utils;
+
+/// DataSource Connector interface (Spark DataSource V2-style)
+/// Provides pluggable connectors for external storage systems and pushdown negotiation
+pub mod connectors;
+
+/// Observability module for Cloud SIEM / Datadog-like capabilities
+/// Provides high-throughput ingestion and querying for logs, metrics, and traces
+pub mod observability;
+
+/// Real-time streaming module for continuous vector ingestion
+/// Provides lock-free ring buffers, backpressure handling, and live queries
+pub mod streaming;
+
+/// Change Data Capture (CDC) module for database synchronization
+/// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks
+pub mod cdc;
+
 pub mod version;
+
+/// Embedded mode for in-process database usage without network layer
+/// Enable with feature flag: --features python
+pub mod embedded;
+
+/// Distributed cluster coordination for multi-node deployments
+/// Provides consensus, metadata management, shard routing, and node registry
+pub mod cluster;
+
+/// Unified Catalog System with pluggable backends
+/// Supports: Native, AWS Glue, Databricks Unity, Apache Polaris, Hive, Iceberg
+pub mod catalog;
 
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
@@ -168,18 +211,122 @@ pub mod version;
 
 // Re-export commonly used types from core
 pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
+
+// Re-export catalog types for unified schema management
+pub use catalog::{
+    CatalogCache,
+    // Catalog management
+    CatalogManager,
+    TableIdentifier,
+    // Catalog federation for unified view across internal and external catalogs
+    federation::{
+        ConstraintSupport, ExternalCatalog, ExternalCatalogConfig, ExternalCatalogType,
+        FederatedCatalog, FederatedCatalogConfig, FederatedTableInfo,
+    },
+    // Internal schema registry
+    internal::{
+        // Object model
+        CatalogObject,
+        // Enforcement
+        ConstraintEnforcer,
+        ConstraintType,
+        ConstraintViolation,
+        DocumentProperties,
+        EnforcementResult,
+        ForeignKeyReference,
+        GraphProperties,
+        // Information schema
+        InformationSchema,
+        InformationSchemaView,
+        InternalSchemaRegistry,
+        // Model properties
+        ModelProperties,
+        ObjectSchema,
+        ObjectType,
+        ObservabilityProperties,
+        RdbmsProperties,
+        ReferentialAction,
+        SchemaEnforcementMode,
+        // Constraints
+        TableConstraint,
+        VectorProperties,
+    },
+};
+
+// ============================================================================
+// Storage-Compute Separation Re-exports (Hadoop-style architecture)
+// ============================================================================
+
+// Re-export key compute types for the pluggable compute layer
+pub use compute::{
+    ComputeCapabilities,
+    // Compute plan types
+    ComputePlan,
+    // Compute provider interface
+    ComputeProvider,
+    // Compute scheduler
+    ComputeScheduler,
+    CostEstimate,
+    Expr as ComputeExpr,
+    LocalComputeProvider,
+    PlanNode,
+    SchedulingPolicy,
+};
+
+// Re-export key connector types for external system integration
+pub use connectors::{
+    DataReader,
+    // Core connector traits
+    DataSourceConnector,
+    DataWriter,
+    // Pushdown types
+    PushdownRequest,
+    PushdownResponse,
+    // Context types
+    ReadContext,
+    TableInfo,
+    TableStatistics,
+    WriteContext,
+    // Result types
+    WriteResult,
+};
+
+// Re-export key storage format types for format abstraction
 use std::sync::Arc;
+pub use storage::formats::{
+    // Format registry
+    FormatRegistry,
+    FormatType,
+    // Context types
+    ReadContext as FormatReadContext,
+    // Core format traits
+    StorageFormat,
+    WriteContext as FormatWriteContext,
+};
 use tokio::sync::RwLock;
 use tracing::info;
+
+// RL Planner checkpoint interval (5 minutes default)
+const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Main ProximaDB database instance
 pub struct ProximaDB {
+    /// Storage engine for vector data
     storage: Arc<RwLock<storage::StorageEngine>>,
     // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
+    /// Multi-server for REST and gRPC endpoints
     multi_server: Option<network::MultiServer>,
+    /// Configuration (stored for RL planner and other runtime access)
     _config: core::Config,
+    /// Security coordinator for auth/RBAC
+    #[allow(dead_code)]
+    security: Option<Arc<security::SecurityCoordinator>>,
+    /// Handle for RL planner checkpoint task (if enabled)
+    rl_checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Path where RL planner policy is persisted
+    rl_policy_path: Option<String>,
 }
 
 impl ProximaDB {
@@ -252,7 +399,18 @@ impl ProximaDB {
             storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
-        // Step 4: Create StorageEngine using the CollectionService from SharedServices
+        // Step 4: Set global metadata provider BEFORE creating StorageEngine
+        // This ensures WAL pool instances can resolve collection paths correctly
+        tracing::debug!(
+            "🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution..."
+        );
+        storage::persistence::write_ahead_log::set_global_metadata_provider(
+            collection_service.metadata_backend().clone(),
+        )
+        .await;
+        tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
+
+        // Step 5: Create StorageEngine using the CollectionService from SharedServices
         tracing::debug!(
             "🔧 ProximaDB::new - Creating storage engine with injected CollectionService..."
         );
@@ -292,7 +450,8 @@ impl ProximaDB {
         let mut builder = network::MultiServerBuilder::custom()
             .http(|h| h.bind_address(rest_addr))
             .grpc(|g| g.bind_address(grpc_addr))
-            .with_api_config(config.api.clone());
+            .with_api_config(config.api.clone())
+            .with_data_dir(config.server.data_dir.clone());
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) && config.tls.is_some() {
@@ -310,18 +469,51 @@ impl ProximaDB {
             .map_err(|e| format!("Failed to create server config: {}", e))?;
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
+        // Initialize security coordinator if configured
+        let security: Option<Arc<security::SecurityCoordinator>> = if let Some(sec_cfg) =
+            config.security.clone()
+        {
+            match security::initialize_security(sec_cfg).await {
+                Ok(coordinator) => Some(Arc::new(coordinator)),
+                Err(err) => {
+                    tracing::warn!(
+                        "Security initialization failed, continuing with security disabled: {:?}",
+                        err
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // SharedServices and metrics collector already created above
 
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
-        let multi_server = network::MultiServer::new(multi_config, shared_services);
-        tracing::debug!("✅ ProximaDB::new - MultiServer created successfully");
+        let rest_auth_enabled = config
+            .security
+            .as_ref()
+            .map(|s| s.authentication.enabled)
+            .unwrap_or(false);
+        let mut multi_server = network::MultiServer::new(
+            multi_config,
+            shared_services,
+            security.clone(),
+            rest_auth_enabled,
+        );
+        // Wire storage engine for PostgreSQL wire protocol support
+        multi_server.set_storage(storage.clone());
+        tracing::debug!("✅ ProximaDB::new - MultiServer created with storage engine wired");
 
         Ok(Self {
             storage,
             // consensus,  // Disabled
             multi_server: Some(multi_server),
             _config: config,
+            security,
+            rl_checkpoint_handle: None,
+            rl_policy_path: None,
         })
     }
 
@@ -341,16 +533,20 @@ impl ProximaDB {
         );
 
         // Step 2: Recover vectors from WAL (persisted data)
+        eprintln!("🔍 DEBUG: ProximaDB::start - About to call storage.recover_from_wal()");
         tracing::info!(
             "📦 ProximaDB::start - Step 2: Recovering vectors from WAL (persisted data)..."
         );
         {
             let storage = self.storage.read().await;
+            eprintln!("🔍 DEBUG: Got storage lock, calling recover_from_wal()...");
             match storage.recover_from_wal().await {
                 Ok(()) => {
+                    eprintln!("✅ DEBUG: recover_from_wal() returned Ok(())");
                     tracing::info!("✅ ProximaDB::start - Vectors recovered from WAL successfully");
                 }
                 Err(e) => {
+                    eprintln!("❌ DEBUG: recover_from_wal() returned Err: {}", e);
                     tracing::warn!(
                         "⚠️  ProximaDB::start - WAL recovery failed (continuing anyway): {}",
                         e
@@ -359,6 +555,7 @@ impl ProximaDB {
                 }
             }
         }
+        eprintln!("🔍 DEBUG: ProximaDB::start - WAL recovery step complete");
 
         // Step 3: Recover graphs from snapshots + WAL
         tracing::info!(
@@ -403,9 +600,13 @@ impl ProximaDB {
                 .await?;
         }
 
-        // Step 6: Start multi-server (HTTP and gRPC on separate ports)
+        // Step 6: Initialize RL Query Planner (if enabled)
+        tracing::info!("🎯 ProximaDB::start - Step 6: Initializing RL Query Planner...");
+        self.init_rl_planner().await?;
+
+        // Step 7: Start multi-server (HTTP and gRPC on separate ports)
         tracing::info!(
-            "🌐 ProximaDB::start - Step 6: Starting multi-server (gRPC:5679 + REST:5678)..."
+            "🌐 ProximaDB::start - Step 7: Starting multi-server (gRPC:5679 + REST:5678)..."
         );
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server
@@ -424,34 +625,218 @@ impl ProximaDB {
         tracing::info!("  3️⃣ Graphs: Recovered from snapshots + WAL replay");
         tracing::info!("  4️⃣ Assignments: Recovered from collection metadata");
         tracing::info!("  5️⃣ Vectors (Buffer): Recovered from in-memory write buffer");
-        tracing::info!("  6️⃣ Services: HTTP/gRPC servers started");
+        tracing::info!("  6️⃣ RL Planner: Initialized with policy recovery");
+        tracing::info!("  7️⃣ Services: HTTP/gRPC servers started");
         Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        // Shutdown global WAL manifest (flush pending writes)
-        tracing::info!("🛑 Shutting down global WAL manifest...");
-        storage::persistence::write_ahead_log::manifest::shutdown().await?;
-        tracing::info!("✅ Global WAL manifest shut down");
+        // Stop RL planner checkpoint task and persist policy
+        tracing::info!("Stopping RL Query Planner...");
+        self.shutdown_rl_planner().await;
 
-        // Stop multi-server
-        if let Some(ref mut multi_server) = self.multi_server {
-            multi_server
-                .stop()
-                .await
-                .map_err(|e| format!("Failed to stop multi-server: {}", e))?;
+        // Flush graph WAL for all graphs before shutdown
+        tracing::info!("Flushing graph WAL for all graphs...");
+        if let Some(ref multi_server) = self.multi_server {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+                let graphs = multi_server
+                    .shared_services
+                    .graph_service
+                    .list_graphs()
+                    .await?;
+                let mut flushed = 0;
+                for graph_id in graphs {
+                    if let Err(e) = multi_server
+                        .shared_services
+                        .graph_service
+                        .flush_wal(&graph_id)
+                        .await
+                    {
+                        tracing::warn!("Failed to flush WAL for graph {}: {}", graph_id, e);
+                    } else {
+                        flushed += 1;
+                    }
+                }
+                tracing::debug!("Flushed WAL for {} graphs", flushed);
+                Ok::<_, crate::core::error::ProximaDBError>(())
+            })
+            .await
+            {
+                Ok(Ok(())) => tracing::debug!("Graph WAL flush complete"),
+                Ok(Err(e)) => tracing::warn!("Graph WAL flush error: {}", e),
+                Err(_) => tracing::warn!("Graph WAL flush timeout - forcing continuation"),
+            }
         }
 
-        // Stop storage engine
+        // Shutdown global WAL manifest (flush pending writes) with timeout
+        tracing::info!("Shutting down global WAL manifest...");
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            storage::persistence::write_ahead_log::manifest::shutdown(),
+        )
+        .await
         {
-            let mut storage = self.storage.write().await;
-            storage.stop().await?;
+            Ok(Ok(())) => tracing::debug!("Global WAL manifest shut down"),
+            Ok(Err(e)) => tracing::warn!("WAL manifest shutdown error: {}", e),
+            Err(_) => tracing::warn!("WAL manifest shutdown timeout - forcing continuation"),
         }
 
-        // Stop consensus engine (disabled)
-        // self.consensus.stop().await?;
+        // Stop multi-server with timeout
+        if let Some(ref mut multi_server) = self.multi_server {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(3), multi_server.stop())
+                .await
+            {
+                Ok(Ok(())) => tracing::debug!("Multi-server stopped"),
+                Ok(Err(e)) => tracing::warn!("Multi-server stop error: {}", e),
+                Err(_) => tracing::warn!("Multi-server stop timeout"),
+            }
+        }
+
+        // Stop storage engine with timeout
+        match tokio::time::timeout(tokio::time::Duration::from_secs(3), async {
+            let mut storage = self.storage.write().await;
+            storage.stop().await
+        })
+        .await
+        {
+            Ok(Ok(())) => tracing::debug!("Storage engine stopped"),
+            Ok(Err(e)) => tracing::warn!("Storage engine stop error: {}", e),
+            Err(_) => tracing::warn!("Storage engine stop timeout"),
+        }
+
+        tracing::info!("Server shutdown complete");
+        Ok(())
+    }
+
+    /// Initialize the RL Query Planner from configuration
+    ///
+    /// This method:
+    /// 1. Reads RL planner config from the main config
+    /// 2. Initializes the global RL planner
+    /// 3. Loads persisted policy if it exists
+    /// 4. Starts a background checkpoint task for periodic policy persistence
+    async fn init_rl_planner(&mut self) -> Result<()> {
+        // Get RL config from main config (or use defaults)
+        let rl_config = self
+            ._config
+            .query
+            .as_ref()
+            .map(|q| q.rl_planner.to_rl_planner_config())
+            .unwrap_or_default();
+
+        if !rl_config.enabled {
+            tracing::info!("RL Query Planner is disabled in configuration");
+            return Ok(());
+        }
+
+        // Determine policy path - use config path or default to data_dir
+        let policy_path = rl_config.log_path.clone().unwrap_or_else(|| {
+            format!("{}/rl_policy.json", self._config.server.data_dir.display())
+        });
+        self.rl_policy_path = Some(policy_path.clone());
+
+        // Initialize global RL planner
+        query::rl_planner::init_rl_planner(rl_config.clone());
+        tracing::info!("✅ RL Query Planner initialized");
+
+        // Try to load existing policy
+        if let Some(planner) = query::rl_planner::get_rl_planner() {
+            if std::path::Path::new(&policy_path).exists() {
+                match planner.load_policy(&policy_path).await {
+                    Ok(()) => {
+                        tracing::info!("✅ RL policy loaded from {}", policy_path);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load RL policy (starting fresh): {}", e);
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    "No existing RL policy found at {}, starting fresh",
+                    policy_path
+                );
+            }
+
+            // Start periodic checkpoint task
+            let checkpoint_path = policy_path.clone();
+            let checkpoint_handle = tokio::spawn(async move {
+                let interval = std::time::Duration::from_secs(RL_CHECKPOINT_INTERVAL_SECS);
+                let mut ticker = tokio::time::interval(interval);
+                ticker.tick().await; // Skip first immediate tick
+
+                loop {
+                    ticker.tick().await;
+                    if let Some(planner) = query::rl_planner::get_rl_planner() {
+                        match planner.save_policy(&checkpoint_path).await {
+                            Ok(()) => {
+                                tracing::debug!(
+                                    "RL policy checkpoint saved to {}",
+                                    checkpoint_path
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to save RL policy checkpoint: {}", e);
+                            }
+                        }
+                    } else {
+                        tracing::debug!("RL planner not available for checkpoint");
+                        break;
+                    }
+                }
+            });
+            self.rl_checkpoint_handle = Some(checkpoint_handle);
+            tracing::info!(
+                "✅ RL policy checkpoint task started (interval: {}s)",
+                RL_CHECKPOINT_INTERVAL_SECS
+            );
+        }
 
         Ok(())
+    }
+
+    /// Shutdown RL planner: stop checkpoint task and persist final policy
+    async fn shutdown_rl_planner(&mut self) {
+        // Stop checkpoint task
+        if let Some(handle) = self.rl_checkpoint_handle.take() {
+            handle.abort();
+            tracing::debug!("RL checkpoint task stopped");
+        }
+
+        // Persist final policy
+        if let Some(ref policy_path) = self.rl_policy_path {
+            if let Some(planner) = query::rl_planner::get_rl_planner() {
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(5),
+                    planner.save_policy(policy_path),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {
+                        tracing::info!("✅ RL policy persisted to {}", policy_path);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("Failed to persist RL policy: {}", e);
+                    }
+                    Err(_) => {
+                        tracing::warn!("RL policy persist timeout");
+                    }
+                }
+
+                // Log final stats
+                let stats = planner.get_action_stats().await;
+                if !stats.is_empty() {
+                    tracing::info!("RL Planner final stats: {} actions tracked", stats.len());
+                    for (action, (avg_reward, count)) in stats.iter().take(5) {
+                        tracing::debug!(
+                            "  {}: avg_reward={:.3}, count={}",
+                            action,
+                            avg_reward,
+                            count
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Get the multi-server status
@@ -487,6 +872,278 @@ impl ProximaDB {
             status.grpc_address
         } else {
             None
+        }
+    }
+
+    // =========================================================================
+    // Graph Database API - High-level graph operations
+    // =========================================================================
+
+    /// Create a new graph collection
+    ///
+    /// # Arguments
+    /// * `graph_id` - Unique identifier for the graph
+    /// * `schema` - Optional schema definition for the graph
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` if the graph already exists or creation fails
+    pub async fn create_graph(
+        &self,
+        graph_id: &str,
+        schema: Option<proto::proximadb_v1::GraphSchema>,
+    ) -> Result<()> {
+        if let Some(ref multi_server) = self.multi_server {
+            let request = proto::proximadb_v1::CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: Some(graph_id.to_string()),
+                description: None,
+                schema,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            };
+            multi_server
+                .shared_services
+                .graph_service
+                .create_graph_collection(request)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            Ok(())
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// List all graphs in the database
+    ///
+    /// # Returns
+    /// * `Vec<String>` - List of graph IDs
+    pub async fn list_graphs(&self) -> Result<Vec<String>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .list_graphs()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Create a node in a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to add the node to
+    /// * `node` - The node to create
+    ///
+    /// # Returns
+    /// * `Ok(Arc<Node>)` - The created node
+    pub async fn create_node(
+        &self,
+        graph_id: &str,
+        node: graph::Node,
+    ) -> Result<std::sync::Arc<graph::Node>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .create_node(graph_id, node)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Get a node by ID from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the node
+    /// * `node_id` - The ID of the node to retrieve
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Node>))` if found, `Ok(None)` if not found
+    pub async fn get_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Node>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .get_node(graph_id, &node_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Update a node in a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the node
+    /// * `node` - The updated node (must have same ID as existing node)
+    ///
+    /// # Returns
+    /// * `Ok(Arc<Node>)` - The updated node
+    pub async fn update_node(
+        &self,
+        graph_id: &str,
+        node: graph::Node,
+    ) -> Result<std::sync::Arc<graph::Node>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .update_node(graph_id, node)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Delete a node from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the node
+    /// * `node_id` - The ID of the node to delete
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Node>))` if deleted, `Ok(None)` if not found
+    pub async fn delete_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Node>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .delete_node(graph_id, &node_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Create an edge between two nodes in a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to add the edge to
+    /// * `edge` - The edge to create
+    ///
+    /// # Returns
+    /// * `Ok(Arc<Edge>)` - The created edge
+    pub async fn create_edge(
+        &self,
+        graph_id: &str,
+        edge: graph::Edge,
+    ) -> Result<std::sync::Arc<graph::Edge>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .create_edge(graph_id, edge)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Get an edge by ID from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the edge
+    /// * `edge_id` - The ID of the edge to retrieve
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Edge>))` if found, `Ok(None)` if not found
+    pub async fn get_edge(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Edge>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .get_edge(graph_id, &edge_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Delete an edge from a graph
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph containing the edge
+    /// * `edge_id` - The ID of the edge to delete
+    ///
+    /// # Returns
+    /// * `Ok(Some(Arc<Edge>))` if deleted, `Ok(None)` if not found
+    pub async fn delete_edge(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<Option<std::sync::Arc<graph::Edge>>> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .delete_edge(graph_id, &edge_id.to_string())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Get graph statistics
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to get stats for
+    ///
+    /// # Returns
+    /// * `Ok(GraphStats)` - Statistics about the graph
+    pub async fn get_graph_stats(&self, graph_id: &str) -> Result<proto::proximadb_v1::GraphStats> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .get_stats(graph_id)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
+        }
+    }
+
+    /// Flush the WAL for a specific graph to ensure durability
+    ///
+    /// # Arguments
+    /// * `graph_id` - The graph to flush
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    pub async fn flush_graph_wal(&self, graph_id: &str) -> Result<()> {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server
+                .shared_services
+                .graph_service
+                .flush_wal(graph_id)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        } else {
+            Err("Multi-server not initialized".into())
         }
     }
 }

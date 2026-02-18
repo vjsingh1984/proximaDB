@@ -9,6 +9,7 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
+
 _runtime_version.ValidateProtobufRuntimeVersion(
     _runtime_version.Domain.PUBLIC,
     6,
@@ -24,8 +25,7 @@ _sym_db = _symbol_database.Default()
 
 from proximadb.v1 import vector_types_pb2 as proximadb_dot_v1_dot_vector__types__pb2
 
-
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19proximadb/v1/vector.proto\x12\x0cproximadb.v1\x1a\x1fproximadb/v1/vector_types.proto2\x95\x02\n\rVectorService\x12V\n\x0bVectorBatch\x12 .proximadb.v1.VectorBatchRequest\x1a%.proximadb.v1.VectorOperationResponse\x12X\n\x0cVectorSearch\x12!.proximadb.v1.VectorSearchRequest\x1a%.proximadb.v1.VectorOperationResponse\x12R\n\tVectorGet\x12\x1e.proximadb.v1.VectorGetRequest\x1a%.proximadb.v1.VectorOperationResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19proximadb/v1/vector.proto\x12\x0cproximadb.v1\x1a\x1fproximadb/v1/vector_types.proto2\xf2\x02\n\rVectorService\x12V\n\x0bVectorBatch\x12 .proximadb.v1.VectorBatchRequest\x1a%.proximadb.v1.VectorOperationResponse\x12X\n\x0cVectorSearch\x12!.proximadb.v1.VectorSearchRequest\x1a%.proximadb.v1.VectorOperationResponse\x12R\n\tVectorGet\x12\x1e.proximadb.v1.VectorGetRequest\x1a%.proximadb.v1.VectorOperationResponse\x12[\n\x12VectorSearchStream\x12!.proximadb.v1.VectorSearchRequest\x1a .proximadb.v1.SearchVectorRecord0\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,5 +33,5 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'proximadb.v1.vector_pb2', _
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_VECTORSERVICE']._serialized_start=77
-  _globals['_VECTORSERVICE']._serialized_end=354
+  _globals['_VECTORSERVICE']._serialized_end=447
 # @@protoc_insertion_point(module_scope)

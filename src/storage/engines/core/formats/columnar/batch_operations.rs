@@ -15,15 +15,18 @@ use crate::proto::proximadb_v1::VectorRecord;
 /// Batch operations for columnar storage
 pub struct ColumnarBatchOperations {
     /// Unified Parquet reader
+    #[allow(dead_code)]
     parquet_reader: Arc<UnifiedParquetReader>,
 
     /// Hardware capabilities
+    #[allow(dead_code)]
     hardware: Arc<HardwareCapabilities>,
 
     /// Vector memory pool for efficient buffer reuse
     memory_pool: Arc<VectorMemoryPool>,
 
     /// Configuration
+    #[allow(dead_code)]
     config: ColumnarConfig,
 
     /// Batch operation cache
@@ -186,6 +189,7 @@ impl ColumnarBatchOperations {
     }
 
     /// Optimize read plan by grouping IDs by likely file locations
+    #[allow(dead_code)]
     async fn optimize_read_plan(
         &self,
         file_paths: &[String],
@@ -257,7 +261,7 @@ impl ColumnarBatchOperations {
 
         Ok(SingleBatchWriteResult {
             bytes_written: estimated_size,
-            row_groups: vec![format!("{}:rg_{}", target_file, batch_idx)],
+            row_groups: vec![format!("{target_file}:rg_{batch_idx}")],
         })
     }
 
@@ -325,6 +329,7 @@ impl ColumnarBatchOperations {
     }
 
     /// Generate cache key for operation
+    #[allow(dead_code)]
     fn generate_cache_key(&self, file_paths: &[String], ids: &[String]) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -336,12 +341,14 @@ impl ColumnarBatchOperations {
     }
 
     /// Get cached result
+    #[allow(dead_code)]
     async fn get_cached_result(&self, cache_key: &str) -> Option<CachedBatchResult> {
         let cache = self.operation_cache.read().await;
         cache.get(cache_key).cloned()
     }
 
     /// Cache operation result
+    #[allow(dead_code)]
     async fn cache_result(&self, cache_key: String, records: &[VectorRecord]) {
         let cached = CachedBatchResult {
             records: records.to_vec(),
@@ -441,10 +448,12 @@ pub struct FailedDelete {
 struct CachedBatchResult {
     pub records: Vec<VectorRecord>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    #[allow(dead_code)]
     pub ttl_seconds: i64,
 }
 
 impl CachedBatchResult {
+    #[allow(dead_code)]
     fn is_expired(&self) -> bool {
         let now = chrono::Utc::now();
         let age = now.signed_duration_since(self.timestamp);
@@ -518,7 +527,7 @@ mod tests {
         // Create test vectors
         let vectors: Vec<VectorRecord> = (0..25000)
             .map(|i| VectorRecord {
-                id: format!("test_{}", i),
+                id: format!("test_{i}"),
                 vector: vec![i as f32; 768],
                 metadata: std::collections::HashMap::new(),
                 timestamp: Some(0),

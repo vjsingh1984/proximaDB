@@ -616,10 +616,9 @@ impl Default for PrefetchConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::{debug, error, info};
+    use tracing::{debug, info};
 
     #[tokio::test]
-    #[ignore = "Test hangs - needs investigation"]
     async fn test_sequential_pattern_detection() {
         let mut config = PrefetchConfig::default();
         config.prefetch_window = 2; // Limit prefetch window for testing
@@ -663,7 +662,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Test hangs - needs investigation"]
     async fn test_hot_block_detection() {
         let mut config = PrefetchConfig::default();
         config.prefetch_window = 2;
@@ -709,7 +707,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Test hangs - needs investigation"]
     async fn test_prefetch_prediction() {
         let mut config = PrefetchConfig::default();
         config.prefetch_window = 2;

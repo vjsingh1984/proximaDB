@@ -4,12 +4,11 @@
 // without unnecessary conversions to/from VectorRecord
 
 use anyhow::{Context, Result};
-use arrow_array::{Array, ArrayRef, Int64Array, RecordBatch, StringArray, UInt32Array};
+use arrow_array::{Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_ord::sort::{SortOptions, sort_to_indices};
 use arrow_schema::Schema;
 use arrow_select::concat::concat_batches;
 use arrow_select::take::take;
-use chrono::Utc;
 use parquet::arrow::ArrowWriter;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::basic::Compression;
@@ -265,7 +264,7 @@ impl UnifiedColumnarCompaction {
         use crate::core::memory::pool::VectorMemoryPool;
         use crate::storage::engines::core::formats::columnar::constants;
         use arrow::array::ArrayRef;
-        use arrow_array::{BinaryArray, FixedSizeListArray, Float32Array, builder::BinaryBuilder};
+        use arrow_array::{FixedSizeListArray, Float32Array, builder::BinaryBuilder};
         use std::sync::Arc;
 
         // Extract vector column from batch
@@ -335,7 +334,7 @@ impl UnifiedColumnarCompaction {
         let mut engine = StorageQuantizationEngine::new_with_config(config);
 
         // Create unified memory pool for batch processing
-        let memory_pool = Arc::new(VectorMemoryPool::new());
+        let _memory_pool = Arc::new(VectorMemoryPool::new());
 
         // Use batch configuration for optimal performance
         let batch_config = crate::storage::strategy::BatchConfig {
@@ -780,8 +779,8 @@ impl UnifiedColumnarCompaction {
         }
 
         // Create and write with ArrowWriter
-        let file = File::create(local_path)
-            .with_context(|| format!("Failed to create: {}", local_path))?;
+        let file =
+            File::create(local_path).with_context(|| format!("Failed to create: {local_path}"))?;
 
         let mut writer = ArrowWriter::try_new(file, schema, Some(writer_properties))?;
 
@@ -811,9 +810,9 @@ impl UnifiedColumnarCompaction {
         }
 
         let bytes_written = metadata
-            .row_groups
+            .row_groups()
             .iter()
-            .map(|rg| rg.total_byte_size)
+            .map(|rg| rg.total_byte_size())
             .sum::<i64>() as u64;
 
         Ok(bytes_written)
@@ -874,7 +873,7 @@ impl UnifiedColumnarCompaction {
             .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
             .ok_or_else(|| anyhow::anyhow!("No storage assignment for collection"))?;
 
-        Ok(format!("{}/{}", base_path, filename))
+        Ok(format!("{base_path}/{filename}"))
     }
 
     /// Atomically replace old files with new

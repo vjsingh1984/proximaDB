@@ -39,9 +39,9 @@ struct AzureMessage {
 
 #[derive(Debug, Deserialize)]
 struct AzureOpenAIResponse {
-    id: String,
-    object: String,
-    created: u64,
+    _id: String,
+    _object: String,
+    _created: u64,
     model: String,
     choices: Vec<AzureChoice>,
     usage: AzureUsage,
@@ -49,14 +49,14 @@ struct AzureOpenAIResponse {
 
 #[derive(Debug, Deserialize)]
 struct AzureChoice {
-    index: u32,
+    _index: u32,
     message: AzureResponseMessage,
     finish_reason: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct AzureResponseMessage {
-    role: String,
+    _role: String,
     content: String,
 }
 
@@ -146,8 +146,8 @@ impl LLMClient for AzureOpenAIClient {
 
         let response = self
             .client
-            .post(&self.build_azure_url())
-            .header("api-key", &self.config.api_key)
+            .post(self.build_azure_url())
+            .header("api-key", self.config.api_key.as_str())
             .header("Content-Type", "application/json")
             .json(&azure_request)
             .send()
@@ -237,8 +237,8 @@ impl LLMClient for AzureOpenAIClient {
 
         let response = self
             .client
-            .post(&self.build_azure_url())
-            .header("api-key", &self.config.api_key)
+            .post(self.build_azure_url())
+            .header("api-key", self.config.api_key.as_str())
             .header("Content-Type", "application/json")
             .json(&test_request)
             .send()

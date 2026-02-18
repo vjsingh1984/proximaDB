@@ -4,7 +4,7 @@ use proximadb::proto::proximadb_v1::{
 };
 use proximadb::storage::engines::factory::StorageEngineFactory;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb::storage::traits::FlushParameters;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -160,6 +160,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         search_params,
         collection: Arc::new(collection),
         metadata,
+        user_context: None,
+        tenant_context: None,
     };
 
     match engine.search_vectors_unified(&ctx).await {

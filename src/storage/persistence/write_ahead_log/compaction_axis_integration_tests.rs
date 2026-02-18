@@ -10,13 +10,10 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::index::axis::{AxisVectorIndex, IndexAlgorithm, IndexStats};
-    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::index::axis::{IndexAlgorithm, IndexStats};
     use crate::storage::traits::CompactionResult;
     use chrono::Utc;
     use std::collections::HashMap;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
 
     // Note: These tests focus on the CompactionAxisUpdater behavior without a real AxisManager.
     // Testing with a real AxisManager would require a more complex setup and is covered

@@ -174,6 +174,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         prefetch_enabled: false,
         prefetch_size_kb: 64,
         vector_encoding_strategy: "FullVector".to_string(),
+        block_format: "ProximaBlocks".to_string(),
     });
 
     let viper_config = proximadb::core::config::ViperConfig {
@@ -396,6 +397,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             use_axis_indexes: false,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let sst_results = sst_engine
@@ -432,6 +435,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
                 use_axis_indexes: false,
                 ..Default::default()
             },
+            user_context: None,
+            tenant_context: None,
         };
 
         let no_filter_results = sst_engine
@@ -509,6 +514,8 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             use_axis_indexes: false,
             ..Default::default()
         },
+        user_context: None,
+        tenant_context: None,
     };
 
     let viper_results = viper_engine

@@ -13,7 +13,6 @@ use arrow_schema::{DataType, Field, Schema};
 // Currently using direct ArrowWriter for test data generation
 use parquet::arrow::ArrowWriter;
 // Also import columnar exports for future migration
-use crate::storage::engines::core::formats::columnar::{BatchParquetWriter, ParquetWriterConfig};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::fs::File;
@@ -421,16 +420,15 @@ impl ParquetTestDataGenerator {
                 } else {
                     // Add metadata entries
                     keys_builder.append_value("category");
-                    values_builder
-                        .append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                    values_builder.append_value(format!("cat_{}", i % config.metadata_cardinality));
                     entry_count += 1;
 
                     keys_builder.append_value("year");
-                    values_builder.append_value(&(2020 + (i % 5)).to_string());
+                    values_builder.append_value((2020 + (i % 5)).to_string());
                     entry_count += 1;
 
                     keys_builder.append_value("score");
-                    values_builder.append_value(&format!("{:.2}", self.rng.gen_range(0.0..1.0)));
+                    values_builder.append_value(format!("{:.2}", self.rng.gen_range(0.0..1.0)));
                     entry_count += 1;
 
                     offsets.push(entry_count);
@@ -524,7 +522,7 @@ impl ParquetTestDataGenerator {
             for i in 0..config.num_rows {
                 // Add metadata entries
                 keys_builder.append_value("category");
-                values_builder.append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                values_builder.append_value(format!("cat_{}", i % config.metadata_cardinality));
                 entry_count += 1;
 
                 keys_builder.append_value("quantized");
@@ -602,7 +600,7 @@ impl ParquetTestDataGenerator {
         arrays.push(Arc::new(vectors));
 
         // Filterable columns
-        let categories = vec!["technology", "science", "art", "music", "sports"];
+        let categories = ["technology", "science", "art", "music", "sports"];
         let category_values: Vec<Option<String>> = (0..config.num_rows)
             .map(|i| {
                 if self.rng.gen_range(0.0..1.0) < config.null_percentage {
@@ -648,7 +646,7 @@ impl ParquetTestDataGenerator {
         arrays.push(Arc::new(BooleanArray::from(active_values)));
 
         // Tags column (list of strings)
-        let all_tags = vec!["AI", "ML", "NLP", "CV", "robotics", "data", "analysis"];
+        let all_tags = ["AI", "ML", "NLP", "CV", "robotics", "data", "analysis"];
         let mut tags_builder =
             arrow_array::builder::ListBuilder::new(arrow_array::builder::StringBuilder::new());
 
@@ -682,11 +680,11 @@ impl ParquetTestDataGenerator {
                 entry_count += 1;
 
                 keys_builder.append_value("row_index");
-                values_builder.append_value(&i.to_string());
+                values_builder.append_value(i.to_string());
                 entry_count += 1;
 
                 keys_builder.append_value("generated_at");
-                values_builder.append_value(&generated_at);
+                values_builder.append_value(generated_at.as_str());
                 entry_count += 1;
 
                 offsets.push(entry_count);
@@ -766,6 +764,8 @@ impl ParquetTestDataGenerator {
     }
 
     /// Generate quantized vectors array
+    #[allow(dead_code)]
+    #[allow(dead_code)]
     fn generate_quantized_vectors_array(
         &mut self,
         num_vectors: usize,

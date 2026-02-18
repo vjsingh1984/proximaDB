@@ -105,11 +105,10 @@ mod tests {
 
     fn create_test_search_params() -> SearchParams {
         SearchParams {
-            vector: vec![0.1; 128],
+            query_vectors: Some(vec![vec![0.1; 128]]),
             top_k: Some(10),
             distance_metric: Some(DistanceMetric::Cosine),
-            metadata_filters: None,
-            custom_hints: None,
+            ..Default::default()
         }
     }
 
@@ -468,11 +467,10 @@ mod tests {
         ];
         
         let params = SearchParams {
-            vector: vec![0.1; 128],
+            query_vectors: Some(vec![vec![0.1; 128]]),
             top_k: Some(10),
             distance_metric: Some(DistanceMetric::Cosine),
-            metadata_filters: None,
-            custom_hints: None,
+            ..Default::default()
         };
         
         orchestrator.apply_unified_ranking(&mut results, &params).await.unwrap();
@@ -509,11 +507,10 @@ mod tests {
         ];
         
         let params = SearchParams {
-            vector: vec![0.1; 128],
+            query_vectors: Some(vec![vec![0.1; 128]]),
             top_k: Some(2), // Limit to 2 results
             distance_metric: Some(DistanceMetric::Cosine),
-            metadata_filters: None,
-            custom_hints: None,
+            ..Default::default()
         };
         
         orchestrator.apply_unified_ranking(&mut results, &params).await.unwrap();

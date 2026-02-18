@@ -1,0 +1,59 @@
+[package]
+name = "proximadb-sdk"
+version = "0.2.0"
+edition = "2024"
+authors = ["ProximaDB Contributors"]
+description = "Rust SDK for ProximaDB - Native client for agent development"
+license = "Apache-2.0"
+repository = "https://github.com/vjsingh1984/proximadb"
+keywords = ["vector", "database", "ai", "ml", "agent"]
+categories = ["database-implementations", "api-bindings"]
+rust-version = "1.88"
+
+[dependencies]
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP client for REST mode
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+
+# Async runtime
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
+
+# URL handling
+url = "2.4"
+
+# Reference to main proximadb crate for embedded mode
+proximadb = { path = "../..", optional = true }
+
+[features]
+default = ["client"]
+# Client mode - HTTP/REST client for remote connections
+client = []
+# Embedded mode - in-process database (requires linking to proximadb)
+embedded = ["dep:proximadb"]
+# Full SDK with both client and embedded modes
+full = ["client", "embedded"]
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["full", "test-util"] }
+
+[[example]]
+name = "client_mode"
+path = "examples/client_mode.rs"
+required-features = ["client"]
+
+[[example]]
+name = "embedded_mode"
+path = "examples/embedded_mode.rs"
+required-features = ["embedded"]
+
+[[example]]
+name = "fluent_api"
+path = "examples/fluent_api.rs"
+required-features = ["client"]

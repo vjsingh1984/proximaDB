@@ -7,9 +7,9 @@
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use crate::storage::engines::impls::sst::SstConfig;
 use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
-use crate::storage::engines::impls::sst::{BloomFilterConfig, SstConfig};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::{BTreeMap, HashMap};
@@ -24,7 +24,7 @@ fn create_test_config() -> SstConfig {
     }
 }
 use serde_json::json;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 // Helper function to compare SqlValue with JSON
 fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {
@@ -42,7 +42,6 @@ fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) 
 }
 
 #[tokio::test]
-#[ignore = "Needs investigation - Bincode deserialization issue"]
 async fn test_metadata_filtering_basic() {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -57,10 +56,13 @@ async fn test_metadata_filtering_basic() {
     let test_config = create_test_config();
     let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone())
-        .with_bloom_config(BloomFilterConfig {
+        .with_bloom_config(crate::core::bloom::BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             bits_per_key: 10,
+            false_positive_rate: Some(0.01),
+            expected_items: 1000,
             enabled: true,
-            ..Default::default()
+            hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
         });
 
     // Create test records with various metadata
@@ -320,7 +322,6 @@ async fn test_metadata_filtering_basic() {
 }
 
 #[tokio::test]
-#[ignore = "Needs investigation - Bincode deserialization issue"]
 async fn test_metadata_bloom_filter_optimization() {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -335,10 +336,13 @@ async fn test_metadata_bloom_filter_optimization() {
     let test_config = create_test_config();
     let block_size = (test_config.block_size_kb * 1024) as usize;
     let writer = SstableWriter::new(&sstable_path, block_size, filesystem.clone())
-        .with_bloom_config(BloomFilterConfig {
+        .with_bloom_config(crate::core::bloom::BloomFilterConfig {
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             bits_per_key: 10,
+            false_positive_rate: Some(0.01),
+            expected_items: 1000,
             enabled: true,
-            ..Default::default()
+            hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
         });
 
     // Create records

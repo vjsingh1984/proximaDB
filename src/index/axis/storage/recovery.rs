@@ -592,7 +592,7 @@ impl IndexRecoveryManager {
     async fn load_index_to_memory(
         &self,
         collection_id: &str,
-        index_data: Vec<u8>,
+        _index_data: Vec<u8>,
         index_type: Index,
     ) -> Result<(), SerializationError> {
         info!(
@@ -732,7 +732,6 @@ impl Clone for IndexRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::axis::*;
     use std::time::Instant;
 
     #[tokio::test]

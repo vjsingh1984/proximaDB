@@ -99,7 +99,7 @@ impl CompactBatchId {
             .as_millis() as u64;
 
         // Use compare_exchange to atomically update timestamp and get counter
-        let mut counter = 0;
+        let counter;
         loop {
             let last_ts = LAST_TIMESTAMP.load(Ordering::Acquire);
 

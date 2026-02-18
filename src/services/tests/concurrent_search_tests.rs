@@ -13,10 +13,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::RwLock;
-    use tracing::{debug, info, warn};
-
-    use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{SearchParams, results::OptimizedSearchRecord};
+    use tracing::{debug, info};
 
     #[tokio::test]
     async fn test_concurrent_searches_no_interference() -> Result<()> {

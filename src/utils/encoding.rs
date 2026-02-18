@@ -4,13 +4,15 @@
 
 use std::fmt;
 
-/// Base64 encoding alphabet
+/// Standard Base64 encoding alphabet
 const STANDARD_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// URL-safe Base64 encoding alphabet (replaces + and / with - and _)
 const URL_SAFE_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-/// Base64 decoding table
+/// Invalid character marker for Base64 decoding
 const INVALID: u8 = 255;
 
 /// Standard base64 encoding
@@ -33,11 +35,17 @@ pub fn base64_decode_url_safe(encoded: &str) -> Result<Vec<u8>, Base64Error> {
     base64_decode_config(encoded, Base64Config::url_safe())
 }
 
-/// Base64 configuration
+/// Base64 encoding/decoding configuration
+///
+/// Allows customization of the Base64 alphabet and padding behavior.
 #[derive(Debug, Clone)]
 pub struct Base64Config {
+    /// Character alphabet to use for encoding
     alphabet: &'static [u8; 64],
+    /// Whether to use padding (= characters)
     padding: bool,
+    /// Whether this is a URL-safe configuration
+    #[allow(dead_code)]
     url_safe: bool,
 }
 
@@ -209,9 +217,13 @@ pub fn base64_decode_config(encoded: &str, config: Base64Config) -> Result<Vec<u
 }
 
 /// Base64 encoding/decoding errors
+///
+/// Represents errors that can occur during Base64 encoding or decoding operations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Base64Error {
+    /// Invalid character encountered in input
     InvalidCharacter,
+    /// Invalid input length for Base64 decoding
     InvalidLength,
 }
 

@@ -11,21 +11,20 @@ use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs::File;
-use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{
     FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
-use crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarReader;
 
-use super::unified_reader::{ReaderConfig, UnifiedParquetReader};
+use super::unified_reader::UnifiedParquetReader;
 use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation
 pub struct ParquetReader {
+    #[allow(dead_code)]
     config: QueryConfig,
     stats: QueryStatistics,
 }
@@ -298,7 +297,7 @@ impl ParquetReader {
         };
 
         // Extract metadata columns - look for any columns that aren't standard columns
-        let standard_columns = vec![
+        let standard_columns = [
             FIELD_ID,
             FIELD_TIMESTAMP,
             FIELD_VECTOR_FP32,
@@ -523,7 +522,7 @@ impl ParquetReader {
                             } else {
                                 "null".to_string()
                             };
-                            format!("{}={}", k, val_str)
+                            format!("{k}={val_str}")
                         })
                         .collect::<Vec<_>>()
                 );

@@ -3,6 +3,7 @@
 
 use super::NovaFile;
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::core::formats::VectorSerializer;
 use crate::storage::engines::core::formats::columnar::ParquetLocation;
 use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
@@ -46,10 +47,14 @@ impl Default for BatchConfig {
 
 /// Row group cache for recently accessed data
 #[derive(Clone)]
-struct RowGroupCache {
-    cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
-    current_size: Arc<RwLock<usize>>,
-    max_size: usize,
+pub struct RowGroupCache {
+    /// LRU cache storing row groups by ID
+    pub cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
+    /// Current cache size in bytes
+    #[allow(dead_code)]
+    pub current_size: Arc<RwLock<usize>>,
+    /// Maximum cache size in bytes
+    pub max_size: usize,
 }
 
 impl RowGroupCache {
@@ -272,13 +277,13 @@ pub async fn update_records_batch(
 }
 
 /// Batch delete operations (mark as deleted in metadata)
-pub async fn delete_records_batch(nova_file: &mut NovaFile, ids: &[String]) -> Result<usize> {
+pub async fn delete_records_batch(_nova_file: &mut NovaFile, ids: &[String]) -> Result<usize> {
     // In NOVA, deletions are typically handled by:
     // 1. Maintaining a deletion list
     // 2. Filtering during compaction
     // 3. Rewriting Parquet files
     let mut deleted = 0;
-    for id in ids {
+    for _id in ids {
         // TODO: Implement ID index for NOVA
         if false {
             // Placeholder: nova_file.id_index.lookup(id).await.is_some()
@@ -314,7 +319,7 @@ pub async fn read_batch_optimized(
         if let Some(loc) = maybe_loc {
             grouped
                 .entry(loc.row_group_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(id.clone());
         }
     }
@@ -364,7 +369,7 @@ pub async fn prefetch_row_groups(
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
-            match load_row_group(rg_id, &vec![], &schema).await {
+            match load_row_group(rg_id, &[], &schema).await {
                 Ok(batch) => {
                     cache.put(rg_id, Arc::new(batch)).await;
                     debug!("Prefetched row group {}", rg_id);
@@ -394,16 +399,9 @@ fn estimate_batch_size(batch: &RecordBatch) -> usize {
     size
 }
 
+// NOTE: Now using shared VectorSerializer from core/formats/vector_serialization.rs
 fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
-        return Err(anyhow!("Invalid vector byte length"));
-    }
-    let mut vector = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(4) {
-        let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        vector.push(value);
-    }
-    Ok(vector)
+    VectorSerializer::deserialize_raw(bytes)
 }
 /// Statistics for batch operations
 pub struct BatchStats {

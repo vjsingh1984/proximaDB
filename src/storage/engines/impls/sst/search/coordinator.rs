@@ -24,8 +24,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::FilterExpression;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::impls::sst::SstEngine;
@@ -160,13 +158,55 @@ impl SearchCoordinator {
         })
     }
 
+    /// Filter tombstones from search results
+    ///
+    /// Tombstones are identified by:
+    /// - Empty vector (None or empty Vec) AND expires_at in the past (or 0)
+    ///
+    /// Deleted records are marked with empty vectors + expires_at in past during delete.
+    /// These should be excluded from search results.
+    fn filter_tombstones(&self, results: Vec<OptimizedSearchRecord>) -> Vec<OptimizedSearchRecord> {
+        let original_count = results.len();
+        let current_time_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let filtered: Vec<OptimizedSearchRecord> = results
+            .into_iter()
+            .filter(|r| {
+                // Tombstone check: empty vector + expires_at in past
+                let is_empty_vector = r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(true);
+                let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                let is_tombstone = is_empty_vector && is_expired;
+
+                // Keep records that are NOT tombstones AND have valid vectors
+                !is_tombstone && r.vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+            })
+            .collect();
+
+        let filtered_count = original_count - filtered.len();
+        if filtered_count > 0 {
+            debug!(
+                "🗑️ Tombstone filter: removed {} deleted records from {} total",
+                filtered_count, original_count
+            );
+        }
+
+        filtered
+    }
+
     /// Post-process search results for optimization
     async fn post_process_results(
         &self,
-        mut results: Vec<OptimizedSearchRecord>,
+        results: Vec<OptimizedSearchRecord>,
         ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("🔧 Post-processing {} search results", results.len());
+
+        // Filter out tombstones (deleted records) first
+        let results = self.filter_tombstones(results);
+        debug!("📊 After tombstone filtering: {} results", results.len());
 
         // Use bounded priority queue for efficient top-k selection
         let k = ctx.top_k();
@@ -209,7 +249,7 @@ impl SearchCoordinator {
     /// Estimate search cost for a given strategy
     pub async fn estimate_search_cost(
         &self,
-        ctx: &StorageQueryContext,
+        _ctx: &StorageQueryContext,
         strategy: &SearchStrategy,
     ) -> Result<f64> {
         match strategy {
@@ -243,6 +283,7 @@ pub struct SearchStatistics {
 mod tests {
     use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::proto::proximadb_v1::DistanceMetric;
     use crate::query::unified_query_optimizer::SearchParams;
     use crate::storage::engines::impls::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -294,7 +335,7 @@ mod tests {
             .unwrap()
     }
 
-    fn create_test_context(use_indexes: bool, has_quantization: bool) -> StorageQueryContext {
+    fn create_test_context(_use_indexes: bool, _has_quantization: bool) -> StorageQueryContext {
         let search_params = Arc::new(SearchParams {
             query_vectors: None,
             vector: Some(vec![1.0, 2.0, 3.0]),
@@ -316,6 +357,11 @@ mod tests {
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
+            search_mode: crate::core::search::SearchMode::default(),
+            block_prune: crate::core::search::BlockPruneConfig::default(),
+            text_query: None,
+            hybrid_mode: crate::core::search::HybridSearchMode::default(),
+            vector_weight: None,
         });
 
         let collection = Arc::new(crate::proto::proximadb_v1::Collection {

@@ -143,6 +143,7 @@ impl GoogleCloudIntegration {
     }
 
     /// Get user groups from Google Workspace (placeholder)
+    #[allow(dead_code)]
     async fn get_user_groups(&self, user_email: &str) -> Result<Vec<String>> {
         // Placeholder implementation
         // Real implementation would use Google Workspace Admin SDK
@@ -161,6 +162,7 @@ impl GoogleCloudIntegration {
     }
 
     /// Map Google Workspace groups to ProximaDB roles
+    #[allow(dead_code)]
     fn map_groups_to_roles(&self, groups: &[String]) -> Vec<String> {
         let mut roles = Vec::new();
 
@@ -179,6 +181,7 @@ impl GoogleCloudIntegration {
     }
 
     /// Check if user domain is allowed
+    #[allow(dead_code)]
     fn is_domain_allowed(&self, email: &str) -> bool {
         let domain = email.split('@').nth(1).unwrap_or("");
         self.config.allowed_domains.contains(&domain.to_string())

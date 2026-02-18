@@ -118,7 +118,7 @@ impl SystemMetricsCollector {
 
             // Use top command to get CPU usage on macOS
             let output = Command::new("top")
-                .args(&["-l", "1", "-n", "0"])
+                .args(["-l", "1", "-n", "0"])
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run top command: {}", e))?;
 
@@ -209,7 +209,7 @@ impl SystemMetricsCollector {
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run vm_stat: {}", e))?;
 
-            let output_str = String::from_utf8_lossy(&output.stdout);
+            let _output_str = String::from_utf8_lossy(&output.stdout);
 
             // Parse memory from vm_stat (simplified)
             // In production, you'd parse the actual values
@@ -243,7 +243,7 @@ impl SystemMetricsCollector {
 
             // Use df command to get disk usage
             let output = Command::new("df")
-                .args(&["-B1", "/"]) // Get bytes for root filesystem
+                .args(["-B1", "/"]) // Get bytes for root filesystem
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run df command: {}", e))?;
 
@@ -283,7 +283,7 @@ impl SystemMetricsCollector {
 
             // Use df command on macOS
             let output = Command::new("df")
-                .args(&["-k", "/"]) // Get kilobytes for root filesystem
+                .args(["-k", "/"]) // Get kilobytes for root filesystem
                 .output()
                 .map_err(|e| anyhow::anyhow!("Failed to run df: {}", e))?;
 
