@@ -250,11 +250,17 @@ jobs:
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Install Cross (for cross-compilation)
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: |
+          # Install cross from a temp directory to avoid rust-version downgrade
+          # The project's Cargo.toml specifies rust-version = "1.88" which causes
+          # cargo to downgrade, but cross 0.2.5 requires Rust 1.92+
+          cd /tmp
+          cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
@@ -442,6 +448,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -523,6 +531,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Install Maturin
         run: pip install maturin
@@ -1376,6 +1386,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces
@@ -1619,6 +1631,8 @@ jobs:
 
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
       - name: Verify crates.io Installation
         run: |
