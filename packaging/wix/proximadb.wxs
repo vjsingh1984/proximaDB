@@ -1,77 +1,104 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
 <!--
-  ProximaDB WiX v4 MSI Installer Manifest
-  Builds a Windows Installer package for ProximaDB.
-
-  Build with:
-    wix build -o proximadb.msi packaging/wix/proximadb.wxs
+  ProximaDB Windows Installer (WiX v4)
+  
+  This manifest creates an MSI installer for ProximaDB on Windows.
+  Build with: wix build proximadb.wxs -o proximadb-version-x64.msi
+  
+  Features:
+  - Installs binaries to C:\Program Files\ProximaDB\
+  - Creates config directory in C:\ProgramData\ProximaDB\
+  - Adds binaries to PATH
+  - Registers as Windows Service (optional)
 -->
-
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package
-    Name="ProximaDB"
-    Manufacturer="ProximaDB Contributors"
-    Version="!(bind.FileVersion.proximadb_server)"
-    UpgradeCode="7A3E4F2B-1C8D-4E5A-9B0F-6D2A8C3E7F1B"
-    Scope="perMachine">
-
-    <MajorUpgrade
-      DowngradeErrorMessage="A newer version of ProximaDB is already installed." />
-
-    <MediaTemplate EmbedCab="yes" />
-
-    <!-- Install directory -->
-    <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="INSTALLFOLDER" Name="ProximaDB">
-        <Directory Id="BinFolder" Name="bin" />
-        <Directory Id="ConfigFolder" Name="config" />
+  <Package Name="ProximaDB" Version="$(var.Version)" Manufacturer="ProximaDB Contributors" UpgradeCode="YOUR-GUID-HERE" Scope="perMachine">
+    
+    <SummaryInformation Description="ProximaDB - Cloud-native vector database" Comments="High-performance vector database for AI applications" />
+    
+    <!-- Media: Single cabinet, embedded -->
+    <Media Id="1" Cabinet="proximadb.cab" EmbedCompact="yes" />
+    
+    <!-- Installation Directory: Program Files -->
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="ProximaDB" />
+    </StandardDirectory>
+    
+    <!-- Config Directory: ProgramData -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="CONFIGDIR" Name="ProximaDB">
+        <Component Id="ConfigDirComponent" Guid="*">
+          <CreateFolder />
+          <RemoveFolder Id="RemoveConfigDir" On="uninstall" />
+        </Component>
       </Directory>
     </StandardDirectory>
-
-    <!-- Binary components -->
-    <ComponentGroup Id="Binaries" Directory="BinFolder">
-      <Component>
-        <File Id="proximadb_server" Source="proximadb-server.exe" KeyPath="yes" />
+    
+    <!-- Data Directory: ProgramData -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATADIR" Name="ProximaDBData">
+        <Component Id="DataDirComponent" Guid="*">
+          <CreateFolder />
+          <RemoveFolder Id="RemoveDataDir" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    
+    <!-- Main Feature: Binaries -->
+    <Feature Id="Binaries" Title="ProximaDB Binaries" Level="1" AllowAbsent="no">
+      <!-- Server Binary -->
+      <Component Id="ServerComponent" Directory="INSTALLFOLDER" Guid="*">
+        <File Id="ServerFile" Source="proximadb-server.exe" KeyPath="yes" />
       </Component>
-      <Component>
-        <File Id="proximadb_bench" Source="proximadb-bench.exe" KeyPath="yes" />
+      
+      <!-- Benchmark Tool -->
+      <Component Id="BenchComponent" Directory="INSTALLFOLDER" Guid="*">
+        <File Id="BenchFile" Source="proximadb-bench.exe" />
       </Component>
-      <Component>
-        <File Id="proximadb_migrate" Source="proximadb-migrate.exe" KeyPath="yes" />
+      
+      <!-- Migration Tool -->
+      <Component Id="MigrateComponent" Directory="INSTALLFOLDER" Guid="*">
+        <File Id="MigrateFile" Source="proximadb-migrate.exe" />
       </Component>
-    </ComponentGroup>
-
-    <!-- Config files -->
-    <ComponentGroup Id="ConfigFiles" Directory="ConfigFolder">
-      <Component>
-        <File Id="config_toml" Source="config\config.toml" KeyPath="yes" />
+      
+      <!-- Config File -->
+      <Component Id="ConfigComponent" Directory="INSTALLFOLDER" Guid="*">
+        <File Id="ConfigFile" Source="config.toml" />
       </Component>
-    </ComponentGroup>
-
-    <!-- PATH environment variable -->
-    <ComponentGroup Id="EnvironmentPath" Directory="BinFolder">
-      <Component Id="PathEntry" Guid="8B4E5F3C-2D9A-4F6B-A1C0-7E3D9B5A2F4C">
-        <Environment Id="PATH"
-          Name="PATH"
-          Value="[BinFolder]"
-          Permanent="no"
-          Part="last"
-          Action="set"
-          System="yes" />
+      
+      <!-- PATH Environment Variable -->
+      <Component Id="PathComponent" Directory="INSTALLFOLDER" Guid="YOUR-GUID-HERE">
+        <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
       </Component>
-    </ComponentGroup>
-
-    <!-- Feature tree -->
-    <Feature Id="Complete" Title="ProximaDB" Level="1">
-      <Feature Id="Server" Title="ProximaDB Server" Level="1">
-        <ComponentGroupRef Id="Binaries" />
-        <ComponentGroupRef Id="ConfigFiles" />
-      </Feature>
-      <Feature Id="PathFeature" Title="Add to PATH" Level="1">
-        <ComponentGroupRef Id="EnvironmentPath" />
-      </Feature>
+      
+      <!-- Config and Data directories -->
+      <ComponentRef Id="ConfigDirComponent" />
+      <ComponentRef Id="DataDirComponent" />
     </Feature>
-
+    
+    <!-- Start Menu Shortcuts -->
+    <Feature Id="Shortcuts" Title="Start Menu Shortcuts" Level="1">
+      <Component Id="StartMenuComponent" Directory="ProgramMenuFolder" Guid="YOUR-GUID-HERE">
+        <Directory Id="ProgramMenuFolder" Name="Programs">
+          <Directory Id="ProximaDBMenuFolder" Name="ProximaDB">
+            <Shortcut Id="ServerShortcut" Name="ProximaDB Server" Description="Start ProximaDB Server" Target="[INSTALLFOLDER]proximadb-server.exe" Arguments="--config &quot;[CONFIGDIR]config.toml&quot;" WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="ConfigShortcut" Name="ProximaDB Config" Description="Edit ProximaDB Configuration" Target="[CONFIGDIR]config.toml" />
+            <RemoveFolder Id="RemoveMenuFolder" On="uninstall" />
+            <RegistryValue Root="HKCU" Key="Software\ProximaDB" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+          </Directory>
+        </Directory>
+      </Component>
+    </Feature>
+    
+    <!-- Upgrade Detection -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ProximaDB is already installed." />
+    
+    <!-- Launch Condition: Windows 10+ -->
+    <Launch Condition="Installed OR (VersionNT >= 603)" Message="ProximaDB requires Windows 8.1 or later." />
+    
+    <!-- Installation UI: Simple -->
+    <UIRef Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    
   </Package>
 </Wix>

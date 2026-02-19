@@ -1,10 +1,19 @@
-#!/usr/bin/env bash
-# ProximaDB pre-remove script
-# Stops and disables the systemd service before package removal.
+#!/bin/bash
+# Pre-remove script for ProximaDB package
 
 set -e
 
+# Stop and disable the service if it's running
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl stop proximadb 2>/dev/null || true
-  systemctl disable proximadb 2>/dev/null || true
+    if systemctl is-active --quiet proximadb.service; then
+        echo "Stopping proximadb service..."
+        systemctl stop proximadb.service
+    fi
+
+    if systemctl is-enabled --quiet proximadb.service; then
+        echo "Disabling proximadb service..."
+        systemctl disable proximadb.service
+    fi
 fi
+
+echo "ProximaDB service stopped and disabled"

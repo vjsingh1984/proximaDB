@@ -1,29 +1,32 @@
 [Unit]
-Description=ProximaDB Vector Database Server
+Description=ProximaDB - Cloud-native vector database engineered for AI-first applications
 Documentation=https://github.com/vjsingh1984/proximadb
-After=network-online.target
+After=network.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=proximadb
 Group=proximadb
 ExecStart=/usr/bin/proximadb-server --config /etc/proximadb/config.toml
 Restart=on-failure
-RestartSec=5
+RestartSec=5s
+
+# Resource limits
 LimitNOFILE=65536
-LimitMEMLOCK=infinity
+LimitNPROC=4096
 
 # Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/proximadb /var/log/proximadb
-PrivateTmp=true
-NoNewPrivileges=true
+ReadWritePaths=/var/lib/proximadb /var/log/proximadb /tmp
 
-# Environment
-Environment=RUST_LOG=info
-WorkingDirectory=/var/lib/proximadb
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=proximadb
 
 [Install]
 WantedBy=multi-user.target
