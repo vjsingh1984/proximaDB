@@ -143,13 +143,16 @@ jobs:
           #   archive: tar.gz
           #
           # Native builds (working):
-          # NOTE: Using aarch64-apple-darwin (Apple Silicon) since macos-latest
-          # is ARM64. This provides native performance and covers most modern Macs.
+          # NOTE: macOS builds temporarily disabled due to ring crate compilation
+          # error on Apple Silicon (CPU feature detection assertion failure).
+          # TODO: Fix ring dependency or update to newer version for macOS support.
+          #
+          # - target: aarch64-apple-darwin
+          #   os: macos-latest
+          #   archive: tar.gz
+          #
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-            archive: tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-latest
             archive: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-2022

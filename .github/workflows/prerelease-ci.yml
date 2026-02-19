@@ -124,12 +124,11 @@ jobs:
 
           # Binary validation
           echo "## Binary Artifacts"
-          # NOTE: v0.2.0 release includes only native builds (3 platforms)
-          # Cross-compilation targets disabled due to OpenSSL linking issues
-          # Using aarch64-apple-darwin (Apple Silicon) since macos-latest is ARM64
+          # NOTE: v0.2.0 release includes Linux + Windows only
+          # macOS builds disabled due to ring crate compilation error on Apple Silicon.
+          # Cross-compilation targets disabled due to OpenSSL linking issues.
           EXPECTED_BINARIES=(
             "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
             "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
           )
 
@@ -209,7 +208,7 @@ jobs:
           # Report
           echo "report<<EOF" >> $GITHUB_OUTPUT
           echo "Version: $VERSION" >> $GITHUB_OUTPUT
-          echo "Binaries: $BINARY_COUNT/3 (native builds only for v0.2.0)" >> $GITHUB_OUTPUT
+          echo "Binaries: $BINARY_COUNT/2 (Linux + Windows for v0.2.0, macOS post-release)" >> $GITHUB_OUTPUT
           echo "Wheels: skipped (pure Python package)" >> $GITHUB_OUTPUT
           echo "SDists: $SDIST_COUNT" >> $GITHUB_OUTPUT
           echo "RPM: $RPM_COUNT, DEB: $DEB_COUNT" >> $GITHUB_OUTPUT
