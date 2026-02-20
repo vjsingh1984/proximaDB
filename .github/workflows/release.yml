@@ -225,15 +225,9 @@ jobs:
             features: ""
             cross: true
 
-          # macOS x86_64
-          - target: x86_64-apple-darwin
-            os: macos-13
-            archive: tar.gz
-            features: ""
-
-          # macOS aarch64 (Apple Silicon)
+          # macOS aarch64 (Apple Silicon) - macos-latest
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
             archive: tar.gz
             features: "metal"
 
@@ -356,7 +350,7 @@ jobs:
   # ============================================================================
   # BUILD PYTHON WHEELS - Cross-platform wheel builds
   # ============================================================================
-  build-wheels:
+  # build-wheels: # DISABLED: clients/python is pure Python (setuptools), not maturin
     name: Build Wheels (${{ matrix.os }}, ${{ matrix.python }})
     needs: prepare
     runs-on: ${{ matrix.os }}
@@ -396,30 +390,22 @@ jobs:
             python: "3.12"
 
           # macOS x86_64
-          - os: macos-13
-            target: x86_64
             python: "3.9"
-          - os: macos-13
-            target: x86_64
             python: "3.10"
-          - os: macos-13
-            target: x86_64
             python: "3.11"
-          - os: macos-13
-            target: x86_64
             python: "3.12"
 
           # macOS aarch64 (Apple Silicon)
-          - os: macos-14
+          - os: macos-latest
             target: aarch64
             python: "3.9"
-          - os: macos-14
+          - os: macos-latest
             target: aarch64
             python: "3.10"
-          - os: macos-14
+          - os: macos-latest
             target: aarch64
             python: "3.11"
-          - os: macos-14
+          - os: macos-latest
             target: aarch64
             python: "3.12"
 
@@ -513,9 +499,7 @@ jobs:
             target: x86_64
           - os: ubuntu-22.04
             target: aarch64
-          - os: macos-13
-            target: x86_64
-          - os: macos-14
+          - os: macos-latest
             target: aarch64
           - os: windows-2022
             target: x64
@@ -722,7 +706,7 @@ jobs:
   build-dmg:
     name: Build DMG Installer
     needs: [prepare, build-binaries]
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
