@@ -233,13 +233,14 @@ jobs:
           #   features: ""
           #   cross: true
 
-          # macOS aarch64 (Apple Silicon) - ENABLED for v0.2.0
-          # Note: Metal feature disabled due to ring crate CI compatibility issues
-          # Metal works locally but ring 0.17.14 has CPU feature detection issues on CI
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
-            features: ""
+          # macOS aarch64 (Apple Silicon) - DISABLED for v0.2.0
+          # Ring 0.17.14 has CPU feature detection issues on CI macOS runners
+          # Multiple dependencies pull in ring (jsonwebtoken, pgwire, rustls, rcgen)
+          # Re-enable in v0.2.1 with alternative crypto stack or rustls upgrade
+          # - target: aarch64-apple-darwin
+          #   os: macos-latest
+          #   archive: tar.gz
+          #   features: ""
 
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
@@ -845,7 +846,8 @@ jobs:
           echo ""
 
           # ----------------------------------------
-          # Expected Binary Targets (3 platforms for v0.2.0)
+          # Expected Binary Targets (2 platforms for v0.2.0)
+          # macOS disabled due to ring crate CI compatibility issues
           # ----------------------------------------
           echo "## Binary Artifacts"
           echo ""
@@ -853,7 +855,6 @@ jobs:
           EXPECTED_BINARIES=(
             "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
             "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
-            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
           )
 
           BINARY_COUNT=0
