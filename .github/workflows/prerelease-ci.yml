@@ -155,11 +155,12 @@ jobs:
           #   cross: true
 
           # macOS aarch64 (Apple Silicon) - ENABLED for v0.2.0
-          # Verified locally on M1 Mac - builds successfully with Metal
+          # Note: Metal feature disabled due to ring crate CI compatibility issues
+          # Metal works locally but ring 0.17.14 has CPU feature detection issues on CI
           - target: aarch64-apple-darwin
             os: macos-latest
             archive: tar.gz
-            features: "metal"
+            features: ""
 
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
