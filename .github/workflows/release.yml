@@ -609,207 +609,216 @@ jobs:
 
   # ============================================================================
   # BUILD PLATFORM PACKAGES - RPM, DEB, DMG, MSI
+  # DISABLED for v0.2.0 - Re-enable in v0.2.1
   # ============================================================================
-  build-rpm:
-    name: Build RPM Package
-    needs: [prepare, build-binaries]
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Binary Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-x86_64-unknown-linux-gnu
-          path: binary
-
-      - name: Install fpm
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential
-          sudo gem install fpm
-
-      - name: Build RPM
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          mkdir -p rpm_build/usr/bin
-          mkdir -p rpm_build/etc/proximadb
-          mkdir -p rpm_build/usr/lib/systemd/system
-          mkdir -p rpm_build/var/lib/proximadb
-          mkdir -p rpm_build/var/log/proximadb
-
-          tar -xzf binary/proximadb-*.tar.gz -C rpm_build/usr/bin --strip-components=1
-          cp -r config/* rpm_build/etc/proximadb/
-          cp packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
-
-          fpm -s dir -t rpm \
-            -n proximadb \
-            -v "$VERSION" \
-            --epoch 1 \
-            --description "ProximaDB - Cloud-native vector database" \
-            --url "https://github.com/vjsingh1984/proximadb" \
-            --license "Apache-2.0" \
-            --vendor "ProximaDB" \
-            --rpm-dist "el8" \
-            --after-install packaging/scripts/postinstall.sh \
-            rpm_build/=/
-
-      - name: Upload RPM Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rpm-package
-          path: "*.rpm"
-          retention-days: 7
-
-  build-deb:
-    name: Build DEB Package
-    needs: [prepare, build-binaries]
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Binary Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-x86_64-unknown-linux-gnu
-          path: binary
-
-      - name: Install fpm
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential
-          sudo gem install fpm
-
-      - name: Build DEB
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          mkdir -p deb_build/usr/bin
-          mkdir -p deb_build/etc/proximadb
-          mkdir -p deb_build/var/lib/proximadb
-          mkdir -p deb_build/var/log/proximadb
-
-          tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
-          cp -r config/* deb_build/etc/proximadb/
-
-          # Build DEB (single line to avoid parsing issues)
-          fpm -s dir -t deb -n proximadb -v "$VERSION" --description "ProximaDB - Cloud-native vector database" --url "https://github.com/vjsingh1984/proximadb" --license "Apache-2.0" --vendor "ProximaDB" --deb-priority "optional" --deb-systemd deb_build/=/
-
-      - name: Upload DEB Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-package
-          path: "*.deb"
-          retention-days: 7
-
-  build-dmg:
-    name: Build DMG Installer
-    # ENABLED for v0.2.0 - macOS aarch64 binary now being built
-    needs: [prepare, build-binaries]
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Binary Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: binaries-*apple-darwin
-          path: binaries
-          merge-multiple: true
-
-      - name: Install create-dmg
-        run: brew install create-dmg
-
-      - name: Create DMG
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          mkdir -p dmg_build/ProximaDB
-
-          for tar in binaries/proximadb-*.tar.gz; do
-            tar -xzf "$tar"
-          done
-
-          mkdir -p dmg_build/ProximaDB.app/Contents/MacOS
-          mkdir -p dmg_build/ProximaDB.app/Contents/Resources
-
-          if [ -f "proximadb-${VERSION}-aarch64-apple-darwin/proximadb-server" ]; then
-            cp proximadb-${VERSION}-aarch64-apple-darwin/proximadb-server dmg_build/ProximaDB.app/Contents/MacOS/
-            cp proximadb-${VERSION}-aarch64-apple-darwin/proximadb-bench dmg_build/ProximaDB.app/Contents/MacOS/
-            cp proximadb-${VERSION}-aarch64-apple-darwin/proximadb-migrate dmg_build/ProximaDB.app/Contents/MacOS/
-          elif [ -f "proximadb-${VERSION}-x86_64-apple-darwin/proximadb-server" ]; then
-            cp proximadb-${VERSION}-x86_64-apple-darwin/proximadb-server dmg_build/ProximaDB.app/Contents/MacOS/
-            cp proximadb-${VERSION}-x86_64-apple-darwin/proximadb-bench dmg_build/ProximaDB.app/Contents/MacOS/
-            cp proximadb-${VERSION}-x86_64-apple-darwin/proximadb-migrate dmg_build/ProximaDB.app/Contents/MacOS/
-          fi
-
-          cat > dmg_build/ProximaDB.app/Contents/Info.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key>
-            <string>proximadb-server</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.proximadb.server</string>
-            <key>CFBundleName</key>
-            <string>ProximaDB</string>
-            <key>CFBundleVersion</key>
-            <string>VERSION</string>
-          </dict>
-          </plist>
-          EOF
-
-          create-dmg \
-            --volname "ProximaDB" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --app-drop-link 450 185 \
-            --icon "ProximaDB.app" 150 185 \
-            "ProximaDB-${VERSION}.dmg" \
-            dmg_build/
-
-      - name: Upload DMG Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dmg-installer
-          path: "*.dmg"
-          retention-days: 7
-
-  build-msi:
-    name: Build MSI Installer
-    needs: [prepare, build-binaries]
-    runs-on: windows-2022
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Binary Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-x86_64-pc-windows-msvc
-          path: binary
-
-      - name: Install WiX v4
-        run: dotnet tool install --global wix --version 4.0.0
-
-      - name: Extract Binaries
-        run: |
-          Expand-Archive -Path binary\proximadb-*.zip -DestinationPath msi_build -Force
-
-      - name: Build MSI
-        run: |
-          $VERSION = "${{ needs.prepare.outputs.version }}"
-          wix build -o "proximadb-$VERSION.msi" packaging\wix\proximadb.wxs
-
-      - name: Upload MSI Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: msi-installer
-          path: "*.msi"
-          retention-days: 7
+  # Platform packaging requires additional fixes:
+  # - DEB: fpm command syntax for --deb-systemd
+  # - MSI: WiX v4 UI extension reference (WixUI:WixUI_InstallDir)
+  # - DMG: Requires macOS binary (disabled due to ring crate issues)
+  # - RPM: Works but not tested for v0.2.0
+  #
+  # For v0.2.0, users will extract tar.gz/zip binaries manually.
+  #
+  # build-rpm:
+  #   name: Build RPM Package
+  #   needs: [prepare, build-binaries]
+  #   runs-on: ubuntu-22.04
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Download Binary Artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: binaries-x86_64-unknown-linux-gnu
+  #         path: binary
+  #
+  #     - name: Install fpm
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y ruby ruby-dev build-essential
+  #         sudo gem install fpm
+  #
+  #     - name: Build RPM
+  #       run: |
+  #         VERSION="${{ needs.prepare.outputs.version }}"
+  #         mkdir -p rpm_build/usr/bin
+  #         mkdir -p rpm_build/etc/proximadb
+  #         mkdir -p rpm_build/usr/lib/systemd/system
+  #         mkdir -p rpm_build/var/lib/proximadb
+  #         mkdir -p rpm_build/var/log/proximadb
+  #
+  #         tar -xzf binary/proximadb-*.tar.gz -C rpm_build/usr/bin --strip-components=1
+  #         cp -r config/* rpm_build/etc/proximadb/
+  #         cp packaging/systemd/proximadb.service rpm_build/usr/lib/systemd/system/
+  #
+  #         fpm -s dir -t rpm \
+  #           -n proximadb \
+  #           -v "$VERSION" \
+  #           --epoch 1 \
+  #           --description "ProximaDB - Cloud-native vector database" \
+  #           --url "https://github.com/vjsingh1984/proximadb" \
+  #           --license "Apache-2.0" \
+  #           --vendor "ProximaDB" \
+  #           --rpm-dist "el8" \
+  #           --after-install packaging/scripts/postinstall.sh \
+  #           rpm_build/=/
+  #
+  #     - name: Upload RPM Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: rpm-package
+  #         path: "*.rpm"
+  #         retention-days: 7
+  #
+  # build-deb:
+  #   name: Build DEB Package
+  #   needs: [prepare, build-binaries]
+  #   runs-on: ubuntu-22.04
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Download Binary Artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: binaries-x86_64-unknown-linux-gnu
+  #         path: binary
+  #
+  #     - name: Install fpm
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y ruby ruby-dev build-essential
+  #         sudo gem install fpm
+  #
+  #     - name: Build DEB
+  #       run: |
+  #         VERSION="${{ needs.prepare.outputs.version }}"
+  #         mkdir -p deb_build/usr/bin
+  #         mkdir -p deb_build/etc/proximadb
+  #         mkdir -p deb_build/var/lib/proximadb
+  #         mkdir -p deb_build/var/log/proximadb
+  #
+  #         tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
+  #         cp -r config/* deb_build/etc/proximadb/
+  #
+  #         # Build DEB (single line to avoid parsing issues)
+  #         fpm -s dir -t deb -n proximadb -v "$VERSION" --description "ProximaDB - Cloud-native vector database" --url "https://github.com/vjsingh1984/proximadb" --license "Apache-2.0" --vendor "ProximaDB" --deb-priority "optional" --deb-systemd deb_build/=/
+  #
+  #     - name: Upload DEB Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: deb-package
+  #         path: "*.deb"
+  #         retention-days: 7
+  #
+  # build-dmg:
+  #   name: Build DMG Installer
+  #   # ENABLED for v0.2.0 - macOS aarch64 binary now being built
+  #   needs: [prepare, build-binaries]
+  #   runs-on: macos-latest
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Download Binary Artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         pattern: binaries-*apple-darwin
+  #         path: binaries
+  #         merge-multiple: true
+  #
+  #     - name: Install create-dmg
+  #       run: brew install create-dmg
+  #
+  #     - name: Create DMG
+  #       run: |
+  #         VERSION="${{ needs.prepare.outputs.version }}"
+  #         mkdir -p dmg_build/ProximaDB
+  #
+  #         for tar in binaries/proximadb-*.tar.gz; do
+  #           tar -xzf "$tar"
+  #         done
+  #
+  #         mkdir -p dmg_build/ProximaDB.app/Contents/MacOS
+  #         mkdir -p dmg_build/ProximaDB.app/Contents/Resources
+  #
+  #         if [ -f "proximadb-${VERSION}-aarch64-apple-darwin/proximadb-server" ]; then
+  #           cp proximadb-${VERSION}-aarch64-apple-darwin/proximadb-server dmg_build/ProximaDB.app/Contents/MacOS/
+  #           cp proximadb-${VERSION}-aarch64-apple-darwin/proximadb-bench dmg_build/ProximaDB.app/Contents/MacOS/
+  #           cp proximadb-${VERSION}-aarch64-apple-darwin/proximadb-migrate dmg_build/ProximaDB.app/Contents/MacOS/
+  #         elif [ -f "proximadb-${VERSION}-x86_64-apple-darwin/proximadb-server" ]; then
+  #           cp proximadb-${VERSION}-x86_64-apple-darwin/proximadb-server dmg_build/ProximaDB.app/Contents/MacOS/
+  #           cp proximadb-${VERSION}-x86_64-apple-darwin/proximadb-bench dmg_build/ProximaDB.app/Contents/MacOS/
+  #           cp proximadb-${VERSION}-x86_64-apple-darwin/proximadb-migrate dmg_build/ProximaDB.app/Contents/MacOS/
+  #         fi
+  #
+  #         cat > dmg_build/ProximaDB.app/Contents/Info.plist << 'EOF'
+  #         <?xml version="1.0" encoding="UTF-8"?>
+  #         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+  #         <plist version="1.0">
+  #         <dict>
+  #           <key>CFBundleExecutable</key>
+  #           <string>proximadb-server</string>
+  #           <key>CFBundleIdentifier</key>
+  #           <string>com.proximadb.server</string>
+  #           <key>CFBundleName</key>
+  #           <string>ProximaDB</string>
+  #           <key>CFBundleVersion</key>
+  #           <string>VERSION</string>
+  #         </dict>
+  #         </plist>
+  #         EOF
+  #
+  #         create-dmg \
+  #           --volname "ProximaDB" \
+  #           --window-pos 200 120 \
+  #           --window-size 600 400 \
+  #           --icon-size 100 \
+  #           --app-drop-link 450 185 \
+  #           --icon "ProximaDB.app" 150 185 \
+  #           "ProximaDB-${VERSION}.dmg" \
+  #           dmg_build/
+  #
+  #     - name: Upload DMG Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: dmg-installer
+  #         path: "*.dmg"
+  #         retention-days: 7
+  #
+  # build-msi:
+  #   name: Build MSI Installer
+  #   needs: [prepare, build-binaries]
+  #   runs-on: windows-2022
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Download Binary Artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: binaries-x86_64-pc-windows-msvc
+  #         path: binary
+  #
+  #     - name: Install WiX v4
+  #       run: dotnet tool install --global wix --version 4.0.0
+  #
+  #     - name: Extract Binaries
+  #       run: |
+  #         Expand-Archive -Path binary\proximadb-*.zip -DestinationPath msi_build -Force
+  #
+  #     - name: Build MSI
+  #       run: |
+  #         $VERSION = "${{ needs.prepare.outputs.version }}"
+  #         wix build -o "proximadb-$VERSION.msi" packaging\wix\proximadb.wxs
+  #
+  #     - name: Upload MSI Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: msi-installer
+  #         path: "*.msi"
+  #         retention-days: 7
 
   # ============================================================================
   # VALIDATE ARTIFACTS - Pre-release validation gate
@@ -820,7 +829,7 @@ jobs:
   # ============================================================================
   validate-artifacts:
     name: Validate Release Artifacts
-    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist, build-rpm, build-deb, build-dmg, build-msi]
+    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist]
     runs-on: ubuntu-latest
     outputs:
       validation_passed: ${{ steps.validate.outputs.passed }}
@@ -1081,7 +1090,7 @@ jobs:
   # ============================================================================
   create-release:
     name: Create GitHub Release
-    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist, build-rpm, build-deb, build-dmg, build-msi, validate-artifacts]
+    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     steps:
