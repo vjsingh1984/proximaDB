@@ -192,6 +192,18 @@ jobs:
             sudo apt-get install -y musl-tools
           fi
 
+      - name: Install macOS Dependencies
+        if: runner.os == 'macOS'
+        run: |
+          # Install OpenSSL for ring crate compatibility
+          brew install openssl@3 pkg-config
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> $GITHUB_ENV
+          # Workaround for ring crate CPU feature detection issues
+          echo "RING_CORE_BACKEND=openssl" >> $GITHUB_ENV
+          echo "CFLAGS=-I$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
+
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
         with:

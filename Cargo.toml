@@ -176,6 +176,7 @@ hex = "0.4"  # Hex encoding for bytea types
 base64 = "0.22"  # Base64 encoding for encryption
 ring = "0.17"  # Cryptographic operations for field-level encryption
 crossbeam = "0.8"  # Lock-free ring buffers for observability ingestion
+
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
