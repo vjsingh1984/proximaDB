@@ -64,7 +64,7 @@ once_cell = "1.19"
 lazy_static = "1.5"
 
 # Networking & gRPC
-tonic = { version = "0.14", features = ["gzip", "tls-ring", "tls-webpki-roots"] }
+tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
 tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
 # tonic-reflection = "0.14"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
 prost = "0.14"
