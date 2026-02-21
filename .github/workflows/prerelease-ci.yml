@@ -410,6 +410,14 @@ jobs:
         with:
           path: artifacts
 
+      - name: List Downloaded Artifacts (debug)
+        run: |
+          echo "=== Artifact Directory Structure ==="
+          find artifacts -type f -name "*.tar.gz" -o -name "*.zip" | head -20
+          echo ""
+          echo "=== All Binary Artifacts ==="
+          find artifacts -path "*/binaries-*/*" -type f | head -20
+
       - name: Validate Artifact Manifest
         id: validate
         run: |
@@ -556,14 +564,11 @@ jobs:
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp -r config/* deb_build/etc/proximadb/ 2>/dev/null || true
 
-          # Note: all flags must come before the source path
-          fpm -s dir -t deb \
-            -n proximadb \
-            -v "$VERSION" \
+          # Build DEB: all flags before source path
+          fpm -s dir -t deb -n proximadb -v "$VERSION" \
             --description "ProximaDB - Cloud-native vector database" \
             --url "https://github.com/vjsingh1984/proximadb" \
-            --license "Apache-2.0" \
-            --deb-systemd \
+            --license "Apache-2.0" --deb-systemd \
             --after-install packaging/scripts/postinstall.sh \
             --before-remove packaging/scripts/preremove.sh \
             deb_build/=/

@@ -12,7 +12,7 @@
   - Registers as Windows Service (optional)
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Package Name="ProximaDB" Version="$(var.Version)" Manufacturer="ProximaDB Contributors" UpgradeCode="YOUR-GUID-HERE" Scope="perMachine">
+  <Package Name="ProximaDB" Version="$(var.Version)" Manufacturer="ProximaDB Contributors" UpgradeCode="74DA5FFA-FEC4-47C6-B49B-0633255780B8" Scope="perMachine">
     
     <SummaryInformation Description="ProximaDB - Cloud-native vector database" Comments="High-performance vector database for AI applications" />
     
@@ -67,7 +67,7 @@
       </Component>
       
       <!-- PATH Environment Variable -->
-      <Component Id="PathComponent" Directory="INSTALLFOLDER" Guid="YOUR-GUID-HERE">
+      <Component Id="PathComponent" Directory="INSTALLFOLDER" Guid="00203128-4665-47F1-8FF1-7C9F779CCE32">
         <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
       </Component>
       
@@ -78,7 +78,7 @@
     
     <!-- Start Menu Shortcuts -->
     <Feature Id="Shortcuts" Title="Start Menu Shortcuts" Level="1">
-      <Component Id="StartMenuComponent" Directory="ProgramMenuFolder" Guid="YOUR-GUID-HERE">
+      <Component Id="StartMenuComponent" Directory="ProgramMenuFolder" Guid="A80E321C-28B4-4765-960B-0A756E049E07">
         <Directory Id="ProgramMenuFolder" Name="Programs">
           <Directory Id="ProximaDBMenuFolder" Name="ProximaDB">
             <Shortcut Id="ServerShortcut" Name="ProximaDB Server" Description="Start ProximaDB Server" Target="[INSTALLFOLDER]proximadb-server.exe" Arguments="--config &quot;[CONFIGDIR]config.toml&quot;" WorkingDirectory="INSTALLFOLDER" />

@@ -692,15 +692,12 @@ jobs:
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp -r config/* deb_build/etc/proximadb/
 
-          fpm -s dir -t deb \
-            -n proximadb \
-            -v "$VERSION" \
+          # Build DEB: all flags before source path
+          fpm -s dir -t deb -n proximadb -v "$VERSION" \
             --description "ProximaDB - Cloud-native vector database" \
             --url "https://github.com/vjsingh1984/proximadb" \
-            --license "Apache-2.0" \
-            --vendor "ProximaDB" \
-            --deb-priority "optional" \
-            --deb-systemd \
+            --license "Apache-2.0" --vendor "ProximaDB" \
+            --deb-priority "optional" --deb-systemd \
             --after-install packaging/scripts/postinstall.sh \
             --before-remove packaging/scripts/preremove.sh \
             deb_build/=/
