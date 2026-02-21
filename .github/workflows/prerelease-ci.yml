@@ -373,12 +373,14 @@ jobs:
         run: |
           pip install build
 
-      - name: Build sdist for embedded package
-        working-directory: clients/python-embedded
-        run: |
-          # clients/python-embedded doesn't have Rust bindings yet
-          # Build as pure Python package for now
-          pip install build && python -m build --sdist --outdir dist
+      # NOTE: clients/python-embedded has maturin in pyproject.toml but no Cargo.toml
+      # Skip building sdist for it until proper Rust bindings are added
+      # - name: Build sdist for embedded package
+      #   working-directory: clients/python-embedded
+      #   run: |
+      #     # clients/python-embedded doesn't have Rust bindings yet
+      #     # Build as pure Python package for now
+      #     pip install build && python -m build --sdist --outdir dist
 
       - name: Build sdist for pure Python package
         working-directory: clients/python
@@ -388,9 +390,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sdist
-          path: |
-            clients/python-embedded/dist/*.tar.gz
-            clients/python/dist/*.tar.gz
+          path: clients/python/dist/*.tar.gz
           retention-days: 7
 
   # ============================================================================
@@ -421,8 +421,8 @@ jobs:
           echo ""
           echo "NOTE: For v0.2.0:"
           echo "  - clients/python is pure Python (setuptools)"
-          echo "  - clients/python-embedded has no Rust bindings yet"
-          echo "  - Only native binaries and source distributions are built"
+          echo "  - clients/python-embedded has no Rust bindings yet (maturin config but no Cargo.toml)"
+          echo "  - Only clients/python sdist is built, python-embedded sdist is skipped"
           echo ""
 
           # Expected Binary Targets (5 platforms - removed x86_64-apple-darwin)
@@ -723,7 +723,7 @@ jobs:
               "dmg": $DMG_COUNT,
               "msi": $MSI_COUNT
             },
-            "note": "v0.2.0: clients/python and clients/python-embedded are pure Python packages (no Rust bindings)"
+            "note": "v0.2.0: clients/python sdist only (python-embedded has maturin config but no Cargo.toml, so sdist is skipped)"
           }
           EOF
 
@@ -749,8 +749,8 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "All artifacts built successfully. This commit is ready for release." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Note:** Both \`clients/python\` and \`clients/python-embedded\` are pure Python" >> $GITHUB_STEP_SUMMARY
-            echo "packages (setuptools) without Rust bindings. Only source distributions are built." >> $GITHUB_STEP_SUMMARY
+            echo "**Note:** \`clients/python-embedded\` is skipped (has maturin config but no Cargo.toml)." >> $GITHUB_STEP_SUMMARY
+            echo "Only \`clients/python\` sdist is built as a pure Python package." >> $GITHUB_STEP_SUMMARY
           else
             echo ":x: **Pre-release CI failed**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
