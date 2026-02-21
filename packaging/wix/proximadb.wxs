@@ -38,7 +38,7 @@
     <!-- Data Directory: ProgramData -->
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="DATADIR" Name="ProximaDBData">
-        <Component Id="DataDirComponent" Guid="9B4E6G3F-8C0D-5B3F-AG2E-7D9C4B8E6F0A">
+        <Component Id="DataDirComponent" Guid="D13947D9-3F89-4E1E-9F5F-647390400C21">
           <CreateFolder />
           <RemoveFolder Id="RemoveDataDir" On="uninstall" />
           <RegistryValue Root="HKMU" Key="Software\ProximaDB" Name="DataDir" Type="string" Value="installed" KeyPath="yes" />
@@ -49,22 +49,22 @@
     <!-- Main Feature: Binaries -->
     <Feature Id="Binaries" Title="ProximaDB Binaries" Level="1" AllowAbsent="no">
       <!-- Server Binary -->
-      <Component Id="ServerComponent" Directory="INSTALLFOLDER" Guid="C5F7D8E4-9D1E-4C3F-B1G3-8E7D5C9F7A1B">
+      <Component Id="ServerComponent" Directory="INSTALLFOLDER" Guid="72DB93A3-5809-4B0B-9943-F557E3934990">
         <File Id="ServerFile" Source="proximadb-server.exe" KeyPath="yes" />
       </Component>
 
       <!-- Benchmark Tool -->
-      <Component Id="BenchComponent" Directory="INSTALLFOLDER" Guid="D6G8E9F5-AE2F-5D4G-C2H4-9F8E6D0G8B2C">
+      <Component Id="BenchComponent" Directory="INSTALLFOLDER" Guid="B037E945-4452-46B8-BD59-2D3657A88E03">
         <File Id="BenchFile" Source="proximadb-bench.exe" />
       </Component>
 
       <!-- Migration Tool -->
-      <Component Id="MigrateComponent" Directory="INSTALLFOLDER" Guid="E7H9F0G6-BF3G-6E5H-D3I5-AG9F7E1H9C3D">
+      <Component Id="MigrateComponent" Directory="INSTALLFOLDER" Guid="B94EA39B-5968-4AD5-AC08-88158E9A4E02">
         <File Id="MigrateFile" Source="proximadb-migrate.exe" />
       </Component>
 
       <!-- Config File -->
-      <Component Id="ConfigComponent" Directory="INSTALLFOLDER" Guid="F8I0G1H7-CG4H-7F6I-E4J6-BH0G8F2I1D4E">
+      <Component Id="ConfigComponent" Directory="INSTALLFOLDER" Guid="58303A7C-0A7C-4650-B4FC-0CCD86CC710D">
         <File Id="ConfigFile" Source="config.toml" />
       </Component>
 

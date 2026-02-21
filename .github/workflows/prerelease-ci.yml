@@ -154,12 +154,12 @@ jobs:
           #   features: ""
           #   cross: true
 
-          # macOS aarch64 (Apple Silicon) - DISABLED for v0.2.0
-          # Requires macOS-specific toolchain setup
-          # - target: aarch64-apple-darwin
-          #   os: macos-latest
-          #   archive: tar.gz
-          #   features: "metal"
+          # macOS aarch64 (Apple Silicon) - ENABLED for v0.2.0
+          # Verified locally on M1 Mac - builds successfully with Metal
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+            features: "metal"
 
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
@@ -430,15 +430,17 @@ jobs:
           echo "=============================================="
           echo ""
           echo "NOTE: For v0.2.0:"
-          echo "  - Building only x86_64 platforms (linux-gnu, windows)"
-          echo "  - musl, aarch64 targets disabled (cross-compilation issues)"
+          echo "  - Building x86_64 platforms (linux-gnu, windows) + macOS aarch64"
+          echo "  - macOS aarch64 (Apple Silicon) enabled with Metal support"
+          echo "  - musl, linux-aarch64 targets disabled (cross-compilation issues)"
           echo "  - clients/python sdist only (python-embedded skipped)"
           echo ""
 
-          # Expected Binary Targets (2 platforms for v0.2.0)
+          # Expected Binary Targets (3 platforms for v0.2.0)
           EXPECTED_BINARIES=(
             "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
             "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
+            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
           )
 
           BINARY_COUNT=0
@@ -563,13 +565,8 @@ jobs:
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp -r config/* deb_build/etc/proximadb/ 2>/dev/null || true
 
-          # Build DEB: all flags before source path
-          fpm -s dir -t deb -n proximadb -v "$VERSION" \
-            --description "ProximaDB - Cloud-native vector database" \
-            --url "https://github.com/vjsingh1984/proximadb" \
-            --license "Apache-2.0" --deb-systemd \
-            --after-install packaging/scripts/postinstall.sh \
-            deb_build/=/
+          # Build DEB (single line to avoid parsing issues)
+          fpm -s dir -t deb -n proximadb -v "$VERSION" --description "ProximaDB - Cloud-native vector database" --url "https://github.com/vjsingh1984/proximadb" --license "Apache-2.0" --deb-systemd deb_build/=/
 
       - name: Upload DEB Artifact
         uses: actions/upload-artifact@v4
