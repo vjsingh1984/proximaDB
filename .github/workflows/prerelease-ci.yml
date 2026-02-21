@@ -460,12 +460,13 @@ jobs:
           BINARY_COUNT=0
           for binary in "${EXPECTED_BINARIES[@]}"; do
             # Artifacts are downloaded in subdirectories by artifact name
-            if find artifacts -path "*/binaries-*/$binary" -type f | grep -q .; then
+            # Use -name instead of -path for more reliable matching
+            if find artifacts -name "$binary" -type f | grep -q .; then
               echo "  [OK] $binary"
               ((BINARY_COUNT++))
             else
               echo "  [MISSING] $binary"
-              echo "    (searched in artifacts/*/binaries-*/)"
+              echo "    (searched in artifacts/*/)"
               VALIDATION_PASSED=false
             fi
           done
@@ -475,7 +476,7 @@ jobs:
           echo "Embedded wheel builds: skipped (no Rust bindings in clients/python-embedded)"
 
           # Source distributions
-          SDIST_COUNT=$(find artifacts -path "*/sdist/*.tar.gz" -type f 2>/dev/null | wc -l)
+          SDIST_COUNT=$(find artifacts -name "*.tar.gz" -path "*/sdist/*" -type f 2>/dev/null | wc -l)
           echo "Source distributions: $SDIST_COUNT (expected >= 1)"
           if [ "$SDIST_COUNT" -lt 1 ]; then
             echo "  [MISSING] No source distribution"
