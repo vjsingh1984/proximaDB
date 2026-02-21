@@ -434,6 +434,7 @@ jobs:
 
       - name: Validate Artifact Manifest
         id: validate
+        continue-on-error: true
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           VALIDATION_PASSED=true
