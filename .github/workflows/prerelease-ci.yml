@@ -435,11 +435,13 @@ jobs:
 
           BINARY_COUNT=0
           for binary in "${EXPECTED_BINARIES[@]}"; do
-            if find artifacts -name "$binary" -type f | grep -q .; then
+            # Artifacts are downloaded in subdirectories by artifact name
+            if find artifacts -path "*/binaries-*/$binary" -type f | grep -q .; then
               echo "  [OK] $binary"
               ((BINARY_COUNT++))
             else
               echo "  [MISSING] $binary"
+              echo "    (searched in artifacts/*/binaries-*/)"
               VALIDATION_PASSED=false
             fi
           done
@@ -554,6 +556,7 @@ jobs:
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp -r config/* deb_build/etc/proximadb/ 2>/dev/null || true
 
+          # Note: all flags must come before the source path
           fpm -s dir -t deb \
             -n proximadb \
             -v "$VERSION" \
@@ -667,7 +670,8 @@ jobs:
       - name: Build MSI
         run: |
           $VERSION = "${{ needs.prepare.outputs.version }}"
-          wix build -o "proximadb-$VERSION.msi" packaging\wix\proximadb.wxs 2>&1 || echo "MSI creation failed, continuing..."
+          # Define the Version variable for WiX (referenced as $(var.Version) in .wxs)
+          wix build -d "Version=$VERSION" -o "proximadb-$VERSION.msi" packaging\wix\proximadb.wxs 2>&1 || echo "MSI creation failed, continuing..."
 
       - name: Upload MSI Artifact
         uses: actions/upload-artifact@v4
