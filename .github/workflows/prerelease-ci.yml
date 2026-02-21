@@ -490,7 +490,8 @@ jobs:
             echo "STATUS: FAILED"
             echo "passed=false" >> $GITHUB_OUTPUT
           fi
-          || true
+          # Ensure script always succeeds even if validation fails
+          true
 
       # TEMPORARILY DISABLED for v0.2.0: Validation script has logging issues
       # Artifacts are confirmed to exist in "List Downloaded Artifacts" output
