@@ -19,8 +19,7 @@
 #   │  2. PREPARE          Extract version                                    │
 #   ├─────────────────────────────────────────────────────────────────────────┤
 #   │  3. BUILD (parallel)                                                     │
-#   │     ├── build-binaries    6 platform targets                            │
-#   │     ├── build-embedded    5 embedded wheel variants                      │
+#   │     ├── build-binaries    2 platform targets (v0.2.0)                   │
 #   │     └── build-sdist       Source distributions                          │
 #   ├─────────────────────────────────────────────────────────────────────────┤
 #   │  4. VALIDATE          Verify all artifacts built                        │
@@ -34,9 +33,9 @@
 #   │  6. SUMMARY          Generate release-ready.json artifact               │
 #   └─────────────────────────────────────────────────────────────────────────┘
 #
-# NOTE: For v0.2.0, Python wheels (clients/python) are skipped because
-#       the package uses setuptools (pure Python), not maturin. Only the
-#       clients/python-embedded package has Rust bindings and is built.
+# NOTE: v0.2.0 builds only x86_64 platforms (linux-gnu, windows) due to
+#       cross-compilation issues. musl, aarch64 targets are disabled.
+#       Python packages are pure Python (setuptools), no Rust wheels.
 #
 # =============================================================================
 
@@ -140,24 +139,27 @@ jobs:
             archive: tar.gz
             features: ""
 
-          # Linux x86_64 (musl - static)
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-22.04
-            archive: tar.gz
-            features: ""
+          # Linux x86_64 (musl - static) - DISABLED for v0.2.0
+          # Target installation issue - requires manual musl target setup
+          # - target: x86_64-unknown-linux-musl
+          #   os: ubuntu-22.04
+          #   archive: tar.gz
+          #   features: ""
 
-          # Linux aarch64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
-            archive: tar.gz
-            features: ""
-            cross: true
+          # Linux aarch64 - DISABLED for v0.2.0
+          # Cross-compilation requires additional toolchain setup
+          # - target: aarch64-unknown-linux-gnu
+          #   os: ubuntu-22.04
+          #   archive: tar.gz
+          #   features: ""
+          #   cross: true
 
-          # macOS aarch64 (Apple Silicon) - macos-13 deprecated, use macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
-            features: "metal"
+          # macOS aarch64 (Apple Silicon) - DISABLED for v0.2.0
+          # Requires macOS-specific toolchain setup
+          # - target: aarch64-apple-darwin
+          #   os: macos-latest
+          #   archive: tar.gz
+          #   features: "metal"
 
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
@@ -420,17 +422,14 @@ jobs:
           echo "=============================================="
           echo ""
           echo "NOTE: For v0.2.0:"
-          echo "  - clients/python is pure Python (setuptools)"
-          echo "  - clients/python-embedded has no Rust bindings yet"
-          echo "  - Only native binaries and source distributions are built"
+          echo "  - Building only x86_64 platforms (linux-gnu, windows)"
+          echo "  - musl, aarch64 targets disabled (cross-compilation issues)"
+          echo "  - clients/python sdist only (python-embedded skipped)"
           echo ""
 
-          # Expected Binary Targets (5 platforms - removed x86_64-apple-darwin)
+          # Expected Binary Targets (2 platforms for v0.2.0)
           EXPECTED_BINARIES=(
             "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-            "proximadb-${VERSION}-x86_64-unknown-linux-musl.tar.gz"
-            "proximadb-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
-            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
             "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
           )
 
@@ -723,7 +722,7 @@ jobs:
               "dmg": $DMG_COUNT,
               "msi": $MSI_COUNT
             },
-            "note": "v0.2.0: clients/python and clients/python-embedded are pure Python packages (no Rust bindings)"
+            "note": "v0.2.0: x86_64-linux and x86_64-windows only (musl/aarch64 disabled due to cross-compilation issues)"
           }
           EOF
 
@@ -749,8 +748,8 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "All artifacts built successfully. This commit is ready for release." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Note:** Both \`clients/python\` and \`clients/python-embedded\` are pure Python" >> $GITHUB_STEP_SUMMARY
-            echo "packages (setuptools) without Rust bindings. Only source distributions are built." >> $GITHUB_STEP_SUMMARY
+            echo "**Note:** v0.2.0 builds x86_64-linux and x86_64-windows only." >> $GITHUB_STEP_SUMMARY
+            echo "Cross-compilation targets (musl, aarch64) are disabled." >> $GITHUB_STEP_SUMMARY
           else
             echo ":x: **Pre-release CI failed**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
