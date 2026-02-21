@@ -434,7 +434,6 @@ jobs:
 
       - name: Validate Artifact Manifest
         id: validate
-        continue-on-error: true
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           VALIDATION_PASSED=true
@@ -464,7 +463,7 @@ jobs:
             # Use -name instead of -path for more reliable matching
             if find artifacts -name "$binary" -type f | grep -q .; then
               echo "  [OK] $binary"
-              ((BINARY_COUNT++))
+              ((BINARY_COUNT++)) || true
             else
               echo "  [MISSING] $binary"
               echo "    (searched in artifacts/*/)"
@@ -491,6 +490,7 @@ jobs:
             echo "STATUS: FAILED"
             echo "passed=false" >> $GITHUB_OUTPUT
           fi
+          || true
 
       # TEMPORARILY DISABLED for v0.2.0: Validation script has logging issues
       # Artifacts are confirmed to exist in "List Downloaded Artifacts" output
