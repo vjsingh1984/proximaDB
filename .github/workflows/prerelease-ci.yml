@@ -523,7 +523,6 @@ jobs:
             --url "https://github.com/vjsingh1984/proximadb" \
             --license "Apache-2.0" \
             --after-install packaging/scripts/postinstall.sh \
-            --before-remove packaging/scripts/preremove.sh \
             rpm_build/=/
 
       - name: Upload RPM Artifact
@@ -570,7 +569,6 @@ jobs:
             --url "https://github.com/vjsingh1984/proximadb" \
             --license "Apache-2.0" --deb-systemd \
             --after-install packaging/scripts/postinstall.sh \
-            --before-remove packaging/scripts/preremove.sh \
             deb_build/=/
 
       - name: Upload DEB Artifact

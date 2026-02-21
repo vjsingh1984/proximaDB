@@ -651,7 +651,6 @@ jobs:
             --vendor "ProximaDB" \
             --rpm-dist "el8" \
             --after-install packaging/scripts/postinstall.sh \
-            --before-remove packaging/scripts/preremove.sh \
             rpm_build/=/
 
       - name: Upload RPM Artifact
@@ -699,7 +698,6 @@ jobs:
             --license "Apache-2.0" --vendor "ProximaDB" \
             --deb-priority "optional" --deb-systemd \
             --after-install packaging/scripts/postinstall.sh \
-            --before-remove packaging/scripts/preremove.sh \
             deb_build/=/
 
       - name: Upload DEB Artifact
