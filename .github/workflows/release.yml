@@ -233,12 +233,12 @@ jobs:
           #   features: ""
           #   cross: true
 
-          # macOS aarch64 (Apple Silicon) - DISABLED for v0.2.0
-          # Requires macOS-specific toolchain setup
-          # - target: aarch64-apple-darwin
-          #   os: macos-latest
-          #   archive: tar.gz
-          #   features: "metal"
+          # macOS aarch64 (Apple Silicon) - ENABLED for v0.2.0
+          # Verified locally on M1 Mac - builds successfully with Metal
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+            features: "metal"
 
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
@@ -703,8 +703,7 @@ jobs:
 
   build-dmg:
     name: Build DMG Installer
-    # DISABLED for v0.2.0 - no macOS binaries being built
-    if: false
+    # ENABLED for v0.2.0 - macOS aarch64 binary now being built
     needs: [prepare, build-binaries]
     runs-on: macos-latest
     steps:
@@ -845,7 +844,7 @@ jobs:
           echo ""
 
           # ----------------------------------------
-          # Expected Binary Targets (2 platforms for v0.2.0)
+          # Expected Binary Targets (3 platforms for v0.2.0)
           # ----------------------------------------
           echo "## Binary Artifacts"
           echo ""
@@ -853,6 +852,7 @@ jobs:
           EXPECTED_BINARIES=(
             "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
             "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
+            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
           )
 
           BINARY_COUNT=0
