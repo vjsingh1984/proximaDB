@@ -421,8 +421,8 @@ jobs:
           echo ""
           echo "NOTE: For v0.2.0:"
           echo "  - clients/python is pure Python (setuptools)"
-          echo "  - clients/python-embedded has no Rust bindings yet (maturin config but no Cargo.toml)"
-          echo "  - Only clients/python sdist is built, python-embedded sdist is skipped"
+          echo "  - clients/python-embedded has no Rust bindings yet"
+          echo "  - Only native binaries and source distributions are built"
           echo ""
 
           # Expected Binary Targets (5 platforms - removed x86_64-apple-darwin)
@@ -723,7 +723,7 @@ jobs:
               "dmg": $DMG_COUNT,
               "msi": $MSI_COUNT
             },
-            "note": "v0.2.0: clients/python sdist only (python-embedded has maturin config but no Cargo.toml, so sdist is skipped)"
+            "note": "v0.2.0: clients/python and clients/python-embedded are pure Python packages (no Rust bindings)"
           }
           EOF
 
@@ -749,8 +749,8 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "All artifacts built successfully. This commit is ready for release." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Note:** \`clients/python-embedded\` is skipped (has maturin config but no Cargo.toml)." >> $GITHUB_STEP_SUMMARY
-            echo "Only \`clients/python\` sdist is built as a pure Python package." >> $GITHUB_STEP_SUMMARY
+            echo "**Note:** Both \`clients/python\` and \`clients/python-embedded\` are pure Python" >> $GITHUB_STEP_SUMMARY
+            echo "packages (setuptools) without Rust bindings. Only source distributions are built." >> $GITHUB_STEP_SUMMARY
           else
             echo ":x: **Pre-release CI failed**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
