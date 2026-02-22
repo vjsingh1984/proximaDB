@@ -508,6 +508,7 @@ jobs:
           mkdir -p rpm_build/usr/lib/systemd/system
           mkdir -p rpm_build/var/lib/proximadb
           mkdir -p rpm_build/var/log/proximadb
+          mkdir -p rpm_build/tmp
 
           tar -xzf binary/proximadb-*.tar.gz -C rpm_build/usr/bin --strip-components=1
           cp config/config.toml rpm_build/etc/proximadb/
@@ -562,6 +563,8 @@ jobs:
           mkdir -p deb_build/etc/proximadb
           mkdir -p deb_build/var/lib/proximadb
           mkdir -p deb_build/var/log/proximadb
+          mkdir -p deb_build/tmp
+          mkdir -p deb_build/lib/systemd/system
 
           tar -xzf binary/proximadb-*.tar.gz -C deb_build/usr/bin --strip-components=1
           cp config/config.toml deb_build/etc/proximadb/
@@ -612,12 +615,16 @@ jobs:
       - name: Install WiX v4
         run: dotnet tool install --global wix --version 4.0.0
 
-      - name: Extract Binaries
+      - name: Extract and Prepare Binaries
         run: |
-          Expand-Archive -Path binary\proximadb-*.zip -DestinationPath msi_build -Force
-
-      - name: Copy Config File
-        run: Copy-Item config\config.toml msi_build\
+          # Extract to temp location
+          Expand-Archive -Path binary\proximadb-*.zip -DestinationPath msi_temp -Force
+          # Move binaries to current directory for WiX
+          Move-Item msi_temp\proximadb-*\* .
+          # Copy config file
+          Copy-Item config\config.toml .
+          # Clean up temp
+          Remove-Item -Recurse -Force msi_temp, msi_build -ErrorAction SilentlyContinue
 
       - name: Build MSI
         run: |
