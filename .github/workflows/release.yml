@@ -573,6 +573,7 @@ jobs:
           cp packaging/scripts/preremove.sh deb_build/tmp/preremove.sh
 
           # Build DEB with systemd support
+          # Note: All flags must come before the path argument
           fpm -s dir -t deb \
             -n proximadb \
             -v "$VERSION" \
@@ -581,9 +582,9 @@ jobs:
             --license "Apache-2.0" \
             --vendor "ProximaDB" \
             --deb-priority "optional" \
-            --deb-systemd \
             --after-install deb_build/tmp/postinstall.sh \
             --before-remove deb_build/tmp/preremove.sh \
+            --deb-systemd \
             deb_build/=/
 
       - name: Upload DEB Artifact
@@ -619,12 +620,15 @@ jobs:
         run: |
           # Extract to temp location
           Expand-Archive -Path binary\proximadb-*.zip -DestinationPath msi_temp -Force
-          # Move binaries to current directory for WiX
-          Move-Item msi_temp\proximadb-*\* .
+          # Move only executable files (not directories) to avoid conflicts
+          $exePath = Get-ChildItem -Path msi_temp\proximadb-*\*.exe
+          foreach ($exe in $exePath) {
+            Move-Item $exe.FullName .
+          }
           # Copy config file
           Copy-Item config\config.toml .
           # Clean up temp
-          Remove-Item -Recurse -Force msi_temp, msi_build -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force msi_temp -ErrorAction SilentlyContinue
 
       - name: Build MSI
         run: |
