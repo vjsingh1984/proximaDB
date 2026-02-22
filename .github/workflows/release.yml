@@ -794,7 +794,8 @@ jobs:
           echo ""
 
           # ----------------------------------------
-          # Platform Packages
+          # Platform Packages (v0.2.0: RPM, DEB, MSI only)
+          # DMG disabled due to ring crate issues on macOS CI
           # ----------------------------------------
           echo "## Platform Packages"
           echo ""
@@ -806,13 +807,18 @@ jobs:
 
           echo "  RPM packages: $RPM_COUNT (expected >= 1)"
           echo "  DEB packages: $DEB_COUNT (expected >= 1)"
-          echo "  DMG installers: $DMG_COUNT (expected >= 1)"
+          echo "  DMG installers: $DMG_COUNT (disabled for v0.2.0)"
           echo "  MSI installers: $MSI_COUNT (expected >= 1)"
           echo ""
 
-          if [ "$RPM_COUNT" -lt 1 ] || [ "$DEB_COUNT" -lt 1 ] || [ "$DMG_COUNT" -lt 1 ] || [ "$MSI_COUNT" -lt 1 ]; then
-            echo "  [WARNING] Missing platform packages"
+          # Only validate RPM, DEB, MSI for v0.2.0
+          if [ "$RPM_COUNT" -lt 1 ] || [ "$DEB_COUNT" -lt 1 ] || [ "$MSI_COUNT" -lt 1 ]; then
+            echo "  [WARNING] Missing required platform packages (RPM, DEB, or MSI)"
             VALIDATION_PASSED=false
+          fi
+
+          if [ "$DMG_COUNT" -gt 0 ]; then
+            echo "  [INFO] DMG found (not required for v0.2.0)"
           fi
           echo ""
 
@@ -975,6 +981,27 @@ jobs:
 
           ```bash
           cargo install proximadb
+          ```
+
+          #### Platform Packages (RPM/DEB/MSI)
+
+          **Linux (RPM - RHEL/CentOS/Fedora):**
+          ```bash
+          sudo rpm -ivh proximadb-${{ needs.prepare.outputs.version }}-1.el8.x86_64.rpm
+          sudo systemctl start proximadb
+          ```
+
+          **Linux (DEB - Debian/Ubuntu):**
+          ```bash
+          sudo dpkg -i proximadb_${{ needs.prepare.outputs.version }}_amd64.deb
+          sudo systemctl start proximadb
+          ```
+
+          **Windows (MSI):**
+          ```powershell
+          # Double-click proximadb-${{ needs.prepare.outputs.version }}-x64.msi
+          # Or install from command line:
+          msiexec /i proximadb-${{ needs.prepare.outputs.version }}-x64.msi
           ```
 
           ### Included Binaries
@@ -1328,15 +1355,19 @@ jobs:
           CHECKSUM_COUNT=$(find artifacts -name "*.sha256" | wc -l)
           WHEEL_COUNT=$(find artifacts -name "*.whl" | wc -l)
           SDIST_COUNT=$(find artifacts -path "*/sdist/*.tar.gz" | wc -l)
+          RPM_COUNT=$(find artifacts -name "*.rpm" | wc -l)
+          DEB_COUNT=$(find artifacts -name "*.deb" | wc -l)
+          MSI_COUNT=$(find artifacts -name "*.msi" | wc -l)
 
           echo "  Binary archives:     $BINARY_COUNT"
           echo "  Checksum files:      $CHECKSUM_COUNT"
           echo "  Python wheels:       $WHEEL_COUNT"
           echo "  Source distributions: $SDIST_COUNT"
+          echo "  Platform packages:   RPM=$RPM_COUNT, DEB=$DEB_COUNT, MSI=$MSI_COUNT"
           echo ""
 
-          # Calculate total size
-          TOTAL_SIZE=$(find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.whl" \) -exec du -ch {} + | tail -1 | cut -f1)
+          # Calculate total size (binaries, wheels, platform packages)
+          TOTAL_SIZE=$(find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.whl" -o -name "*.rpm" -o -name "*.deb" -o -name "*.msi" \) -exec du -ch {} + | tail -1 | cut -f1)
           echo "  Total artifact size: $TOTAL_SIZE"
           echo ""
 
