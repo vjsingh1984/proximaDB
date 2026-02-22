@@ -17,7 +17,7 @@
 #   ├─────────────────────────────────────────────────────────────────────────┤
 #   │  2. BUILD (parallel)                                                   │
 #   │     ├── build-binaries    6 platform targets (Linux/macOS/Windows)     │
-#   │     ├── build-wheels      20+ Python wheel variants                    │
+#   │     ├── (build-wheels disabled - pure Python package)              │
 #   │     ├── build-embedded    5 embedded wheel variants                    │
 #   │     └── build-sdist       Source distributions                         │
 #   ├─────────────────────────────────────────────────────────────────────────┤
@@ -692,7 +692,7 @@ jobs:
   # ============================================================================
   validate-artifacts:
     name: Validate Release Artifacts
-    needs: [prepare, build-binaries, build-wheels, build-embedded-wheels, build-sdist]
+    needs: [prepare, build-binaries, build-embedded-wheels, build-sdist]
     runs-on: ubuntu-latest
     outputs:
       validation_passed: ${{ steps.validate.outputs.passed }}
@@ -1072,7 +1072,7 @@ jobs:
   # ============================================================================
   publish-pypi:
     name: Publish to PyPI
-    needs: [prepare, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts, create-release]
+    needs: [prepare, build-embedded-wheels, build-sdist, validate-artifacts, create-release]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     environment:
@@ -1154,7 +1154,7 @@ jobs:
   # ============================================================================
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [prepare, build-wheels, build-embedded-wheels, build-sdist, validate-artifacts]
+    needs: [prepare, build-embedded-wheels, build-sdist, validate-artifacts]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease == 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     environment:
