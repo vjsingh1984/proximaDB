@@ -360,80 +360,82 @@ jobs:
 
   # ============================================================================
   # BUILD PYTHON EMBEDDED WHEELS - Lightweight embedded package
+  # DISABLED for v0.2.0: clients/python-embedded is pure Python (setuptools), not Rust
+  # Re-enable in v0.2.1 after adding proper setuptools build or PyO3 bindings
   # ============================================================================
-  build-embedded-wheels:
-    name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})
-    needs: prepare
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            target: x86_64
-          - os: ubuntu-22.04
-            target: aarch64
-          - os: macos-latest
-            target: aarch64
-          - os: windows-2022
-            target: x64
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Install Maturin
-        run: pip install maturin
-
-      - name: Build Embedded Wheels (Linux x86_64)
-        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
-        uses: PyO3/maturin-action@v1
-        with:
-          working-directory: clients/python-embedded
-          target: x86_64
-          manylinux: auto
-          args: --release --out dist --features python
-
-      - name: Build Embedded Wheels (Linux aarch64)
-        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
-        uses: PyO3/maturin-action@v1
-        with:
-          working-directory: clients/python-embedded
-          target: aarch64
-          manylinux: auto
-          args: --release --out dist --features python
-
-      - name: Build Embedded Wheels (macOS/Windows)
-        if: runner.os != 'Linux'
-        working-directory: clients/python-embedded
-        run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            if [ "${{ matrix.target }}" = "aarch64" ]; then
-              maturin build --release --out dist --features python --target aarch64-apple-darwin
-            else
-              maturin build --release --out dist --features python --target x86_64-apple-darwin
-            fi
-          else
-            maturin build --release --out dist --features python
-          fi
-        shell: bash
-
-      - name: Upload Embedded Wheel Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: embedded-wheel-${{ matrix.os }}-${{ matrix.target }}
-          path: clients/python-embedded/dist/*.whl
-          retention-days: 7
+  # build-embedded-wheels:
+  #   name: Build Embedded Wheels (${{ matrix.os }}, ${{ matrix.target }})
+  #   needs: prepare
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: ubuntu-22.04
+  #           target: x86_64
+  #         - os: ubuntu-22.04
+  #           target: aarch64
+  #         - os: macos-latest
+  #           target: aarch64
+  #         - os: windows-2022
+  #           target: x64
+  #
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Setup Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
+  #
+  #     - name: Install Rust Toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #
+  #     - name: Install Maturin
+  #       run: pip install maturin
+  #
+  #     - name: Build Embedded Wheels (Linux x86_64)
+  #       if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64'
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         working-directory: clients/python-embedded
+  #         target: x86_64
+  #         manylinux: auto
+  #         args: --release --out dist --features python
+  #
+  #     - name: Build Embedded Wheels (Linux aarch64)
+  #       if: matrix.os == 'ubuntu-22.04' && matrix.target == 'aarch64'
+  #       uses: PyO3/maturin-action@v1
+  #       with:
+  #         working-directory: clients/python-embedded
+  #         target: aarch64
+  #         manylinux: auto
+  #         args: --release --out dist --features python
+  #
+  #     - name: Build Embedded Wheels (macOS/Windows)
+  #       if: runner.os != 'Linux'
+  #       working-directory: clients/python-embedded
+  #       run: |
+  #         if [ "${{ runner.os }}" = "macOS" ]; then
+  #           if [ "${{ matrix.target }}" = "aarch64" ]; then
+  #             maturin build --release --out dist --features python --target aarch64-apple-darwin
+  #           else
+  #             maturin build --release --out dist --features python --target x86_64-apple-darwin
+  #           fi
+  #         else
+  #           maturin build --release --out dist --features python
+  #         fi
+  #       shell: bash
+  #
+  #     - name: Upload Embedded Wheel Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: embedded-wheel-${{ matrix.os }}-${{ matrix.target }}
+  #         path: clients/python-embedded/dist/*.whl
+  #         retention-days: 7
 
   # ============================================================================
   # BUILD SOURCE DISTRIBUTION - Python sdist
@@ -457,17 +459,19 @@ jobs:
       - name: Build sdist (main package)
         run: maturin sdist --out dist
 
-      - name: Build sdist (embedded package)
-        working-directory: clients/python-embedded
-        run: maturin sdist --out dist
+      # DISABLED: clients/python-embedded is pure Python (no Cargo.toml)
+      # Re-enable in v0.2.1 with proper setuptools build
+      # - name: Build sdist (embedded package)
+      #   working-directory: clients/python-embedded
+      #   run: |
+      #     pip install build
+      #     python -m build --sdist --outdir dist
 
       - name: Upload sdist Artifact
         uses: actions/upload-artifact@v4
         with:
           name: sdist
-          path: |
-            dist/*.tar.gz
-            clients/python-embedded/dist/*.tar.gz
+          path: dist/*.tar.gz
           retention-days: 7
 
   # ============================================================================
@@ -692,7 +696,7 @@ jobs:
   # ============================================================================
   validate-artifacts:
     name: Validate Release Artifacts
-    needs: [prepare, build-binaries, build-embedded-wheels, build-sdist]
+    needs: [prepare, build-binaries, build-sdist]
     runs-on: ubuntu-latest
     outputs:
       validation_passed: ${{ steps.validate.outputs.passed }}
@@ -953,7 +957,7 @@ jobs:
   # ============================================================================
   create-release:
     name: Create GitHub Release
-    needs: [prepare, build-binaries, build-embedded-wheels, build-sdist, validate-artifacts]
+    needs: [prepare, build-binaries, build-sdist, validate-artifacts]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     steps:
@@ -1072,7 +1076,7 @@ jobs:
   # ============================================================================
   publish-pypi:
     name: Publish to PyPI
-    needs: [prepare, build-embedded-wheels, build-sdist, create-release]
+    needs: [prepare, build-sdist, create-release]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     environment:
@@ -1154,7 +1158,7 @@ jobs:
   # ============================================================================
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [prepare, build-embedded-wheels, build-sdist, validate-artifacts]
+    needs: [prepare, build-sdist, validate-artifacts]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.prerelease == 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
     environment:
@@ -1347,7 +1351,7 @@ jobs:
   # ============================================================================
   dry-run-summary:
     name: Dry Run Summary
-    needs: [prepare, build-binaries, build-embedded-wheels, build-sdist, validate-artifacts]
+    needs: [prepare, build-binaries, build-sdist, validate-artifacts]
     runs-on: ubuntu-latest
     if: needs.prepare.outputs.dry_run == 'true'
     steps:
