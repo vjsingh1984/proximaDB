@@ -573,7 +573,7 @@ jobs:
           cp packaging/scripts/preremove.sh deb_build/tmp/preremove.sh
 
           # Build DEB with systemd support
-          # Note: All flags must come before the path argument
+          # Note: --deb-systemd flag removed - using manual scripts instead
           fpm -s dir -t deb \
             -n proximadb \
             -v "$VERSION" \
@@ -584,7 +584,6 @@ jobs:
             --deb-priority "optional" \
             --after-install deb_build/tmp/postinstall.sh \
             --before-remove deb_build/tmp/preremove.sh \
-            --deb-systemd \
             deb_build/=/
 
       - name: Upload DEB Artifact
