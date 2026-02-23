@@ -59,6 +59,7 @@ pub enum StorageEngineType {
     RAPTOR,
     SWIFT,
     HELIX,
+    TST,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

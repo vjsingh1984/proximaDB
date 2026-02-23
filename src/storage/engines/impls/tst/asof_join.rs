@@ -56,25 +56,26 @@ impl ASOFJoin {
 
         // Sort right series by timestamp for efficient lookup
         let mut sorted_right = right_series.clone();
-        sorted_right.sort_by_key(|r| r.timestamp.unwrap_or(DateTime::from_timestamp(0, 0).unwrap()));
+        sorted_right.sort_by_key(|r| r.timestamp.unwrap_or(0));
 
         let mut results = Vec::new();
 
         for left_record in left_series {
-            let left_ts = left_record.timestamp.unwrap_or(DateTime::from_timestamp(0, 0).unwrap());
+            let left_ts = left_record.timestamp.unwrap_or(0);
+            let left_dt = DateTime::from_timestamp(left_ts, 0).unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
 
             // Find the most recent right record <= left timestamp
             let match_result = sorted_right
                 .iter()
                 .rev()
                 .find(|right| {
-                    let right_ts = right.timestamp.unwrap_or(DateTime::from_timestamp(0, 0).unwrap());
+                    let right_ts = right.timestamp.unwrap_or(0);
                     right_ts <= left_ts
                 });
 
             if let Some(right_record) = match_result {
-                let right_ts = right_record.timestamp.unwrap_or(DateTime::from_timestamp(0, 0).unwrap());
-                let time_diff = left_ts.signed_duration_since(right_ts);
+                let right_ts = right_record.timestamp.unwrap_or(0);
+                let time_diff = Duration::seconds(left_ts - right_ts);
 
                 // Check tolerance
                 if let Some(tol) = tolerance {

@@ -108,6 +108,7 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
             StorageEngineStrategy::Nova => FormatType::Nova,
             StorageEngineStrategy::Swift => FormatType::Swift,
             StorageEngineStrategy::Raptor => FormatType::Raptor,
+            StorageEngineStrategy::TimeSeries => FormatType::Sst, // TimeSeries uses Arrow format
             StorageEngineStrategy::Hybrid => FormatType::Sst, // Default to SST for hybrid
         }
     }
@@ -210,6 +211,7 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
                 StorageEngineStrategy::Sst
                     | StorageEngineStrategy::Nova
                     | StorageEngineStrategy::Helix
+                    | StorageEngineStrategy::TimeSeries
             ),
             _ => self.engine.supports_feature(feature),
         }

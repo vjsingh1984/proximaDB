@@ -168,6 +168,10 @@ pub enum StorageEngineStrategy {
     /// Best for: High-dimensional vectors (>1536D)
     Helix,
 
+    /// TST: Time-Series Storage (Trading/IoT workloads with OHLC, ASOF joins)
+    /// Best for: Time-series data, OHLC aggregation, temporal queries
+    TimeSeries,
+
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     /// Best for: Complex workloads with different access patterns
     Hybrid,
@@ -1058,6 +1062,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
             }
+            StorageEngineStrategy::TimeSeries => {
+                // TST: time-based flushing
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
+            }
         }
     }
 
@@ -1127,6 +1136,16 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0)
                     < 0.7) // Compact when locality score drops below threshold
+            }
+            StorageEngineStrategy::TimeSeries => {
+                // TST: compact based on partition count
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("total_partitions")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 100)
             }
         }
     }

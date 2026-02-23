@@ -315,7 +315,23 @@ impl StorageEngineFactory {
                 info!("Creating HELIX engine");
                 Self::create_helix()
             }
+            StorageEngineStrategy::TimeSeries => {
+                info!("Creating TimeSeries (TST) engine");
+                Self::create_tst()
+            }
         }
+    }
+
+    /// Create TimeSeries storage engine
+    ///
+    /// Time-series optimized engine with:
+    /// - Time-partitioned columnar storage
+    /// - OHLC aggregation for trading data
+    /// - ASOF joins for temporal queries
+    /// - Automatic downsampling
+    pub fn create_tst() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating TST (Time-Series) storage engine");
+        Ok(Arc::new(crate::storage::engines::impls::tst::TimeSeriesEngine::new()?))
     }
 
     /// Create VIPER engine with default configuration

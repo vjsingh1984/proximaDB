@@ -3,7 +3,6 @@
 //! Provides time-based downsampling for reducing data granularity.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{TimePartition, OHLCBar, DownsampleAggregation};

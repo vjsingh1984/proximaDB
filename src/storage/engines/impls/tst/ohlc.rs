@@ -95,7 +95,7 @@ impl OHLC {
         timestamp: DateTime<Utc>,
         price: f64,
         volume: i64,
-    ) -> Result<&OHLCBar> {
+    ) -> Result<()> {
         // Truncate timestamp to interval
         let truncated = self.truncate_to_interval(timestamp);
 
@@ -107,7 +107,7 @@ impl OHLC {
         // Update bar
         bar.update(price, volume);
 
-        Ok(bar)
+        Ok(())
     }
 
     /// Get the current OHLC bar for a timestamp
