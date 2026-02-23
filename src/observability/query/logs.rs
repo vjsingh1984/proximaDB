@@ -1,10 +1,14 @@
 // Log query engine
 //
 // Provides:
-// - Full-text search in log messages
-// - Field-based filtering
+// - Full-text search in log messages (via Tantivy - see ObservabilityStorage::search_logs_tantivy)
+// - Field-based filtering (via LogFilter for in-memory filtering)
 // - Aggregations (count, histogram)
 // - Pattern detection
+//
+// Note: This module provides simple in-memory log filtering. For full-text search
+// with BM25 ranking and phrase matching, use the Tantivy integration available
+// through ObservabilityStorage::search_logs_tantivy in mod.rs.
 
 use std::collections::HashMap;
 
@@ -193,12 +197,14 @@ impl LogQuery {
             }
         }
 
-        // Text search
+        // Text search (simple substring matching)
+        // Note: For full-text search with BM25 ranking, use ObservabilityStorage::search_logs_tantivy
+        // which provides Tantivy-based full-text search with proper scoring and phrase matching
         if let Some(query) = &self.text_query {
             let message_lower = log.message.to_lowercase();
             let query_lower = query.to_lowercase();
 
-            // Simple substring match (TODO: implement proper full-text search)
+            // Simple substring match for in-memory filtering
             if !message_lower.contains(&query_lower) {
                 return false;
             }

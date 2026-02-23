@@ -197,6 +197,7 @@ axum = { version = "0.6", features = ["json", "ws"] }
 urlencoding = "2.1.3"
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["future"] }
+lettre = "0.11"  # Email sending for SMTP alerting
 
 # Language bindings (optional, for embedded mode)
 # Python bindings via PyO3

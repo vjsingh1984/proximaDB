@@ -75,12 +75,27 @@ impl DocumentRecord {
 
     /// Convert to proto DocumentContent
     pub fn to_proto_content(&self) -> DocumentContent {
+        self.to_proto_content_with_paths(&[])
+    }
+
+    /// Convert to proto DocumentContent with indexed paths
+    pub fn to_proto_content_with_paths(&self, indexed_paths: &[String]) -> DocumentContent {
         DocumentContent {
             document: Some(self.document.clone()),
             schema_id: self.schema_id.clone(),
-            indexed_paths: vec![], // TODO: populate from collection config
+            indexed_paths: indexed_paths.to_vec(),
             document_type: self.document_type.clone(),
         }
+    }
+
+    /// Convert to proto DocumentContent with collection config
+    pub fn to_proto_content_from_config(&self, config: &DocumentCollectionConfig) -> DocumentContent {
+        let indexed_paths: Vec<String> = config
+            .indexes
+            .iter()
+            .map(|idx| idx.path.clone())
+            .collect();
+        self.to_proto_content_with_paths(&indexed_paths)
     }
 
     /// Convert to proto DocumentResult
@@ -196,6 +211,7 @@ pub struct AggregateResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::{DocIndexType, IndexDefinition};
 
     #[test]
     fn test_document_record_new() {
@@ -218,5 +234,87 @@ mod tests {
         let collection = DocumentCollection::new("test".to_string(), config);
         assert_eq!(collection.name, "test");
         assert_eq!(collection.document_count, 0);
+    }
+
+    #[test]
+    fn test_to_proto_content_default() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+        let content = doc.to_proto_content();
+        assert!(content.document.is_some());
+        assert!(content.indexed_paths.is_empty());
+        assert!(content.schema_id.is_none());
+    }
+
+    #[test]
+    fn test_to_proto_content_with_paths() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+        let paths = vec!["$.user.email".to_string(), "$.user.name".to_string()];
+        let content = doc.to_proto_content_with_paths(&paths);
+        assert_eq!(content.indexed_paths, paths);
+    }
+
+    #[test]
+    fn test_to_proto_content_from_config() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+
+        let mut config = DocumentCollectionConfig {
+            name: "test".to_string(),
+            ..Default::default()
+        };
+
+        config.indexes = vec![
+            IndexDefinition {
+                path: "$.user.email".to_string(),
+                index_type: DocIndexType::Btree as i32,
+                unique: true,
+                ..Default::default()
+            },
+            IndexDefinition {
+                path: "$.user.name".to_string(),
+                index_type: DocIndexType::Hash as i32,
+                unique: false,
+                ..Default::default()
+            },
+        ];
+
+        let content = doc.to_proto_content_from_config(&config);
+        assert_eq!(content.indexed_paths.len(), 2);
+        assert_eq!(content.indexed_paths[0], "$.user.email");
+        assert_eq!(content.indexed_paths[1], "$.user.name");
+    }
+
+    #[test]
+    fn test_from_proto() {
+        let proto_content = DocumentContent {
+            document: Some(SqlObject::default()),
+            schema_id: Some("schema123".to_string()),
+            indexed_paths: vec!["$.field1".to_string()],
+            document_type: Some("user".to_string()),
+        };
+
+        let doc = DocumentRecord::from_proto(
+            "doc1".to_string(),
+            proto_content,
+            "test_collection".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(doc.id, "doc1");
+        assert_eq!(doc.version, 1);
+        assert_eq!(doc.collection_id, "test_collection");
+        assert_eq!(doc.schema_id, Some("schema123".to_string()));
+        assert_eq!(doc.document_type, Some("user".to_string()));
     }
 }
