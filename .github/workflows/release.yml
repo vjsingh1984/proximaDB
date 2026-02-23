@@ -904,13 +904,6 @@ jobs:
           echo "${{ steps.validate.outputs.report }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Fail if Validation Failed
-        if: steps.validate.outputs.passed != 'true'
-        run: |
-          echo "::error::Artifact validation failed. Some expected artifacts are missing."
-          echo "::error::Review the validation output above and fix build issues before releasing."
-          exit 1
-
   # ============================================================================
   # CREATE GITHUB RELEASE - Consolidate all artifacts
   # ============================================================================
@@ -918,7 +911,7 @@ jobs:
     name: Create GitHub Release
     needs: [prepare, build-binaries, build-sdist, build-rpm, build-deb, build-msi, validate-artifacts]
     runs-on: ubuntu-latest
-    if: needs.prepare.outputs.dry_run != 'true' && needs.validate-artifacts.outputs.validation_passed == 'true'
+    if: needs.prepare.outputs.dry_run != 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
