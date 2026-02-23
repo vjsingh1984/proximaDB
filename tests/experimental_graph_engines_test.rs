@@ -30,6 +30,7 @@ use tempfile::TempDir;
 #[cfg(feature = "distributed-graph")]
 mod pulsar_tests {
     use super::*;
+    use proximadb::graph::engines::GraphEngine;
 
     #[tokio::test]
     async fn test_pulsar_basic_operations() {
@@ -226,6 +227,7 @@ mod pulsar_tests {
 #[cfg(feature = "tiered-graph")]
 mod quasar_tests {
     use super::*;
+    use proximadb::graph::engines::GraphEngine;
 
     #[tokio::test]
     async fn test_quasar_basic_operations() {
