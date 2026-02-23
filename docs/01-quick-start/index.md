@@ -1,0 +1,171 @@
+# Quick Start
+
+**Get ProximaDB running in 5 minutes**
+
+```mermaid
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+  A[1. Install] --> B[2. Start]
+  B --> C[3. Create Collection]
+  C --> D[4. Insert Data]
+  D --> E[5. Query]
+
+  style A fill:#e8f5e9
+  style B fill:#e8f5e9
+  style C fill:#e8f5e9
+  style D fill:#e8f5e9
+  style E fill:#e8f5e9
+```
+
+---
+
+## Choose Your Installation Method
+
+| Method | OS | Time | Best For |
+|--------|-------|------|----------|
+| [Platform Package](./install.md#platform-packages) | Linux, Windows | 2 min | Production |
+| [Docker](./install.md#docker) | Any | 1 min | Testing, dev |
+| [From Source](./install.md#from-source) | Any | 10 min | Development |
+
+---
+
+## Quick Test (Docker)
+
+```bash
+# 1. Run ProximaDB
+docker run -d -p 5678:5678 --name proximadb proximadb/proximadb:latest
+
+# 2. Wait for startup (5 seconds)
+sleep 5
+
+# 3. Verify it's running
+curl http://localhost:5678/health
+# {"status":"healthy","version":"0.2.0"}
+
+# 4. Create a collection and insert vectors
+curl -X POST http://localhost:5678/api/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "demo",
+    "dimension": 128,
+    "metric": "cosine"
+  }'
+
+# 5. Insert some vectors
+curl -X POST http://localhost:5678/api/v1/collections/demo/vectors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": [[0.1, 0.2, ...], [0.3, 0.4, ...]],
+    "ids": [1, 2]
+  }'
+
+# 6. Search
+curl -X POST http://localhost:5678/api/v1/collections/demo/vectors/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, ...],
+    "k": 5
+  }'
+```
+
+---
+
+## Python SDK
+
+```python
+from proximadb import ProximaDB
+
+# Connect
+client = ProximaDB("http://localhost:5678")
+
+# Create collection
+collection = client.create_collection(
+    name="demo",
+    dimension=128,
+    metric="cosine"
+)
+
+# Insert vectors
+collection.insert(
+    vectors=[[0.1, 0.2, ...], [0.3, 0.4, ...]],
+    ids=[1, 2],
+    metadata={"category": ["A", "B"]}
+)
+
+# Search
+results = collection.search(
+    query_vector=[0.1, 0.2, ...],
+    k=5
+)
+
+for result in results:
+    print(f"ID: {result.id}, Score: {result.score}")
+```
+
+---
+
+## SQL Interface
+
+```bash
+# Connect via psql (PostgreSQL wire protocol)
+psql -h localhost -p 5433 -U postgres
+
+# Create table with vector column
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    name TEXT,
+    embedding VECTOR(128)
+);
+
+# Insert
+INSERT INTO products (name, embedding)
+VALUES ('Product A', '[0.1, 0.2, ...]');
+
+# Search with <-> operator
+SELECT name, embedding <-> '[0.1, 0.2, ...]' AS distance
+FROM products
+ORDER BY distance
+LIMIT 5;
+```
+
+---
+
+## What's Next?
+
+- **Learn installation options**: [Installation Guide](./install.md)
+- **Build your first app**: [First Query Tutorial](./first-query.md)
+- **Understand the architecture**: [Architecture Basics](./architecture-basics.md)
+- **Explore features**: [Guides](../02-guides/)
+
+---
+
+## Troubleshooting
+
+**Port already in use?**
+```bash
+# Find what's using port 5678
+lsof -i :5678
+
+# Kill the process
+kill -9 <PID>
+```
+
+**Server won't start?**
+```bash
+# Check logs
+sudo journalctl -u proximadb -f  # Linux
+docker logs proximadb              # Docker
+```
+
+**Can't connect?**
+```bash
+# Verify server is running
+curl http://localhost:5678/health
+
+# Check firewall
+sudo firewall-cmd --list-ports  # Linux
+```
+
+---
+
+*Need help?* [GitHub Issues](https://github.com/vjsingh1984/proximadb/issues)
