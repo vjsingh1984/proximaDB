@@ -1,35 +1,49 @@
 // Observability module for Cloud SIEM / Datadog-like capabilities
 //
-// # Status: EXPERIMENTAL - NOT PRODUCTION READY
+// # Status: BETA - Limited Production Support
 //
-// This module is experimental and not recommended for production use.
-// Many features are incomplete or have limited testing.
+// This module is in beta status with several production-ready features and
+// some experimental capabilities still under development.
 //
-// ## What Works (Basic Support)
+// ## Production Ready Features
 // - Log ingestion via HTTP/JSON
 // - Syslog parsing (RFC 3164/5424)
 // - Basic metric storage and aggregation
 // - CEF/LEEF parsing (ArcSight/IBM QRadar formats)
 // - OCSF event parsing
+// - Fluent adapter: FULLY IMPLEMENTED (MessagePack parsing complete)
+// - Full-text search with Tantivy (BM25 ranking)
 //
-// ## Incomplete Features (Do Not Use in Production)
-// - Fluent adapter: Returns empty results (MessagePack parsing not implemented)
-// - OTLP adapter: Partial implementation
-// - High-throughput ingestion: Not benchmarked or optimized
+// ## Experimental Features (Use with Caution)
+// - OTLP adapter: Partial implementation, needs testing
+// - High-throughput ingestion: Not benchmarked for >10K logs/sec
 // - Alerting engine: Framework only, no production-tested rules
 // - Storage partitioning: Basic implementation, needs validation
+// - Distributed tracing: Span assembly not production-optimized
 //
-// ## Recommended Alternatives
+// ## Recommended Production Setup
 //
-// For production observability, consider:
-// - **Vector** (https://vector.dev): High-performance log/metric collection
-// - **OpenTelemetry Collector**: For OTLP and distributed tracing
-// - **Loki** (Grafana): Log aggregation
-// - **Prometheus/VictoriaMetrics**: Metrics storage
-// - **Jaeger/Zipkin**: Distributed tracing
+// For high-scale production observability:
 //
-// These can use ProximaDB as a vector store backend for semantic log search,
-// but the ingestion/collection layer should be handled by mature tools.
+// 1. **Ingestion Layer** (Mature tools):
+//    - Vector (https://vector.dev): High-performance log/metric collection
+//    - OpenTelemetry Collector: For OTLP and distributed tracing
+//    - Fluent Bit: Forward logs via TCP/HTTP
+//
+// 2. **Storage** (ProximaDB):
+//    - Use as vector store backend for semantic log search
+//    - Store full-text indexed logs for fast pattern matching
+//    - Store metrics for time-series queries
+//
+// 3. **Visualization**:
+//    - Grafana: Dashboards and alerting
+//    - Kibana: Log analysis
+//    - Jaeger/Zipkin UI: Distributed tracing
+//
+// ## Performance Targets (When using mature ingestion tools)
+// - Log ingestion: >10K logs/second (via HTTP/JSON)
+// - Full-text search: <100ms for 1M logs
+// - Metric queries: <50ms for aggregation over 10K samples
 //
 // ---
 //
