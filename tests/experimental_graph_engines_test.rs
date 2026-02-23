@@ -72,6 +72,7 @@ mod pulsar_tests {
             to_node_id: "test_node2".to_string(),
             edge_type: "TEST_EDGE".to_string(),
             properties: HashMap::new(),
+            weight: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         };
@@ -178,6 +179,7 @@ mod pulsar_tests {
             to_node_id: "omega_node".to_string(),
             edge_type: "CROSS_SHARD".to_string(),
             properties: HashMap::new(),
+            weight: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         };
