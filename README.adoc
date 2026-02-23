@@ -85,13 +85,31 @@ REST + gRPC + Arrow Flight]
 
 == Quick Start
 
+=== Platform Packages (Linux/Windows)
+
+[source,bash]
+----
+# Linux (RPM - RHEL/CentOS/Fedora)
+sudo rpm -ivh proximadb-0.2.0-1.el8.x86_64.rpm
+sudo systemctl start proximadb
+
+# Linux (DEB - Debian/Ubuntu)
+sudo dpkg -i proximadb_0.2.0_amd64.deb
+sudo systemctl start proximadb
+
+# Windows
+msiexec /i proximadb-0.2.0-x64.msi
+----
+
+See link:docs/02-guides/platform-packages.md[Platform Packages Guide] for details.
+
 === Docker
 
 [source,bash]
 ----
 docker run -it --rm \
   -p 5678:5678 \
-  -p 5679:5679 \
+  -p 5433:5433 \
   proximadb/proximadb:latest
 ----
 
@@ -296,12 +314,24 @@ Features:
 
 == Documentation
 
-* link:docs/INDEX.adoc[Documentation Index]
-* link:docs/concepts/vision.adoc[Vision and Strategy]
-* link:docs/02-guides/unified-port-migration.adoc[Unified Port Migration Guide]
-* link:docs/concepts/storage-engines.adoc[Storage Engine Selection Guide]
-* link:docs/concepts/graph-engines.adoc[Graph Engine Selection Guide]
-* link:docs/02-guides/sdk-python-guide.adoc[Python SDK Guide]
+* link:docs/README.md[Documentation] - Complete documentation with infographic guides
+* link:docs/01-quick-start/[Quick Start] - Get running in 5 minutes
+* link:docs/02-guides/[Guides] - Vector search, multi-model joins, platform packages
+* link:docs/05-concepts/[Concepts] - Storage engines, graph engines, WAL architecture
+* link:docs/03-api-reference/[API Reference] - REST, gRPC, PostgreSQL wire, Python SDK
+* link:docs/04-operations/[Operations] - Deployment, monitoring, security
+* link:docs/06-internals/[Internals] - Contributing, testing, architecture decisions
+
+**v0.2.0 Release** (February 2026):
+* Platform packages: link:docs/02-guides/platform-packages.md[RPM, DEB, MSI]
+* Unified port architecture (single port 5678)
+* Multi-model query engine with cross-model joins
+
+**Key Guides**:
+* link:docs/02-guides/vector-search.md[Vector Search] - Semantic search, filtering, hybrid search
+* link:docs/02-guides/multi-model-joins.md[Multi-Model Joins] - Cross-model SQL queries
+* link:docs/05-concepts/storage-engines.md[Storage Engines] - SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR
+* link:docs/05-concepts/graph-engines.md[Graph Engines] - ORION, PULSAR, QUASAR
 
 ---
 
