@@ -353,7 +353,7 @@ Features:
 * link:docs/02-guides/vector-search.md[Vector Search] - Semantic search, filtering, hybrid search
 * link:docs/02-guides/multi-model-joins.md[Multi-Model Joins] - Cross-model SQL queries
 * link:docs/05-concepts/storage-engines.md[Storage Engines] - SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR
-* link:docs/05-concepts/graph-engines.md[Graph Engines] - ORION, PULSAR, QUASAR
+* link:docs/06-internals/GRAPH_ENGINES_GUIDE.adoc[Graph Engines Guide] - ORION (production), PULSAR (distributed), QUASAR (tiered)
 
 ---
 

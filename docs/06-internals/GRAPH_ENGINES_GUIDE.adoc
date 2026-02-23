@@ -1,0 +1,704 @@
+= ProximaDB Graph Engines Guide
+:toc: left
+:toclevels: 3
+:icons: font
+:sectnums:
+:author: ProximaDB Team
+:revdate: February 2026
+:revnumber: 0.2.0
+
+== Introduction
+
+ProximaDB provides three graph storage engines optimized for different workloads. This guide explains when to use each engine, how to enable them, and their current limitations.
+
+[%hardbreaks]
+--
+*WARNING*: PULSAR and QUASAR are experimental and not production-ready. Use ORION for production deployments.
+--
+
+== Quick Reference
+
+| Engine | Use Case | Scale | Status | Feature Flag |
+|--------|----------|-------|--------|--------------|
+| ORION | Real-time traversal, interactive queries | <1M nodes | Production | Default |
+| PULSAR | Distributed graphs, fault tolerance | 1B+ nodes | Experimental | `distributed-graph` |
+| QUASAR | Cost-optimized tiered storage | 10M+ nodes | Experimental | `tiered-graph` |
+
+== ORION: In-Memory Graph Engine (Default)
+
+=== Overview
+
+ORION is the default graph engine for ProximaDB. It uses Compressed Sparse Row (CSR) format for in-memory storage with Arc-based zero-copy sharing for maximum performance.
+
+=== When to Use ORION
+
+* Interactive graph applications (<1M nodes)
+* Real-time traversal and pathfinding
+* Sub-millisecond latency requirements
+* Development and testing
+* Production deployments (recommended)
+
+=== Performance Characteristics
+
+* 1M+ edges/second traversal
+* <1μs node lookup
+* <100 bytes/node memory overhead
+* WAL persistence for crash recovery
+
+=== Configuration
+
+ORION is enabled by default. No feature flags or special configuration required.
+
+[source,rust]
+----
+// Default ORION engine (in-memory, no persistence)
+let engine = OrionGraphEngine::new();
+
+// With WAL persistence
+let engine = OrionGraphEngine::with_persistence_for_graph(
+    "my_graph".to_string(),
+    "file:///tmp/proximadb".to_string(),
+    true, // Enable WAL
+).await?;
+----
+
+=== REST API Example
+
+[source,bash]
+----
+# Create a graph collection with ORION (default)
+curl -X POST http://localhost:5678/api/v1/graph/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "social_network",
+    "engine": "orion"
+  }'
+
+# Insert nodes
+curl -X POST http://localhost:5678/api/v1/graph/nodes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "social_network",
+    "nodes": [
+      {"id": "user1", "labels": ["User"], "properties": {"name": "Alice"}},
+      {"id": "user2", "labels": ["User"], "properties": {"name": "Bob"}}
+    ]
+  }'
+
+# Insert edges
+curl -X POST http://localhost:5678/api/v1/graph/edges \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "social_network",
+    "edges": [
+      {
+        "id": "edge1",
+        "from_node_id": "user1",
+        "to_node_id": "user2",
+        "edge_type": "FRIENDS_WITH"
+      }
+    ]
+  }'
+
+# Query neighbors
+curl -X POST http://localhost:5678/api/v1/graph/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "social_network",
+    "query": {
+      "type": "neighbors",
+      "node_id": "user1"
+    }
+  }'
+----
+
+== PULSAR: Distributed Graph Engine (Experimental)
+
+=== Overview
+
+[%hardbreaks]
+--
+**WARNING**: PULSAR is experimental and not production-ready. Cross-shard queries and distributed transactions are incomplete. Use ORION with application-level sharding for production.
+--
+
+PULSAR provides distributed graph capabilities via sharding and replication. It scales to 1B+ nodes by distributing data across multiple ORION shards.
+
+=== Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TD
+    A[PULSAR Engine] --> B[Coordinator]
+    A --> C[Hash Ring]
+    A --> D[Shard 0<br/>ORION]
+    A --> E[Shard 1<br/>ORION]
+    A --> F[Shard N<br/>ORION]
+    A --> G[Replication Manager]
+
+    B --> H[Query Router]
+    H --> D
+    H --> E
+    H --> F
+
+    C --> D
+    C --> E
+    C --> F
+
+    D -.->|Replicate| E
+    E -.->|Replicate| F
+----
+
+=== When to Consider PULSAR
+
+* Experimental workloads with extremely large graphs (1B+ nodes)
+* Research and development environments
+* When you can tolerate data loss and inconsistency
+
+=== Known Limitations
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Consistent hashing | Implemented | Nodes distributed via SHA-256 |
+| Single-shard queries | Implemented | Fast single-shard operations |
+| Replication | Basic | Async replication (eventual consistency) |
+| Cross-shard traversal | Incomplete | May miss edges across shards |
+| Distributed transactions | Incomplete | No 2PC coordination |
+| WAL persistence | Implemented | Per-shard WAL files |
+
+=== Enabling PULSAR
+
+Build ProximaDB with the `distributed-graph` feature flag:
+
+[source,bash]
+----
+# Build with PULSAR support
+cargo build --release --features distributed-graph
+
+# Run server with PULSAR enabled
+./target/release/proximadb-server --config config/config.toml
+----
+
+=== Configuration
+
+Edit `config/config.toml`:
+
+[source,toml]
+----
+[graph]
+# Enable PULSAR engine (requires distributed-graph feature)
+default_engine = "pulsar"
+
+[graph.pulsar]
+# Number of shards for data distribution
+shard_count = 16
+
+# Replication factor (1-3)
+replication_factor = 1
+
+# Consistency level: "any", "quorum", "all"
+consistency_level = "quorum"
+
+# Enable cross-shard query optimization
+cross_shard_optimization = true
+
+# Maximum concurrent cross-shard queries
+max_concurrent_queries = 100
+----
+
+=== REST API Example
+
+[source,bash]
+----
+# Create a graph collection with PULSAR
+curl -X POST http://localhost:5678/api/v1/graph/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "web_graph",
+    "engine": "pulsar",
+    "config": {
+      "shard_count": 16,
+      "replication_factor": 2
+    }
+  }'
+
+# PULSAR handles cross-shard queries automatically
+curl -X POST http://localhost:5678/api/v1/graph/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "web_graph",
+    "query": {
+      "type": "traversal",
+      "start_node": "https://example.com",
+      "max_depth": 3
+    }
+  }'
+----
+
+=== Python SDK Example
+
+[source,python]
+----
+from proximadb import ProximaDB
+
+# Connect to ProximaDB with PULSAR enabled
+client = ProximaDB.connect("http://localhost:5678")
+
+# Create a distributed graph
+graph = client.create_graph(
+    name="web_graph",
+    engine="pulsar",
+    config={
+        "shard_count": 16,
+        "replication_factor": 2
+    }
+)
+
+# PULSAR automatically shards nodes across the cluster
+node1 = graph.insert_node(
+    id="https://example.com",
+    labels=["Page"],
+    properties={"rank": 0.9}
+)
+
+node2 = graph.insert_node(
+    id="https://example.org",
+    labels=["Page"],
+    properties={"rank": 0.8}
+)
+
+# Insert edge (PULSAR routes to appropriate shard)
+graph.insert_edge(
+    id="link1",
+    from_node_id="https://example.com",
+    to_node_id="https://example.org",
+    edge_type="LINKS_TO"
+)
+
+# Cross-shard traversal
+neighbors = graph.get_neighbors("https://example.com")
+----
+
+=== Direct Rust Usage
+
+[source,rust]
+----
+use proximadb::graph::engines::pulsar::{PulsarGraphEngine, PulsarConfig};
+
+// Create PULSAR engine
+let config = PulsarConfig {
+    shard_count: 16,
+    replication_factor: 2,
+    ..Default::default()
+};
+
+let engine = PulsarGraphEngine::new(config)?;
+
+// Or with persistence
+let engine = PulsarGraphEngine::with_persistence(
+    config,
+    "my_graph".to_string(),
+    "file:///tmp/proximadb".to_string(),
+).await?;
+
+// PULSAR handles sharding automatically
+let node = engine.insert_node(Node {
+    id: "node1".to_string(),
+    labels: vec!["Label".to_string()],
+    ..Default::default()
+}).await?;
+
+// Cross-shard traversal
+let results = engine.cross_shard_traversal(&"node1".to_string(), 3).await?;
+----
+
+=== Monitoring PULSAR
+
+[source,bash]
+----
+# Get PULSAR engine statistics
+curl http://localhost:5678/api/v1/graph/stats?collection=web_graph
+
+# Response includes:
+# {
+#   "total_nodes": 1000000,
+#   "total_edges": 5000000,
+#   "shards_active": 16,
+#   "cross_shard_queries": 1234,
+#   "replication_lag_ms": 50,
+#   "hot_shards": [2, 5, 9]
+# }
+----
+
+=== Recommended Alternative
+
+For production distributed graph workloads, consider:
+
+* Using ORION with application-level sharding
+* Implementing a sharding layer in your application
+* Using ORION per tenant/partition
+* Deploying multiple ProximaDB instances with a proxy
+
+== QUASAR: Tiered Storage Engine (Experimental)
+
+=== Overview
+
+[%hardbreaks]
+--
+**WARNING**: QUASAR is experimental and not production-ready. Tiering logic is minimal and not integrated with ProximaDB's storage engines. Use ORION for production.
+--
+
+QUASAR provides hot/cold tiering for cost optimization. Frequently accessed data stays in memory (hot tier), while cold data is moved to disk (cold tier).
+
+=== Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TD
+    A[QUASAR Engine] --> B[Hot Tier<br/>ORION In-Memory]
+    A --> C[Tiering Manager]
+    A --> D[Access Pattern Cache]
+    A --> E[Cold Tier<br/>Disk Storage]
+
+    C --> F[LRU Eviction]
+    C --> G[Promotion Worker]
+    C --> H[Migration Worker]
+
+    F --> E
+    G --> B
+    H --> E
+
+    D --> C
+----
+
+=== When to Consider QUASAR
+
+* Experimental cost optimization for large, sparse graphs
+* Research and development environments
+* When memory constraints are critical and data loss is acceptable
+
+=== Known Limitations
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Hot tier (ORION) | Implemented | In-memory with WAL |
+| Cold tier storage | Basic | JSON/SST/Parquet files |
+| Access tracking | Implemented | LRU cache |
+| Automatic tiering | Minimal | Simple time-based eviction |
+| WAL persistence | Partial | Hot tier only |
+| Cross-tier queries | Partial | Sync path skips cold tier |
+
+=== Enabling QUASAR
+
+Build ProximaDB with the `tiered-graph` feature flag:
+
+[source,bash]
+----
+# Build with QUASAR support
+cargo build --release --features tiered-graph
+
+# Run server with QUASAR enabled
+./target/release/proximadb-server --config config/config.toml
+----
+
+=== Configuration
+
+Edit `config/config.toml`:
+
+[source,toml]
+----
+[graph]
+# Enable QUASAR engine (requires tiered-graph feature)
+default_engine = "quasar"
+
+[graph.quasar]
+# Hot tier limits
+hot_tier_max_nodes = 100000
+hot_tier_max_memory_mb = 1024
+
+# Cold tier path
+cold_tier_path = "./quasar_cold"
+
+# Tiering thresholds
+cold_migration_threshold = "1h"     # Move to cold after 1 hour of inactivity
+hot_promotion_threshold = "5m"      # Promote to hot if accessed within 5 minutes
+migration_interval = "1m"           # Run migration every minute
+
+# Cold storage backend: "sst", "parquet", or "json"
+cold_storage_backend = "sst"
+----
+
+=== REST API Example
+
+[source,bash]
+----
+# Create a graph collection with QUASAR
+curl -X POST http://localhost:5678/api/v1/graph/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "historical_events",
+    "engine": "quasar",
+    "config": {
+      "hot_tier_max_nodes": 100000,
+      "cold_tier_path": "/data/quasar_cold"
+    }
+  }'
+
+# QUASAR automatically manages hot/cold tiers
+curl -X POST http://localhost:5678/api/v1/graph/nodes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "historical_events",
+    "nodes": [
+      {"id": "event1", "labels": ["Event"], "properties": {"timestamp": "2024-01-01"}}
+    ]
+  }'
+
+# Force migration cycle (maintenance operation)
+curl -X POST http://localhost:5678/api/v1/graph/migrate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "historical_events"
+  }'
+----
+
+=== Python SDK Example
+
+[source,python]
+----
+from proximadb import ProximaDB
+
+# Connect to ProximaDB with QUASAR enabled
+client = ProximaDB.connect("http://localhost:5678")
+
+# Create a tiered graph
+graph = client.create_graph(
+    name="historical_events",
+    engine="quasar",
+    config={
+        "hot_tier_max_nodes": 100000,
+        "cold_tier_path": "/data/quasar_cold"
+    }
+)
+
+# QUASAR manages hot/cold tiers automatically
+event = graph.insert_node(
+    id="event1",
+    labels=["Event"],
+    properties={"timestamp": "2024-01-01"}
+)
+
+# Access triggers automatic promotion if in cold tier
+retrieved = graph.get_node("event1")
+
+# Force migration cycle
+graph.force_migration()
+----
+
+=== Direct Rust Usage
+
+[source,rust]
+----
+use proximadb::graph::engines::quasar::{QuasarGraphEngine, QuasarConfig};
+use std::path::PathBuf;
+
+// Create QUASAR engine
+let config = QuasarConfig {
+    hot_tier_max_nodes: 100000,
+    cold_tier_path: PathBuf::from("./quasar_cold"),
+    ..Default::default()
+};
+
+let engine = QuasarGraphEngine::new(config).await?;
+
+// Or with persistence (hot tier WAL only)
+let engine = QuasarGraphEngine::with_persistence(
+    config,
+    "my_graph".to_string(),
+    "file:///tmp/proximadb".to_string(),
+).await?;
+
+// QUASAR manages hot/cold tiers automatically
+let node = engine.insert_node(Node {
+    id: "node1".to_string(),
+    labels: vec!["Label".to_string()],
+    ..Default::default()
+}).await?;
+
+// Force migration cycle
+engine.force_migration().await?;
+
+// Get statistics
+let stats = engine.get_stats().await;
+println!("Hot tier nodes: {}", stats.hot_tier_nodes);
+println!("Cold tier nodes: {}", stats.cold_tier_nodes);
+println!("Cache hit ratio: {:.2}%",
+    stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64 * 100.0
+);
+----
+
+=== Monitoring QUASAR
+
+[source,bash]
+----
+# Get QUASAR engine statistics
+curl http://localhost:5678/api/v1/graph/stats?collection=historical_events
+
+# Response includes:
+# {
+#   "hot_tier_nodes": 80000,
+#   "cold_tier_nodes": 20000,
+#   "hot_tier_edges": 400000,
+#   "cold_tier_edges": 100000,
+#   "cache_hits": 50000,
+#   "cache_misses": 5000,
+#   "promotions_to_hot": 100,
+#   "demotions_to_cold": 50,
+#   "average_access_latency_ms": 0.5,
+#   "storage_cost_savings_ratio": 0.75
+# }
+----
+
+=== Recommended Alternative
+
+For production tiered storage:
+
+* Use ORION with appropriate memory sizing
+* Implement application-level caching
+* Consider external caching layers (Redis, Memcached)
+* Use ProximaDB's built-in VIPER/Parquet for archival data
+
+== Engine Comparison
+
+=== Performance
+
+| Metric | ORION | PULSAR | QUASAR |
+|--------|-------|--------|--------|
+| Node lookup | <1μs | <10μs | <1μs hot, <10ms cold |
+| Traversal | 1M+ edges/sec | Depends on sharding | ORION speed for hot tier |
+| Insert latency | <100μs | <1ms | <100μs hot tier |
+| Memory efficiency | 100 bytes/node | 100 bytes/node per shard | Varies by tier |
+| Max scale | 1M nodes | 1B+ nodes | 10M+ nodes |
+
+=== Durability
+
+| Feature | ORION | PULSAR | QUASAR |
+|---------|-------|--------|--------|
+| WAL persistence | Yes | Per-shard | Hot tier only |
+| Crash recovery | Yes | Yes (per shard) | Partial |
+| Replication | No | Yes (async) | No |
+| Cross-shard queries | N/A | Incomplete | N/A |
+
+=== Use Cases
+
+| Use Case | Recommended Engine | Alternative |
+|----------|-------------------|-------------|
+| Social networks | ORION | PULSAR for massive scale |
+| Knowledge graphs | ORION | QUASAR for archival |
+| Fraud detection | ORION | PULSAR for multi-region |
+| Recommendation engines | ORION | QUASAR for cost optimization |
+| Graph analytics | ORION | PULSAR for distributed |
+
+== Migration Guide
+
+=== From ORION to PULSAR
+
+1. Enable `distributed-graph` feature flag
+2. Update config to use PULSAR engine
+3. Export ORION data and import into PULSAR
+4. PULSAR will automatically shard data
+
+=== From ORION to QUASAR
+
+1. Enable `tiered-graph` feature flag
+2. Update config to use QUASAR engine
+3. Export ORION data and import into QUASAR
+4. QUASAR will automatically manage hot/cold tiers
+
+=== Back to ORION
+
+If you encounter issues with PULSAR or QUASAR:
+
+1. Export data from experimental engine
+2. Disable feature flags
+3. Rebuild with default configuration
+4. Import data into ORION
+
+== Troubleshooting
+
+=== PULSAR Issues
+
+[source,bash]
+----
+# Cross-shard queries returning incomplete results
+# This is a known limitation. Use single-shard queries or
+# ensure your data model minimizes cross-shard edges.
+
+# Replication lag causing stale reads
+# Increase consistency_level to "quorum" or "all" in config.
+
+# Hot shards detected
+# Consider increasing shard_count to rebalance data.
+----
+
+=== QUASAR Issues
+
+[source,bash]
+----
+# High cold tier latency
+# Reduce cold_migration_threshold to keep more data hot.
+
+# Low cache hit ratio
+# Increase hot_tier_max_nodes to keep more data in memory.
+
+# Migration not running
+# Check migration_interval in config. Ensure background
+# tasks are not blocked.
+----
+
+== Best Practices
+
+=== Choose ORION When
+
+* You need production reliability
+* Your graph fits in memory (<1M nodes)
+* You need sub-millisecond latency
+* You want simplicity and predictability
+
+=== Choose PULSAR When
+
+* You're experimenting with distributed graphs
+* You have 1B+ nodes that don't fit on one machine
+* You can tolerate eventual consistency
+* You're building a proof-of-concept
+
+=== Choose QUASAR When
+
+* You're experimenting with cost optimization
+* You have sparse access patterns (some data rarely used)
+* Memory is expensive and you need to minimize it
+* You're building a proof-of-concept
+
+== Future Roadmap
+
+=== PULSAR
+
+* [ ] Complete cross-shard traversal
+* [ ] Implement 2PC distributed transactions
+* [ ] Add automatic rebalancing
+* [ ] Support multi-datacenter deployments
+
+=== QUASAR
+
+* [ ] Integrate with ProximaDB storage engines (SST/HELIX/VIPER)
+* [ ] Implement ML-based access prediction
+* [ ] Add cold tier WAL for full durability
+* [ ] Support cross-tier queries in sync path
+
+== References
+
+* link:../concepts/architecture.adoc[Architecture Overview]
+* link:../api/graph-api.adoc[Graph API Reference]
+* link:../examples/graph-examples.adoc[Graph Code Examples]
+* https://github.com/proximadb/proximdb[ProximaDB GitHub]
