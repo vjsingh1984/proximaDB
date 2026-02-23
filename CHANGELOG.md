@@ -2,7 +2,83 @@
 
 All notable changes to ProximaDB will be documented in this file.
 
-## [0.2.0] - 2025-12-28
+## [0.2.0] - 2026-02-22
+
+### 🎉 Major Release: Platform Packages
+
+This release introduces **native platform packages** for Linux and Windows, making installation easier than ever.
+
+### Platform Packages
+
+#### Linux
+- **RPM Packages** (Red Hat/CentOS/Fedora 8+)
+  - `proximadb-0.2.0-1.el8.x86_64.rpm`
+  - Systemd service integration
+  - Automatic user and directory creation
+  - Installation: `sudo rpm -ivh proximadb-0.2.0-1.el8.x86_64.rpm`
+
+- **DEB Packages** (Debian/Ubuntu)
+  - `proximadb_0.2.0_amd64.deb`
+  - Systemd service integration
+  - Configuration management
+  - Installation: `sudo dpkg -i proximadb_0.2.0_amd64.deb`
+
+#### Windows
+- **MSI Installer** (Windows 10+)
+  - `proximadb-0.2.0-x64.msi`
+  - Installation to `C:\Program Files\ProximaDB\`
+  - Start menu shortcuts
+  - PATH environment variable setup
+  - Installation: `msiexec /i proximadb-0.2.0-x64.msi`
+
+### Release Infrastructure
+
+- ✅ Automated platform package builds (RPM via fpm, DEB via fpm, MSI via WiX v4)
+- ✅ Multi-platform binary support (Linux x86_64, Windows x86_64)
+- ✅ Pre-release CI validation workflow
+- ✅ Automated release workflow with GitHub Releases integration
+- ✅ Version consistency automation across all packages
+- ✅ PyPI and crates.io publishing automation
+
+### Installation Improvements
+
+- **Native package manager integration** for Linux distributions
+- **Systemd service support** with automatic start/stop
+- **Configuration file management** (/etc/proximadb/config.toml)
+- **Data directory creation** (/var/lib/proximadb)
+- **Log directory management** (/var/log/proximadb)
+
+### Documentation
+
+- Installation guides for all platforms
+- Platform package documentation
+- Release preparation and validation procedures
+- Automated changelog generation
+
+### Known Limitations
+
+- **macOS packages (DMG)**: Not available in v0.2.0 due to ring crate CPU feature detection issues on CI. Planned for v0.2.1.
+- **Python embedded wheels**: Disabled for v0.2.0 (clients/python-embedded is pure Python, not Rust)
+- **ARM64 packages**: Planned for future releases
+
+### Testing
+
+- Platform package builds validated (RPM: 41s, DEB: 46s, MSI: 54s)
+- Installation testing on Linux (RHEL/Ubuntu) and Windows
+- Pre-release CI validation passed
+- Dry-run release validation completed successfully
+
+### Migration from v0.1.x
+
+No breaking changes from v0.1.x. Existing configurations and data are compatible.
+
+### Contributors
+
+Thanks to all contributors who made this release possible!
+
+---
+
+## [0.1.5] - Previous Release
 
 ### Major Features
 
