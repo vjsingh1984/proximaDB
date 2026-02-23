@@ -83,6 +83,28 @@ REST + gRPC + Arrow Flight]
 
 ---
 
+== Performance
+
+*Industry-leading vector search with sub-10ms latency at million-scale*
+
+[.table-striped]
+[cols="1,1"]
+|===
+|Metric|Result (10M vectors, 768-d, single-node)
+
+|Search latency|8.2ms avg, 15ms p99
+|Ingest throughput|125K vectors/second
+|Recall@10|97.3% (HNSW, M=32)
+|Memory efficiency|1.2GB for 10M vectors
+|Hybrid search|8.1ms (vector + BM25)
+|===**
+
+* link:docs/BENCHMARKS.adoc[View detailed benchmarks] - ANN-benchmark results, competitor comparisons, scaling characteristics
+* link:docs/benchmarks/ENGINE_PERFORMANCE_BENCHMARK.adoc[Engine performance] - Storage engine benchmarks
+* link:scripts/run_benchmarks.sh[Run benchmarks yourself] - Benchmark execution script
+
+---
+
 == Quick Start
 
 === Platform Packages (Linux/Windows)
