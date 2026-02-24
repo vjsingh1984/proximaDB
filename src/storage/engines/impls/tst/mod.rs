@@ -112,12 +112,12 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::{VectorRecord, Collection};
 use crate::storage::traits::StorageQueryContext;
 use crate::storage::traits::{StorageIdentity, StorageReader, StorageWriter, StorageMetrics, StorageLifecycle, UnifiedStorageEngine};
-use crate::storage::traits::{FlushParameters, FlushResult, CompactionParameters, CompactionResult, CreateScanResult};
-use crate::storage::traits::{EngineStatistics, EngineHealth, VectorSearchParams, ScanOptions};
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::traits::{FlushParameters, FlushResult, CompactionParameters, CompactionResult};
+use crate::storage::traits::{EngineStatistics, EngineHealth};
+use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use crate::storage::StorageEngineStrategy;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::index::axis::eventlog::StorageEngineType;
@@ -198,48 +198,32 @@ impl PartitionDuration {
         match self {
             PartitionDuration::Hour => {
                 // Truncate to hour: zero out minutes, seconds, nanos
-                dt.with_minute(0)
-                    .unwrap_or(dt)
-                    .with_second(0)
-                    .unwrap_or(dt)
-                    .with_nanosecond(0)
-                    .unwrap_or(dt)
+                dt.with_minute(0).unwrap_or(dt)
+                    .with_second(0).unwrap_or(dt)
+                    .with_nanosecond(0).unwrap_or(dt)
             }
             PartitionDuration::Day => {
                 // Truncate to day: zero out hours, minutes, seconds, nanos
-                dt.with_hour(0)
-                    .unwrap_or(dt)
-                    .with_minute(0)
-                    .unwrap_or(dt)
-                    .with_second(0)
-                    .unwrap_or(dt)
-                    .with_nanosecond(0)
-                    .unwrap_or(dt)
+                dt.with_hour(0).unwrap_or(dt)
+                    .with_minute(0).unwrap_or(dt)
+                    .with_second(0).unwrap_or(dt)
+                    .with_nanosecond(0).unwrap_or(dt)
             }
             PartitionDuration::Week => {
                 // Truncate to week: zero out time and go to Monday
-                let dt = dt.with_hour(0)
-                    .unwrap_or(dt)
-                    .with_minute(0)
-                    .unwrap_or(dt)
-                    .with_second(0)
-                    .unwrap_or(dt)
-                    .with_nanosecond(0)
-                    .unwrap_or(dt);
+                let dt = dt.with_hour(0).unwrap_or(dt)
+                    .with_minute(0).unwrap_or(dt)
+                    .with_second(0).unwrap_or(dt)
+                    .with_nanosecond(0).unwrap_or(dt);
                 dt - chrono::Duration::days(dt.weekday().num_days_from_monday() as i64)
             }
             PartitionDuration::Month => {
                 // Truncate to month: first day, zero out time
-                dt.with_day(1)
-                    .unwrap_or(dt)
-                    .with_hour(0)
-                    .unwrap_or(dt)
-                    .with_minute(0)
-                    .unwrap_or(dt)
-                    .with_second(0)
-                    .unwrap_or(dt)
-                    .with_nanosecond(0)
-                    .unwrap_or(dt)
+                dt.with_day(1).unwrap_or(dt)
+                    .with_hour(0).unwrap_or(dt)
+                    .with_minute(0).unwrap_or(dt)
+                    .with_second(0).unwrap_or(dt)
+                    .with_nanosecond(0).unwrap_or(dt)
             }
         }
     }
@@ -775,6 +759,38 @@ impl StorageLifecycle for TimeSeriesEngine {
 
 #[async_trait]
 impl UnifiedStorageEngine for TimeSeriesEngine {
+    // Required methods from trait
+    fn engine_name(&self) -> &'static str {
+        "tst"
+    }
+
+    fn engine_version(&self) -> &'static str {
+        "0.1.0"
+    }
+
+    fn strategy(&self) -> StorageEngineStrategy {
+        StorageEngineStrategy::TimeSeries
+    }
+
+    async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> {
+        self.collect_engine_metrics().await
+    }
+
+    fn get_filesystem_factory(&self) -> &FilesystemFactory {
+        // TODO: Return actual filesystem factory
+        // For now, create a default one (note: this leaks memory but is acceptable for a stub)
+        use std::sync::OnceLock;
+        static DUMMY_FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
+        use futures::executor::block_on;
+
+        DUMMY_FACTORY.get_or_init(|| {
+            block_on(async {
+                FilesystemFactory::create(FilesystemConfig::default()).await
+                    .unwrap_or_else(|_| panic!("Failed to create filesystem factory"))
+            })
+        })
+    }
+
     async fn vector_by_id(
         &self,
         collection_id: &str,
@@ -789,14 +805,13 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
 
     async fn search_vectors_unified(
         &self,
-        params: VectorSearchParams,
+        ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        // For time-series, we interpret vector search as:
-        // 1. If there's a filter with timestamp range, use that
-        // 2. Otherwise, do a full scan with time ordering
-        let collection_id = params.collection_id.unwrap_or_default();
+        // For time-series, we interpret vector search as time-range query
+        let collection_id = ctx.collection_id();
 
-        // Get all records from all partitions
+        // Try to extract time range from filters
+        // For now, just return all records ordered by time
         let mut all_records = Vec::new();
         for partition in self.partitions.values() {
             let records = partition.all_records().await?;
@@ -809,7 +824,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
         // Convert to OptimizedSearchRecord
         let results: Vec<OptimizedSearchRecord> = all_records
             .into_iter()
-            .take(params.k.unwrap_or(10))
+            .take(ctx.top_k())
             .enumerate()
             .map(|(idx, record)| OptimizedSearchRecord {
                 id: record.id.clone(),
@@ -848,10 +863,14 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
     async fn create_scan(
         &self,
         _collection_id: &str,
-        _options: ScanOptions,
-    ) -> Result<CreateScanResult> {
-        // TODO: Implement scan creation
-        Ok(CreateScanResult::default())
+        _strategy: crate::storage::unified_scan_strategy::ScanStrategy,
+        _collection_config: Option<&Collection>,
+    ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
+        // TODO: Implement unified scan strategy for time-series
+        // For now, return error
+        Err(anyhow::anyhow!(
+            "TST engine does not yet implement unified scan strategy. Use search_vectors_unified for now."
+        ))
     }
 }
 
