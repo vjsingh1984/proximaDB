@@ -626,8 +626,8 @@ impl StorageReader for TimeSeriesEngine {
             .map(|(idx, record)| OptimizedSearchRecord {
                 id: record.id.clone(),
                 vector_id: Some(record.id.clone()),
-                score: 1.0 / (1.0 + idx as f64), // Decay score by time order
-                vector: Some(record.vector.clone()),
+                score: (1.0 / (1.0 + idx as f64)) as f32, // Decay score by time order
+                vector: Some(Arc::new(record.vector.clone())),
                 ..Default::default()
             })
             .collect();
@@ -643,8 +643,8 @@ impl StorageWriter for TimeSeriesEngine {
         let mut result = FlushResult::default();
 
         if let Some((key, partition)) = &self.active_partition {
-            result.entries_flushed = Some(partition.record_count().await);
-            result.bytes_written = Some(partition.size_bytes().await);
+            result.entries_flushed = Some(partition.record_count() as u64);
+            result.bytes_written = Some(partition.size_bytes() as u64);
 
             tracing::info!(
                 "TST engine flushed partition {} with {} records",
@@ -725,7 +725,7 @@ impl StorageMetrics for TimeSeriesEngine {
             response_time_ms: 0.0,
             error_count: 0,
             warnings: Vec::new(),
-            metrics: self.collect_engine_metrics().await?,
+            metrics: <TimeSeriesEngine as StorageMetrics>::collect_engine_metrics(self).await?,
         })
     }
 }
@@ -773,7 +773,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
     }
 
     async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> {
-        self.collect_engine_metrics().await
+        <TimeSeriesEngine as StorageMetrics>::collect_engine_metrics(self).await
     }
 
     fn get_filesystem_factory(&self) -> &FilesystemFactory {
@@ -829,8 +829,8 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
             .map(|(idx, record)| OptimizedSearchRecord {
                 id: record.id.clone(),
                 vector_id: Some(record.id.clone()),
-                score: 1.0 / (1.0 + idx as f64), // Decay score by time order
-                vector: Some(record.vector.clone()),
+                score: (1.0 / (1.0 + idx as f64)) as f32, // Decay score by time order
+                vector: Some(Arc::new(record.vector.clone())),
                 ..Default::default()
             })
             .collect();
@@ -842,8 +842,8 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
         let mut result = FlushResult::default();
 
         if let Some((key, partition)) = &self.active_partition {
-            result.entries_flushed = Some(partition.record_count());
-            result.bytes_written = Some(partition.size_bytes());
+            result.entries_flushed = Some(partition.record_count() as u64);
+            result.bytes_written = Some(partition.size_bytes() as u64);
 
             tracing::info!(
                 "TST engine flushed partition {} with {} records",

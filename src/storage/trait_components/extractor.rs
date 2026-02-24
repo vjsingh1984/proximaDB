@@ -398,6 +398,9 @@ impl ExtractionFactory {
                     filesystem,
                 ),
             ),
+            StorageEngineType::TST => Arc::new(
+                crate::storage::engines::impls::tst::TimeSeriesEngine::new().unwrap(),
+            ),
         }
     }
 }
