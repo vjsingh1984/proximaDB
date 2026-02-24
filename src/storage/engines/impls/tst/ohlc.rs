@@ -95,7 +95,7 @@ impl OHLC {
         timestamp: DateTime<Utc>,
         price: f64,
         volume: i64,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         // Truncate timestamp to interval
         let truncated = self.truncate_to_interval(timestamp);
 

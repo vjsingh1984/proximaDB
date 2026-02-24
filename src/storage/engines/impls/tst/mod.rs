@@ -103,13 +103,14 @@ pub mod asof_join;
 pub mod compression;
 pub mod query;
 pub mod index;
+pub mod extraction;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Datelike, Timelike};
 use serde::{Deserialize, Serialize};
 
 use crate::proto::proximadb_v1::{VectorRecord, Collection};
