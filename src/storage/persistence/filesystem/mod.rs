@@ -1650,6 +1650,49 @@ impl FilesystemFactory {
         let fs = self.get_filesystem(url)?;
         fs.sync().await
     }
+
+    /// Create an Arc-wrapped filesystem factory (safe helper)
+    ///
+    /// This is a convenience helper for creating Arc<FilesystemFactory> with proper error handling.
+    /// Use this to avoid `.unwrap()` calls when creating filesystem factories.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use anyhow::Context;
+    ///
+    /// // Before (panics on error):
+    /// let factory = Arc::new(FilesystemFactory::create(config).await.unwrap());
+    ///
+    /// // After (proper error handling):
+    /// let factory = FilesystemFactory::create_arc(config).await
+    ///     .context("Failed to create filesystem factory")?;
+    /// ```
+    pub async fn create_arc(config: FilesystemConfig) -> FsResult<Arc<Self>> {
+        let factory = Self::create(config).await?;
+        Ok(Arc::new(factory))
+    }
+
+    /// Create an Arc-wrapped filesystem factory with default config (safe helper)
+    ///
+    /// This is a convenience helper for creating Arc<FilesystemFactory> with proper error handling.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use anyhow::Context;
+    ///
+    /// // Before (panics on error):
+    /// let factory = Arc::new(FilesystemFactory::create_default().await.unwrap());
+    ///
+    /// // After (proper error handling):
+    /// let factory = FilesystemFactory::create_default_arc().await
+    ///     .context("Failed to create filesystem factory")?;
+    /// ```
+    pub async fn create_default_arc() -> FsResult<Arc<Self>> {
+        let factory = Self::create_default().await?;
+        Ok(Arc::new(factory))
+    }
 }
 
 #[cfg(test)]
