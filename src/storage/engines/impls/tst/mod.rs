@@ -469,7 +469,9 @@ impl TimeSeriesEngine {
         }
 
         // Return mutable reference
-        Ok(self.partitions.get_mut(&partition_key).unwrap())
+        self.partitions
+            .get_mut(&partition_key)
+            .ok_or_else(|| anyhow::anyhow!("Partition not found after creation: {}", partition_key))
     }
 
     /// Identify partitions that overlap with the time range
