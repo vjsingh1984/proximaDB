@@ -550,10 +550,11 @@ mod tests {
     fn test_plan_pushdown_basic() {
         let planner = FilterPushdownPlanner::new(FilterPushdownConfig::default());
 
-        let filter = FilterExpression::Condition(Box::new(FilterCondition::Eq {
+        let filter = FilterExpression::Comparison {
             field: "category".to_string(),
+            operator: ComparisonOperator::Equals,
             value: json!("electronics"),
-        }));
+        };
 
         let plan = planner.plan_pushdown(&filter, None).unwrap();
         assert!(plan.should_pushdown);
@@ -571,14 +572,16 @@ mod tests {
 
         // Create filter with estimated selectivity > 0.1
         let filter = FilterExpression::Or(vec![
-            Box::new(FilterCondition::Eq {
+            FilterExpression::Comparison {
                 field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
                 value: json!("electronics"),
-            }),
-            Box::new(FilterCondition::Eq {
+            },
+            FilterExpression::Comparison {
                 field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
                 value: json!("books"),
-            }),
+            },
         ]);
 
         let plan = planner.plan_pushdown(&filter, None).unwrap();
