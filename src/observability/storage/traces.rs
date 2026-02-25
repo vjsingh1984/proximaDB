@@ -50,6 +50,8 @@ pub struct TraceStorage {
     service_index: RwLock<HashMap<String, Vec<String>>>,
     /// Total span count
     span_count: AtomicU64,
+    /// Total storage bytes (estimated)
+    total_bytes: AtomicU64,
 }
 
 /// Data for a single trace
@@ -77,6 +79,7 @@ impl TraceStorage {
             spans_by_time: RwLock::new(BTreeMap::new()),
             service_index: RwLock::new(HashMap::new()),
             span_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
         })
     }
 
@@ -134,6 +137,10 @@ impl TraceStorage {
         }
 
         self.span_count.fetch_add(1, Ordering::Relaxed);
+
+        // Track storage bytes
+        let span_size = self.estimate_span_size(span);
+        self.total_bytes.fetch_add(span_size, Ordering::Relaxed);
 
         Ok(())
     }
@@ -280,6 +287,38 @@ impl TraceStorage {
     /// Get total span count
     pub async fn count(&self) -> u64 {
         self.span_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the total storage size in bytes
+    pub async fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Estimate the size of a trace span in bytes
+    fn estimate_span_size(&self, span: &TraceSpan) -> u64 {
+        let mut size = 100; // Base overhead
+
+        // Add strings
+        size += span.trace_id.len() as u64;
+        size += span.span_id.len() as u64;
+        size += span.parent_span_id.len() as u64;
+        size += span.name.len() as u64;
+        size += span.service_name.len() as u64;
+        size += span.status_message.len() as u64;
+
+        // Add timestamps
+        size += 16; // 2 x i64
+
+        // Add attributes
+        for (key, val) in &span.attributes {
+            size += key.len() as u64;
+            size += val.len() as u64;
+        }
+
+        // Add status
+        size += 4; // i32
+
+        size
     }
 
     /// Get trace count

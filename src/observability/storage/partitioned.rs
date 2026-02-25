@@ -29,6 +29,8 @@ pub struct PartitionedStorage {
     partition_duration_ns: i64,
     /// Total entry count
     entry_count: AtomicU64,
+    /// Total storage bytes (estimated)
+    total_bytes: AtomicU64,
     /// Optional storage engine for tier transitions
     storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
 }
@@ -69,6 +71,33 @@ pub struct TierFlushResult {
     pub success: bool,
 }
 
+/// Estimate the size of a SqlValue in bytes
+fn estimate_sql_value_size(value: &SqlValue) -> u64 {
+    match &value.value {
+        Some(Value::NullValue(_)) => 4,
+        Some(Value::StringValue(s)) => s.len() as u64 + 4,
+        Some(Value::NumberValue(f)) => 8,
+        Some(Value::BoolValue(_)) => 1,
+        Some(Value::Int64Value(i)) => 8,
+        Some(Value::BytesValue(b)) => b.len() as u64 + 4,
+        Some(Value::ArrayValue(arr)) => {
+            let mut size = 4; // array overhead
+            for v in &arr.values {
+                size += estimate_sql_value_size(v);
+            }
+            size
+        }
+        Some(Value::ObjectValue(obj)) => {
+            let mut size = 4; // object overhead
+            for (_key, v) in &obj.fields {
+                size += estimate_sql_value_size(v);
+            }
+            size
+        }
+        None => 0,
+    }
+}
+
 impl PartitionedStorage {
     /// Create a new partitioned storage
     pub fn new(base_path: &str) -> Result<Self> {
@@ -80,6 +109,7 @@ impl PartitionedStorage {
             partitions: RwLock::new(BTreeMap::new()),
             partition_duration_ns,
             entry_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
             storage_engine: None,
         })
     }
@@ -97,6 +127,7 @@ impl PartitionedStorage {
             partitions: RwLock::new(BTreeMap::new()),
             partition_duration_ns,
             entry_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
             storage_engine: Some(storage_engine),
         })
     }
@@ -145,7 +176,49 @@ impl PartitionedStorage {
         entries.push(log.clone());
         self.entry_count.fetch_add(1, Ordering::Relaxed);
 
+        // Track storage bytes
+        let entry_size = self.estimate_entry_size(log);
+        self.total_bytes.fetch_add(entry_size, Ordering::Relaxed);
+
         Ok(())
+    }
+
+    /// Estimate size of a LogEntry in bytes
+    fn estimate_entry_size(&self, entry: &LogEntry) -> u64 {
+        // Base message size overhead
+        let mut size = 100; // Protocol buffer overhead
+
+        // Add timestamp
+        size += 8;
+
+        // Add message
+        size += entry.message.len() as u64;
+
+        // Add severity
+        size += 4;
+
+        // Add source if present
+        if let Some(source) = &entry.source {
+            size += source.len() as u64;
+        }
+
+        // Add service if present
+        if let Some(service) = &entry.service {
+            size += service.len() as u64;
+        }
+
+        // Add fields
+        for (key, value) in &entry.fields {
+            size += key.len() as u64;
+            size += estimate_sql_value_size(value);
+        }
+
+        size
+    }
+
+    /// Get the total storage size in bytes
+    pub async fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
     }
 
     /// Query logs in a time range

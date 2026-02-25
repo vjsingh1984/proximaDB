@@ -37,6 +37,8 @@ pub struct MetricStorage {
     series: RwLock<HashMap<String, MetricSeries>>,
     /// Series count
     series_count: AtomicU64,
+    /// Total storage bytes (estimated)
+    total_bytes: AtomicU64,
     /// Tiering policy configuration
     tiering_policy: MetricTieringPolicy,
     /// Optional rollup persistence layer for durable storage
@@ -195,6 +197,7 @@ impl MetricStorage {
             base_path: base_path.to_string(),
             series: RwLock::new(HashMap::new()),
             series_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
             tiering_policy: policy,
             rollup_persistence: None,
         })
@@ -210,6 +213,7 @@ impl MetricStorage {
             base_path: base_path.to_string(),
             series: RwLock::new(HashMap::new()),
             series_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
             tiering_policy: policy,
             rollup_persistence: Some(persistence),
         })
@@ -243,6 +247,9 @@ impl MetricStorage {
     pub async fn write(&self, sample: &MetricSample) -> Result<()> {
         let key = Self::series_key(&sample.name, &sample.labels);
 
+        // Estimate sample size for storage tracking
+        let sample_size = self.estimate_sample_size(sample);
+
         // Get or create series
         {
             let series = self.series.read().await;
@@ -253,11 +260,15 @@ impl MetricStorage {
                 // Update downsampled data
                 self.update_downsampled(s, sample.timestamp_ns, sample.value)
                     .await;
+
+                // Track bytes
+                self.total_bytes.fetch_add(sample_size, Ordering::Relaxed);
                 return Ok(());
             }
         }
 
         // Create new series
+        let sample_size = self.estimate_sample_size(sample);
         let new_series = MetricSeries {
             name: sample.name.clone(),
             labels: sample.labels.clone(),
@@ -272,6 +283,7 @@ impl MetricStorage {
         let mut series = self.series.write().await;
         series.insert(key, new_series);
         self.series_count.fetch_add(1, Ordering::Relaxed);
+        self.total_bytes.fetch_add(sample_size, Ordering::Relaxed);
 
         Ok(())
     }
@@ -421,6 +433,33 @@ impl MetricStorage {
     /// Get series count
     pub async fn series_count(&self) -> u64 {
         self.series_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the total storage size in bytes
+    pub async fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Estimate the size of a metric sample in bytes
+    fn estimate_sample_size(&self, sample: &MetricSample) -> u64 {
+        let mut size = 100; // Base overhead
+
+        // Add metric name
+        size += sample.name.len() as u64;
+
+        // Add timestamp
+        size += 8;
+
+        // Add value
+        size += 8;
+
+        // Add labels (HashMap<String, String>)
+        for (key, val) in &sample.labels {
+            size += key.len() as u64;
+            size += val.len() as u64;
+        }
+
+        size
     }
 
     /// Compact old data

@@ -409,11 +409,16 @@ impl ObservabilityStorage {
             .get(namespace)
             .ok_or_else(|| anyhow::anyhow!("Namespace '{}' not found", namespace))?;
 
+        // Calculate total bytes from logs, metrics, and traces
+        let log_bytes = ns.logs.total_bytes().await;
+        let metric_bytes = ns.metrics.total_bytes().await;
+        let trace_bytes = ns.traces.total_bytes().await;
+
         Ok(StorageStats {
             log_count: ns.logs.count().await,
             metric_series_count: ns.metrics.series_count().await,
             trace_count: ns.traces.count().await,
-            total_bytes: 0, // TODO: Implement size tracking
+            total_bytes: log_bytes + metric_bytes + trace_bytes,
         })
     }
 }
