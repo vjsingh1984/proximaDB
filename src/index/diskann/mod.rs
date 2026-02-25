@@ -59,8 +59,10 @@
 //! - Document search for massive corpora
 //! - Embedding search for billion-item catalogs
 
+pub mod vamana;
+
 use crate::core::error::ProximaDBError;
-use std::path::PathBuf;
+use crate::index::diskann::vamana::{VamanaConfig, VamanaGraph};
 use tracing::info;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -81,19 +83,6 @@ pub struct DiskANNIndex {
 
     /// PQ compressed vectors (if built)
     pq_vectors: Option<PQVectors>,
-}
-
-/// Vamana graph for efficient SSD-based search
-#[derive(Debug, Clone)]
-pub struct VamanaGraph {
-    /// Maximum degree (R)
-    pub max_degree: usize,
-
-    /// Graph edges (node -> neighbors)
-    pub edges: Vec<Vec<usize>>,
-
-    /// Medoid (starting point for search)
-    pub medoid: usize,
 }
 
 /// Product Quantization compressed vectors
@@ -145,7 +134,12 @@ impl DiskANNIndex {
         );
 
         // Phase 1: Build Vamana graph
-        // TODO: Implement Vamana graph construction
+        let config = VamanaConfig::default();
+        let mut builder = self::vamana::VamanaBuilder::new(num_vectors, dimension, config);
+
+        let vamana_graph = builder.build(&vectors)?;
+        self.vamana_graph = Some(vamana_graph);
+
         self.num_vectors = num_vectors;
 
         Ok(())
