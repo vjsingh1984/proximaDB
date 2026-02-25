@@ -26,6 +26,9 @@ pub mod cache;
 // Schema utilities (builders, evolution, validation)
 pub mod schema;
 
+// Partition pruning for query optimization
+pub mod partition_pruning;
+
 // Always-available catalog implementations
 pub mod hive;
 pub mod iceberg;
@@ -67,6 +70,7 @@ use tracing::info;
 pub use self::cache::CatalogCache;
 pub use self::traits::*;
 pub use self::types::*;
+pub use self::partition_pruning::{PartitionPruner, PruningResult, PartitionInfo, parse_partition_path};
 
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {
