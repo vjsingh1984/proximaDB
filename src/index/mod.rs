@@ -76,6 +76,7 @@
 
 pub mod axis;
 pub mod config;
+pub mod diskann;
 pub mod geo;
 
 // Re-export main types for easier access
