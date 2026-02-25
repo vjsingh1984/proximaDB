@@ -133,7 +133,7 @@ mod tests {
     fn make_record(id: &str, timestamp: i64) -> VectorRecord {
         VectorRecord {
             id: id.to_string(),
-            timestamp: Some(DateTime::from_timestamp(timestamp, 0).unwrap()),
+            timestamp: Some(timestamp),
             ..Default::default()
         }
     }

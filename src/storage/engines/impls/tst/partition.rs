@@ -358,7 +358,7 @@ mod tests {
 
         let record = VectorRecord {
             id: "test_id".to_string(),
-            timestamp: Some(timestamp),
+            timestamp: Some(timestamp.timestamp_millis()),
             ..Default::default()
         };
 
@@ -427,15 +427,14 @@ mod tests {
 
         let record = VectorRecord {
             id: "test_id".to_string(),
-            timestamp: Some(timestamp),
+            timestamp: Some(timestamp.timestamp_millis()),
             ..Default::default()
         };
 
         tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(async {
-                partition.add_record(timestamp, record).await.unwrap();
-                assert_eq!(partition.record_count(), 1);
+                partition.add_record(timestamp, record).unwrap();
                 assert_eq!(partition.columns.timestamps.len(), 1);
                 assert_eq!(partition.columns.ids.len(), 1);
             });

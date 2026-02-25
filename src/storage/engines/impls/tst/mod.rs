@@ -895,7 +895,8 @@ mod tests {
         };
 
         let engine = TimeSeriesEngine::with_config(config).unwrap();
-        assert_eq!(engine.engine_name(), "tst");
+        use crate::storage::StorageIdentity;
+        assert_eq!(StorageIdentity::engine_name(&engine), "tst");
         assert_eq!(engine.partitions.len(), 0);
     }
 

@@ -30,6 +30,71 @@ impl TstExtractor {
     pub fn new(filesystem: Arc<UnifiedCachingFilesystem>) -> Self {
         Self { filesystem }
     }
+
+    /// Create a test extractor (only for unit tests that don't perform I/O)
+    #[cfg(test)]
+    pub fn test_extractor() -> Self {
+        use crate::storage::persistence::filesystem::{DirEntry, FilesystemError, FileSystem, FsResult, FileMetadata, FileOptions, FilesystemFile};
+        use std::any::Any;
+        use async_trait::async_trait;
+
+        // Minimal mock filesystem
+        #[derive(Debug)]
+        struct MockFs;
+
+        #[async_trait]
+        impl FileSystem for MockFs {
+            fn as_any(&self) -> &dyn Any { self }
+            fn filesystem_type(&self) -> &'static str { "mock" }
+
+            async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
+                Err(FilesystemError::NotFound("Mock".to_string()))
+            }
+            async fn write(&self, _path: &str, _data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
+                Ok(())
+            }
+            async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
+                Ok(())
+            }
+            async fn metadata(&self, _path: &str) -> FsResult<FileMetadata> {
+                Err(FilesystemError::NotFound("Mock".to_string()))
+            }
+            async fn exists(&self, _path: &str) -> FsResult<bool> {
+                Ok(false)
+            }
+            async fn delete(&self, _path: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn list(&self, _prefix: &str) -> FsResult<Vec<DirEntry>> {
+                Ok(vec![])
+            }
+            async fn create_dir(&self, _path: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn create_dir_all(&self, _path: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn copy(&self, _from: &str, _to: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn move_file(&self, _from: &str, _to: &str) -> FsResult<()> {
+                Ok(())
+            }
+            async fn sync(&self) -> FsResult<()> {
+                Ok(())
+            }
+            async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+                Err(FilesystemError::NotFound("Mock".to_string()))
+            }
+        }
+
+        let fs = Arc::new(UnifiedCachingFilesystem::new(
+            Arc::new(MockFs),
+            "test".to_string(),
+            "tst".to_string(),
+        ));
+        Self { filesystem: fs }
+    }
 }
 
 #[async_trait]
@@ -174,10 +239,8 @@ mod tests {
 
     #[test]
     fn test_tst_extractor_capabilities() {
-        let fs = Arc::new(UnifiedCachingFilesystem::new(
-            crate::storage::persistence::filesystem::FilesystemConfig::default(),
-        ));
-        let extractor = TstExtractor::new(fs);
+        // Create a test extractor that doesn't perform actual I/O
+        let extractor = TstExtractor::test_extractor();
 
         let caps = extractor.extraction_capabilities();
         assert!(caps.supports_incremental);
@@ -187,10 +250,8 @@ mod tests {
 
     #[test]
     fn test_tst_extractor_cost_estimate() {
-        let fs = Arc::new(UnifiedCachingFilesystem::new(
-            crate::storage::persistence::filesystem::FilesystemConfig::default(),
-        ));
-        let extractor = TstExtractor::new(fs);
+        // Create a test extractor that doesn't perform actual I/O
+        let extractor = TstExtractor::test_extractor();
 
         let request = ExtractionRequest::full(vec!["file1.tst".to_string(), "file2.tst".to_string()]);
         let cost = extractor.estimate_extraction_cost(&request);

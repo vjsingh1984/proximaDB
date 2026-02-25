@@ -2,7 +2,7 @@
 //!
 //! Provides OHLC bar aggregation for trading and financial time-series data.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 
 /// OHLC bar data
