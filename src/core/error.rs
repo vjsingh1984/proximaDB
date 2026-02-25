@@ -54,6 +54,9 @@ pub enum VectorDBError {
     #[error("Too many transactions: maximum {max} concurrent transactions allowed")]
     TooManyTransactions { max: usize },
 
+    #[error("Transaction aborted: {0}")]
+    TransactionAborted(String),
+
     #[error("Lock timeout for resource: {resource}")]
     LockTimeout { resource: String },
 

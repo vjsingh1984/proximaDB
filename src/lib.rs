@@ -190,6 +190,10 @@ pub mod streaming;
 /// Captures changes from PostgreSQL, MySQL, MongoDB and streams to Kafka, webhooks
 pub mod cdc;
 
+/// Cross-model ACID transactions with two-phase commit protocol
+/// Provides atomicity, consistency, isolation, and durability across vector, document, graph, and time-series models
+pub mod transaction;
+
 pub mod version;
 
 /// Embedded mode for in-process database usage without network layer
