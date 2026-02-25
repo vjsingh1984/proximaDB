@@ -59,10 +59,12 @@
 //! - Document search for massive corpora
 //! - Embedding search for billion-item catalogs
 
+pub mod search;
 pub mod ssd_layout;
 pub mod vamana;
 
 use crate::core::error::ProximaDBError;
+use crate::index::diskann::search::{DiskANNSearch, SearchConfig, SearchResult, SearchStats};
 use crate::index::diskann::ssd_layout::{NodeOrdering, SsdLayoutOptimizer};
 use crate::index::diskann::vamana::{VamanaConfig, VamanaGraph};
 use tracing::info;
@@ -85,6 +87,9 @@ pub struct DiskANNIndex {
 
     /// Node ordering for SSD-optimized layout (if built)
     node_ordering: Option<NodeOrdering>,
+
+    /// Vector data (if built)
+    vectors: Option<Vec<Vec<f32>>>,
 
     /// PQ compressed vectors (if built)
     pq_vectors: Option<PQVectors>,
@@ -112,6 +117,7 @@ impl DiskANNIndex {
             num_vectors: 0,
             vamana_graph: None,
             node_ordering: None,
+            vectors: None,
             pq_vectors: None,
         }
     }
@@ -163,12 +169,13 @@ impl DiskANNIndex {
         );
 
         self.node_ordering = Some(node_ordering);
+        self.vectors = Some(vectors);
         self.num_vectors = num_vectors;
 
         Ok(())
     }
 
-    /// Search for nearest neighbors
+    /// Search for nearest neighbors using beam search
     pub async fn search(&self, query: &[f32], k: usize) -> Result<Vec<(usize, f32)>> {
         if query.len() != self.dimension {
             return Err(ProximaDBError::InvalidInput(format!(
@@ -177,9 +184,37 @@ impl DiskANNIndex {
             )));
         }
 
-        // TODO: Implement DiskANN search with Vamana graph traversal
-        // For now, return empty results
-        Ok(Vec::new())
+        // Check if index is built
+        let vamana_graph = self.vamana_graph.as_ref()
+            .ok_or_else(|| ProximaDBError::Internal("Index not built".to_string()))?;
+
+        let vectors = self.vectors.as_ref()
+            .ok_or_else(|| ProximaDBError::Internal("Vectors not available".to_string()))?;
+
+        // Create search engine
+        let search_engine = DiskANNSearch::new(
+            vamana_graph.clone(),
+            self.node_ordering.clone(),
+        );
+
+        // Configure search
+        let config = SearchConfig {
+            beam_width: 50,
+            top_k: k,
+            search_list_size: 100,
+            use_node_ordering: self.node_ordering.is_some(),
+        };
+
+        // Execute search
+        let (results, _stats) = search_engine.search(query, vectors, &config)?;
+
+        // Convert results to (node_id, distance) tuple format
+        let results: Vec<(usize, f32)> = results
+            .into_iter()
+            .map(|r| (r.node_id, r.distance))
+            .collect();
+
+        Ok(results)
     }
 
     /// Get index statistics
@@ -317,5 +352,43 @@ mod tests {
 
         let result = index.search(&query, 10).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_diskann_search_integration() {
+        let mut index = DiskANNIndex::new("search_test".to_string(), 64);
+
+        // Create vectors
+        let vectors: Vec<Vec<f32>> = (0..30)
+            .map(|i| {
+                (0..64)
+                    .map(|j| ((i * 64 + j) % 20) as f32)
+                    .collect()
+            })
+            .collect();
+
+        // Build index
+        let result = index.build(vectors).await;
+        assert!(result.is_ok());
+
+        // Search for first vector
+        let query = index.vectors.as_ref().unwrap()[0].clone();
+        let search_results = index.search(&query, 5).await.unwrap();
+
+        assert!(search_results.len() <= 5);
+        // First result should be the query itself (distance ~0)
+        if !search_results.is_empty() {
+            assert_eq!(search_results[0].0, 0);
+            assert!(search_results[0].1 < 0.01);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diskann_search_without_build() {
+        let index = DiskANNIndex::new("no_build_test".to_string(), 128);
+        let query = vec![0.0f32; 128];
+
+        let result = index.search(&query, 10).await;
+        assert!(result.is_err()); // Should fail - index not built
     }
 }
