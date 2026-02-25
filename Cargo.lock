@@ -5423,6 +5423,7 @@ dependencies = [
  "lazy_static",
  "lettre",
  "libc",
+ "lru",
  "lz4_flex 0.11.5",
  "memmap2",
  "metal",

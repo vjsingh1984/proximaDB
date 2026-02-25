@@ -101,6 +101,7 @@
 //! ```
 
 pub mod algorithms;
+pub mod disk_storage;
 pub mod index;
 pub mod persistence;
 pub mod storage;
