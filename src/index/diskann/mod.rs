@@ -59,9 +59,11 @@
 //! - Document search for massive corpora
 //! - Embedding search for billion-item catalogs
 
+pub mod ssd_layout;
 pub mod vamana;
 
 use crate::core::error::ProximaDBError;
+use crate::index::diskann::ssd_layout::{NodeOrdering, SsdLayoutOptimizer};
 use crate::index::diskann::vamana::{VamanaConfig, VamanaGraph};
 use tracing::info;
 
@@ -80,6 +82,9 @@ pub struct DiskANNIndex {
 
     /// Vamana graph (if built)
     vamana_graph: Option<VamanaGraph>,
+
+    /// Node ordering for SSD-optimized layout (if built)
+    node_ordering: Option<NodeOrdering>,
 
     /// PQ compressed vectors (if built)
     pq_vectors: Option<PQVectors>,
@@ -106,6 +111,7 @@ impl DiskANNIndex {
             dimension,
             num_vectors: 0,
             vamana_graph: None,
+            node_ordering: None,
             pq_vectors: None,
         }
     }
@@ -138,8 +144,25 @@ impl DiskANNIndex {
         let mut builder = self::vamana::VamanaBuilder::new(num_vectors, dimension, config);
 
         let vamana_graph = builder.build(&vectors)?;
+        let graph_edges = vamana_graph.edges.clone();
         self.vamana_graph = Some(vamana_graph);
 
+        // Phase 2: Compute SSD-optimized node ordering
+        info!("Computing SSD-optimized layout...");
+        let layout_optimizer = SsdLayoutOptimizer::with_default_config();
+        let node_ordering = layout_optimizer.compute_node_ordering(&graph_edges)?;
+
+        // Log layout statistics
+        let stats = layout_optimizer.compute_layout_stats(&graph_edges, &node_ordering);
+        info!(
+            "Layout stats: {} nodes, {} landmarks, {:.2}% sequential access, {:.2}% est. cache hit rate",
+            stats.total_nodes,
+            stats.landmark_count,
+            stats.sequential_access_ratio * 100.0,
+            stats.estimated_cache_hit_rate * 100.0
+        );
+
+        self.node_ordering = Some(node_ordering);
         self.num_vectors = num_vectors;
 
         Ok(())
@@ -227,6 +250,64 @@ mod tests {
 
         let stats = index.stats();
         assert_eq!(stats.num_vectors, 100);
+        assert!(index.vamana_graph.is_some());
+        assert!(index.node_ordering.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_diskann_ssd_layout_integration() {
+        let mut index = DiskANNIndex::new("layout_test".to_string(), 64);
+
+        // Create a small graph with clear high-degree nodes
+        let vectors: Vec<Vec<f32>> = (0..20)
+            .map(|i| {
+                (0..64)
+                    .map(|j| ((i * 64 + j) % 10) as f32)
+                    .collect()
+            })
+            .collect();
+
+        let result = index.build(vectors).await;
+        assert!(result.is_ok());
+
+        // Verify node ordering was computed
+        assert!(index.node_ordering.is_some());
+
+        let ordering = index.node_ordering.as_ref().unwrap();
+        assert_eq!(ordering.old_to_new.len(), 20);
+        assert_eq!(ordering.new_to_old.len(), 20);
+
+        // Verify landmarks exist
+        assert!(!ordering.landmarks.is_empty());
+        // With 10% landmark ratio and 20 nodes, should have ~2 landmarks
+        assert!(ordering.landmarks.len() >= 1 && ordering.landmarks.len() <= 3);
+    }
+
+    #[test]
+    fn test_ssd_layout_optimizer_standalone() {
+        use crate::index::diskann::ssd_layout::SsdLayoutOptimizer;
+
+        // Create a simple graph
+        let graph = vec![
+            vec![1, 2, 3, 4], // Node 0: high degree (hub)
+            vec![0],
+            vec![0],
+            vec![0],
+            vec![0],
+        ];
+
+        let optimizer = SsdLayoutOptimizer::with_default_config();
+        let ordering = optimizer.compute_node_ordering(&graph).unwrap();
+
+        // Node 0 should be a landmark (highest degree)
+        assert!(ordering.is_landmark(0));
+
+        // Verify bidirectional mapping
+        for old_id in 0..5 {
+            let new_pos = ordering.get_new_position(old_id).unwrap();
+            let reverse_id = ordering.get_old_id(new_pos).unwrap();
+            assert_eq!(reverse_id, old_id);
+        }
     }
 
     #[tokio::test]
