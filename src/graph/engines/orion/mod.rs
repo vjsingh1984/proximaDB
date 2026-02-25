@@ -101,6 +101,7 @@
 //! ```
 
 pub mod algorithms;
+pub mod compaction;
 pub mod disk_storage;
 pub mod index;
 pub mod persistence;

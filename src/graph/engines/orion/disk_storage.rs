@@ -67,6 +67,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
+use super::compaction::{CompactionConfig, CompactionManager, CompactionStats};
+
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Helper to convert IO errors to StorageError
@@ -201,6 +203,9 @@ pub struct DiskCsrStorage {
 
     /// WAL enabled flag
     wal_enabled: bool,
+
+    /// Compaction manager (optional)
+    compaction_manager: Option<Arc<RwLock<CompactionManager>>>,
 }
 
 impl DiskCsrStorage {
@@ -229,6 +234,7 @@ impl DiskCsrStorage {
             dirty: false,
             wal_writer: None,
             wal_enabled: false,
+            compaction_manager: None,
         })
     }
 
@@ -524,6 +530,56 @@ impl DiskCsrStorage {
         wal_path.exists()
     }
 
+    /// Enable automatic background compaction
+    pub async fn enable_compaction(&mut self, config: CompactionConfig) -> Result<()> {
+        let mut manager = CompactionManager::new(self.config.storage_dir.clone(), config);
+
+        // Start background compaction task
+        manager.start().await?;
+
+        self.compaction_manager = Some(Arc::new(RwLock::new(manager)));
+        Ok(())
+    }
+
+    /// Run manual compaction cycle
+    pub async fn compact(&self) -> Result<CompactionStats> {
+        if let Some(manager) = &self.compaction_manager {
+            let manager = manager.read().await;
+            manager.compact().await
+        } else {
+            // No compaction manager, return empty stats
+            Ok(CompactionStats {
+                bytes_before: 0,
+                bytes_after: 0,
+                space_saved: 0,
+                nodes_compacted: 0,
+                edges_compacted: 0,
+                duration_ms: 0,
+                fragmentation_before: 0.0,
+                fragmentation_after: 0.0,
+            })
+        }
+    }
+
+    /// Stop background compaction
+    pub async fn stop_compaction(&mut self) -> Result<()> {
+        if let Some(manager) = &self.compaction_manager {
+            let mut manager = manager.write().await;
+            manager.stop().await?;
+        }
+        Ok(())
+    }
+
+    /// Get compaction statistics
+    pub async fn compaction_stats(&self) -> Option<CompactionStats> {
+        if let Some(manager) = &self.compaction_manager {
+            let manager = manager.read().await;
+            Some(manager.stats())
+        } else {
+            None
+        }
+    }
+
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
         self.node_count
@@ -668,5 +724,51 @@ mod tests {
 
         // WAL not enabled, should not need recovery
         assert!(!storage.needs_recovery().await);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_enable() {
+        let config = DiskCsrConfig {
+            storage_dir: PathBuf::from("/tmp/test_graph_compaction"),
+            ..Default::default()
+        };
+        let mut storage = DiskCsrStorage::new(config).await.unwrap();
+        storage.initialize_graph(100).await.unwrap();
+
+        let compaction_config = crate::graph::engines::orion::compaction::CompactionConfig::default();
+        storage.enable_compaction(compaction_config).await.unwrap();
+
+        let stats = storage.compaction_stats().await;
+        assert!(stats.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_manual_compaction() {
+        let config = DiskCsrConfig {
+            storage_dir: PathBuf::from("/tmp/test_manual_compaction_storage"),
+            ..Default::default()
+        };
+        let mut storage = DiskCsrStorage::new(config).await.unwrap();
+        storage.initialize_graph(100).await.unwrap();
+
+        // Run manual compaction (without compaction manager enabled)
+        let stats = storage.compact().await.unwrap();
+        assert_eq!(stats.space_saved, 0); // Placeholder implementation
+    }
+
+    #[tokio::test]
+    async fn test_compaction_stop() {
+        let config = DiskCsrConfig {
+            storage_dir: PathBuf::from("/tmp/test_compaction_stop"),
+            ..Default::default()
+        };
+        let mut storage = DiskCsrStorage::new(config).await.unwrap();
+
+        let compaction_config = crate::graph::engines::orion::compaction::CompactionConfig::default();
+        storage.enable_compaction(compaction_config).await.unwrap();
+        storage.stop_compaction().await.unwrap();
+
+        let stats = storage.compaction_stats().await;
+        assert!(stats.is_some());
     }
 }
