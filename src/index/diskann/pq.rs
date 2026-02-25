@@ -382,7 +382,7 @@ impl PQEncoder {
 
             // Choose weighted by distance squared
             let total: f32 = distances.iter().sum();
-            let mut rand_val = rng.gen::<f32>();
+            let mut rand_val = rng.gen_range(0.0..1.0);
             let mut cumulative = 0.0;
 
             for (idx, &dist) in distances.iter().enumerate() {

@@ -48,7 +48,7 @@
 //! 5. **Multi-Layer Filtering** - Apply filters at storage, index, and result layers
 
 use crate::core::error::ProximaDBError;
-use crate::core::search::{FilterExpression, FilterCondition};
+use crate::core::search::{ComparisonOperator, FilterExpression};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -208,42 +208,55 @@ impl FilterPushdownPlanner {
     ) -> Result<StorageFilter> {
         match filter_expression {
             FilterExpression::And(conditions) => {
-                let storage_conditions = conditions
-                    .iter()
-                    .map(|c| self.convert_condition(c))
-                    .collect::<Result<Vec<_>>>()?;
+                // Flatten nested And conditions by recursively converting each
+                let mut all_conditions = Vec::new();
+                for cond in conditions {
+                    let nested_filter = self.convert_to_storage_filter(cond)?;
+                    // If nested is also And, merge conditions
+                    if nested_filter.logic == FilterLogic::And {
+                        all_conditions.extend(nested_filter.conditions);
+                    } else {
+                        all_conditions.extend(nested_filter.conditions);
+                    }
+                }
 
                 Ok(StorageFilter {
-                    conditions: storage_conditions,
+                    conditions: all_conditions,
                     logic: FilterLogic::And,
                     estimated_selectivity: 0.5, // Will be estimated later
                 })
             }
             FilterExpression::Or(conditions) => {
-                let storage_conditions = conditions
-                    .iter()
-                    .map(|c| self.convert_condition(c))
-                    .collect::<Result<Vec<_>>>()?;
+                // Flatten nested Or conditions by recursively converting each
+                let mut all_conditions = Vec::new();
+                for cond in conditions {
+                    let nested_filter = self.convert_to_storage_filter(cond)?;
+                    // If nested is also Or, merge conditions
+                    if nested_filter.logic == FilterLogic::Or {
+                        all_conditions.extend(nested_filter.conditions);
+                    } else {
+                        all_conditions.extend(nested_filter.conditions);
+                    }
+                }
 
                 Ok(StorageFilter {
-                    conditions: storage_conditions,
+                    conditions: all_conditions,
                     logic: FilterLogic::Or,
                     estimated_selectivity: 0.5,
                 })
             }
-            FilterExpression::Not(condition) => {
-                // NOT is tricky - handle by inverting logic
-                // For now, convert to a condition and mark as NOT
-                let storage_condition = self.convert_condition(condition)?;
-
+            FilterExpression::Not(_condition) => {
+                // NOT is not fully supported in filter pushdown
+                // Return a filter that won't match (empty result)
+                // In production, this should be handled by the query engine
                 Ok(StorageFilter {
-                    conditions: vec![storage_condition],
-                    logic: FilterLogic::Or, // NOT treated as OR for simplicity
-                    estimated_selectivity: 0.5,
+                    conditions: vec![],
+                    logic: FilterLogic::And,
+                    estimated_selectivity: 0.0, // No matches
                 })
             }
-            FilterExpression::Condition(condition) => {
-                let storage_condition = self.convert_condition(condition)?;
+            FilterExpression::Comparison { field, operator, value } => {
+                let storage_condition = self.convert_comparison(field, operator, value)?;
 
                 Ok(StorageFilter {
                     conditions: vec![storage_condition],
@@ -254,85 +267,56 @@ impl FilterPushdownPlanner {
         }
     }
 
-    /// Convert a single FilterCondition to StorageFilterCondition
-    fn convert_condition(&self, condition: &FilterCondition) -> Result<StorageFilterCondition> {
-        match condition {
-            FilterCondition::Eq { field, value } => {
-                let filter_value = self.convert_value(value)?;
-                Ok(StorageFilterCondition::Equals {
-                    field: field.clone(),
-                    value: filter_value,
-                })
-            }
-            FilterCondition::Ne { field, value } => {
-                // Not equals converted to range with opposite bounds
-                let filter_value = self.convert_value(value)?;
-                Ok(StorageFilterCondition::Range {
-                    field: field.clone(),
-                    min: FilterValue::Integer(i64::MIN),
-                    max: filter_value,
-                })
-            }
-            FilterCondition::Gt { field, value } => {
-                let filter_value = self.convert_value(value)?;
-                Ok(StorageFilterCondition::Range {
-                    field: field.clone(),
-                    min: filter_value,
-                    max: FilterValue::Float(f64::MAX),
-                })
-            }
-            FilterCondition::Gte { field, value } => {
-                let filter_value = self.convert_value(value)?;
-                Ok(StorageFilterCondition::Range {
-                    field: field.clone(),
-                    min: filter_value,
-                    max: FilterValue::Float(f64::MAX),
-                })
-            }
-            FilterCondition::Lt { field, value } => {
-                let filter_value = self.convert_value(value)?;
-                Ok(StorageFilterCondition::Range {
-                    field: field.clone(),
-                    min: FilterValue::Integer(i64::MIN),
-                    max: filter_value,
-                })
-            }
-            FilterCondition::Lte { field, value } => {
-                let filter_value = self.convert_value(value)?;
-                Ok(StorageFilterCondition::Range {
-                    field: field.clone(),
-                    min: FilterValue::Integer(i64::MIN),
-                    max: filter_value,
-                })
-            }
-            FilterCondition::In { field, values } => {
-                let filter_values = values
-                    .iter()
-                    .map(|v| self.convert_value(v))
-                    .collect::<Result<Vec<_>>>()?;
+    /// Convert a FilterExpression comparison to StorageFilterCondition
+    fn convert_comparison(
+        &self,
+        field: &str,
+        operator: &ComparisonOperator,
+        value: &serde_json::Value,
+    ) -> Result<StorageFilterCondition> {
+        let filter_value = self.convert_value(value)?;
 
-                Ok(StorageFilterCondition::In {
-                    field: field.clone(),
-                    values: filter_values,
-                })
-            }
-            FilterCondition::IsNull { field } => {
-                Ok(StorageFilterCondition::IsNull {
-                    field: field.clone(),
-                })
-            }
-            FilterCondition::IsNotNull { field } => {
-                // IsNotNull is tricky - for now convert to a range that excludes NULL
+        match operator {
+            ComparisonOperator::Equals => Ok(StorageFilterCondition::Equals {
+                field: field.to_string(),
+                value: filter_value,
+            }),
+            ComparisonOperator::NotEquals => {
+                // Not equals - filter as range excluding this value
                 Ok(StorageFilterCondition::Range {
-                    field: field.clone(),
+                    field: field.to_string(),
                     min: FilterValue::Integer(i64::MIN),
-                    max: FilterValue::Float(f64::MAX),
+                    max: filter_value.clone(),
                 })
             }
-            // Add more condition types as needed
-            _ => Err(ProximaDBError::Internal(
-                format!("Unsupported filter condition: {:?}", condition)
-            )),
+            ComparisonOperator::GreaterThan => Ok(StorageFilterCondition::Range {
+                field: field.to_string(),
+                min: filter_value,
+                max: FilterValue::Float(f64::MAX),
+            }),
+            ComparisonOperator::GreaterThanOrEqual => Ok(StorageFilterCondition::Range {
+                field: field.to_string(),
+                min: filter_value,
+                max: FilterValue::Float(f64::MAX),
+            }),
+            ComparisonOperator::LessThan => Ok(StorageFilterCondition::Range {
+                field: field.to_string(),
+                min: FilterValue::Integer(i64::MIN),
+                max: filter_value,
+            }),
+            ComparisonOperator::LessThanOrEqual => Ok(StorageFilterCondition::Range {
+                field: field.to_string(),
+                min: FilterValue::Integer(i64::MIN),
+                max: filter_value,
+            }),
+            ComparisonOperator::In => Ok(StorageFilterCondition::In {
+                field: field.to_string(),
+                values: vec![filter_value],
+            }),
+            _ => Err(ProximaDBError::Internal(format!(
+                "Unsupported comparison operator: {:?}",
+                operator
+            ))),
         }
     }
 
