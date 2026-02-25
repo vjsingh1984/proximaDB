@@ -59,11 +59,13 @@
 //! - Document search for massive corpora
 //! - Embedding search for billion-item catalogs
 
+pub mod pq;
 pub mod search;
 pub mod ssd_layout;
 pub mod vamana;
 
 use crate::core::error::ProximaDBError;
+use crate::index::diskann::pq::{PQEncoder, PQConfig};
 use crate::index::diskann::search::{DiskANNSearch, SearchConfig, SearchResult, SearchStats};
 use crate::index::diskann::ssd_layout::{NodeOrdering, SsdLayoutOptimizer};
 use crate::index::diskann::vamana::{VamanaConfig, VamanaGraph};
@@ -92,20 +94,7 @@ pub struct DiskANNIndex {
     vectors: Option<Vec<Vec<f32>>>,
 
     /// PQ compressed vectors (if built)
-    pq_vectors: Option<PQVectors>,
-}
-
-/// Product Quantization compressed vectors
-#[derive(Debug, Clone)]
-pub struct PQVectors {
-    /// Number of codebooks (sub-vectors)
-    pub num_codebooks: usize,
-
-    /// Codebooks (centroid vectors)
-    pub codebooks: Vec<Vec<f32>>,
-
-    /// Compressed vectors (codes)
-    pub codes: Vec<Vec<u8>>,
+    pq_vectors: Option<pq::PQVectors>,
 }
 
 impl DiskANNIndex {
@@ -169,8 +158,30 @@ impl DiskANNIndex {
         );
 
         self.node_ordering = Some(node_ordering);
-        self.vectors = Some(vectors);
+        self.vectors = Some(vectors.clone());
         self.num_vectors = num_vectors;
+
+        // Phase 4: Product Quantization compression (optional)
+        info!("Training PQ codebooks for compression...");
+        let pq_config = PQConfig {
+            num_subvectors: 4,      // Smaller for faster testing
+            num_centroids: 16,      // Smaller for faster testing
+            max_iterations: 5,      // Fewer iterations
+            convergence_threshold: 0.01,
+        };
+        let pq_encoder = PQEncoder::new(pq_config);
+        let pq_vectors = pq_encoder.train_codebooks(&vectors)
+            .and_then(|codebooks| pq_encoder.encode(&vectors, &codebooks))?;
+
+        let compression_ratio = pq_vectors.compression_ratio(dimension);
+        info!(
+            "PQ compression: {:.1}x compression ratio ({} bytes → {} bytes per vector)",
+            compression_ratio,
+            dimension * std::mem::size_of::<f32>(),
+            pq_vectors.codes[0].len() * std::mem::size_of::<u8>()
+        );
+
+        self.pq_vectors = Some(pq_vectors);
 
         Ok(())
     }
@@ -390,5 +401,32 @@ mod tests {
 
         let result = index.search(&query, 10).await;
         assert!(result.is_err()); // Should fail - index not built
+    }
+
+    #[tokio::test]
+    async fn test_diskann_pq_integration() {
+        let mut index = DiskANNIndex::new("pq_test".to_string(), 64);
+
+        let vectors: Vec<Vec<f32>> = (0..30)
+            .map(|i| {
+                (0..64)
+                    .map(|j| ((i * 64 + j) % 20) as f32)
+                    .collect()
+            })
+            .collect();
+
+        let result = index.build(vectors).await;
+        assert!(result.is_ok());
+
+        // Verify PQ vectors were created
+        assert!(index.pq_vectors.is_some());
+
+        let pq_vectors = index.pq_vectors.as_ref().unwrap();
+        assert_eq!(pq_vectors.codes.len(), 30);
+        assert!(pq_vectors.codes[0].len() > 0);
+
+        // Check compression ratio
+        let ratio = pq_vectors.compression_ratio(64);
+        assert!(ratio > 30.0); // Should have >30x compression
     }
 }
