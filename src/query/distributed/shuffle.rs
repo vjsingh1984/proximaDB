@@ -569,7 +569,7 @@ mod tests {
         // All blocks should target one of the nodes
         for block in &blocks {
             assert!(
-                vec!["node1", "node2", "node3"].contains(&block.target_node)
+                vec!["node1", "node2", "node3"].contains(&block.target_node.as_str())
             );
         }
     }

@@ -179,7 +179,8 @@ impl FilterPushdownPlanner {
         let selectivity = self.estimate_selectivity(&storage_filter, collection_stats);
 
         // Determine if filter should be pushed down
-        let should_pushdown = selectivity < self.config.min_selectivity_threshold;
+        // Push down if selectivity is at or below threshold (filters that reduce data)
+        let should_pushdown = selectivity <= self.config.min_selectivity_threshold;
 
         if !should_pushdown {
             debug!("Filter selectivity ({:.2}) above threshold ({:.2}), skipping pushdown",
@@ -570,7 +571,8 @@ mod tests {
         };
         let planner = FilterPushdownPlanner::new(config);
 
-        // Create filter with estimated selectivity > 0.1
+        // Create OR filter with estimated selectivity > 0.1
+        // OR filters have higher selectivity (0.3 * num_conditions = 0.6 for 2 conditions)
         let filter = FilterExpression::Or(vec![
             FilterExpression::Comparison {
                 field: "category".to_string(),
@@ -585,7 +587,7 @@ mod tests {
         ]);
 
         let plan = planner.plan_pushdown(&filter, None).unwrap();
-        // OR filter has higher selectivity, should be pushed down with default threshold
-        assert!(plan.should_pushdown);
+        // OR filter has high selectivity (0.6) which is above threshold (0.1), so should NOT push down
+        assert!(!plan.should_pushdown);
     }
 }
