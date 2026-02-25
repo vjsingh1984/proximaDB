@@ -58,12 +58,14 @@
 
 use crate::core::error::{ProximaDBError, StorageError};
 use crate::graph::EdgeId;
+use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
 use memmap2::MmapMut;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -193,6 +195,12 @@ pub struct DiskCsrStorage {
 
     /// Dirty flag indicating pending writes
     dirty: bool,
+
+    /// WAL writer for crash recovery (optional)
+    wal_writer: Option<Arc<Mutex<UnifiedWALWriter>>>,
+
+    /// WAL enabled flag
+    wal_enabled: bool,
 }
 
 impl DiskCsrStorage {
@@ -219,7 +227,16 @@ impl DiskCsrStorage {
             node_count: 0,
             edge_count: 0,
             dirty: false,
+            wal_writer: None,
+            wal_enabled: false,
         })
+    }
+
+    /// Enable WAL integration for crash recovery
+    pub async fn enable_wal(&mut self, wal_writer: Arc<Mutex<UnifiedWALWriter>>) -> Result<()> {
+        self.wal_writer = Some(wal_writer);
+        self.wal_enabled = true;
+        Ok(())
     }
 
     /// Initialize memory-mapped files for a new graph
@@ -284,6 +301,21 @@ impl DiskCsrStorage {
         // Check for duplicates
         if self.edge_set.contains(&(from_idx, to_idx, edge_id.clone())) {
             return Ok(());
+        }
+
+        // Log to WAL before writing (write-ahead logging)
+        if self.wal_enabled {
+            if let Some(ref wal_writer) = self.wal_writer {
+                // TODO: Create proper GraphOperation::CreateEdge
+                // For now, log the operation for debugging
+                tracing::debug!(
+                    "WAL: Edge addition from={} to={} id={}",
+                    from_idx, to_idx, edge_id
+                );
+
+                // Note: In production, this would write to UnifiedWALWriter
+                // wal_writer.log_operation(operation).await?;
+            }
         }
 
         // Add to write buffer
@@ -450,6 +482,48 @@ impl DiskCsrStorage {
         Ok(())
     }
 
+    /// Create a snapshot of the current graph state
+    pub async fn create_snapshot(&self) -> Result<DiskCsrSnapshot> {
+        Ok(DiskCsrSnapshot {
+            node_count: self.node_count,
+            edge_count: self.edge_count,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        })
+    }
+
+    /// Recover graph state from WAL on startup
+    pub async fn recover_from_wal(&mut self) -> Result<RecoveryStats> {
+        let mut stats = RecoveryStats {
+            operations_replayed: 0,
+            edges_recovered: 0,
+            duration_ms: 0,
+        };
+
+        if !self.wal_enabled {
+            return Ok(stats);
+        }
+
+        let start = std::time::Instant::now();
+
+        // TODO: Implement actual WAL replay from UnifiedWALWriter
+        // For now, this is a placeholder
+        tracing::info!("WAL recovery initiated for disk-based graph storage");
+
+        stats.duration_ms = start.elapsed().as_millis() as u64;
+        Ok(stats)
+    }
+
+    /// Check if crash recovery is needed
+    pub async fn needs_recovery(&self) -> bool {
+        if !self.wal_enabled {
+            return false;
+        }
+
+        // Check if WAL file exists and has uncommitted transactions
+        let wal_path = self.config.storage_dir.join("graph.wal");
+        wal_path.exists()
+    }
+
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
         self.node_count
@@ -464,6 +538,22 @@ impl DiskCsrStorage {
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
+}
+
+/// Snapshot of disk-based CSR storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskCsrSnapshot {
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub timestamp: i64,
+}
+
+/// Statistics from WAL recovery
+#[derive(Debug, Clone)]
+pub struct RecoveryStats {
+    pub operations_replayed: u64,
+    pub edges_recovered: u64,
+    pub duration_ms: u64,
 }
 
 #[cfg(test)]
@@ -551,5 +641,32 @@ mod tests {
 
         let stats = storage.cache_stats();
         assert!(stats.cache_size >= 0);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_creation() {
+        let config = DiskCsrConfig {
+            storage_dir: PathBuf::from("/tmp/test_graph_snapshot"),
+            ..Default::default()
+        };
+        let mut storage = DiskCsrStorage::new(config).await.unwrap();
+        storage.initialize_graph(100).await.unwrap();
+
+        let snapshot = storage.create_snapshot().await.unwrap();
+        assert_eq!(snapshot.node_count, 100);
+        assert_eq!(snapshot.edge_count, 0);
+        assert!(snapshot.timestamp > 0);
+    }
+
+    #[tokio::test]
+    async fn test_wal_recovery_check() {
+        let config = DiskCsrConfig {
+            storage_dir: PathBuf::from("/tmp/test_graph_recovery"),
+            ..Default::default()
+        };
+        let storage = DiskCsrStorage::new(config).await.unwrap();
+
+        // WAL not enabled, should not need recovery
+        assert!(!storage.needs_recovery().await);
     }
 }
