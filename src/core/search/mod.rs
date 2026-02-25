@@ -2,6 +2,7 @@
 
 pub mod bounded_queue;
 pub mod engine_benchmarks;
+pub mod filter_pushdown_engine;
 pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
