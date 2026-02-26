@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_file_encryption_round_trip() {
-        std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!");
+        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
 
         let key_manager = std::sync::Arc::new(
             KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_large_file_chunking() {
-        std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!");
+        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
 
         let key_manager = std::sync::Arc::new(
             KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_file_encryption_disabled() {
-        std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!");
+        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
 
         let key_manager = std::sync::Arc::new(
             KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
