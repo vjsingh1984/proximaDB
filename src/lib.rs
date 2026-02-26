@@ -194,6 +194,10 @@ pub mod cdc;
 /// Provides atomicity, consistency, isolation, and durability across vector, document, graph, and time-series models
 pub mod transaction;
 
+/// Database operations for backup, restore, and maintenance
+/// Provides incremental snapshots, WAL checkpointing, and disaster recovery
+pub mod operations;
+
 pub mod version;
 
 /// Embedded mode for in-process database usage without network layer
