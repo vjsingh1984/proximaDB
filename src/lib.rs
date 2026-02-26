@@ -198,6 +198,10 @@ pub mod transaction;
 /// Provides incremental snapshots, WAL checkpointing, and disaster recovery
 pub mod operations;
 
+/// Benchmark suite for performance validation
+/// Provides ANN-benchmarks integration and competitor comparisons
+pub mod bench;
+
 pub mod version;
 
 /// Embedded mode for in-process database usage without network layer

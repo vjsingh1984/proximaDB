@@ -26,6 +26,14 @@ name = "proximadb-bench"
 path = "src/bin/proximadb-bench-consolidated.rs"
 
 [[bin]]
+name = "ann-benchmarks"
+path = "src/bin/ann-benchmarks.rs"
+
+[[bin]]
+name = "vectordb_comparison"
+path = "src/bin/vectordb_comparison.rs"
+
+[[bin]]
 name = "proximadb-migrate"
 path = "src/bin/proximadb-migrate.rs"
 
