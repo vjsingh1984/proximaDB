@@ -86,11 +86,11 @@
 //! ## Implementation Status
 //!
 //! - [x] Core engine structure
-//! - [ ] Time partitioning
-//! - [ ] OHLC aggregation
-//! - [ ] Downsampling
-//! - [ ] ASOF joins
-//! - [ ] Compression
+//! - [x] Time partitioning (partition.rs)
+//! - [x] OHLC aggregation (ohlc.rs)
+//! - [x] Downsampling (downsample.rs) - 6 aggregation types
+//! - [x] ASOF joins (asof_join.rs)
+//! - [x] Compression (compression.rs) - Gorilla-inspired delta compression
 //! - [ ] Query optimization
 //! - [ ] WAL integration
 //! - [ ] Integration tests
