@@ -148,6 +148,10 @@ rand_distr = "0.4"  # For generating realistic probability distributions
 # Cryptographic hashing
 sha2 = "0.10"
 
+# Encryption at rest (AES-256-GCM)
+aes-gcm = "0.10"  # AES-256-GCM authenticated encryption
+hkdf = "0.12"      # HMAC-based key derivation
+
 # TLS/mTLS certificate management
 rcgen = "0.12"                   # Certificate generation
 x509-parser = "0.16"             # Certificate parsing and validation

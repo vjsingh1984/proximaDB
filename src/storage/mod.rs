@@ -203,6 +203,9 @@ pub mod engines;
 // Data persistence layer (organized)
 pub mod persistence;
 
+// Encryption at rest for data security
+pub mod encryption;
+
 // Unified atomic operations
 pub mod transaction_coordinator;
 
