@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process;
 
 use anyhow::Result;
-use proximadb::bench::{ANNBenchmarksConfig, ANNBenchmarksRunner, BuildParams, SearchParams};
+use proximadb::bench::{ANNBenchConfig, ANNBenchmarksRunner, BuildParams, SearchParams};
 
 fn main() -> Result<()> {
     let args = parse_args();
@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     println!("Runs: {}", args.runs);
     println!();
 
-    let config = ANNBenchmarkConfig {
+    let config = ANNBenchConfig {
         dataset: args.dataset.clone(),
         algorithm: args.algorithm.clone(),
         dataset_path: args.dataset_path,
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     let runner = ANNBenchmarksRunner::new(config);
 
     println!("Building index...");
-    let results = runner.run()?;
+    let results = runner.run().map_err(|e| anyhow::anyhow!("{}", e))?;
 
     println!("\n=== Benchmark Results ===");
     println!("Index build time: {:.2}s", results.build_time_secs);
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
     std::fs::write(&csv_path, csv)?;
     println!("\nResults exported to: {}", csv_path);
 
-    let json = runner.export_json(&results)?;
+    let json = runner.export_json(&results).map_err(|e| anyhow::anyhow!("{}", e))?;
     let json_path = format!("results_{}_{}.json", args.dataset, args.algorithm);
     std::fs::write(&json_path, json)?;
     println!("Results exported to: {}", json_path);
