@@ -1385,7 +1385,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Unified Multi-Model Query API endpoints
     // Routes all queries through QueryFacadeAdapter for consistent execution
-    let unified_query_router = {
+    let unified_query_router_opt = {
         use crate::network::rest::v1::unified_query::{self, UnifiedQueryApiState};
         use crate::storage::document::DocumentService;
 
@@ -1412,17 +1412,24 @@ pub fn create_router(state: AppState) -> axum::Router {
         });
 
         // Get the query adapter from state (required for unified query execution)
-        let query_adapter = state.query_adapter.clone().expect(
-            "QueryFacadeAdapter must be configured in AppState for unified query endpoints",
-        );
+        let query_adapter_opt = state.query_adapter.clone();
 
         // Use new_with_adapter to route all queries through QueryFacadeAdapter
-        let unified_state =
-            UnifiedQueryApiState::new_with_adapter(query_adapter, document_service, engine);
-        unified_query::create_router().with_state(unified_state)
+        query_adapter_opt.map(|adapter| {
+            let unified_state =
+                UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine);
+            unified_query::create_router().with_state(unified_state)
+        })
     };
-    router = router.nest("/api/v1/unified", unified_query_router);
-    info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
+
+    if let Some(unified_query_router) = unified_query_router_opt {
+        router = router.nest("/api/v1/unified", unified_query_router);
+        info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
+    } else {
+        tracing::warn!(
+            "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
+        );
+    }
 
     // Hybrid Search API endpoints
     let hybrid_router = {

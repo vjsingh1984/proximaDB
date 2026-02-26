@@ -982,30 +982,36 @@ fn extract_value_from_array(array: &dyn arrow::array::Array, row_idx: usize) -> 
     }
 
     match array.data_type() {
-        DataType::Utf8 => {
-            let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
-            serde_json::Value::String(arr.value(row_idx).to_string())
-        }
-        DataType::Float32 => {
-            let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Float64 => {
-            let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Int32 => {
-            let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Int64 => {
-            let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Boolean => {
-            let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
+        DataType::Utf8 => array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .map(|arr| serde_json::Value::String(arr.value(row_idx).to_string()))
+            .unwrap_or_else(|| serde_json::Value::String("<invalid UTF8 array>".to_string())),
+        DataType::Float32 => array
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .map(|arr| serde_json::json!(arr.value(row_idx)))
+            .unwrap_or_else(|| serde_json::Value::String("<invalid Float32 array>".to_string())),
+        DataType::Float64 => array
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .map(|arr| serde_json::json!(arr.value(row_idx)))
+            .unwrap_or_else(|| serde_json::Value::String("<invalid Float64 array>".to_string())),
+        DataType::Int32 => array
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .map(|arr| serde_json::json!(arr.value(row_idx)))
+            .unwrap_or_else(|| serde_json::Value::String("<invalid Int32 array>".to_string())),
+        DataType::Int64 => array
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .map(|arr| serde_json::json!(arr.value(row_idx)))
+            .unwrap_or_else(|| serde_json::Value::String("<invalid Int64 array>".to_string())),
+        DataType::Boolean => array
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .map(|arr| serde_json::json!(arr.value(row_idx)))
+            .unwrap_or_else(|| serde_json::Value::String("<invalid Boolean array>".to_string())),
         _ => serde_json::Value::String(format!("<unsupported type: {:?}>", array.data_type())),
     }
 }

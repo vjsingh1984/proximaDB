@@ -1366,13 +1366,9 @@ impl UnifiedStorageEngine for HelixEngine {
                     .map(|(_, record)| record.clone())
                     .collect();
                 let keys_vec: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
-                let range = if !indexed_records.is_empty() {
-                    Some((
-                        indexed_records.first().unwrap().0,
-                        indexed_records.last().unwrap().0,
-                    ))
-                } else {
-                    None
+                let range = match (indexed_records.first(), indexed_records.last()) {
+                    (Some(first), Some(last)) => Some((first.0, last.0)),
+                    _ => None,
                 };
                 (sorted, Some(keys_vec), range)
             } else {
@@ -1675,7 +1671,14 @@ impl UnifiedStorageEngine for HelixEngine {
         // Get PCA model (load from disk if not in memory)
         let pca_model = {
             let model_guard = self.pca_model.read().await;
-            if model_guard.is_none() {
+            let model_opt = model_guard.as_ref();
+            if let Some(model) = model_opt {
+                debug!(
+                    "[HELIX] Using cached PCA model from memory: version={}",
+                    model.version
+                );
+                model_guard.clone()
+            } else {
                 drop(model_guard); // Release read lock before attempting load
 
                 // Try to load persisted model for this collection
@@ -1693,12 +1696,6 @@ impl UnifiedStorageEngine for HelixEngine {
                     );
                     None
                 }
-            } else {
-                debug!(
-                    "[HELIX] Using cached PCA model from memory: version={}",
-                    model_guard.as_ref().unwrap().version
-                );
-                model_guard.clone()
             }
         };
 

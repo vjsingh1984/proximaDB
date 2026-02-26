@@ -91,6 +91,17 @@ use crate::streaming::{
     BackpressureLevel, SessionConfig, StreamConfig, StreamCoordinator, StreamId,
 };
 
+/// Safely serialize a message to JSON, logging errors without panicking
+fn safe_serialize<T: Serialize>(msg: &T) -> Option<String> {
+    match serde_json::to_string(msg) {
+        Ok(json) => Some(json),
+        Err(e) => {
+            error!(error = %e, "Failed to serialize message to JSON");
+            None
+        }
+    }
+}
+
 /// Convert JSON value to SqlValue
 fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
     match v {
@@ -330,9 +341,9 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                 code: "SESSION_CREATE_FAILED".to_string(),
                 message: e.to_string(),
             });
-            let _ = sender
-                .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                .await;
+            if let Some(json) = safe_serialize(&error_msg) {
+                let _ = sender.send(Message::Text(json)).await;
+            }
             return;
         }
     };
@@ -347,8 +358,17 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
             .unwrap_or(10000),
         expires_in_seconds: state.coordinator.config().session_timeout.as_secs() as u32,
     });
+    let session_created_json = match safe_serialize(&created_msg) {
+        Some(json) => json,
+        None => {
+            error!("Failed to serialize SessionCreated message");
+            state.coordinator.close_session(&session_id);
+            return;
+        }
+    };
+
     if sender
-        .send(Message::Text(serde_json::to_string(&created_msg).unwrap()))
+        .send(Message::Text(session_created_json))
         .await
         .is_err()
     {
@@ -404,11 +424,12 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                     vectors_dropped: result.dropped as u32,
                                 });
 
-                                if sender
-                                    .send(Message::Text(serde_json::to_string(&ack).unwrap()))
-                                    .await
-                                    .is_err()
-                                {
+                                if let Some(ack_json) = safe_serialize(&ack) {
+                                    if sender.send(Message::Text(ack_json)).await.is_err() {
+                                        break;
+                                    }
+                                } else {
+                                    error!("Failed to serialize Ack message");
                                     break;
                                 }
                             }
@@ -418,17 +439,17 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                     code: "PUSH_FAILED".to_string(),
                                     message: e.to_string(),
                                 });
-                                let _ = sender
-                                    .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                                    .await;
+                                if let Some(error_json) = safe_serialize(&error_msg) {
+                                    let _ = sender.send(Message::Text(error_json)).await;
+                                }
                             }
                         }
                     }
                     Ok(ClientMessage::Ping) => {
                         let pong = ServerMessage::Pong;
-                        let _ = sender
-                            .send(Message::Text(serde_json::to_string(&pong).unwrap()))
-                            .await;
+                        if let Some(pong_json) = safe_serialize(&pong) {
+                            let _ = sender.send(Message::Text(pong_json)).await;
+                        }
                     }
                     Ok(ClientMessage::Close) => {
                         debug!(session_id = %session_id, "Client requested close");
@@ -439,9 +460,9 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                             code: "INVALID_MESSAGE".to_string(),
                             message: "Expected insert or close message".to_string(),
                         });
-                        let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                            .await;
+                        if let Some(error_json) = safe_serialize(&error_msg) {
+                            let _ = sender.send(Message::Text(error_json)).await;
+                        }
                     }
                     Err(e) => {
                         warn!(session_id = %session_id, error = %e, "Invalid message format");
@@ -449,9 +470,9 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                             code: "PARSE_ERROR".to_string(),
                             message: e.to_string(),
                         });
-                        let _ = sender
-                            .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                            .await;
+                        if let Some(error_json) = safe_serialize(&error_msg) {
+                            let _ = sender.send(Message::Text(error_json)).await;
+                        }
                     }
                 }
             }
@@ -503,18 +524,18 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
                         code: "EXPECTED_SUBSCRIBE".to_string(),
                         message: "First message must be a subscribe message".to_string(),
                     });
-                    let _ = sender
-                        .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                        .await;
+                    if let Some(error_json) = safe_serialize(&error_msg) {
+                        let _ = sender.send(Message::Text(error_json)).await;
+                    }
                 }
                 Err(e) => {
                     let error_msg = ServerMessage::Error(ErrorMessage {
                         code: "PARSE_ERROR".to_string(),
                         message: e.to_string(),
                     });
-                    let _ = sender
-                        .send(Message::Text(serde_json::to_string(&error_msg).unwrap()))
-                        .await;
+                    if let Some(error_json) = safe_serialize(&error_msg) {
+                        let _ = sender.send(Message::Text(error_json)).await;
+                    }
                 }
             },
             Some(Ok(Message::Close(_))) | None => return,
@@ -540,8 +561,16 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
                 .unwrap_or(0),
             total_count: 0,
         });
+        let initial_json = match safe_serialize(&initial) {
+            Some(json) => json,
+            None => {
+                error!("Failed to serialize initial Update message");
+                return;
+            }
+        };
+
         if sender
-            .send(Message::Text(serde_json::to_string(&initial).unwrap()))
+            .send(Message::Text(initial_json))
             .await
             .is_err()
         {
@@ -562,11 +591,12 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
                         .map(|d| d.as_nanos() as u64)
                         .unwrap_or(0),
                 });
-                if sender
-                    .send(Message::Text(serde_json::to_string(&heartbeat).unwrap()))
-                    .await
-                    .is_err()
-                {
+                if let Some(heartbeat_json) = safe_serialize(&heartbeat) {
+                    if sender.send(Message::Text(heartbeat_json)).await.is_err() {
+                        break;
+                    }
+                } else {
+                    error!("Failed to serialize Heartbeat message");
                     break;
                 }
             }

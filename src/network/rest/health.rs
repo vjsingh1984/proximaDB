@@ -134,13 +134,11 @@ pub async fn health_check(
     let timeout = Duration::from_millis(params.timeout_ms.unwrap_or(5000));
 
     let detailed = params.detailed.unwrap_or(false);
-    let mut components = if detailed { Some(HashMap::new()) } else { None };
+    let mut components_opt = if detailed { Some(HashMap::new()) } else { None };
     let mut overall_status = HealthStatus::Healthy;
 
     // Check individual components if detailed status requested
-    if detailed {
-        let components_map = components.as_mut().unwrap();
-
+    if let Some(components_map) = components_opt.as_mut() {
         // Check storage engine health
         if params.component.is_none() || params.component.as_deref() == Some("storage") {
             let storage_health = check_storage_health(&state, timeout).await;
@@ -218,7 +216,7 @@ pub async fn health_check(
             .as_secs(),
         uptime_seconds: state.uptime_seconds(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        components,
+        components: components_opt,
         metrics,
     };
 
