@@ -308,7 +308,7 @@ impl OtlpAdapter {
     }
 
     /// Convert OTLP span to ProximaDB TraceData
-    fn convert_otlp_span(
+    pub fn convert_otlp_span(
         &self,
         otlp_span: &OtlpSpan,
         resource_attributes: &HashMap<String, String>,
