@@ -161,6 +161,17 @@ impl TimePartition {
         Ok(self.records.values().cloned().collect())
     }
 
+    /// Get all OHLC bars in this partition
+    pub async fn all_ohlc_bars(&self) -> Result<Vec<OHLCBar>> {
+        let mut all_bars = Vec::new();
+        for symbol_bars in self.ohlc_bars.values() {
+            for bar in symbol_bars.values() {
+                all_bars.push(bar.clone());
+            }
+        }
+        Ok(all_bars)
+    }
+
     /// Flush this partition to disk
     pub async fn flush_to_disk(&self, path: &PathBuf) -> Result<()> {
         // TODO: Implement Arrow file write
