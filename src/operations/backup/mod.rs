@@ -625,7 +625,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = BackupConfig::default();
 
         let backup_manager = BackupManager::new(base_path, wal_writer, storage, config);
@@ -637,7 +637,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = BackupConfig::default();
 
         let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
@@ -655,7 +655,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = BackupConfig::default();
 
         let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
@@ -673,7 +673,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = BackupConfig::default();
 
         let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
@@ -687,7 +687,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = BackupConfig::default();
 
         let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();

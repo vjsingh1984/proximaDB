@@ -508,7 +508,7 @@ mod tests {
     async fn test_restore_manager_creation() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = RestoreConfig::default();
 
         let restore_manager = RestoreManager::new(base_path, storage, config);
@@ -519,7 +519,7 @@ mod tests {
     async fn test_calculate_checksum() {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(base_path).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
         let config = RestoreConfig::default();
 
         let restore_manager = RestoreManager::new(base_path, storage, config).unwrap();
@@ -542,7 +542,7 @@ mod tests {
         let test_file = backup_dir.join("test.dat");
         tokio::fs::write(&test_file, b"test data").await.unwrap();
 
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(&restore_dir).unwrap());
+        let storage = UnifiedCachingFilesystem::new_local(&restore_dir).await.unwrap();
         let config = RestoreConfig {
             dry_run: true,
             ..Default::default()
@@ -594,8 +594,8 @@ mod tests {
         tokio::fs::write(&test_file, b"test data").await.unwrap();
 
         // Create manifest
-        let storage = Arc::new(UnifiedCachingFilesystem::new_local(&restore_dir).unwrap());
-        let restore_manager = RestoreManager::new(&restore_dir, storage, RestoreConfig::default()).unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(&restore_dir).await.unwrap();
+        let restore_manager = RestoreManager::new(&restore_dir, storage.clone(), RestoreConfig::default()).unwrap();
 
         let checksum = restore_manager.calculate_checksum(b"test data");
         let manifest = BackupManifest {

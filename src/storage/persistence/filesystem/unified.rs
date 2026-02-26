@@ -182,27 +182,25 @@ impl UnifiedCachingFilesystem {
     /// This is a convenience method for tests that creates a UnifiedCachingFilesystem
     /// backed by a local filesystem at the specified path.
     #[cfg(test)]
-    pub fn new_local(base_path: &std::path::Path) -> FsResult<Self> {
+    pub async fn new_local(base_path: &std::path::Path) -> FsResult<Arc<Self>> {
         use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
         use std::sync::Arc;
 
         // Create local filesystem
-        let local_fs = Arc::new(LocalFileSystem {
-            config: LocalConfig {
-                root_dir: Some(base_path.to_path_buf()),
-                follow_symlinks: true,
-                default_permissions: None,
-                sync_enabled: false, // Disable sync for tests
-            },
-            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(100)),
-        });
+        let local_fs = LocalFileSystem::new(LocalConfig {
+            root_dir: Some(base_path.to_path_buf()),
+            follow_symlinks: true,
+            default_permissions: None,
+            sync_enabled: false, // Disable sync for tests
+        })
+        .await?;
 
         // Create unified caching filesystem
-        Ok(Self::new(
-            local_fs,
+        Ok(Arc::new(Self::new(
+            Arc::new(local_fs),
             "test_collection".to_string(),
             "test_engine".to_string(),
-        ))
+        )))
     }
 
     /// Generate cache key for this filesystem instance
