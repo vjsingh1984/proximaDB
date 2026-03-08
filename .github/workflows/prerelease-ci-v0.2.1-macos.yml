@@ -1,135 +1,14 @@
-# =============================================================================
-# ProximaDB Pre-Release CI Workflow - v0.2.1 macOS Support
-# =============================================================================
-#
-# MODIFICATIONS FOR v0.2.1:
-#   - Enable macOS aarch64 (Apple Silicon) build with Metal feature
-#   - Update validation to expect 3 binaries (linux, windows, macos)
-#   - Enable DMG installer build
-#
-# TRIGGERS:
-#   1. Push to main branch
-#   2. Push to development branch
-#   3. Manual dispatch with optional version input
-#
-# WORKFLOW STAGES:
-#   ┌─────────────────────────────────────────────────────────────────────────┐
-#   │  1. VERSION-CHECK    Validate version consistency                        │
-#   ├─────────────────────────────────────────────────────────────────────────┤
-#   │  2. PREPARE          Extract version                                    │
-#   ├─────────────────────────────────────────────────────────────────────────┤
-#   │  3. BUILD (parallel)                                                     │
-#   │     ├── build-binaries    3 platform targets (v0.2.1)                   │
-#   │     └── build-sdist       Source distributions                          │
-#   ├─────────────────────────────────────────────────────────────────────────┤
-#   │  4. VALIDATE          Verify all artifacts built                        │
-#   ├─────────────────────────────────────────────────────────────────────────┤
-#   │  5. BUILD PLATFORM PACKAGES (parallel)                                  │
-#   │     ├── build-rpm         RPM package (fpm)                             │
-#   │     ├── build-deb         DEB package (fpm)                             │
-#   │     ├── build-dmg         DMG installer (create-dmg)                    │
-#   │     └── build-msi         MSI installer (WiX v4)                        │
-#   ├─────────────────────────────────────────────────────────────────────────┤
-#   │  6. SUMMARY          Generate release-ready.json artifact               │
-#   └─────────────────────────────────────────────────────────────────────────┘
-#
-# NOTE: v0.2.1 adds macOS aarch64 support with Metal (MPS) for GPU acceleration.
-#
-# =============================================================================
+name: Prerelease macOS v0.2.1 Notes
 
-# This is a documentation file showing the changes needed for v0.2.1
-# Apply these changes to .github/workflows/prerelease-ci.yml and release.yml
+on:
+  workflow_dispatch:
 
-# =============================================================================
-# CHANGE 1: Enable macOS aarch64 target in build-binaries matrix
-# =============================================================================
-
-# In the build-binaries job, uncomment and update the macOS entry:
-
-#          # macOS aarch64 (Apple Silicon) - ENABLED for v0.2.1
-#          # NOTE: macos-latest IS ARM64-based (Apple Silicon M1/M2/M3/M4)
-#          # No cross-compilation needed - native build
-#          - target: aarch64-apple-darwin
-#            os: macos-latest
-#            archive: tar.gz
-#            features: "metal"  # Enable Metal/MPS GPU acceleration
-
-# =============================================================================
-# CHANGE 2: Update validation to expect 3 binaries
-# =============================================================================
-
-# In validate-artifacts job, update EXPECTED_BINARIES:
-
-#          # Expected Binary Targets (3 platforms for v0.2.1)
-#          EXPECTED_BINARIES=(
-#            "proximadb-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-#            "proximadb-${VERSION}-x86_64-pc-windows-msvc.zip"
-#            "proximadb-${VERSION}-aarch64-apple-darwin.tar.gz"
-#          )
-
-# =============================================================================
-# CHANGE 3: Enable DMG build job
-# =============================================================================
-
-# In build-dmg job, remove the 'if: false' line:
-
-#  build-dmg:
-#    name: Build DMG Installer
-#    # ENABLED for v0.2.1 - macOS binary now being built
-#    needs: [prepare, build-binaries]
-#    runs-on: macos-latest
-#    # ... rest of the job remains the same
-
-# =============================================================================
-# CHANGE 4: Update prerelease-summary to expect DMG
-# =============================================================================
-
-# In prerelease-summary job, update validation expectations:
-
-#          DMG_COUNT=$(find artifacts -name "*.dmg" -type f 2>/dev/null | wc -l)
-#          echo "DMG installers: $DMG_COUNT (expected >= 1)"
-#          if [ "$DMG_COUNT" -lt 1 ]; then
-#            echo "  [MISSING] No DMG installer"
-#            VALIDATION_PASSED=false
-#          fi
-
-# In release-ready.json, update:
-#              "dmg": $DMG_COUNT,
-
-# =============================================================================
-# CHANGE 5: Add macOS-specific build step (if needed)
-# =============================================================================
-
-# In build-binaries job, add macOS-specific dependency installation:
-
-#      - name: Install macOS Dependencies
-#        if: runner.os == 'macOS'
-#        run: |
-#          # Xcode Command Line Tools are pre-installed on macos-latest
-#          # Verify Xcode setup
-#          xcode-select -p
-#          # Optional: Set specific Xcode version if needed
-#          # sudo xcode-select -s /Applications/Xcode.app
-
-# =============================================================================
-# CHANGE 6: Update release.yml similarly
-# =============================================================================
-
-# Apply the same changes to .github/workflows/release.yml:
-# 1. Enable aarch64-apple-darwin in build-binaries matrix
-# 2. Update EXPECTED_BINARIES to include macOS
-# 3. Enable build-dmg job (remove 'if: false')
-# 4. Update validate-artifacts to expect 3 binaries
-# 5. Update create-release to include DMG in assets
-
-# =============================================================================
-# TESTING CHECKLIST FOR v0.2.1
-# =============================================================================
-
-# Before merging:
-# [ ] Verify Metal feature builds successfully on macos-latest
-# [ ] Test DMG creation works with aarch64 binary
-# [ ] Validate all 3 binaries are built correctly
-# [ ] Test DMG installer on actual Apple Silicon hardware (if available)
-# [ ] Verify Metal/MPS GPU acceleration works at runtime
-# [ ] Update version to 0.2.1 in Cargo.toml and all version files
+jobs:
+  notes:
+    name: Documentation Notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain usage
+        run: |
+          echo "This workflow file was previously documentation-only and caused CI parsing failures."
+          echo "Use .github/workflows/prerelease-ci.yml for real prerelease automation."
