@@ -417,7 +417,8 @@ impl TimeSeriesEngine {
 
             // Now perform downsampling without holding immutable borrows
             for ohlc_bars in ohlc_to_downsample {
-                self.store_downsampled_data(collection_id, ohlc_bars).await?;
+                self.store_downsampled_data(collection_id, ohlc_bars)
+                    .await?;
             }
         }
 
@@ -1465,7 +1466,9 @@ impl ScanIterator for TimeSeriesScanIterator {
             // Get current partition
             let partition_key = self.partition_keys[self.current_index];
 
-            if self.current_partition_key.is_none() || self.current_partition_key != Some(partition_key) {
+            if self.current_partition_key.is_none()
+                || self.current_partition_key != Some(partition_key)
+            {
                 // Load new partition
                 self.current_partition_key = Some(partition_key);
                 self.current_record_index = 0;

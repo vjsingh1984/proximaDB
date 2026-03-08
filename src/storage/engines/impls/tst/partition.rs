@@ -222,7 +222,8 @@ impl TimePartition {
 
         // Create vector array (list of floats)
         let vector_data: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
-        let vector_array = Float32Array::from_iter(vector_data.iter().flat_map(|v| v.iter().cloned()));
+        let vector_array =
+            Float32Array::from_iter(vector_data.iter().flat_map(|v| v.iter().cloned()));
         let vector_offsets: Vec<i32> = std::iter::once(0)
             .chain(vectors.iter().scan(0, |acc, v| {
                 *acc += v.len() as i32;
@@ -320,10 +321,7 @@ impl TimePartition {
 
                 let vector = if let Some(start) = vector_list_array.offsets().get(i) {
                     let len_i32 = vector_values.len() as i32;
-                    let end = vector_list_array
-                        .offsets()
-                        .get(i + 1)
-                        .unwrap_or(&len_i32);
+                    let end = vector_list_array.offsets().get(i + 1).unwrap_or(&len_i32);
                     let start_i32 = *start;
                     let end_i32 = *end;
                     let count = end_i32.saturating_sub(start_i32);
@@ -673,7 +671,10 @@ impl ColumnarPartition {
             for i in 0..(vector_list_array.len()) {
                 let offsets = vector_list_array.offsets();
                 let start = offsets[i] as usize;
-                let end = offsets.get(i + 1).map(|&v| v as usize).unwrap_or(vector_values.len());
+                let end = offsets
+                    .get(i + 1)
+                    .map(|&v| v as usize)
+                    .unwrap_or(vector_values.len());
                 let vector = vector_values
                     .iter()
                     .skip(start)
