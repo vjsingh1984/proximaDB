@@ -84,7 +84,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
 
-use super::types::{CatalogPartitionSpec, PartitionTransform};
+use super::types::{CatalogPartitionField, CatalogPartitionSpec, PartitionTransform};
 
 /// Partition pruning result with statistics
 #[derive(Debug, Clone)]
