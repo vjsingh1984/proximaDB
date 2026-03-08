@@ -38,8 +38,14 @@ fn main() -> Result<()> {
 
     println!("\n=== Benchmark Results ===");
     println!("Index build time: {:.2}s", results.build_time_secs);
-    println!("Index size: {:.2} MB", results.index_size_bytes as f64 / 1024.0 / 1024.0);
-    println!("Memory usage: {:.2} MB", results.memory_usage_bytes as f64 / 1024.0 / 1024.0);
+    println!(
+        "Index size: {:.2} MB",
+        results.index_size_bytes as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "Memory usage: {:.2} MB",
+        results.memory_usage_bytes as f64 / 1024.0 / 1024.0
+    );
     println!();
 
     println!("Query Performance:");
@@ -50,7 +56,11 @@ fn main() -> Result<()> {
     println!();
 
     println!("Accuracy:");
-    println!("  Recall@{}: {:.2}%", results.query_stats.num_queries, results.query_stats.recall_at_k * 100.0);
+    println!(
+        "  Recall@{}: {:.2}%",
+        results.query_stats.num_queries,
+        results.query_stats.recall_at_k * 100.0
+    );
     println!();
 
     println!("Latency:");
@@ -65,7 +75,9 @@ fn main() -> Result<()> {
     std::fs::write(&csv_path, csv)?;
     println!("\nResults exported to: {}", csv_path);
 
-    let json = runner.export_json(&results).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let json = runner
+        .export_json(&results)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     let json_path = format!("results_{}_{}.json", args.dataset, args.algorithm);
     std::fs::write(&json_path, json)?;
     println!("Results exported to: {}", json_path);
@@ -183,7 +195,9 @@ fn print_help() {
     println!();
     println!("OPTIONS:");
     println!("  --dataset <NAME>         Dataset name (sift, gist, mnist, deep1b) [default: sift]");
-    println!("  --algorithm <NAME>       Algorithm name (hnsw, ivf, annoy, flat, lsh, pq, diskann) [default: hnsw]");
+    println!(
+        "  --algorithm <NAME>       Algorithm name (hnsw, ivf, annoy, flat, lsh, pq, diskann) [default: hnsw]"
+    );
     println!("  --dataset-path <PATH>    Path to dataset files [default: /data/ann_benchmarks]");
     println!("  --k <N>                  Number of neighbors [default: 10]");
     println!("  --runs <N>               Number of query runs [default: 100]");

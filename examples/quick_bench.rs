@@ -2,8 +2,8 @@
 //!
 //! Run with: cargo run --release --example quick_bench
 
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::Instant;
 
 fn main() {
     println!("=== ProximaDB Quick Performance Benchmark ===");
@@ -25,7 +25,8 @@ fn main() {
     let iterations = 100_000;
     let start = Instant::now();
     for _ in 0..iterations {
-        let _distance: f32 = vec1.iter()
+        let _distance: f32 = vec1
+            .iter()
             .zip(vec2.iter())
             .map(|(a, b)| (a - b).powi(2))
             .sum();
@@ -35,7 +36,10 @@ fn main() {
     println!("  Iterations: {}", iterations);
     println!("  Total time: {:?}", elapsed);
     println!("  Avg per iteration: {} ns", avg_ns);
-    println!("  Throughput: {:.2} M ops/sec", (iterations as f64 / elapsed.as_secs_f64()) / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        (iterations as f64 / elapsed.as_secs_f64()) / 1_000_000.0
+    );
     println!();
 
     // Benchmark 2: Cosine similarity
@@ -50,7 +54,10 @@ fn main() {
     let elapsed = start.elapsed();
     let avg_ns = elapsed.as_nanos() / iterations as u128;
     println!("  Avg per iteration: {} ns", avg_ns);
-    println!("  Throughput: {:.2} M ops/sec", (iterations as f64 / elapsed.as_secs_f64()) / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        (iterations as f64 / elapsed.as_secs_f64()) / 1_000_000.0
+    );
     println!();
 
     // Benchmark 3: HashMap operations (simulating index lookup)
@@ -68,7 +75,10 @@ fn main() {
     }
     let build_time = start.elapsed();
     println!("  Build time: {:?}", build_time);
-    println!("  Throughput: {:.2} K vectors/sec", (num_vectors as f64 / build_time.as_secs_f64()) / 1_000.0);
+    println!(
+        "  Throughput: {:.2} K vectors/sec",
+        (num_vectors as f64 / build_time.as_secs_f64()) / 1_000.0
+    );
     println!();
 
     // Lookup benchmark
@@ -82,7 +92,10 @@ fn main() {
     println!("  Lookups: {}", lookups);
     println!("  Total time: {:?}", lookup_time);
     println!("  Avg per lookup: {} ns", avg_ns);
-    println!("  Throughput: {:.2} M lookups/sec", (lookups as f64 / lookup_time.as_secs_f64()) / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M lookups/sec",
+        (lookups as f64 / lookup_time.as_secs_f64()) / 1_000_000.0
+    );
     println!();
 
     // Benchmark 4: Memory estimation
@@ -107,7 +120,12 @@ fn main() {
         .collect();
 
     let vector_results: Vec<(String, f64)> = (0..fusion_size)
-        .map(|i| (format!("doc_{}", (i + 100) % fusion_size), 0.9 - (i as f64 * 0.001)))
+        .map(|i| {
+            (
+                format!("doc_{}", (i + 100) % fusion_size),
+                0.9 - (i as f64 * 0.001),
+            )
+        })
         .collect();
 
     let iterations = 10_000;
@@ -139,7 +157,10 @@ fn main() {
     println!("  Iterations: {}", iterations);
     println!("  Total time: {:?}", elapsed);
     println!("  Avg per fusion: {} μs", avg_ns / 1000);
-    println!("  Throughput: {:.2} K fusions/sec", (iterations as f64 / elapsed.as_secs_f64()) / 1_000.0);
+    println!(
+        "  Throughput: {:.2} K fusions/sec",
+        (iterations as f64 / elapsed.as_secs_f64()) / 1_000.0
+    );
     println!();
 
     println!("=== Summary ===");
