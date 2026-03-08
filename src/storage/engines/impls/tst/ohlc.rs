@@ -2,7 +2,7 @@
 //!
 //! Provides OHLC bar aggregation for trading and financial time-series data.
 
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// OHLC bar data
@@ -100,7 +100,8 @@ impl OHLC {
         let truncated = self.truncate_to_interval(timestamp);
 
         // Get or create bar for this interval
-        let bar = self.current_bars
+        let bar = self
+            .current_bars
             .entry(truncated)
             .or_insert_with(|| OHLCBar::from_price(self.symbol.clone(), truncated, price));
 
@@ -122,11 +123,7 @@ impl OHLC {
     }
 
     /// Get bars in a time range
-    pub fn get_bars_in_range(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> Vec<&OHLCBar> {
+    pub fn get_bars_in_range(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<&OHLCBar> {
         self.current_bars
             .range(start..=end)
             .map(|(_, bar)| bar)
@@ -135,8 +132,7 @@ impl OHLC {
 
     /// Clear bars older than a timestamp
     pub fn clear_before(&mut self, timestamp: DateTime<Utc>) {
-        self.current_bars = self.current_bars
-            .split_off(&timestamp);
+        self.current_bars = self.current_bars.split_off(&timestamp);
     }
 
     /// Clear all bars
@@ -221,7 +217,7 @@ mod tests {
     #[test]
     fn test_ohlc_bar_from_price() {
         let timestamp = DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
 
         let bar = OHLCBar::from_price("AAPL".to_string(), timestamp, 100.0);
@@ -236,7 +232,7 @@ mod tests {
     #[test]
     fn test_ohlc_bar_update() {
         let timestamp = DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
 
         let mut bar = OHLCBar::from_price("AAPL".to_string(), timestamp, 100.0);
@@ -256,39 +252,45 @@ mod tests {
         let mut aggregator = OHLC::new("AAPL".to_string(), 3600); // 1-hour intervals
 
         let t1 = DateTime::parse_from_rfc3339("2024-01-01T10:30:00Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
         let t2 = DateTime::parse_from_rfc3339("2024-01-01T10:45:00Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
         let t3 = DateTime::parse_from_rfc3339("2024-01-01T11:15:00Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
 
-        aggregator.add_price(t1, 100.0, 100).unwrap();
-        aggregator.add_price(t2, 102.0, 50).unwrap();
-        aggregator.add_price(t3, 101.0, 75).unwrap();
+        aggregator.add_price(t1, 100.0, 100).expect("add_price should succeed");
+        aggregator.add_price(t2, 102.0, 50).expect("add_price should succeed");
+        aggregator.add_price(t3, 101.0, 75).expect("add_price should succeed");
 
         // Should have 2 bars (10:00-11:00 and 11:00-12:00)
         let bars = aggregator.get_all_bars();
         assert_eq!(bars.len(), 2);
 
         // First bar should have high of 102
-        let first_bar = bars.iter().find(|b| b.timestamp.hour() == 10).unwrap();
+        let first_bar = bars
+            .iter()
+            .find(|b| b.timestamp.hour() == 10)
+            .expect("first bar at hour 10 should exist");
         assert_eq!(first_bar.high, 102.0);
 
         // Second bar should have close of 101
-        let second_bar = bars.iter().find(|b| b.timestamp.hour() == 11).unwrap();
+        let second_bar = bars
+            .iter()
+            .find(|b| b.timestamp.hour() == 11)
+            .expect("second bar at hour 11 should exist");
         assert_eq!(second_bar.close, 101.0);
     }
 
     #[test]
     fn test_ohlc_query() {
         let start = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
         let end = DateTime::parse_from_rfc3339("2024-01-01T23:59:59Z")
-            .unwrap()
+            .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
 
         let query = OHLCQuery::new("AAPL".to_string(), start, end)

@@ -204,7 +204,8 @@ impl EnterpriseDashboard {
 
     /// Get current dashboard state
     pub async fn get_dashboard_state(&self) -> Result<DashboardState> {
-        let state = self.dashboard_state.read().await;
+        let state = self.dashboard_state.read().await
+            .map_err(|e| anyhow::anyhow!("Failed to read dashboard state: {}", e))?;
         Ok(state.clone())
     }
 

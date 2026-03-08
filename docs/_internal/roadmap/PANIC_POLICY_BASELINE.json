@@ -1,0 +1,58 @@
+{
+  "generated_at_utc": "2026-03-05T15:31:18Z",
+  "mode": "report",
+  "modules": {
+    "api_handlers": {
+      "expect": 0,
+      "path": "src/api_handlers",
+      "total": 0,
+      "unwrap": 0
+    },
+    "core": {
+      "expect": 0,
+      "path": "src/core",
+      "total": 0,
+      "unwrap": 0
+    },
+    "graph": {
+      "expect": 0,
+      "path": "src/graph",
+      "total": 0,
+      "unwrap": 0
+    },
+    "network_rest": {
+      "expect": 0,
+      "path": "src/network/rest",
+      "total": 0,
+      "unwrap": 0
+    },
+    "query": {
+      "expect": 0,
+      "path": "src/query",
+      "total": 0,
+      "unwrap": 0
+    },
+    "services": {
+      "expect": 0,
+      "path": "src/services",
+      "total": 0,
+      "unwrap": 0
+    },
+    "storage": {
+      "expect": 0,
+      "path": "src/storage",
+      "total": 0,
+      "unwrap": 0
+    }
+  },
+  "repo": "proximaDB",
+  "scan_scope": "src/**/*.rs excluding tests/legacy/test-benchmark-example files and #[cfg(test)] blocks; ignores parser-internal self.expect(...) calls",
+  "source_root": "src",
+  "status": "pass",
+  "totals": {
+    "expect": 0,
+    "total": 0,
+    "unwrap": 0
+  },
+  "violations": []
+}

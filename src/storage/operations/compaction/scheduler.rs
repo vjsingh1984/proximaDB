@@ -58,9 +58,9 @@ impl PartialOrd for ScheduledTask {
 impl Ord for ScheduledTask {
     fn cmp(&self, other: &Self) -> Ordering {
         // Higher priority = should come first in BinaryHeap
+        // total_cmp provides a total ordering even if a NaN is introduced unexpectedly.
         self.effective_priority()
-            .partial_cmp(&other.effective_priority())
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&other.effective_priority())
     }
 }
 
@@ -238,11 +238,13 @@ impl CompactionScheduler {
     {
         // Acquire concurrency permit
         let permit = self.concurrency_semaphore.try_acquire();
-        if permit.is_err() {
-            debug!("No available compaction slot, waiting...");
-            return Ok(None);
-        }
-        let _permit = permit.unwrap();
+        let _permit = match permit {
+            Ok(p) => p,
+            Err(_) => {
+                debug!("No available compaction slot, waiting...");
+                return Ok(None);
+            }
+        };
 
         // Get next task from queue
         let task = {
@@ -455,11 +457,11 @@ mod tests {
 
         // Schedule low priority first
         let low_priority = create_test_plan("low", 10.0);
-        scheduler.schedule(low_priority).await.unwrap();
+        scheduler.schedule(low_priority).await.expect("Failed to schedule low priority task");
 
         // Schedule high priority second
         let high_priority = create_test_plan("high", 100.0);
-        scheduler.schedule(high_priority).await.unwrap();
+        scheduler.schedule(high_priority).await.expect("Failed to schedule high priority task");
 
         assert_eq!(scheduler.pending_count().await, 2);
 
@@ -477,10 +479,10 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .expect("Failed to execute next task");
 
         assert!(result.is_some());
-        assert_eq!(result.unwrap().plan_id, "high");
+        assert_eq!(result.expect("Expected result").plan_id, "high");
     }
 
     #[tokio::test]
@@ -488,7 +490,7 @@ mod tests {
         let scheduler = CompactionScheduler::new();
 
         let plan = create_test_plan("to_cancel", 50.0);
-        scheduler.schedule(plan).await.unwrap();
+        scheduler.schedule(plan).await.expect("Failed to schedule task");
 
         assert_eq!(scheduler.pending_count().await, 1);
 
@@ -503,7 +505,7 @@ mod tests {
         let scheduler = CompactionScheduler::new();
 
         let plan = create_test_plan("stats_test", 50.0);
-        scheduler.schedule(plan).await.unwrap();
+        scheduler.schedule(plan).await.expect("Failed to schedule task");
 
         scheduler
             .execute_next(|plan| async move {
@@ -518,7 +520,7 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .expect("Failed to execute task");
 
         let stats = scheduler.get_stats().await;
         assert_eq!(stats.completed_compactions, 1);
@@ -535,7 +537,7 @@ mod tests {
 
         // Schedule and execute first compaction
         let plan1 = create_test_plan("first", 50.0);
-        scheduler.schedule(plan1).await.unwrap();
+        scheduler.schedule(plan1).await.expect("Failed to schedule first task");
         scheduler
             .execute_next(|plan| async move {
                 Ok(CompactionExecutionResult {
@@ -549,7 +551,7 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .expect("Failed to execute first task");
 
         // Try to schedule another for same collection - should fail due to rate limit
         let plan2 = create_test_plan("second", 50.0);
@@ -564,15 +566,15 @@ mod tests {
         scheduler
             .schedule(create_test_plan("p1", 50.0))
             .await
-            .unwrap();
+            .expect("Failed to schedule p1");
         scheduler
             .schedule(create_test_plan("p2", 60.0))
             .await
-            .unwrap();
+            .expect("Failed to schedule p2");
         scheduler
             .schedule(create_test_plan("p3", 70.0))
             .await
-            .unwrap();
+            .expect("Failed to schedule p3");
 
         assert_eq!(scheduler.pending_count().await, 3);
 

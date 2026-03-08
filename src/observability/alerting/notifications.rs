@@ -26,9 +26,20 @@ pub struct NotificationManager {
 impl NotificationManager {
     /// Create a new notification manager
     pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap_or_else(|err| {
+                warn!(
+                    "Failed to build no-proxy reqwest client for NotificationManager; falling back to default client: {}",
+                    err
+                );
+                reqwest::Client::new()
+            });
+
         Self {
             channels: RwLock::new(HashMap::new()),
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -219,15 +230,18 @@ impl NotificationManager {
     /// Send email notification via SMTP
     async fn send_email(&self, config: &EmailConfig, alert: &Alert) -> Result<()> {
         use lettre::{
-            message::header::ContentType,
+            Message, SmtpTransport, Transport, message::header::ContentType,
             transport::smtp::authentication::Credentials,
-            Message, SmtpTransport, Transport,
         };
 
         // Build email message
         let subject = format!("[ProximaDB Alert] {}", alert.name);
-        let value_str = alert.value.map_or("N/A".to_string(), |v| format!("{:.2}", v));
-        let threshold_str = alert.threshold.map_or("N/A".to_string(), |v| format!("{:.2}", v));
+        let value_str = alert
+            .value
+            .map_or("N/A".to_string(), |v| format!("{:.2}", v));
+        let threshold_str = alert
+            .threshold
+            .map_or("N/A".to_string(), |v| format!("{:.2}", v));
         let severity_str = format_severity_from_enum(alert.severity);
 
         let body = format!(
@@ -276,7 +290,10 @@ impl NotificationManager {
             .map_err(|e| anyhow::anyhow!("Failed to join email sending task: {}", e))?
             .context("Failed to send email via SMTP")?;
 
-            debug!("Sent email notification to {} for alert: {}", recipient, alert.name);
+            debug!(
+                "Sent email notification to {} for alert: {}",
+                recipient, alert.name
+            );
         }
 
         info!(
@@ -447,14 +464,16 @@ mod tests {
 
         // Create email configuration
         let email_config = EmailConfig {
-            smtp_server: std::env::var("SMTP_SERVER").unwrap_or_else(|_| "smtp.gmail.com".to_string()),
+            smtp_server: std::env::var("SMTP_SERVER")
+                .unwrap_or_else(|_| "smtp.gmail.com".to_string()),
             smtp_port: std::env::var("SMTP_PORT")
                 .unwrap_or_else(|_| "587".to_string())
                 .parse()
                 .expect("Invalid SMTP port"),
             username: std::env::var("SMTP_USERNAME").expect("SMTP_USERNAME must be set"),
             password: std::env::var("SMTP_PASSWORD").expect("SMTP_PASSWORD must be set"),
-            from: std::env::var("SMTP_FROM").unwrap_or_else(|_| "noreply@proximadb.test".to_string()),
+            from: std::env::var("SMTP_FROM")
+                .unwrap_or_else(|_| "noreply@proximadb.test".to_string()),
             recipients: vec!["singhvjd@gmail.com".to_string()],
         };
 
@@ -471,7 +490,10 @@ mod tests {
         labels.insert("test".to_string(), "integration".to_string());
 
         let mut annotations = HashMap::new();
-        annotations.insert("description".to_string(), "Test alert from ProximaDB".to_string());
+        annotations.insert(
+            "description".to_string(),
+            "Test alert from ProximaDB".to_string(),
+        );
 
         let alert = Alert {
             name: "Test SMTP Alert".to_string(),
