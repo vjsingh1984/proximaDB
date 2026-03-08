@@ -9,10 +9,15 @@
 //! cargo run --release --example quasar_tiered_graph --features tiered-graph
 //! ```
 
-use proximadb::graph::engines::quasar::{QuasarGraphEngine, QuasarConfig, ColdStorageBackend};
-use proximadb::graph::{Node, Edge, PropertyValue};
+#[cfg(feature = "tiered-graph")]
+use proximadb::graph::engines::quasar::{ColdStorageBackend, QuasarConfig, QuasarGraphEngine};
+#[cfg(feature = "tiered-graph")]
+use proximadb::graph::{Edge, Node, PropertyValue};
+#[cfg(feature = "tiered-graph")]
 use std::collections::HashMap;
+#[cfg(feature = "tiered-graph")]
 use std::time::{Duration, Instant};
+#[cfg(feature = "tiered-graph")]
 use tempfile::TempDir;
 
 #[tokio::main]
@@ -48,8 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Creating QUASAR engine with configuration:");
         println!("  Hot tier max nodes: {}", config.hot_tier_max_nodes);
         println!("  Cold tier path: {}", config.cold_tier_path.display());
-        println!("  Migration threshold: {:?}", config.cold_migration_threshold);
-        println!("  Promotion threshold: {:?}", config.hot_promotion_threshold);
+        println!(
+            "  Migration threshold: {:?}",
+            config.cold_migration_threshold
+        );
+        println!(
+            "  Promotion threshold: {:?}",
+            config.hot_promotion_threshold
+        );
         println!("  Migration interval: {:?}", config.migration_interval);
         println!("  Cold storage backend: {:?}", config.cold_storage_backend);
         println!();
@@ -163,7 +174,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             0.0
         };
         println!("Hit ratio: {:.2}%", hit_ratio * 100.0);
-        println!("Average access latency: {:.2} ms", stats.average_access_latency_ms);
+        println!(
+            "Average access latency: {:.2} ms",
+            stats.average_access_latency_ms
+        );
         println!();
 
         // Example 6: Storage cost savings
@@ -171,7 +185,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stats = engine.get_stats().await;
         println!("Hot tier nodes: {}", stats.hot_tier_nodes);
         println!("Cold tier nodes: {}", stats.cold_tier_nodes);
-        println!("Storage cost savings: {:.2}%", stats.storage_cost_savings_ratio * 100.0);
+        println!(
+            "Storage cost savings: {:.2}%",
+            stats.storage_cost_savings_ratio * 100.0
+        );
         println!();
 
         // Example 7: Edges across tiers
@@ -196,7 +213,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("=== Example 8: Access Pattern Statistics ===");
         let access_stats = engine.get_access_stats().await;
         println!("Total accesses tracked: {}", access_stats.total_accesses);
-        println!("Unique nodes accessed: {}", access_stats.unique_nodes_accessed);
+        println!(
+            "Unique nodes accessed: {}",
+            access_stats.unique_nodes_accessed
+        );
         println!();
 
         println!("=== Example Complete ===");

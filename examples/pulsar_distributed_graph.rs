@@ -9,9 +9,13 @@
 //! cargo run --release --example pulsar_distributed_graph --features distributed-graph
 //! ```
 
-use proximadb::graph::engines::pulsar::{PulsarGraphEngine, PulsarConfig, ConsistencyLevel};
-use proximadb::graph::{Node, Edge, PropertyValue};
+#[cfg(feature = "distributed-graph")]
+use proximadb::graph::engines::pulsar::{ConsistencyLevel, PulsarConfig, PulsarGraphEngine};
+#[cfg(feature = "distributed-graph")]
+use proximadb::graph::{Edge, Node, PropertyValue};
+#[cfg(feature = "distributed-graph")]
 use std::collections::HashMap;
+#[cfg(feature = "distributed-graph")]
 use std::time::Instant;
 
 #[tokio::main]
@@ -42,7 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Shard count: {}", config.shard_count);
         println!("  Replication factor: {}", config.replication_factor);
         println!("  Consistency level: {:?}", config.consistency_level);
-        println!("  Cross-shard optimization: {}", config.cross_shard_optimization);
+        println!(
+            "  Cross-shard optimization: {}",
+            config.cross_shard_optimization
+        );
         println!();
 
         // Create PULSAR engine (in-memory, no persistence)
@@ -145,8 +152,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for edge in &edges {
             let from_shard = engine.get_shard_for_node(&edge.from_node_id).await?;
             let to_shard = engine.get_shard_for_node(&edge.to_node_id).await?;
-            println!("  Edge '{}' ({} -> {}): {} -> Shard {}",
-                edge.id, edge.from_node_id, edge.to_node_id, from_shard, to_shard);
+            println!(
+                "  Edge '{}' ({} -> {}): {} -> Shard {}",
+                edge.id, edge.from_node_id, edge.to_node_id, from_shard, to_shard
+            );
         }
         println!();
 
@@ -178,13 +187,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match result {
             Ok(nodes) => {
-                println!("BFS traversal from 'alice' (depth=2, took {:?}):", traversal_time);
+                println!(
+                    "BFS traversal from 'alice' (depth=2, took {:?}):",
+                    traversal_time
+                );
                 for node in nodes {
                     println!("  - {}", node.id);
                 }
             }
             Err(e) => {
-                println!("Cross-shard traversal failed (expected - incomplete implementation): {:?}", e);
+                println!(
+                    "Cross-shard traversal failed (expected - incomplete implementation): {:?}",
+                    e
+                );
             }
         }
         println!();
@@ -216,8 +231,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bulk_time = start.elapsed();
 
         let stats = engine.get_stats().await;
-        println!("Inserted 100 nodes in {:?} ({:.2} nodes/sec)",
-            bulk_time, 100.0 / bulk_time.as_secs_f64());
+        println!(
+            "Inserted 100 nodes in {:?} ({:.2} nodes/sec)",
+            bulk_time,
+            100.0 / bulk_time.as_secs_f64()
+        );
         println!("Total nodes in engine: {}", stats.total_nodes);
         println!();
 
