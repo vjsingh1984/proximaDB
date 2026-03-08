@@ -236,6 +236,7 @@ jobs:
   benchmark-regression:
     name: Benchmark Regression Detection
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     continue-on-error: true
     needs: unit-tests
 
