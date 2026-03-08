@@ -3,11 +3,11 @@
 //! Provides time-based downsampling for reducing data granularity.
 
 use anyhow::Result;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::{TimePartition, OHLCBar, DownsampleAggregation};
+use super::{DownsampleAggregation, OHLCBar, TimePartition};
 
 /// Downsampling configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,7 +20,7 @@ pub struct DownsampleConfig {
 }
 
 /// Downsample interval
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DownsampleInterval {
     Second,
     Minute,
@@ -78,6 +78,11 @@ impl Downsampler {
         self
     }
 
+    /// Get the configuration
+    pub fn config(&self) -> &DownsampleConfig {
+        &self.config
+    }
+
     /// Check if downsampling should be triggered
     pub async fn should_trigger(&self, partition: &TimePartition) -> Result<bool> {
         // Check if partition has enough records
@@ -125,10 +130,7 @@ impl Downsampler {
             for bar in symbol_bars {
                 let ts = bar.timestamp.timestamp_nanos_opt().unwrap_or(0) / 1_000_000_000;
                 let bucket_ts = self.config.interval.truncate_timestamp(ts);
-                buckets
-                    .entry(bucket_ts)
-                    .or_insert_with(Vec::new)
-                    .push(bar);
+                buckets.entry(bucket_ts).or_insert_with(Vec::new).push(bar);
             }
 
             // Aggregate each bucket into OHLC
@@ -139,7 +141,10 @@ impl Downsampler {
                 let close = bucket_bars.last().map(|b| b.close).unwrap_or(0.0);
                 let volume = bucket_bars.iter().map(|b| b.volume).sum();
 
-                let dt = Utc.timestamp_opt(bucket_ts, 0).single().unwrap_or_else(|| Utc::now());
+                let dt = Utc
+                    .timestamp_opt(bucket_ts, 0)
+                    .single()
+                    .unwrap_or_else(|| Utc::now());
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -182,7 +187,10 @@ impl Downsampler {
                 let avg = values.iter().sum::<f64>() / values.len() as f64;
                 let sum = values.len() as i64; // Use count as volume
 
-                let dt = Utc.timestamp_opt(bucket_ts, 0).single().unwrap_or_else(|| Utc::now());
+                let dt = Utc
+                    .timestamp_opt(bucket_ts, 0)
+                    .single()
+                    .unwrap_or_else(|| Utc::now());
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -222,7 +230,10 @@ impl Downsampler {
                 let sum: f64 = bucket_bars.iter().map(|b| b.close).sum();
                 let volume = bucket_bars.iter().map(|b| b.volume).sum();
 
-                let dt = Utc.timestamp_opt(bucket_ts, 0).single().unwrap_or_else(|| Utc::now());
+                let dt = Utc
+                    .timestamp_opt(bucket_ts, 0)
+                    .single()
+                    .unwrap_or_else(|| Utc::now());
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -259,11 +270,20 @@ impl Downsampler {
 
         for (symbol, buckets) in by_symbol {
             for (bucket_ts, bucket_bars) in buckets {
-                let min_val = bucket_bars.iter().map(|b| b.low).fold(f64::INFINITY, f64::min);
-                let max_val = bucket_bars.iter().map(|b| b.high).fold(f64::NEG_INFINITY, f64::max);
+                let min_val = bucket_bars
+                    .iter()
+                    .map(|b| b.low)
+                    .fold(f64::INFINITY, f64::min);
+                let max_val = bucket_bars
+                    .iter()
+                    .map(|b| b.high)
+                    .fold(f64::NEG_INFINITY, f64::max);
                 let volume = bucket_bars.iter().map(|b| b.volume).sum();
 
-                let dt = Utc.timestamp_opt(bucket_ts, 0).single().unwrap_or_else(|| Utc::now());
+                let dt = Utc
+                    .timestamp_opt(bucket_ts, 0)
+                    .single()
+                    .unwrap_or_else(|| Utc::now());
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -304,7 +324,10 @@ impl Downsampler {
                 let last = bucket_bars.last().map(|b| b.close).unwrap_or(0.0);
                 let volume = bucket_bars.iter().map(|b| b.volume).sum();
 
-                let dt = Utc.timestamp_opt(bucket_ts, 0).single().unwrap_or_else(|| Utc::now());
+                let dt = Utc
+                    .timestamp_opt(bucket_ts, 0)
+                    .single()
+                    .unwrap_or_else(|| Utc::now());
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),
@@ -340,7 +363,10 @@ impl Downsampler {
 
         for (symbol, buckets) in by_symbol {
             for (bucket_ts, count) in buckets {
-                let dt = Utc.timestamp_opt(bucket_ts, 0).single().unwrap_or_else(|| Utc::now());
+                let dt = Utc
+                    .timestamp_opt(bucket_ts, 0)
+                    .single()
+                    .unwrap_or_else(|| Utc::now());
 
                 result.push(OHLCBar {
                     symbol: symbol.to_string(),

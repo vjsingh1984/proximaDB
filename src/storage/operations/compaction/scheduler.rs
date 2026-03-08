@@ -457,11 +457,17 @@ mod tests {
 
         // Schedule low priority first
         let low_priority = create_test_plan("low", 10.0);
-        scheduler.schedule(low_priority).await.expect("Failed to schedule low priority task");
+        scheduler
+            .schedule(low_priority)
+            .await
+            .expect("Failed to schedule low priority task");
 
         // Schedule high priority second
         let high_priority = create_test_plan("high", 100.0);
-        scheduler.schedule(high_priority).await.expect("Failed to schedule high priority task");
+        scheduler
+            .schedule(high_priority)
+            .await
+            .expect("Failed to schedule high priority task");
 
         assert_eq!(scheduler.pending_count().await, 2);
 
@@ -490,7 +496,10 @@ mod tests {
         let scheduler = CompactionScheduler::new();
 
         let plan = create_test_plan("to_cancel", 50.0);
-        scheduler.schedule(plan).await.expect("Failed to schedule task");
+        scheduler
+            .schedule(plan)
+            .await
+            .expect("Failed to schedule task");
 
         assert_eq!(scheduler.pending_count().await, 1);
 
@@ -505,7 +514,10 @@ mod tests {
         let scheduler = CompactionScheduler::new();
 
         let plan = create_test_plan("stats_test", 50.0);
-        scheduler.schedule(plan).await.expect("Failed to schedule task");
+        scheduler
+            .schedule(plan)
+            .await
+            .expect("Failed to schedule task");
 
         scheduler
             .execute_next(|plan| async move {
@@ -537,7 +549,10 @@ mod tests {
 
         // Schedule and execute first compaction
         let plan1 = create_test_plan("first", 50.0);
-        scheduler.schedule(plan1).await.expect("Failed to schedule first task");
+        scheduler
+            .schedule(plan1)
+            .await
+            .expect("Failed to schedule first task");
         scheduler
             .execute_next(|plan| async move {
                 Ok(CompactionExecutionResult {

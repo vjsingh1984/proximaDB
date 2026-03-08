@@ -109,7 +109,7 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
             StorageEngineStrategy::Swift => FormatType::Swift,
             StorageEngineStrategy::Raptor => FormatType::Raptor,
             StorageEngineStrategy::TimeSeries => FormatType::Sst, // TimeSeries uses Arrow format
-            StorageEngineStrategy::Hybrid => FormatType::Sst, // Default to SST for hybrid
+            StorageEngineStrategy::Hybrid => FormatType::Sst,     // Default to SST for hybrid
         }
     }
 }
@@ -522,7 +522,7 @@ fn extract_collection_id_from_path(path: &str) -> Result<String> {
         Ok(parts[parts.len() - 2].to_string())
     } else {
         // Return last segment
-        Ok(parts.last().unwrap().to_string())
+        Ok(parts.last().copied().unwrap_or_default().to_string())
     }
 }
 

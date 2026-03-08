@@ -569,11 +569,7 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
             }
         };
 
-        if sender
-            .send(Message::Text(initial_json))
-            .await
-            .is_err()
-        {
+        if sender.send(Message::Text(initial_json)).await.is_err() {
             return;
         }
     }

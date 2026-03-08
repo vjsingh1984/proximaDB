@@ -2,16 +2,14 @@
 //
 // Comprehensive benchmark suite for ProximaDB including:
 // - ANN-benchmarks standardized tests
-// - Competitor comparisons (Qdrant, Weaviate, Milvus, Pinecone)
 // - Storage engine performance tests
 // - Index type comparisons
 
+#[path = "../src/bench/ann_benchmarks/mod.rs"]
 pub mod ann_benchmarks;
-pub mod vectordb_comparison;
 
 // Re-export commonly used types
 pub use ann_benchmarks::{
-    ANNBenchmarkConfig, ANNBenchmarksConfig, ANNBenchmarksRunner,
-    BenchmarkResults, BuildParams, DatasetMetadata, QueryStats, SearchParams,
+    ANNBenchmarkConfig, ANNBenchmarksRunner, BenchmarkResults, BuildParams, DatasetMetadata,
+    QueryStats, SearchParams,
 };
-pub use vectordb_comparison::{ComparisonResult, ComparisonRunner, CompetitorConfig};

@@ -305,9 +305,15 @@ impl PartitionedStorage {
                     PartitionTier::Warm => {
                         // Move to cold - convert to Parquet/VIPER for compression
                         if let Some(ref engine) = self.storage_engine {
-                            match self.convert_partition_to_cold(engine, partition, *key).await {
+                            match self
+                                .convert_partition_to_cold(engine, partition, *key)
+                                .await
+                            {
                                 Ok(count) => {
-                                    info!("Converted {} logs from partition {} to cold storage", count, key);
+                                    info!(
+                                        "Converted {} logs from partition {} to cold storage",
+                                        count, key
+                                    );
                                     // Clear warm tier data to free memory
                                     let mut entries = partition.entries.write().await;
                                     entries.clear();
@@ -315,7 +321,10 @@ impl PartitionedStorage {
                                     tiered_count += 1;
                                 }
                                 Err(e) => {
-                                    warn!("Failed to convert partition {} to cold storage: {}", key, e);
+                                    warn!(
+                                        "Failed to convert partition {} to cold storage: {}",
+                                        key, e
+                                    );
                                 }
                             }
                         } else {
@@ -394,7 +403,11 @@ impl PartitionedStorage {
             return Ok(0);
         }
 
-        info!("Converting partition {} to cold storage with {} entries", partition_key, entries.len());
+        info!(
+            "Converting partition {} to cold storage with {} entries",
+            partition_key,
+            entries.len()
+        );
 
         // Convert log entries to columnar format for Parquet
         // Group by common fields to improve compression
@@ -436,28 +449,38 @@ impl PartitionedStorage {
                 // Add cold storage marker
                 metadata.insert(
                     "_cold".to_string(),
-                    SqlValue { value: Some(Value::StringValue("true".to_string())) }
+                    SqlValue {
+                        value: Some(Value::StringValue("true".to_string())),
+                    },
                 );
                 metadata.insert(
                     "_partition_key".to_string(),
-                    SqlValue { value: Some(Value::StringValue(partition_key.to_string())) }
+                    SqlValue {
+                        value: Some(Value::StringValue(partition_key.to_string())),
+                    },
                 );
                 metadata.insert(
                     "_compressed".to_string(),
-                    SqlValue { value: Some(Value::StringValue("true".to_string())) }
+                    SqlValue {
+                        value: Some(Value::StringValue("true".to_string())),
+                    },
                 );
 
                 // Add selected fields for querying
                 if let Some(source) = &log.source {
                     metadata.insert(
                         "source".to_string(),
-                        SqlValue { value: Some(Value::StringValue(source.clone())) }
+                        SqlValue {
+                            value: Some(Value::StringValue(source.clone())),
+                        },
                     );
                 }
                 if let Some(service) = &log.service {
                     metadata.insert(
                         "service".to_string(),
-                        SqlValue { value: Some(Value::StringValue(service.clone())) }
+                        SqlValue {
+                            value: Some(Value::StringValue(service.clone())),
+                        },
                     );
                 }
 
@@ -489,7 +512,10 @@ impl PartitionedStorage {
         let result = engine.flush(params).await?;
 
         if result.success {
-            info!("Successfully converted partition {} to cold storage ({} bytes)", partition_key, compressed_size);
+            info!(
+                "Successfully converted partition {} to cold storage ({} bytes)",
+                partition_key, compressed_size
+            );
             Ok(entries.len())
         } else {
             Err(anyhow::anyhow!("Cold storage conversion failed"))

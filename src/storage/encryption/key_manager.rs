@@ -11,7 +11,7 @@ use std::env;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
@@ -37,7 +37,7 @@ pub struct KeyVersion {
 /// Key manager for encryption keys
 pub struct KeyManager {
     /// Master key (256-bit)
-    master_key: [u8; 8], // Store as u64 array for obfuscation
+    master_key: [u8; 32], // 256-bit master key
     /// Key versions by ID
     key_versions: Arc<RwLock<HashMap<KeyVersionId, KeyVersion>>>,
     /// Current active key version
@@ -51,8 +51,9 @@ pub struct KeyManager {
 impl KeyManager {
     /// Create a new key manager from environment variable
     pub fn from_env(env_var: &str) -> Result<Self> {
-        let master_key_str = env::var(env_var)
-            .map_err(|_| anyhow::anyhow!("Master key environment variable '{}' not set", env_var))?;
+        let master_key_str = env::var(env_var).map_err(|_| {
+            anyhow::anyhow!("Master key environment variable '{}' not set", env_var)
+        })?;
 
         let master_key_bytes = master_key_str.as_bytes();
         if master_key_bytes.len() < 32 {
@@ -66,7 +67,7 @@ impl KeyManager {
         let mut hasher = Sha256::new();
         hasher.update(master_key_bytes);
         let hash_result = hasher.finalize();
-        let mut master_key = [0u8; 8];
+        let mut master_key = [0u8; 32];
         master_key.copy_from_slice(&hash_result[0..32]);
 
         let mut key_versions = HashMap::new();
@@ -89,13 +90,7 @@ impl KeyManager {
 
     /// Get master key as bytes
     fn master_key_bytes(&self) -> [u8; 32] {
-        // Reconstruct master key from u64 array
-        let mut key = [0u8; 32];
-        for i in 0..8 {
-            let bytes = self.master_key[i].to_be_bytes();
-            key[i * 4..i * 4 + 4].copy_from_slice(&bytes);
-        }
-        key
+        self.master_key
     }
 
     /// Derive encryption key for a specific context
@@ -106,13 +101,22 @@ impl KeyManager {
 
     /// Get current active key version
     pub fn current_version(&self) -> KeyVersionId {
-        *self.current_version.read().unwrap()
+        match self.current_version.read() {
+            Ok(guard) => *guard,
+            Err(poisoned) => {
+                warn!("current_version lock poisoned; continuing with last known value");
+                *poisoned.into_inner()
+            }
+        }
     }
 
     /// Create a new key version (for key rotation)
     pub fn rotate_key(&self) -> Result<KeyVersionId> {
         let new_version_id = {
-            let mut next_id = self.next_version_id.write().unwrap();
+            let mut next_id = self
+                .next_version_id
+                .write()
+                .map_err(|_| anyhow::anyhow!("next_version_id lock poisoned"))?;
             let id = *next_id;
             *next_id += 1;
             id
@@ -129,18 +133,28 @@ impl KeyManager {
         };
 
         // Deactivate old version
+        let old_version_id = *self
+            .current_version
+            .read()
+            .map_err(|_| anyhow::anyhow!("current_version lock poisoned"))?;
+
         {
-            let mut versions = self.key_versions.write().unwrap();
-            let old_version_id = *self.current_version.read().unwrap();
+            let mut versions = self
+                .key_versions
+                .write()
+                .map_err(|_| anyhow::anyhow!("key_versions lock poisoned"))?;
             if let Some(old_version) = versions.get_mut(&old_version_id) {
                 old_version.active = false;
             }
             versions.insert(new_version_id, new_version.clone());
-
-            // Update current version
-            let mut current = self.current_version.write().unwrap();
-            *current = new_version_id;
         }
+
+        // Update current version
+        let mut current = self
+            .current_version
+            .write()
+            .map_err(|_| anyhow::anyhow!("current_version lock poisoned"))?;
+        *current = new_version_id;
 
         info!("Rotated to key version {}", new_version_id);
 
@@ -149,24 +163,39 @@ impl KeyManager {
 
     /// Get key version by ID
     pub fn get_version(&self, version_id: KeyVersionId) -> Option<KeyVersion> {
-        self.key_versions.read().unwrap().get(&version_id).cloned()
+        match self.key_versions.read() {
+            Ok(versions) => versions.get(&version_id).cloned(),
+            Err(_) => {
+                warn!(
+                    "key_versions lock poisoned while reading version {}",
+                    version_id
+                );
+                None
+            }
+        }
     }
 
     /// Get all active key versions
     pub fn active_versions(&self) -> Vec<KeyVersion> {
-        self.key_versions
-            .read()
-            .unwrap()
-            .values()
-            .filter(|v| v.active)
-            .cloned()
-            .collect()
+        match self.key_versions.read() {
+            Ok(versions) => versions.values().filter(|v| v.active).cloned().collect(),
+            Err(_) => {
+                warn!("key_versions lock poisoned while listing active versions");
+                Vec::new()
+            }
+        }
     }
 
     /// Check if key rotation is needed
     pub fn needs_rotation(&self) -> bool {
         let current_id = self.current_version();
-        let versions = self.key_versions.read().unwrap();
+        let versions = match self.key_versions.read() {
+            Ok(versions) => versions,
+            Err(_) => {
+                warn!("key_versions lock poisoned during rotation check");
+                return false;
+            }
+        };
 
         if let Some(version) = versions.get(&current_id) {
             if let Some(expires_at) = version.expires_at {
@@ -180,16 +209,15 @@ impl KeyManager {
     /// Clean up expired key versions
     pub fn cleanup_expired(&self) -> Result<usize> {
         let now = now();
-        let mut versions = self.key_versions.write().unwrap();
+        let mut versions = self
+            .key_versions
+            .write()
+            .map_err(|_| anyhow::anyhow!("key_versions lock poisoned"))?;
 
         let expired: Vec<KeyVersionId> = versions
             .values()
             .filter(|v| !v.active)
-            .filter(|v| {
-                v.expires_at
-                    .map(|exp| exp < now)
-                    .unwrap_or(false)
-            })
+            .filter(|v| v.expires_at.map(|exp| exp < now).unwrap_or(false))
             .map(|v| v.id)
             .collect();
 
@@ -262,10 +290,16 @@ impl Clone for KeyVersionManager {
 
 /// Get current time as Unix epoch
 fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(error) => {
+            warn!(
+                "system clock is before Unix epoch; using 0 as fallback timestamp: {}",
+                error
+            );
+            0
+        }
+    }
 }
 
 #[cfg(test)]
@@ -275,7 +309,12 @@ mod tests {
     #[test]
     fn test_key_manager_creation() {
         // Set test master key
-        unsafe { env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
         let km = KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap();
         assert_eq!(km.current_version(), 0);
@@ -283,7 +322,12 @@ mod tests {
 
     #[test]
     fn test_context_key_derivation() {
-        unsafe { env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
         let km = KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap();
         let key1 = km.derive_context_key(b"context1");
@@ -297,7 +341,12 @@ mod tests {
 
     #[test]
     fn test_key_rotation() {
-        unsafe { env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
         let km = KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap();
         assert_eq!(km.current_version(), 0);

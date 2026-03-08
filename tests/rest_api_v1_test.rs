@@ -8,8 +8,7 @@
 use serde_json::json;
 
 use proximadb::network::rest::v1::handlers::{
-    HybridIndexRequest, HybridSearchRequest, HybridSearchResponse,
-    HybridSearchHit,
+    HybridIndexRequest, HybridSearchHit, HybridSearchRequest, HybridSearchResponse,
 };
 
 // Test hybrid search request deserialization
@@ -342,17 +341,15 @@ fn test_hybrid_index_request_missing_text() {
 fn test_hybrid_search_response_serialization() {
     let response = HybridSearchResponse {
         success: true,
-        results: vec![
-            HybridSearchHit {
-                id: "doc1".to_string(),
-                combined_score: 0.95,
-                vector_score: Some(0.9),
-                bm25_score: Some(0.85),
-                vector_rank: Some(1),
-                bm25_rank: Some(2),
-                matched_terms: vec!["machine".to_string(), "learning".to_string()],
-            },
-        ],
+        results: vec![HybridSearchHit {
+            id: "doc1".to_string(),
+            combined_score: 0.95,
+            vector_score: Some(0.9),
+            bm25_score: Some(0.85),
+            vector_rank: Some(1),
+            bm25_rank: Some(2),
+            matched_terms: vec!["machine".to_string(), "learning".to_string()],
+        }],
         total: 1,
         processing_time_us: 1500,
         mode: "hybrid".to_string(),
@@ -464,7 +461,10 @@ fn test_special_characters_in_text() {
     assert!(result.is_ok());
 
     let request = result.unwrap();
-    assert_eq!(request.text_query, Some("C++ & Rust: <lang> \"programming\"".to_string()));
+    assert_eq!(
+        request.text_query,
+        Some("C++ & Rust: <lang> \"programming\"".to_string())
+    );
 }
 
 #[test]

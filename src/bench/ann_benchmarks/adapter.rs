@@ -7,7 +7,7 @@
 //   cargo run --bin ann-benchmarks -- --dataset sift --algorithm hnsw
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -168,12 +168,14 @@ impl ANNBenchmarksRunner {
     /// Run the benchmark
     pub fn run(&self) -> Result<BenchmarkResults, String> {
         // Step 1: Load dataset
-        let metadata = self.load_dataset_metadata()
+        let metadata = self
+            .load_dataset_metadata()
             .map_err(|e| format!("Failed to load dataset metadata: {}", e))?;
 
         // Step 2: Build index
         let build_start = Instant::now();
-        let index_size = self.build_index(&metadata)
+        let index_size = self
+            .build_index(&metadata)
             .map_err(|e| format!("Failed to build index: {}", e))?;
         let build_time = build_start.elapsed();
 
@@ -181,7 +183,8 @@ impl ANNBenchmarksRunner {
         let memory_usage = self.measure_memory_usage();
 
         // Step 4: Run queries
-        let query_stats = self.run_queries(&metadata, &self.config.search_params)
+        let query_stats = self
+            .run_queries(&metadata, &self.config.search_params)
             .map_err(|e| format!("Failed to run queries: {}", e))?;
 
         Ok(BenchmarkResults {
@@ -241,12 +244,12 @@ impl ANNBenchmarksRunner {
 
         // For now, return a placeholder size
         match self.config.algorithm.as_str() {
-            "hnsw" => Ok(1_000_000_000), // ~1GB for HNSW on SIFT
-            "ivf" => Ok(800_000_000),    // ~800MB for IVF
+            "hnsw" => Ok(1_000_000_000),  // ~1GB for HNSW on SIFT
+            "ivf" => Ok(800_000_000),     // ~800MB for IVF
             "annoy" => Ok(1_200_000_000), // ~1.2GB for Annoy
             "flat" => Ok(4_000_000_000),  // ~4GB for flat index
-            "lsh" => Ok(500_000_000),    // ~500MB for LSH
-            "pq" => Ok(300_000_000),     // ~300MB for PQ
+            "lsh" => Ok(500_000_000),     // ~500MB for LSH
+            "pq" => Ok(300_000_000),      // ~300MB for PQ
             "diskann" => Ok(900_000_000), // ~900MB for DiskANN
             _ => Err(format!("Unknown algorithm: {}", self.config.algorithm)),
         }
@@ -257,15 +260,19 @@ impl ANNBenchmarksRunner {
         // In production, this would use actual memory measurement
         // For now, return an estimate based on algorithm
         match self.config.algorithm.as_str() {
-            "hnsw" => 2_000_000_000,  // ~2GB
-            "ivf" => 1_500_000_000,   // ~1.5GB
-            "flat" => 4_000_000_000,  // ~4GB
-            _ => 1_000_000_000,       // ~1GB default
+            "hnsw" => 2_000_000_000, // ~2GB
+            "ivf" => 1_500_000_000,  // ~1.5GB
+            "flat" => 4_000_000_000, // ~4GB
+            _ => 1_000_000_000,      // ~1GB default
         }
     }
 
     /// Run queries and collect statistics
-    fn run_queries(&self, _metadata: &DatasetMetadata, _search_params: &SearchParams) -> Result<QueryStats, String> {
+    fn run_queries(
+        &self,
+        _metadata: &DatasetMetadata,
+        _search_params: &SearchParams,
+    ) -> Result<QueryStats, String> {
         // In production, this would:
         // 1. Load test queries from the dataset
         // 2. Run queries with the specified algorithm
@@ -275,14 +282,14 @@ impl ANNBenchmarksRunner {
         // For now, return placeholder statistics
         // These values should be representative of actual performance
         let (avg_qps, recall) = match self.config.algorithm.as_str() {
-            "hnsw" => (5000.0, 0.95),  // HNSW: 5K QPS, 95% recall
-            "ivf" => (8000.0, 0.90),   // IVF: 8K QPS, 90% recall
-            "annoy" => (10000.0, 0.85), // Annoy: 10K QPS, 85% recall
-            "flat" => (100.0, 1.0),     // Flat: 100 QPS, 100% recall (exact)
-            "lsh" => (15000.0, 0.70),   // LSH: 15K QPS, 70% recall
-            "pq" => (20000.0, 0.80),    // PQ: 20K QPS, 80% recall
+            "hnsw" => (5000.0, 0.95),    // HNSW: 5K QPS, 95% recall
+            "ivf" => (8000.0, 0.90),     // IVF: 8K QPS, 90% recall
+            "annoy" => (10000.0, 0.85),  // Annoy: 10K QPS, 85% recall
+            "flat" => (100.0, 1.0),      // Flat: 100 QPS, 100% recall (exact)
+            "lsh" => (15000.0, 0.70),    // LSH: 15K QPS, 70% recall
+            "pq" => (20000.0, 0.80),     // PQ: 20K QPS, 80% recall
             "diskann" => (6000.0, 0.93), // DiskANN: 6K QPS, 93% recall
-            _ => (1000.0, 0.80),        // Default: 1K QPS, 80% recall
+            _ => (1000.0, 0.80),         // Default: 1K QPS, 80% recall
         };
 
         let avg_latency_ms = 1000.0 / avg_qps;
@@ -290,9 +297,9 @@ impl ANNBenchmarksRunner {
         Ok(QueryStats {
             num_queries: self.config.runs,
             avg_qps,
-            median_qps: avg_qps * 1.1,  // Median slightly better than average
-            p95_qps: avg_qps * 0.8,     // P95 slightly worse
-            p99_qps: avg_qps * 0.6,     // P99 significantly worse
+            median_qps: avg_qps * 1.1, // Median slightly better than average
+            p95_qps: avg_qps * 0.8,    // P95 slightly worse
+            p99_qps: avg_qps * 0.6,    // P99 significantly worse
             recall_at_k: recall,
             avg_latency_ms,
             median_latency_ms: avg_latency_ms * 0.9,
@@ -311,7 +318,8 @@ impl ANNBenchmarksRunner {
         csv.push_str("avg_latency_ms,median_latency_ms,p95_latency_ms,p99_latency_ms\n");
 
         // Data row
-        csv.push_str(&format!("{},{},{},{},{},{},",
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},",
             results.dataset,
             results.algorithm,
             results.query_stats.num_queries,
@@ -319,14 +327,16 @@ impl ANNBenchmarksRunner {
             results.index_size_bytes,
             results.memory_usage_bytes,
         ));
-        csv.push_str(&format!("{},{},{},{},{},",
+        csv.push_str(&format!(
+            "{},{},{},{},{},",
             results.query_stats.avg_qps,
             results.query_stats.median_qps,
             results.query_stats.p95_qps,
             results.query_stats.p99_qps,
             results.query_stats.recall_at_k,
         ));
-        csv.push_str(&format!("{},{},{},{}\n",
+        csv.push_str(&format!(
+            "{},{},{},{}\n",
             results.query_stats.avg_latency_ms,
             results.query_stats.median_latency_ms,
             results.query_stats.p95_latency_ms,

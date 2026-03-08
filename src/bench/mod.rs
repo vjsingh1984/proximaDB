@@ -13,6 +13,6 @@ pub mod ann_benchmarks;
 
 // Re-export commonly used types
 pub use ann_benchmarks::{
-    ANNBenchmarkConfig as ANNBenchConfig, ANNBenchmarksRunner,
-    BenchmarkResults, BuildParams, DatasetMetadata, QueryStats, SearchParams,
+    ANNBenchmarkConfig as ANNBenchConfig, ANNBenchmarksRunner, BenchmarkResults, BuildParams,
+    DatasetMetadata, QueryStats, SearchParams,
 };

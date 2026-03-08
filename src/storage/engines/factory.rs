@@ -331,7 +331,9 @@ impl StorageEngineFactory {
     /// - Automatic downsampling
     pub fn create_tst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating TST (Time-Series) storage engine");
-        Ok(Arc::new(crate::storage::engines::impls::tst::TimeSeriesEngine::new()?))
+        Ok(Arc::new(
+            crate::storage::engines::impls::tst::TimeSeriesEngine::new()?,
+        ))
     }
 
     /// Create VIPER engine with default configuration

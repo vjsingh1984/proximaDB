@@ -5,7 +5,6 @@
 //! Uses Gorilla-inspired compression for floating-point time-series data,
 //! which can achieve 10:1 compression ratios for typical workloads.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};
 
@@ -356,7 +355,11 @@ mod tests {
         let ratio = compressor.calculate_ratio(&data, &compressed);
         // For slowly increasing data, the XORs are non-zero, so compression ratio may be < 1
         // The key is that compression/decompression is lossless
-        assert!(ratio > 0.5, "Compression ratio should be reasonable, got {}", ratio);
+        assert!(
+            ratio > 0.5,
+            "Compression ratio should be reasonable, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -374,7 +377,11 @@ mod tests {
         // High compression ratio expected for repeated values
         let ratio = compressor.calculate_ratio(&data, &compressed);
         // With simplified delta encoding, repeated values achieve excellent compression
-        assert!(ratio > 10.0, "Compression ratio should be > 10:1 for repeated values, got {}", ratio);
+        assert!(
+            ratio > 10.0,
+            "Compression ratio should be > 10:1 for repeated values, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -395,7 +402,11 @@ mod tests {
         // Verify compression works (ratio depends on data characteristics)
         let ratio = compressor.calculate_ratio(&data, &compressed);
         // For OHLC data with variations, the key is correctness, not high compression ratio
-        assert!(ratio > 0.5, "Compression ratio should be reasonable, got {}", ratio);
+        assert!(
+            ratio > 0.5,
+            "Compression ratio should be reasonable, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -428,7 +439,11 @@ mod tests {
             if orig.is_nan() {
                 assert!(decomp.is_nan(), "Value at index {} should be NaN", i);
             } else if orig.is_infinite() {
-                assert!(decomp.is_infinite(), "Value at index {} should be infinite", i);
+                assert!(
+                    decomp.is_infinite(),
+                    "Value at index {} should be infinite",
+                    i
+                );
                 assert!(orig.is_sign_positive() == decomp.is_sign_positive());
             } else {
                 assert_eq!(orig, *decomp, "Value at index {} mismatch", i);

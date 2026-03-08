@@ -65,8 +65,8 @@ pub mod ssd_layout;
 pub mod vamana;
 
 use crate::core::error::ProximaDBError;
-use crate::index::diskann::pq::{PQEncoder, PQConfig};
-use crate::index::diskann::search::{DiskANNSearch, SearchConfig, SearchResult, SearchStats};
+use crate::index::diskann::pq::{PQConfig, PQEncoder};
+use crate::index::diskann::search::{DiskANNSearch, SearchConfig};
 use crate::index::diskann::ssd_layout::{NodeOrdering, SsdLayoutOptimizer};
 use crate::index::diskann::vamana::{VamanaConfig, VamanaGraph};
 use tracing::info;
@@ -164,21 +164,27 @@ impl DiskANNIndex {
         // Phase 4: Product Quantization compression (optional)
         info!("Training PQ codebooks for compression...");
         let pq_config = PQConfig {
-            num_subvectors: 4,      // Smaller for faster testing
-            num_centroids: 16,      // Smaller for faster testing
-            max_iterations: 5,      // Fewer iterations
+            num_subvectors: 4, // Smaller for faster testing
+            num_centroids: 16, // Smaller for faster testing
+            max_iterations: 5, // Fewer iterations
             convergence_threshold: 0.01,
         };
         let pq_encoder = PQEncoder::new(pq_config);
-        let pq_vectors = pq_encoder.train_codebooks(&vectors)
+        let pq_vectors = pq_encoder
+            .train_codebooks(&vectors)
             .and_then(|codebooks| pq_encoder.encode(&vectors, &codebooks))?;
 
-        let compression_ratio = pq_vectors.compression_ratio(dimension);
+        let compression_ratio = pq_vectors.compression_ratio(dimension)?;
+        let codes_len = pq_vectors
+            .codes
+            .first()
+            .ok_or_else(|| ProximaDBError::Internal("No PQ codes available".to_string()))?
+            .len();
         info!(
             "PQ compression: {:.1}x compression ratio ({} bytes → {} bytes per vector)",
             compression_ratio,
             dimension * std::mem::size_of::<f32>(),
-            pq_vectors.codes[0].len() * std::mem::size_of::<u8>()
+            codes_len * std::mem::size_of::<u8>()
         );
 
         self.pq_vectors = Some(pq_vectors);
@@ -191,22 +197,24 @@ impl DiskANNIndex {
         if query.len() != self.dimension {
             return Err(ProximaDBError::InvalidInput(format!(
                 "Query dimension mismatch: expected {}, got {}",
-                self.dimension, query.len()
+                self.dimension,
+                query.len()
             )));
         }
 
         // Check if index is built
-        let vamana_graph = self.vamana_graph.as_ref()
+        let vamana_graph = self
+            .vamana_graph
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Internal("Index not built".to_string()))?;
 
-        let vectors = self.vectors.as_ref()
+        let vectors = self
+            .vectors
+            .as_ref()
             .ok_or_else(|| ProximaDBError::Internal("Vectors not available".to_string()))?;
 
         // Create search engine
-        let search_engine = DiskANNSearch::new(
-            vamana_graph.clone(),
-            self.node_ordering.clone(),
-        );
+        let search_engine = DiskANNSearch::new(vamana_graph.clone(), self.node_ordering.clone());
 
         // Configure search
         let config = SearchConfig {
@@ -234,7 +242,11 @@ impl DiskANNIndex {
             id: self.id.clone(),
             dimension: self.dimension,
             num_vectors: self.num_vectors,
-            max_degree: self.vamana_graph.as_ref().map(|g| g.max_degree).unwrap_or(0),
+            max_degree: self
+                .vamana_graph
+                .as_ref()
+                .map(|g| g.max_degree)
+                .unwrap_or(0),
             is_built: self.vamana_graph.is_some(),
         }
     }
@@ -306,11 +318,7 @@ mod tests {
 
         // Create a small graph with clear high-degree nodes
         let vectors: Vec<Vec<f32>> = (0..20)
-            .map(|i| {
-                (0..64)
-                    .map(|j| ((i * 64 + j) % 10) as f32)
-                    .collect()
-            })
+            .map(|i| (0..64).map(|j| ((i * 64 + j) % 10) as f32).collect())
             .collect();
 
         let result = index.build(vectors).await;
@@ -371,11 +379,7 @@ mod tests {
 
         // Create vectors
         let vectors: Vec<Vec<f32>> = (0..30)
-            .map(|i| {
-                (0..64)
-                    .map(|j| ((i * 64 + j) % 20) as f32)
-                    .collect()
-            })
+            .map(|i| (0..64).map(|j| ((i * 64 + j) % 20) as f32).collect())
             .collect();
 
         // Build index
@@ -408,11 +412,7 @@ mod tests {
         let mut index = DiskANNIndex::new("pq_test".to_string(), 64);
 
         let vectors: Vec<Vec<f32>> = (0..30)
-            .map(|i| {
-                (0..64)
-                    .map(|j| ((i * 64 + j) % 20) as f32)
-                    .collect()
-            })
+            .map(|i| (0..64).map(|j| ((i * 64 + j) % 20) as f32).collect())
             .collect();
 
         let result = index.build(vectors).await;
@@ -426,7 +426,7 @@ mod tests {
         assert!(pq_vectors.codes[0].len() > 0);
 
         // Check compression ratio
-        let ratio = pq_vectors.compression_ratio(64);
+        let ratio = pq_vectors.compression_ratio(64).unwrap();
         assert!(ratio > 30.0); // Should have >30x compression
     }
 }

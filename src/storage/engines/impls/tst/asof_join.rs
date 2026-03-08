@@ -62,16 +62,13 @@ impl ASOFJoin {
 
         for left_record in left_series {
             let left_ts = left_record.timestamp.unwrap_or(0);
-            let left_dt = DateTime::from_timestamp(left_ts, 0).unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+            let _left_dt = DateTime::from_timestamp(left_ts, 0).unwrap_or_else(Utc::now);
 
             // Find the most recent right record <= left timestamp
-            let match_result = sorted_right
-                .iter()
-                .rev()
-                .find(|right| {
-                    let right_ts = right.timestamp.unwrap_or(0);
-                    right_ts <= left_ts
-                });
+            let match_result = sorted_right.iter().rev().find(|right| {
+                let right_ts = right.timestamp.unwrap_or(0);
+                right_ts <= left_ts
+            });
 
             if let Some(right_record) = match_result {
                 let right_ts = right_record.timestamp.unwrap_or(0);
@@ -154,25 +151,23 @@ mod tests {
 
         let asof = ASOFJoin::new();
 
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                let results = asof.execute(left, right, None).await.unwrap();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let results = asof.execute(left, right, None).await.unwrap();
 
-                assert_eq!(results.len(), 3);
+            assert_eq!(results.len(), 3);
 
-                // left1 at 100 should match right2 at 90 (closest <= 100)
-                assert_eq!(results[0].left_record.id, "left1");
-                assert_eq!(results[0].right_record.as_ref().unwrap().id, "right1");
+            // left1 at 100 should match right2 at 90 (closest <= 100)
+            assert_eq!(results[0].left_record.id, "left1");
+            assert_eq!(results[0].right_record.as_ref().unwrap().id, "right1");
 
-                // left2 at 150 should match right2 at 140
-                assert_eq!(results[1].left_record.id, "left2");
-                assert_eq!(results[1].right_record.as_ref().unwrap().id, "right2");
+            // left2 at 150 should match right2 at 140
+            assert_eq!(results[1].left_record.id, "left2");
+            assert_eq!(results[1].right_record.as_ref().unwrap().id, "right2");
 
-                // left3 at 200 should match right3 at 180
-                assert_eq!(results[2].left_record.id, "left3");
-                assert_eq!(results[2].right_record.as_ref().unwrap().id, "right3");
-            });
+            // left3 at 200 should match right3 at 180
+            assert_eq!(results[2].left_record.id, "left3");
+            assert_eq!(results[2].right_record.as_ref().unwrap().id, "right3");
+        });
     }
 
     #[test]
@@ -184,14 +179,12 @@ mod tests {
         let asof = ASOFJoin::new();
         let tolerance = Duration::seconds(15);
 
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                let results = asof.execute(left, right, Some(tolerance)).await.unwrap();
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let results = asof.execute(left, right, Some(tolerance)).await.unwrap();
 
-                // Should not match because time difference (20s) > tolerance (15s)
-                assert_eq!(results.len(), 1);
-                assert!(results[0].right_record.is_none());
-            });
+            // Should not match because time difference (20s) > tolerance (15s)
+            assert_eq!(results.len(), 1);
+            assert!(results[0].right_record.is_none());
+        });
     }
 }

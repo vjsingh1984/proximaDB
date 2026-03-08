@@ -148,12 +148,19 @@ async fn test_otlp_adapter_span_conversion() {
 
     // Verify attributes
     assert_eq!(span.attributes.len(), 4);
-    let method_attr = span.attributes.iter().find(|a| a.key == "http.method").unwrap();
+    let method_attr = span
+        .attributes
+        .iter()
+        .find(|a| a.key == "http.method")
+        .unwrap();
     assert!(method_attr.value.string_value.is_some());
 
     // Verify child span
     let child_span = &req.resource_spans[0].scope_spans[0].spans[1];
-    assert_eq!(child_span.parent_span_id, Some("0102030405060708".to_string()));
+    assert_eq!(
+        child_span.parent_span_id,
+        Some("0102030405060708".to_string())
+    );
     assert_eq!(child_span.name, "child-operation");
 }
 
@@ -171,9 +178,9 @@ async fn test_observability_trace_ingestion() {
     let namespace_config = ObservabilityNamespaceConfig {
         name: "otlp-test".to_string(),
         retention: Some(RetentionConfig {
-            hot_retention_hours: 24,      // 1 day in hot tier
+            hot_retention_hours: 24, // 1 day in hot tier
             warm_retention_days: 0,
-            cold_retention_days: 7,       // 7 days in cold tier
+            cold_retention_days: 7, // 7 days in cold tier
             archive_retention_days: 0,
         }),
         access: None,
@@ -488,7 +495,10 @@ async fn test_otlp_multiple_services_trace() {
         .iter()
         .find(|a| a.key == "service.name")
         .unwrap();
-    assert_eq!(second_service.value.string_value.as_ref().unwrap(), "backend");
+    assert_eq!(
+        second_service.value.string_value.as_ref().unwrap(),
+        "backend"
+    );
 
     // Both spans belong to same trace
     assert_eq!(

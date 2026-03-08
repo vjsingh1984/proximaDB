@@ -6,15 +6,14 @@
 // - Per-segment key derivation
 // - Key version tracking in segment metadata
 
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::key_manager::{KeyVersionManager, KeyVersionId};
+use super::key_manager::{KeyVersionId, KeyVersionManager};
 use super::{decrypt_data, encrypt_data};
 
 /// WAL segment metadata with encryption info
@@ -177,10 +176,16 @@ mod tests {
     #[test]
     fn test_wal_encryption_round_trip() {
         // Set test master key
-        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
+            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+                .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
@@ -193,22 +198,30 @@ mod tests {
         // Encrypt
         let (ciphertext, metadata) = layer
             .encrypt_segment(segment_name, segment_id, plaintext)
-            .unwrap();
+            .expect("failed to encrypt segment");
 
         assert!(metadata.encrypted);
         assert_ne!(ciphertext, plaintext.to_vec());
 
         // Decrypt
-        let decrypted = layer.decrypt_segment(&metadata, &ciphertext).unwrap();
+        let decrypted = layer
+            .decrypt_segment(&metadata, &ciphertext)
+            .expect("failed to decrypt segment");
         assert_eq!(decrypted, plaintext.to_vec());
     }
 
     #[test]
     fn test_wal_encryption_disabled() {
-        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
+            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+                .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
@@ -221,22 +234,30 @@ mod tests {
         // Encrypt (should be no-op when disabled)
         let (ciphertext, metadata) = layer
             .encrypt_segment(segment_name, segment_id, plaintext)
-            .unwrap();
+            .expect("failed to encrypt segment");
 
         assert!(!metadata.encrypted);
         assert_eq!(ciphertext, plaintext.to_vec());
 
         // Decrypt (should be no-op)
-        let decrypted = layer.decrypt_segment(&metadata, &ciphertext).unwrap();
+        let decrypted = layer
+            .decrypt_segment(&metadata, &ciphertext)
+            .expect("failed to decrypt segment");
         assert_eq!(decrypted, plaintext.to_vec());
     }
 
     #[test]
     fn test_reencryption_needed() {
-        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
         let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
+            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY")
+                .expect("failed to create key manager from env"),
         );
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
@@ -245,13 +266,13 @@ mod tests {
         let plaintext = b"WAL data";
         let (ciphertext, metadata) = layer
             .encrypt_segment("wal_0001", 1, plaintext)
-            .unwrap();
+            .expect("failed to encrypt segment");
 
         // Initially, no re-encryption needed
         assert!(!layer.needs_reencryption(&metadata));
 
         // Rotate key
-        key_version_manager.rotate().unwrap();
+        key_version_manager.rotate().expect("failed to rotate key");
 
         // Now re-encryption is needed
         assert!(layer.needs_reencryption(&metadata));
@@ -259,10 +280,12 @@ mod tests {
         // Re-encrypt
         let (new_ciphertext, new_metadata) = layer
             .reencrypt_segment(&metadata, &ciphertext)
-            .unwrap();
+            .expect("failed to re-encrypt segment");
 
         // Decrypt with new key
-        let decrypted = layer.decrypt_segment(&new_metadata, &new_ciphertext).unwrap();
+        let decrypted = layer
+            .decrypt_segment(&new_metadata, &new_ciphertext)
+            .expect("failed to decrypt segment");
         assert_eq!(decrypted, plaintext.to_vec());
     }
 }

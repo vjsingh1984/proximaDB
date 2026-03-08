@@ -68,9 +68,11 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 pub use self::cache::CatalogCache;
+pub use self::partition_pruning::{
+    PartitionInfo, PartitionPruner, PruningResult, parse_partition_path,
+};
 pub use self::traits::*;
 pub use self::types::*;
-pub use self::partition_pruning::{PartitionPruner, PruningResult, PartitionInfo, parse_partition_path};
 
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {
@@ -487,7 +489,10 @@ impl CatalogManager {
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
-                let table = parts.last().unwrap().to_string();
+                let table = parts
+                    .last()
+                    .ok_or_else(|| anyhow!("Invalid table name: missing table component"))?
+                    .to_string();
                 let id = TableIdentifier::new(namespace, table);
                 Ok((catalog, id))
             }
@@ -530,7 +535,7 @@ impl TableIdentifier {
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
-            let name = parts.last().unwrap().to_string();
+            let name = parts[parts.len() - 1].to_string();
             Self::new(namespace, name)
         }
     }
@@ -641,7 +646,7 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.default_catalog().await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("No default catalog"));
     }
 
@@ -650,7 +655,7 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.get_catalog("nonexistent").await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("not found"));
     }
 
@@ -659,7 +664,8 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.set_default_catalog("nonexistent").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not found"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
@@ -667,7 +673,7 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.unregister_catalog("nonexistent").await;
         assert!(result.is_ok());
-        assert!(!result.unwrap()); // Returns false for nonexistent
+        assert!(!result.expect("Expected Ok result")); // Returns false for nonexistent
     }
 
     #[tokio::test]
@@ -690,7 +696,7 @@ mod tests {
             .create_glue_catalog("glue", "us-east-1", "123456789012")
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("aws"));
     }
 
@@ -707,7 +713,7 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("unity-catalog"));
     }
 
@@ -724,7 +730,7 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("polaris-catalog"));
     }
 
@@ -736,7 +742,7 @@ mod tests {
             .create_delta_catalog("delta", "file:///tmp/delta")
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("delta-lake"));
     }
 
@@ -780,13 +786,16 @@ mod tests {
                 &format!("file://{}", temp_dir.display()),
             )
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         assert_eq!(catalog.name(), "test_iceberg");
         assert_eq!(catalog.catalog_type(), "iceberg");
 
         // Health check
-        let health = catalog.health_check().await.unwrap();
+        let health = catalog
+            .health_check()
+            .await
+            .expect("Expected health check to succeed");
         assert!(health.is_healthy);
 
         // Clean up
@@ -824,9 +833,12 @@ mod tests {
         manager
             .create_native_catalog("first", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
-        let default = manager.default_catalog().await.unwrap();
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(default.name(), "first");
 
         // Clean up
@@ -865,7 +877,7 @@ mod tests {
         manager
             .create_native_catalog("catalog1", &format!("file://{}", temp_dir1.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
         manager
             .create_iceberg_catalog(
                 "catalog2",
@@ -873,7 +885,7 @@ mod tests {
                 &format!("file://{}", temp_dir2.display()),
             )
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         let catalogs = manager.list_catalogs().await;
         assert_eq!(catalogs.len(), 2);
@@ -896,19 +908,28 @@ mod tests {
         manager
             .create_native_catalog("cat1", &format!("file://{}", temp_dir1.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
         manager
             .create_native_catalog("cat2", &format!("file://{}", temp_dir2.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // First catalog should be default
-        let default = manager.default_catalog().await.unwrap();
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(default.name(), "cat1");
 
         // Change default
-        manager.set_default_catalog("cat2").await.unwrap();
-        let new_default = manager.default_catalog().await.unwrap();
+        manager
+            .set_default_catalog("cat2")
+            .await
+            .expect("Expected set_default_catalog to succeed");
+        let new_default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(new_default.name(), "cat2");
 
         // Clean up
@@ -925,11 +946,14 @@ mod tests {
         manager
             .create_native_catalog("to_remove", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         assert_eq!(manager.list_catalogs().await.len(), 1);
 
-        let removed = manager.unregister_catalog("to_remove").await.unwrap();
+        let removed = manager
+            .unregister_catalog("to_remove")
+            .await
+            .expect("Expected unregister to succeed");
         assert!(removed);
         assert!(manager.list_catalogs().await.is_empty());
 
@@ -948,17 +972,23 @@ mod tests {
         manager
             .create_native_catalog("cat1", &format!("file://{}", temp_dir1.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
         manager
             .create_native_catalog("cat2", &format!("file://{}", temp_dir2.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // Remove default catalog
-        manager.unregister_catalog("cat1").await.unwrap();
+        manager
+            .unregister_catalog("cat1")
+            .await
+            .expect("Expected unregister to succeed");
 
         // cat2 should become the new default
-        let default = manager.default_catalog().await.unwrap();
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(default.name(), "cat2");
 
         // Clean up
@@ -979,10 +1009,13 @@ mod tests {
         manager
             .create_native_catalog("default", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // Simple table name
-        let (catalog, id) = manager.resolve_table("users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("users")
+            .await
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "default");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["default"]);
@@ -1000,10 +1033,13 @@ mod tests {
         manager
             .create_native_catalog("default", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // namespace.table
-        let (catalog, id) = manager.resolve_table("mydb.users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("mydb.users")
+            .await
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "default");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["mydb"]);
@@ -1021,10 +1057,13 @@ mod tests {
         manager
             .create_native_catalog("mycat", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // catalog.namespace.table
-        let (catalog, id) = manager.resolve_table("mycat.mydb.users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("mycat.mydb.users")
+            .await
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "mycat");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["mydb"]);
@@ -1042,13 +1081,13 @@ mod tests {
         manager
             .create_native_catalog("catalog", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // catalog.ns1.ns2.table
         let (catalog, id) = manager
             .resolve_table("catalog.db.schema.users")
             .await
-            .unwrap();
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "catalog");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["db", "schema"]);

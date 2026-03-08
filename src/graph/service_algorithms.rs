@@ -443,11 +443,10 @@ impl GraphOperationsService {
 
         let mut scores_vec: Vec<(String, f64)> = result.scores.into_iter().collect();
         scores_vec.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or_else(|| {
-                    // If either score is NaN, treat them as equal
-                    std::cmp::Ordering::Equal
-                })
+            b.1.partial_cmp(&a.1).unwrap_or_else(|| {
+                // If either score is NaN, treat them as equal
+                std::cmp::Ordering::Equal
+            })
         });
         scores_vec.truncate(n);
 
@@ -475,7 +474,10 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.expect("Failed to create test graph collection");
+        service
+            .create_graph_collection(req)
+            .await
+            .expect("Failed to create test graph collection");
 
         // Create nodes
         for i in 0..5 {
@@ -487,7 +489,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            service.create_node(&graph_id, node).await.expect("Failed to create test node");
+            service
+                .create_node(&graph_id, node)
+                .await
+                .expect("Failed to create test node");
         }
 
         // Create edges (star topology with n0 at center)
@@ -503,7 +508,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            service.create_edge(&graph_id, edge).await.expect("Failed to create test edge");
+            service
+                .create_edge(&graph_id, edge)
+                .await
+                .expect("Failed to create test edge");
         }
 
         graph_id
@@ -514,7 +522,10 @@ mod tests {
         let service = GraphOperationsService::new();
         let graph_id = create_test_graph(&service).await;
 
-        let scores = service.pagerank(&graph_id).await.expect("PageRank should succeed");
+        let scores = service
+            .pagerank(&graph_id)
+            .await
+            .expect("PageRank should succeed");
 
         // All nodes should have scores
         assert_eq!(scores.len(), 5);

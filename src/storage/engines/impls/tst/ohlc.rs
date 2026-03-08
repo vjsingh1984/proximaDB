@@ -261,9 +261,15 @@ mod tests {
             .expect("valid RFC3339 timestamp")
             .with_timezone(&Utc);
 
-        aggregator.add_price(t1, 100.0, 100).expect("add_price should succeed");
-        aggregator.add_price(t2, 102.0, 50).expect("add_price should succeed");
-        aggregator.add_price(t3, 101.0, 75).expect("add_price should succeed");
+        aggregator
+            .add_price(t1, 100.0, 100)
+            .expect("add_price should succeed");
+        aggregator
+            .add_price(t2, 102.0, 50)
+            .expect("add_price should succeed");
+        aggregator
+            .add_price(t3, 101.0, 75)
+            .expect("add_price should succeed");
 
         // Should have 2 bars (10:00-11:00 and 11:00-12:00)
         let bars = aggregator.get_all_bars();

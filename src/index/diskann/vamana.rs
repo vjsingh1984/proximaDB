@@ -85,9 +85,9 @@ pub struct VamanaConfig {
 impl Default for VamanaConfig {
     fn default() -> Self {
         Self {
-            max_degree: 32,           // Standard DiskANN parameter
-            search_window_size: 75,  // Search 75 candidates
-            alpha: 1.2,               // Candidate selection threshold
+            max_degree: 32,         // Standard DiskANN parameter
+            search_window_size: 75, // Search 75 candidates
+            alpha: 1.2,             // Candidate selection threshold
         }
     }
 }
@@ -135,7 +135,8 @@ impl VamanaBuilder {
         if vectors.len() != self.num_vectors {
             return Err(ProximaDBError::InvalidInput(format!(
                 "Vector count mismatch: expected {}, got {}",
-                self.num_vectors, vectors.len()
+                self.num_vectors,
+                vectors.len()
             )));
         }
 
@@ -205,7 +206,7 @@ impl VamanaBuilder {
     }
 
     /// Greedy graph construction starting from medoid
-    fn build_greedy(&mut self, vectors: &[Vec<f32>], medoid: usize) -> Result<()> {
+    fn build_greedy(&mut self, _vectors: &[Vec<f32>], medoid: usize) -> Result<()> {
         let mut processed = HashSet::new();
         let mut queue = VecDeque::new();
 
@@ -232,7 +233,11 @@ impl VamanaBuilder {
     }
 
     /// Find nearest neighbors for a node using existing graph
-    fn find_nearest_neighbors(&self, node: usize, processed: &HashSet<usize>) -> Result<Vec<usize>> {
+    fn find_nearest_neighbors(
+        &self,
+        node: usize,
+        processed: &HashSet<usize>,
+    ) -> Result<Vec<usize>> {
         let mut candidates = Vec::new();
 
         // Use processed nodes as candidate pool
@@ -244,7 +249,7 @@ impl VamanaBuilder {
         }
 
         // Sort by distance and return top L candidates
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Filter by alpha * best_distance
         if let Some((_, best_dist)) = candidates.first() {
@@ -289,7 +294,8 @@ impl VamanaBuilder {
                 }
 
                 // Sort by distance and keep closest R
-                neighbors_with_dist.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                neighbors_with_dist
+                    .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
                 neighbors_with_dist.truncate(self.config.max_degree);
 
                 // Update graph and reverse graph
@@ -315,7 +321,8 @@ impl VamanaBuilder {
                     reverse_with_dist.push((neighbor, dist));
                 }
 
-                reverse_with_dist.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                reverse_with_dist
+                    .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
                 reverse_with_dist.truncate(self.config.max_degree);
 
                 let old_reverse = std::mem::take(&mut self.reverse_graph[node]);
@@ -341,9 +348,7 @@ impl VamanaBuilder {
         let mut min_total_distance = f32::MAX;
 
         for node in 0..self.num_vectors {
-            let total_distance: f32 = self.distance_cache[node]
-                .iter()
-                .sum();
+            let total_distance: f32 = self.distance_cache[node].iter().sum();
 
             if total_distance < min_total_distance {
                 min_total_distance = total_distance;
@@ -351,7 +356,10 @@ impl VamanaBuilder {
             }
         }
 
-        info!("Found medoid: {} with total distance {}", best_medoid, min_total_distance);
+        info!(
+            "Found medoid: {} with total distance {}",
+            best_medoid, min_total_distance
+        );
         Ok(best_medoid)
     }
 }
@@ -369,11 +377,7 @@ mod tests {
 
     #[test]
     fn test_vamana_builder_creation() {
-        let builder = VamanaBuilder::new(
-            100,
-            128,
-            VamanaConfig::default(),
-        );
+        let builder = VamanaBuilder::new(100, 128, VamanaConfig::default());
 
         assert_eq!(builder.num_vectors, 100);
         assert_eq!(builder.dimension, 128);
@@ -381,11 +385,7 @@ mod tests {
 
     #[test]
     fn test_compute_distance_euclidean() {
-        let builder = VamanaBuilder::new(
-            2,
-            3,
-            VamanaConfig::default(),
-        );
+        let builder = VamanaBuilder::new(2, 3, VamanaConfig::default());
 
         let v1 = vec![1.0, 2.0, 3.0];
         let v2 = vec![1.0, 2.0, 4.0];
@@ -397,11 +397,7 @@ mod tests {
     #[test]
     fn test_compute_distance_cosine() {
         // Test uses unified distance engine with Euclidean metric
-        let builder = VamanaBuilder::new(
-            2,
-            3,
-            VamanaConfig::default(),
-        );
+        let builder = VamanaBuilder::new(2, 3, VamanaConfig::default());
 
         let v1 = vec![1.0, 0.0, 0.0];
         let v2 = vec![0.0, 1.0, 0.0];
@@ -415,19 +411,11 @@ mod tests {
     fn test_small_graph_build() {
         let num_vectors = 10;
         let dimension = 8;
-        let mut builder = VamanaBuilder::new(
-            num_vectors,
-            dimension,
-            VamanaConfig::default(),
-        );
+        let mut builder = VamanaBuilder::new(num_vectors, dimension, VamanaConfig::default());
 
         // Create dummy vectors
         let vectors: Vec<Vec<f32>> = (0..num_vectors)
-            .map(|i| {
-                (0..dimension)
-                    .map(|j| (i * dimension + j) as f32)
-                    .collect()
-            })
+            .map(|i| (0..dimension).map(|j| (i * dimension + j) as f32).collect())
             .collect();
 
         let graph = builder.build(&vectors).unwrap();

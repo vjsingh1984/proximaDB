@@ -11,16 +11,15 @@
 // - Memory-mapped file support
 // - Per-file key derivation
 
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::key_manager::{KeyVersionManager, KeyVersionId};
+use super::key_manager::{KeyVersionId, KeyVersionManager};
 use super::{decrypt_data, encrypt_data, nonce_size, tag_size};
 
 /// Encrypted file metadata (stored in file header)
@@ -48,7 +47,12 @@ impl EncryptedFileMetadata {
     pub const VERSION: u8 = 1;
 
     /// Create new metadata
-    pub fn new(key_version: KeyVersionId, chunk_size: usize, original_size: u64, num_chunks: u64) -> Self {
+    pub fn new(
+        key_version: KeyVersionId,
+        chunk_size: usize,
+        original_size: u64,
+        num_chunks: u64,
+    ) -> Self {
         Self {
             magic: Self::MAGIC,
             version: Self::VERSION,
@@ -60,8 +64,13 @@ impl EncryptedFileMetadata {
     }
 
     /// Serialize to bytes
-    pub fn to_bytes(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
+    ///
+    /// CRITICAL: Returns Result to properly handle serialization failures.
+    /// Using unwrap_or_default() would cause silent data corruption by
+    /// returning empty metadata, breaking all subsequent file operations.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        bincode::serialize(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize encrypted file metadata: {}", e))
     }
 
     /// Deserialize from bytes
@@ -71,7 +80,10 @@ impl EncryptedFileMetadata {
 
         // Validate magic number
         if metadata.magic != Self::MAGIC {
-            return Err(anyhow::anyhow!("Invalid magic number: {:?}", metadata.magic));
+            return Err(anyhow::anyhow!(
+                "Invalid magic number: {:?}",
+                metadata.magic
+            ));
         }
 
         Ok(metadata)
@@ -109,11 +121,7 @@ impl FileEncryptionLayer {
     }
 
     /// Encrypt a file in chunks
-    pub fn encrypt_file(
-        &self,
-        file_path: &str,
-        plaintext: &[u8],
-    ) -> Result<Vec<u8>> {
+    pub fn encrypt_file(&self, file_path: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
         if !self.encryption_enabled {
             return Ok(plaintext.to_vec());
         }
@@ -126,14 +134,19 @@ impl FileEncryptionLayer {
         let key = self.key_manager.derive_sst_key(file_path);
 
         // Encrypt chunks in parallel
-        let encrypted_chunks: Vec<Vec<u8>> = plaintext
+        //
+        // CRITICAL: We must propagate encryption failures rather than using unwrap_or_default(),
+        // which would silently insert empty chunks and corrupt the encrypted file.
+        let encrypted_chunks: Result<Vec<Vec<u8>>> = plaintext
             .par_chunks(chunk_size)
             .enumerate()
             .map(|(chunk_id, chunk)| {
                 let chunk_key = Self::derive_chunk_key(&key, chunk_id);
-                encrypt_data(&chunk_key, chunk).unwrap()
+                encrypt_data(&chunk_key, chunk)
+                    .map_err(|e| anyhow::anyhow!("Failed to encrypt chunk {}: {}", chunk_id, e))
             })
             .collect();
+        let encrypted_chunks = encrypted_chunks?;
 
         // Calculate total size
         let metadata = EncryptedFileMetadata::new(
@@ -143,10 +156,13 @@ impl FileEncryptionLayer {
             num_chunks as u64,
         );
 
-        let metadata_bytes = metadata.to_bytes();
+        let metadata_bytes = metadata
+            .to_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize file metadata: {}", e))?;
 
         // Combine metadata + encrypted chunks
-        let total_size = metadata_bytes.len() + encrypted_chunks.iter().map(|c| c.len()).sum::<usize>();
+        let total_size =
+            metadata_bytes.len() + encrypted_chunks.iter().map(|c| c.len()).sum::<usize>();
         let mut result = Vec::with_capacity(total_size);
         result.extend_from_slice(&metadata_bytes);
 
@@ -166,11 +182,7 @@ impl FileEncryptionLayer {
     }
 
     /// Decrypt a file
-    pub fn decrypt_file(
-        &self,
-        file_path: &str,
-        ciphertext: &[u8],
-    ) -> Result<Vec<u8>> {
+    pub fn decrypt_file(&self, file_path: &str, ciphertext: &[u8]) -> Result<Vec<u8>> {
         if ciphertext.len() < 37 {
             return Err(anyhow::anyhow!("File too short to be encrypted"));
         }
@@ -192,12 +204,22 @@ impl FileEncryptionLayer {
 
         let mut offset = 0;
         for chunk_id in 0..metadata.num_chunks {
-            let chunk_end = offset + chunk_size + nonce_size() + tag_size();
+            // Calculate actual plaintext chunk size (last chunk may be smaller)
+            let chunk_start = (chunk_id as usize) * chunk_size;
+            let chunk_end_plaintext =
+                std::cmp::min(chunk_start + chunk_size, metadata.original_size as usize);
+            let actual_plaintext_size = chunk_end_plaintext - chunk_start;
+
+            // Encrypted chunk size = actual plaintext + nonce + tag
+            let encrypted_chunk_size = actual_plaintext_size + nonce_size() + tag_size();
+            let chunk_end = offset + encrypted_chunk_size;
 
             if chunk_end > encrypted_data.len() {
                 return Err(anyhow::anyhow!(
-                    "Unexpected end of file at chunk {}",
-                    chunk_id
+                    "Unexpected end of file at chunk {} (expected {} bytes, got {})",
+                    chunk_id,
+                    chunk_end,
+                    encrypted_data.len()
                 ));
             }
 
@@ -258,11 +280,7 @@ impl FileEncryptionLayer {
     }
 
     /// Re-encrypt file with new key version
-    pub fn reencrypt_file(
-        &self,
-        file_path: &str,
-        ciphertext: &[u8],
-    ) -> Result<Vec<u8>> {
+    pub fn reencrypt_file(&self, file_path: &str, ciphertext: &[u8]) -> Result<Vec<u8>> {
         // Decrypt file
         let plaintext = self.decrypt_file(file_path, ciphertext)?;
 
@@ -278,11 +296,15 @@ mod tests {
 
     #[test]
     fn test_file_encryption_round_trip() {
-        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
-        let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
-        );
+        let key_manager =
+            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap());
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
         let layer = FileEncryptionLayer::new(key_version_manager.clone(), true, 4096);
@@ -302,11 +324,15 @@ mod tests {
 
     #[test]
     fn test_large_file_chunking() {
-        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
-        let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
-        );
+        let key_manager =
+            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap());
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
         let chunk_size = 100;
@@ -325,7 +351,7 @@ mod tests {
     fn test_metadata_serialization() {
         let metadata = EncryptedFileMetadata::new(0, 4096, 1024, 1);
 
-        let bytes = metadata.to_bytes();
+        let bytes = metadata.to_bytes().expect("Failed to serialize metadata");
         let deserialized = EncryptedFileMetadata::from_bytes(&bytes).unwrap();
 
         assert_eq!(deserialized.magic, EncryptedFileMetadata::MAGIC);
@@ -338,11 +364,15 @@ mod tests {
 
     #[test]
     fn test_file_encryption_disabled() {
-        unsafe { std::env::set_var("TEST_PROXIMADB_MASTER_KEY", "test-master-key-32-bytes-long-here!!"); }
+        unsafe {
+            std::env::set_var(
+                "TEST_PROXIMADB_MASTER_KEY",
+                "test-master-key-32-bytes-long-here!!",
+            );
+        }
 
-        let key_manager = std::sync::Arc::new(
-            KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap(),
-        );
+        let key_manager =
+            std::sync::Arc::new(KeyManager::from_env("TEST_PROXIMADB_MASTER_KEY").unwrap());
         let key_version_manager = std::sync::Arc::new(KeyVersionManager::new(key_manager));
 
         let layer = FileEncryptionLayer::new(key_version_manager.clone(), false, 4096);

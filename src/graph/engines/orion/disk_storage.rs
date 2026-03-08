@@ -73,7 +73,10 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Helper to convert IO errors to StorageError
 fn io_error(msg: String) -> ProximaDBError {
-    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, msg)))
+    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        msg,
+    )))
 }
 
 /// Configuration for disk-based CSR storage
@@ -212,14 +215,20 @@ impl DiskCsrStorage {
     /// Create a new disk-based CSR storage
     pub async fn new(config: DiskCsrConfig) -> Result<Self> {
         // Ensure storage directory exists
-        tokio::fs::create_dir_all(&config.storage_dir).await
+        tokio::fs::create_dir_all(&config.storage_dir)
+            .await
             .map_err(|e| io_error(format!("Failed to create storage directory: {}", e)))?;
 
         // Initialize LRU cache
         let cache_capacity = config.cache_size_bytes / 4096; // Assume 4KB pages
-        let page_cache = Arc::new(RwLock::new(lru::LruCache::new(
-            std::num::NonZeroUsize::new(cache_capacity).unwrap_or(std::num::NonZeroUsize::new(1).unwrap()),
-        )));
+        // Ensure at least 1 page in cache, use safe fallback
+        let cache_size = std::num::NonZeroUsize::new(cache_capacity).ok_or_else(|| {
+            io_error(format!(
+                "Invalid cache capacity: must be at least 1 page, got {}",
+                cache_capacity
+            ))
+        })?;
+        let page_cache = Arc::new(RwLock::new(lru::LruCache::new(cache_size)));
 
         Ok(Self {
             config,
@@ -265,7 +274,8 @@ impl DiskCsrStorage {
             .open(&offsets_path)
             .map_err(|e| io_error(format!("Failed to create offsets file: {}", e)))?;
 
-        offsets_file.set_len(offsets_size as u64)
+        offsets_file
+            .set_len(offsets_size as u64)
             .map_err(|e| io_error(format!("Failed to set offsets file size: {}", e)))?;
 
         self.offsets_mmap = Some(unsafe {
@@ -311,12 +321,14 @@ impl DiskCsrStorage {
 
         // Log to WAL before writing (write-ahead logging)
         if self.wal_enabled {
-            if let Some(ref wal_writer) = self.wal_writer {
+            if let Some(ref _wal_writer) = self.wal_writer {
                 // TODO: Create proper GraphOperation::CreateEdge
                 // For now, log the operation for debugging
                 tracing::debug!(
                     "WAL: Edge addition from={} to={} id={}",
-                    from_idx, to_idx, edge_id
+                    from_idx,
+                    to_idx,
+                    edge_id
                 );
 
                 // Note: In production, this would write to UnifiedWALWriter
@@ -335,7 +347,9 @@ impl DiskCsrStorage {
         self.dirty = true;
 
         // Flush if buffer is full
-        if self.write_buffer.values().map(|v| v.len()).sum::<usize>() >= self.config.write_buffer_size {
+        if self.write_buffer.values().map(|v| v.len()).sum::<usize>()
+            >= self.config.write_buffer_size
+        {
             self.flush()?;
         }
 
@@ -349,21 +363,21 @@ impl DiskCsrStorage {
         }
 
         // Write buffered edges to memory-mapped files
-        for (from_idx, edges) in self.write_buffer.iter() {
+        for (_from_idx, edges) in self.write_buffer.iter() {
             // Calculate offset in targets array for this node's edges
             // This is a simplified implementation - production would need more sophisticated offset management
 
             if let Some(ref mut targets_mmap) = self.targets_mmap {
-                if let Some(ref mut edge_ids_mmap) = self.edge_ids_mmap {
+                if let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
                     // For each edge, append to targets and edge_ids arrays
                     for (to_idx, edge_id) in edges {
                         // Convert to bytes and write to mmap
                         // Note: This is simplified - production would use proper serialization
                         let to_idx_bytes = to_idx.to_ne_bytes();
-                        let edge_id_bytes = edge_id.as_bytes();
+                        let _edge_id_bytes = edge_id.as_bytes();
 
                         // Append to targets (simplified - production would track current position)
-                        unsafe {
+                        {
                             let pos = self.edge_count * std::mem::size_of::<usize>();
                             if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
                                 targets_mmap[pos..pos + std::mem::size_of::<usize>()]
@@ -420,30 +434,33 @@ impl DiskCsrStorage {
             let offset_pos = from_idx * std::mem::size_of::<usize>();
 
             if offset_pos + std::mem::size_of::<usize>() * 2 <= offsets_mmap.len() {
-                unsafe {
-                    let start_offset = usize::from_ne_bytes(
-                        offsets_mmap[offset_pos..offset_pos + std::mem::size_of::<usize>()]
-                            .try_into()
-                            .unwrap(),
-                    );
-                    let end_offset = usize::from_ne_bytes(
-                        offsets_mmap[offset_pos + std::mem::size_of::<usize>()
-                            ..offset_pos + std::mem::size_of::<usize>() * 2]
-                            .try_into()
-                            .unwrap(),
-                    );
+                {
+                    // Safe: bounds checked above
+                    let start_bytes = offsets_mmap
+                        [offset_pos..offset_pos + std::mem::size_of::<usize>()]
+                        .try_into()
+                        .map_err(|_| io_error("Offset slice has wrong size".to_string()))?;
+                    let start_offset = usize::from_ne_bytes(start_bytes);
+
+                    let end_bytes = offsets_mmap[offset_pos + std::mem::size_of::<usize>()
+                        ..offset_pos + std::mem::size_of::<usize>() * 2]
+                        .try_into()
+                        .map_err(|_| io_error("Offset slice has wrong size".to_string()))?;
+                    let end_offset = usize::from_ne_bytes(end_bytes);
 
                     // Read edges from targets array
                     if let Some(ref targets_mmap) = self.targets_mmap {
-                        if let Some(ref edge_ids_mmap) = self.edge_ids_mmap {
+                        if let Some(ref _edge_ids_mmap) = self.edge_ids_mmap {
                             for i in start_offset..end_offset {
                                 let pos = i * std::mem::size_of::<usize>();
                                 if pos + std::mem::size_of::<usize>() <= targets_mmap.len() {
-                                    let to_idx = usize::from_ne_bytes(
-                                        targets_mmap[pos..pos + std::mem::size_of::<usize>()]
-                                            .try_into()
-                                            .unwrap(),
-                                    );
+                                    let target_bytes = targets_mmap
+                                        [pos..pos + std::mem::size_of::<usize>()]
+                                        .try_into()
+                                        .map_err(|_| {
+                                            io_error("Target slice has wrong size".to_string())
+                                        })?;
+                                    let to_idx = usize::from_ne_bytes(target_bytes);
 
                                     // Read edge_id (simplified - production would use proper deserialization)
                                     let edge_id = format!("edge_{}", i);
@@ -619,7 +636,9 @@ mod tests {
     #[tokio::test]
     async fn test_disk_csr_creation() {
         let config = DiskCsrConfig::default();
-        let storage = DiskCsrStorage::new(config).await.unwrap();
+        let storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
         assert_eq!(storage.node_count(), 0);
         assert_eq!(storage.edge_count(), 0);
     }
@@ -630,8 +649,13 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_graph_init"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(1000).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(1000)
+            .await
+            .expect("Failed to initialize graph");
         assert_eq!(storage.node_count(), 1000);
     }
 
@@ -641,11 +665,20 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_graph_edges"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(100).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(100)
+            .await
+            .expect("Failed to initialize graph");
 
-        storage.add_edge(0, 1, "edge1".to_string()).unwrap();
-        storage.add_edge(0, 2, "edge2".to_string()).unwrap();
+        storage
+            .add_edge(0, 1, "edge1".to_string())
+            .expect("Failed to add edge 0->1");
+        storage
+            .add_edge(0, 2, "edge2".to_string())
+            .expect("Failed to add edge 0->2");
 
         assert_eq!(storage.edge_count(), 2);
         assert!(storage.is_dirty());
@@ -658,13 +691,20 @@ mod tests {
             write_buffer_size: 2, // Small buffer for testing
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(10).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(10)
+            .await
+            .expect("Failed to initialize graph");
 
-        storage.add_edge(0, 1, "edge1".to_string()).unwrap();
+        storage
+            .add_edge(0, 1, "edge1".to_string())
+            .expect("Failed to add edge");
         assert!(storage.is_dirty());
 
-        storage.flush().unwrap();
+        storage.flush().expect("Failed to flush storage");
         assert!(!storage.is_dirty());
     }
 
@@ -675,7 +715,9 @@ mod tests {
             cache_size_bytes: 1024 * 1024, // 1MB
             ..Default::default()
         };
-        let storage = DiskCsrStorage::new(config).await.unwrap();
+        let storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
         let stats = storage.cache_stats();
 
         assert_eq!(stats.cache_size, 0);
@@ -688,12 +730,20 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_graph_warm"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(100).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(100)
+            .await
+            .expect("Failed to initialize graph");
 
         // Warm cache with first 10 nodes
         let nodes: Vec<usize> = (0..10).collect();
-        storage.warm_cache(nodes).await.unwrap();
+        storage
+            .warm_cache(nodes)
+            .await
+            .expect("Failed to warm cache");
 
         let stats = storage.cache_stats();
         assert!(stats.cache_size >= 0);
@@ -705,10 +755,18 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_graph_snapshot"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(100).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(100)
+            .await
+            .expect("Failed to initialize graph");
 
-        let snapshot = storage.create_snapshot().await.unwrap();
+        let snapshot = storage
+            .create_snapshot()
+            .await
+            .expect("Failed to create snapshot");
         assert_eq!(snapshot.node_count, 100);
         assert_eq!(snapshot.edge_count, 0);
         assert!(snapshot.timestamp > 0);
@@ -720,7 +778,9 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_graph_recovery"),
             ..Default::default()
         };
-        let storage = DiskCsrStorage::new(config).await.unwrap();
+        let storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
 
         // WAL not enabled, should not need recovery
         assert!(!storage.needs_recovery().await);
@@ -732,11 +792,20 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_graph_compaction"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(100).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(100)
+            .await
+            .expect("Failed to initialize graph");
 
-        let compaction_config = crate::graph::engines::orion::compaction::CompactionConfig::default();
-        storage.enable_compaction(compaction_config).await.unwrap();
+        let compaction_config =
+            crate::graph::engines::orion::compaction::CompactionConfig::default();
+        storage
+            .enable_compaction(compaction_config)
+            .await
+            .expect("Failed to enable compaction");
 
         let stats = storage.compaction_stats().await;
         assert!(stats.is_some());
@@ -748,11 +817,16 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_manual_compaction_storage"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
-        storage.initialize_graph(100).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
+        storage
+            .initialize_graph(100)
+            .await
+            .expect("Failed to initialize graph");
 
         // Run manual compaction (without compaction manager enabled)
-        let stats = storage.compact().await.unwrap();
+        let stats = storage.compact().await.expect("Failed to run compaction");
         assert_eq!(stats.space_saved, 0); // Placeholder implementation
     }
 
@@ -762,11 +836,20 @@ mod tests {
             storage_dir: PathBuf::from("/tmp/test_compaction_stop"),
             ..Default::default()
         };
-        let mut storage = DiskCsrStorage::new(config).await.unwrap();
+        let mut storage = DiskCsrStorage::new(config)
+            .await
+            .expect("Failed to create DiskCsrStorage");
 
-        let compaction_config = crate::graph::engines::orion::compaction::CompactionConfig::default();
-        storage.enable_compaction(compaction_config).await.unwrap();
-        storage.stop_compaction().await.unwrap();
+        let compaction_config =
+            crate::graph::engines::orion::compaction::CompactionConfig::default();
+        storage
+            .enable_compaction(compaction_config)
+            .await
+            .expect("Failed to enable compaction");
+        storage
+            .stop_compaction()
+            .await
+            .expect("Failed to stop compaction");
 
         let stats = storage.compaction_stats().await;
         assert!(stats.is_some());

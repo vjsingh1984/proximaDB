@@ -13,21 +13,20 @@
 // - Key rotation support
 // - <5% performance overhead
 
+pub mod file_encryption;
 pub mod key_manager;
 pub mod wal_encryption;
-pub mod file_encryption;
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
 
+pub use file_encryption::FileEncryptionLayer;
 pub use key_manager::{KeyManager, KeyVersion, KeyVersionManager};
 pub use wal_encryption::WALEncryptionLayer;
-pub use file_encryption::FileEncryptionLayer;
 
 /// Encryption algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +57,7 @@ impl Default for EncryptionConfig {
             algorithm: EncryptionAlgorithm::Aes256Gcm,
             master_key_env_var: "PROXIMADB_MASTER_KEY".to_string(),
             key_rotation_interval_secs: 30 * 24 * 3600, // 30 days
-            chunk_size: 4096, // 4KB
+            chunk_size: 4096,                           // 4KB
         }
     }
 }
@@ -68,7 +67,8 @@ pub fn encrypt_data(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
-    let mut ciphertext = cipher.encrypt(&nonce, plaintext)
+    let mut ciphertext = cipher
+        .encrypt(&nonce, plaintext)
         .map_err(|e| anyhow::anyhow!("Encryption failed: {}", e))?;
 
     // Prepend nonce to ciphertext (needed for decryption)
@@ -87,18 +87,30 @@ pub fn decrypt_data(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
 
     let cipher = Aes256Gcm::new(key.into());
     let (nonce, encrypted_data) = ciphertext.split_at(12);
-    let nonce = Nonce::from_slice(nonce.try_into().unwrap());
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes.copy_from_slice(nonce);
+    let nonce = Nonce::from_slice(&nonce_bytes);
 
-    cipher.decrypt(nonce, encrypted_data)
+    cipher
+        .decrypt(nonce, encrypted_data)
         .map_err(|e| anyhow::anyhow!("Decryption failed: {}", e))
 }
 
 /// Derive encryption key from master password using HKDF
 pub fn derive_key(master_key: &[u8], context: &[u8]) -> [u8; 32] {
-    let mut hkdf = hkdf::Hkdf::<Sha256>::new(Some(master_key), context);
+    let hkdf = hkdf::Hkdf::<Sha256>::new(Some(master_key), context);
     let mut key = [0u8; 32];
-    hkdf.expand(&b"proximadb-encryption"[..], &mut key)
-        .expect("HKDF expand should not fail");
+    if let Err(error) = hkdf.expand(&b"proximadb-encryption"[..], &mut key) {
+        tracing::warn!(
+            error = %error,
+            "HKDF expand failed; falling back to SHA-256(master_key || context)"
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(master_key);
+        hasher.update(context);
+        let digest = hasher.finalize();
+        key.copy_from_slice(&digest[..32]);
+    }
     key
 }
 

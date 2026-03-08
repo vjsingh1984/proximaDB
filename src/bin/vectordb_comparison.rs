@@ -81,25 +81,49 @@ impl ComparisonRunner {
             match competitor.name.as_str() {
                 "qdrant" => {
                     let result = self
-                        .benchmark_qdrant(competitor, dataset_name, num_vectors, dimensions, num_queries)
+                        .benchmark_qdrant(
+                            competitor,
+                            dataset_name,
+                            num_vectors,
+                            dimensions,
+                            num_queries,
+                        )
                         .await?;
                     results.push(result);
                 }
                 "weaviate" => {
                     let result = self
-                        .benchmark_weaviate(competitor, dataset_name, num_vectors, dimensions, num_queries)
+                        .benchmark_weaviate(
+                            competitor,
+                            dataset_name,
+                            num_vectors,
+                            dimensions,
+                            num_queries,
+                        )
                         .await?;
                     results.push(result);
                 }
                 "milvus" => {
                     let result = self
-                        .benchmark_milvus(competitor, dataset_name, num_vectors, dimensions, num_queries)
+                        .benchmark_milvus(
+                            competitor,
+                            dataset_name,
+                            num_vectors,
+                            dimensions,
+                            num_queries,
+                        )
                         .await?;
                     results.push(result);
                 }
                 "pinecone" => {
                     let result = self
-                        .benchmark_pinecone(competitor, dataset_name, num_vectors, dimensions, num_queries)
+                        .benchmark_pinecone(
+                            competitor,
+                            dataset_name,
+                            num_vectors,
+                            dimensions,
+                            num_queries,
+                        )
                         .await?;
                     results.push(result);
                 }
@@ -132,7 +156,7 @@ impl ComparisonRunner {
         let (qps, recall, build_time, index_size) = match (num_vectors, dimensions) {
             (1_000_000, 128) => (5_234.0, 0.948, 142.0, 987.0), // SIFT
             (1_000_000, 960) => (3_892.0, 0.935, 287.0, 1_534.0), // GIST
-            (60_000, 784) => (8_456.0, 0.962, 12.0, 89.0),   // MNIST
+            (60_000, 784) => (8_456.0, 0.962, 12.0, 89.0),      // MNIST
             _ => (1_000.0, 0.90, 10.0, 100.0),
         };
 
@@ -257,8 +281,12 @@ impl ComparisonRunner {
     pub fn generate_comparison_table(&self, results: &[ComparisonResult]) -> String {
         let mut table = String::new();
 
-        table.push_str("| Database | Index | QPS | Recall@10 | P95 Latency | Index Size | Build Time |\n");
-        table.push_str("|----------|-------|-----|-----------|--------------|------------|-------------|\n");
+        table.push_str(
+            "| Database | Index | QPS | Recall@10 | P95 Latency | Index Size | Build Time |\n",
+        );
+        table.push_str(
+            "|----------|-------|-----|-----------|--------------|------------|-------------|\n",
+        );
 
         for result in results {
             table.push_str(&format!(
@@ -280,10 +308,11 @@ impl ComparisonRunner {
     pub fn calculate_speedup(&self, results: &[ComparisonResult]) -> HashMap<String, f64> {
         let mut speedup = HashMap::new();
 
-        let proximadb_result = results
-            .iter()
-            .find(|r| r.database == "ProximaDB")
-            .expect("ProximaDB result not found");
+        let proximadb_result = results.iter().find(|r| r.database == "ProximaDB");
+
+        let Some(proximadb_result) = proximadb_result else {
+            return speedup;
+        };
 
         let proximadb_qps = proximadb_result.avg_qps;
 
@@ -340,10 +369,7 @@ mod tests {
 
     #[test]
     fn test_comparison_table() {
-        let runner = ComparisonRunner::new(
-            "http://localhost:5678".to_string(),
-            vec![],
-        );
+        let runner = ComparisonRunner::new("http://localhost:5678".to_string(), vec![]);
 
         let results = vec![
             ComparisonResult {
@@ -374,10 +400,7 @@ mod tests {
 
     #[test]
     fn test_speedup_calculation() {
-        let runner = ComparisonRunner::new(
-            "http://localhost:5678".to_string(),
-            vec![],
-        );
+        let runner = ComparisonRunner::new("http://localhost:5678".to_string(), vec![]);
 
         let results = vec![
             ComparisonResult {

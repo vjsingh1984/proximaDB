@@ -103,10 +103,17 @@ pub enum StorageFilterCondition {
     Equals { field: String, value: FilterValue },
 
     /// Range check: field >= min AND field <= max
-    Range { field: String, min: FilterValue, max: FilterValue },
+    Range {
+        field: String,
+        min: FilterValue,
+        max: FilterValue,
+    },
 
     /// In check: field IN (values)
-    In { field: String, values: Vec<FilterValue> },
+    In {
+        field: String,
+        values: Vec<FilterValue>,
+    },
 
     /// Null check: field IS NULL
     IsNull { field: String },
@@ -183,8 +190,10 @@ impl FilterPushdownPlanner {
         let should_pushdown = selectivity <= self.config.min_selectivity_threshold;
 
         if !should_pushdown {
-            debug!("Filter selectivity ({:.2}) above threshold ({:.2}), skipping pushdown",
-                selectivity, self.config.min_selectivity_threshold);
+            debug!(
+                "Filter selectivity ({:.2}) above threshold ({:.2}), skipping pushdown",
+                selectivity, self.config.min_selectivity_threshold
+            );
             return Ok(FilterPushdownPlan {
                 storage_filter: None,
                 index_filter: None,
@@ -256,7 +265,11 @@ impl FilterPushdownPlanner {
                     estimated_selectivity: 0.0, // No matches
                 })
             }
-            FilterExpression::Comparison { field, operator, value } => {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 let storage_condition = self.convert_comparison(field, operator, value)?;
 
                 Ok(StorageFilter {
@@ -331,16 +344,15 @@ impl FilterPushdownPlanner {
                 } else if let Some(f) = n.as_f64() {
                     Ok(FilterValue::Float(f))
                 } else {
-                    Err(ProximaDBError::Internal(
-                        "Invalid number value".to_string()
-                    ))
+                    Err(ProximaDBError::Internal("Invalid number value".to_string()))
                 }
             }
             serde_json::Value::Bool(b) => Ok(FilterValue::Boolean(*b)),
             serde_json::Value::Null => Ok(FilterValue::String("null".to_string())),
-            _ => Err(ProximaDBError::Internal(
-                format!("Unsupported value type: {:?}", value)
-            )),
+            _ => Err(ProximaDBError::Internal(format!(
+                "Unsupported value type: {:?}",
+                value
+            ))),
         }
     }
 
@@ -387,7 +399,8 @@ impl FilterPushdownPlanner {
                 }
                 StorageFilterCondition::IsNull { field } => {
                     if let Some(column_stats) = stats.column_stats.get(field) {
-                        let null_ratio = column_stats.null_count as f32 / column_stats.total_count as f32;
+                        let null_ratio =
+                            column_stats.null_count as f32 / column_stats.total_count as f32;
                         selectivity *= null_ratio;
                     }
                 }
@@ -533,12 +546,10 @@ mod tests {
         let planner = FilterPushdownPlanner::new(FilterPushdownConfig::default());
 
         let and_filter = StorageFilter {
-            conditions: vec![
-                StorageFilterCondition::Equals {
-                    field: "category".to_string(),
-                    value: FilterValue::String("electronics".to_string()),
-                },
-            ],
+            conditions: vec![StorageFilterCondition::Equals {
+                field: "category".to_string(),
+                value: FilterValue::String("electronics".to_string()),
+            }],
             logic: FilterLogic::And,
             estimated_selectivity: 0.5,
         };

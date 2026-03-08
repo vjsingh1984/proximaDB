@@ -88,7 +88,10 @@ pub enum WALTransactionState {
     /// Transaction begun
     Begun,
     /// One or more participants prepared
-    Preparing { prepared_count: usize, total_count: usize },
+    Preparing {
+        prepared_count: usize,
+        total_count: usize,
+    },
     /// All participants prepared (ready to commit)
     Prepared { total_count: usize },
     /// Transaction committed
@@ -124,7 +127,8 @@ impl WALCoordinator {
         info!("Initializing WAL coordinator at {:?}", self.wal_dir);
 
         // Create WAL directory if it doesn't exist
-        tokio::fs::create_dir_all(&self.wal_dir).await
+        tokio::fs::create_dir_all(&self.wal_dir)
+            .await
             .map_err(|e| ProximaDBError::Internal(format!("Failed to create WAL dir: {}", e)))?;
 
         // Recover incomplete transactions
@@ -148,7 +152,8 @@ impl WALCoordinator {
     /// Write transaction begin record
     pub async fn write_tx_begin(&self, tx_id: TransactionId) -> Result<()> {
         let record = TransactionWALRecord::TxBegin { tx_id };
-        self.write_record_to_all_participants(tx_id, &record).await?;
+        self.write_record_to_all_participants(tx_id, &record)
+            .await?;
 
         // Update state
         {
@@ -202,7 +207,8 @@ impl WALCoordinator {
     /// Write commit record
     pub async fn write_tx_commit(&self, tx_id: TransactionId) -> Result<()> {
         let record = TransactionWALRecord::TxCommit { tx_id };
-        self.write_record_to_all_participants(tx_id, &record).await?;
+        self.write_record_to_all_participants(tx_id, &record)
+            .await?;
 
         // Update state
         {
@@ -217,7 +223,8 @@ impl WALCoordinator {
     /// Write abort record
     pub async fn write_tx_abort(&self, tx_id: TransactionId) -> Result<()> {
         let record = TransactionWALRecord::TxAbort { tx_id };
-        self.write_record_to_all_participants(tx_id, &record).await?;
+        self.write_record_to_all_participants(tx_id, &record)
+            .await?;
 
         // Update state
         {
@@ -238,7 +245,7 @@ impl WALCoordinator {
     /// Write record to all participants' WALs
     async fn write_record_to_all_participants(
         &self,
-        tx_id: TransactionId,
+        _tx_id: TransactionId,
         record: &TransactionWALRecord,
     ) -> Result<()> {
         let wal_writers = self.wal_writers.read().await;
@@ -274,7 +281,8 @@ impl WALCoordinator {
             .map_err(|e| ProximaDBError::Internal(format!("Failed to open WAL: {}", e)))?;
 
         use tokio::io::AsyncWriteExt;
-        file.write_all(&serialized).await
+        file.write_all(&serialized)
+            .await
             .map_err(|e| ProximaDBError::Internal(format!("Failed to write WAL: {}", e)))?;
 
         Ok(())
@@ -301,7 +309,8 @@ impl WALCoordinator {
             .map_err(|e| ProximaDBError::Internal(format!("Failed to open WAL: {}", e)))?;
 
         use tokio::io::AsyncWriteExt;
-        file.write_all(&serialized).await
+        file.write_all(&serialized)
+            .await
             .map_err(|e| ProximaDBError::Internal(format!("Failed to write WAL: {}", e)))?;
 
         Ok(())
@@ -319,11 +328,12 @@ impl WALCoordinator {
         }
 
         // Read WAL file
-        let contents = tokio::fs::read(&tx_wal_path).await
+        let contents = tokio::fs::read(&tx_wal_path)
+            .await
             .map_err(|e| ProximaDBError::Internal(format!("Failed to read WAL: {}", e)))?;
 
         // Deserialize records
-        let mut tx_states: HashMap<TransactionId, WALTransactionState> = HashMap::new();
+        let tx_states: HashMap<TransactionId, WALTransactionState> = HashMap::new();
 
         // Note: In production, we'd parse records properly
         // For now, just log that we found the WAL
@@ -345,7 +355,9 @@ impl WALCoordinator {
             .filter(|(_, state)| {
                 matches!(
                     state,
-                    WALTransactionState::Begun | WALTransactionState::Preparing { .. } | WALTransactionState::Prepared { .. }
+                    WALTransactionState::Begun
+                        | WALTransactionState::Preparing { .. }
+                        | WALTransactionState::Prepared { .. }
                 )
             })
             .map(|(tx_id, _)| *tx_id)
@@ -360,7 +372,10 @@ impl WALCoordinator {
         {
             let tx_states = self.tx_states.read().await;
             for (tx_id, state) in tx_states.iter() {
-                if matches!(state, WALTransactionState::Committed | WALTransactionState::Aborted) {
+                if matches!(
+                    state,
+                    WALTransactionState::Committed | WALTransactionState::Aborted
+                ) {
                     to_remove.push(*tx_id);
                 }
             }
@@ -374,7 +389,10 @@ impl WALCoordinator {
             }
         }
 
-        debug!("Cleaned up {} completed transactions from WAL", to_remove.len());
+        debug!(
+            "Cleaned up {} completed transactions from WAL",
+            to_remove.len()
+        );
         Ok(())
     }
 }

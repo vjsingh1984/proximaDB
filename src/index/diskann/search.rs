@@ -43,10 +43,9 @@
 
 use crate::compute::distance_computation::UnifiedDistanceCompute;
 use crate::core::error::ProximaDBError;
-use crate::index::diskann::ssd_layout::NodeOrdering;
 use crate::index::diskann::VamanaGraph;
+use crate::index::diskann::ssd_layout::NodeOrdering;
 use std::collections::{BinaryHeap, HashSet};
-use std::cmp::Reverse;
 use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -91,7 +90,10 @@ impl PartialOrd for SearchResult {
 impl Ord for SearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse order for min-heap (smaller distance = higher priority)
-        other.distance.partial_cmp(&self.distance).unwrap_or(std::cmp::Ordering::Equal)
+        other
+            .distance
+            .partial_cmp(&self.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -114,8 +116,8 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            beam_width: 50,     // Standard DiskANN parameter
-            top_k: 10,          // Return top 10 results
+            beam_width: 50,        // Standard DiskANN parameter
+            top_k: 10,             // Return top 10 results
             search_list_size: 100, // 2 * beam_width
             use_node_ordering: true,
         }
@@ -160,7 +162,7 @@ impl DiskANNSearch {
             graph,
             node_ordering,
             distance_compute: UnifiedDistanceCompute::new(
-                crate::compute::distance_computation::DistanceMetric::Euclidean
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         }
     }
@@ -194,13 +196,16 @@ impl DiskANNSearch {
 
         // Validate inputs
         if vectors.is_empty() {
-            return Ok((vec![], SearchStats {
-                nodes_visited: 0,
-                distance_computations: 0,
-                latency_ns: 0,
-                final_beam_size: 0,
-                cache_hits: 0,
-            }));
+            return Ok((
+                vec![],
+                SearchStats {
+                    nodes_visited: 0,
+                    distance_computations: 0,
+                    latency_ns: 0,
+                    final_beam_size: 0,
+                    cache_hits: 0,
+                },
+            ));
         }
 
         if query.len() != vectors[0].len() {
@@ -304,7 +309,8 @@ impl DiskANNSearch {
                         if config.use_node_ordering {
                             if let Some(ordering) = &self.node_ordering {
                                 if let Some(new_pos) = ordering.get_new_position(neighbor_id) {
-                                    if new_pos < 1000 { // Assume first 1000 nodes are cached
+                                    if new_pos < 1000 {
+                                        // Assume first 1000 nodes are cached
                                         stats.cache_hits += 1;
                                     }
                                 }
@@ -323,7 +329,7 @@ impl DiskANNSearch {
             if beam.len() >= config.top_k {
                 // Check if we have K results within reasonable distance bound
                 let mut results: Vec<_> = beam.iter().take(config.top_k).cloned().collect();
-                results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+                results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
 
                 if results.len() >= config.top_k {
                     let worst_result = results[config.top_k - 1].distance;
@@ -341,7 +347,7 @@ impl DiskANNSearch {
 
         // Step 3: Extract top-K results
         let mut all_results: Vec<_> = beam.into_iter().collect();
-        all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        all_results.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         all_results.truncate(config.top_k);
 
         stats.final_beam_size = all_results.len();
@@ -403,11 +409,17 @@ impl DiskANNSearch {
         }
 
         let total_searches = stats.len();
-        let avg_nodes_visited = stats.iter().map(|s| s.nodes_visited).sum::<usize>() as f64 / total_searches as f64;
-        let avg_distance_computations = stats.iter().map(|s| s.distance_computations).sum::<usize>() as f64 / total_searches as f64;
-        let avg_latency_us = stats.iter().map(|s| s.latency_ns).sum::<u128>() as f64 / total_searches as f64 / 1000.0;
+        let avg_nodes_visited =
+            stats.iter().map(|s| s.nodes_visited).sum::<usize>() as f64 / total_searches as f64;
+        let avg_distance_computations = stats.iter().map(|s| s.distance_computations).sum::<usize>()
+            as f64
+            / total_searches as f64;
+        let avg_latency_us = stats.iter().map(|s| s.latency_ns).sum::<u128>() as f64
+            / total_searches as f64
+            / 1000.0;
         let avg_cache_hit_rate = if stats.iter().map(|s| s.nodes_visited).sum::<usize>() > 0 {
-            stats.iter().map(|s| s.cache_hits).sum::<usize>() as f64 / stats.iter().map(|s| s.nodes_visited).sum::<usize>() as f64
+            stats.iter().map(|s| s.cache_hits).sum::<usize>() as f64
+                / stats.iter().map(|s| s.nodes_visited).sum::<usize>() as f64
         } else {
             0.0
         };
@@ -544,10 +556,12 @@ mod tests {
         let queries = vec![vectors[0].clone(), vectors[5].clone()];
         let search_config = SearchConfig::default();
 
-        let results = search.batch_search(&queries, &vectors, &search_config).unwrap();
+        let search_results = search
+            .batch_search(&queries, &vectors, &search_config)
+            .unwrap();
 
-        assert_eq!(results.len(), 2);
-        for (results, stats) in results {
+        assert_eq!(search_results.len(), 2);
+        for (_results, stats) in search_results {
             assert!(stats.nodes_visited > 0);
         }
     }

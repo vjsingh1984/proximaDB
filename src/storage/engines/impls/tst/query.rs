@@ -13,16 +13,14 @@ pub struct TimeSeriesQueryOptimizer {
 
 impl TimeSeriesQueryOptimizer {
     pub fn new() -> Self {
-        Self {
-            enable_cache: true,
-        }
+        Self { enable_cache: true }
     }
 
     /// Optimize a time-range query
     pub fn optimize_time_range(
         &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        _start: DateTime<Utc>,
+        _end: DateTime<Utc>,
     ) -> Result<OptimizedQuery> {
         Ok(OptimizedQuery {
             partitions_to_scan: vec![],

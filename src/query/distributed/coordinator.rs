@@ -35,7 +35,7 @@ use crate::query::unified::fusion::SubQueryResult;
 use super::aggregator::{AggregationStrategy, ResultAggregator};
 use super::planner::{DistributionStrategy, QueryPlanner, ShardedSubQuery};
 use super::remote::RemoteExecutor;
-use super::shuffle::{ShuffleExchange, ShuffleConfig, ShuffleKey};
+use super::shuffle::{ShuffleConfig, ShuffleExchange, ShuffleKey};
 
 /// Configuration for distributed query coordination
 #[derive(Debug, Clone)]
@@ -519,7 +519,7 @@ impl DistributedQueryCoordinator {
         }
 
         // Check for GROUP BY operations (may need shuffle)
-        for component in &query.components {
+        for _component in &query.components {
             // TODO: Detect GROUP BY in AST when available
             // For now, assume aggregations on distributed data need shuffle
             if plan.remote_subqueries.len() > 1 {
@@ -556,11 +556,8 @@ impl DistributedQueryCoordinator {
             max_shuffle_size: 1_000_000_000, // 1GB
         };
 
-        let shuffle = ShuffleExchange::new(
-            shuffle_config,
-            self.local_node_id.clone(),
-            node_ids.clone(),
-        );
+        let shuffle =
+            ShuffleExchange::new(shuffle_config, self.local_node_id.clone(), node_ids.clone());
 
         // Extract records and create shuffle keys
         let mut shuffle_data = Vec::new();
@@ -590,7 +587,9 @@ impl DistributedQueryCoordinator {
         let blocks = shuffle.partition_data(shuffle_data)?;
 
         // Send shuffle blocks to target nodes
-        let send_fn = |target_node: String, data: Vec<Vec<u8>>| -> std::result::Result<usize, ProximaDBError> {
+        let send_fn = |_target_node: String,
+                       data: Vec<Vec<u8>>|
+         -> std::result::Result<usize, ProximaDBError> {
             // TODO: Send via gRPC to target node
             // For now, just simulate sending
             Ok(data.len())
@@ -608,7 +607,7 @@ impl DistributedQueryCoordinator {
         let received_data = shuffle.receive_shuffled_data(receive_fn).await?;
 
         // Sort received data
-        let key_fn = |record: &serde_json::Value| -> ShuffleKey {
+        let _key_fn = |_record: &serde_json::Value| -> ShuffleKey {
             // TODO: Extract key from record
             ShuffleKey::String("default".to_string())
         };

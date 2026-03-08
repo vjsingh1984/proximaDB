@@ -44,7 +44,6 @@
 
 use crate::compute::distance_computation::UnifiedDistanceCompute;
 use crate::core::error::ProximaDBError;
-use std::collections::HashMap;
 use rand::Rng;
 use tracing::{debug, info};
 
@@ -69,9 +68,9 @@ pub struct PQConfig {
 impl Default for PQConfig {
     fn default() -> Self {
         Self {
-            num_subvectors: 8,      // Split 128-dim into 8 sub-vectors of 16-dim
-            num_centroids: 256,     // 8-bit codes (256 = 2^8)
-            max_iterations: 25,     // K-means iterations
+            num_subvectors: 8,            // Split 128-dim into 8 sub-vectors of 16-dim
+            num_centroids: 256,           // 8-bit codes (256 = 2^8)
+            max_iterations: 25,           // K-means iterations
             convergence_threshold: 0.001, // Early stopping
         }
     }
@@ -92,11 +91,7 @@ pub struct PQCodebooks {
 
 impl PQCodebooks {
     /// Create new PQ codebooks
-    pub fn new(
-        num_subvectors: usize,
-        num_centroids: usize,
-        subvector_dim: usize,
-    ) -> Self {
+    pub fn new(num_subvectors: usize, num_centroids: usize, subvector_dim: usize) -> Self {
         let mut centroids = Vec::with_capacity(num_subvectors);
         for _ in 0..num_subvectors {
             let subvector_centroids = vec![vec![0.0f32; subvector_dim]; num_centroids];
@@ -136,11 +131,23 @@ impl PQVectors {
     }
 
     /// Get compression ratio
-    pub fn compression_ratio(&self, vector_dim: usize) -> f64 {
+    pub fn compression_ratio(&self, vector_dim: usize) -> Result<f64> {
+        if self.codes.is_empty() {
+            return Err(ProximaDBError::InvalidInput(
+                "Cannot compute compression ratio: no codes available".to_string(),
+            ));
+        }
+
         let original_size = vector_dim * std::mem::size_of::<f32>();
         let compressed_size = self.codes[0].len() * std::mem::size_of::<u8>();
 
-        original_size as f64 / compressed_size as f64
+        if compressed_size == 0 {
+            return Err(ProximaDBError::InvalidInput(
+                "Cannot compute compression ratio: code size is zero".to_string(),
+            ));
+        }
+
+        Ok(original_size as f64 / compressed_size as f64)
     }
 }
 
@@ -156,7 +163,7 @@ impl PQEncoder {
         Self {
             config,
             distance_compute: UnifiedDistanceCompute::new(
-                crate::compute::distance_computation::DistanceMetric::Euclidean
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         }
     }
@@ -189,10 +196,10 @@ impl PQEncoder {
         let subvector_dim = vector_dim / self.config.num_subvectors;
 
         if subvector_dim == 0 {
-            return Err(ProximaDBError::InvalidInput(
-                format!("Vector dimension {} too small for {} sub-vectors",
-                    vector_dim, self.config.num_subvectors)
-            ));
+            return Err(ProximaDBError::InvalidInput(format!(
+                "Vector dimension {} too small for {} sub-vectors",
+                vector_dim, self.config.num_subvectors
+            )));
         }
 
         info!(
@@ -211,7 +218,11 @@ impl PQEncoder {
 
         // Train codebook for each sub-vector
         for sub_id in 0..self.config.num_subvectors {
-            debug!("Training sub-vector {}/{}", sub_id + 1, self.config.num_subvectors);
+            debug!(
+                "Training sub-vector {}/{}",
+                sub_id + 1,
+                self.config.num_subvectors
+            );
 
             // Extract sub-vectors from all vectors
             let start_dim = sub_id * subvector_dim;
@@ -272,10 +283,8 @@ impl PQEncoder {
                 let subvector = &vector[start_dim..end_dim];
 
                 // Find nearest centroid
-                let nearest_id = self.find_nearest_centroid(
-                    subvector,
-                    &codebooks.centroids[sub_id],
-                )?;
+                let nearest_id =
+                    self.find_nearest_centroid(subvector, &codebooks.centroids[sub_id])?;
 
                 code.push(nearest_id as u8);
             }
@@ -358,7 +367,7 @@ impl PQEncoder {
         &self,
         subvectors: &[Vec<f32>],
         k: usize,
-        dim: usize,
+        _dim: usize,
     ) -> Result<Vec<Vec<f32>>> {
         let mut rng = rand::thread_rng();
         let mut centroids = Vec::with_capacity(k);
@@ -382,19 +391,21 @@ impl PQEncoder {
 
             // Choose weighted by distance squared
             let total: f32 = distances.iter().sum();
-            let mut rand_val = rng.gen_range(0.0..1.0);
+            let rand_val = rng.gen_range(0.0..1.0);
             let mut cumulative = 0.0;
+            let mut selected = false;
 
             for (idx, &dist) in distances.iter().enumerate() {
                 cumulative += dist / total;
                 if rand_val <= cumulative {
                     centroids.push(subvectors[idx].clone());
+                    selected = true;
                     break;
                 }
             }
 
             // Fallback if not selected
-            if centroids.len() < k + 1 {
+            if !selected {
                 centroids.push(subvectors[rng.gen_range(0..subvectors.len())].clone());
             }
         }
@@ -420,10 +431,7 @@ impl PQEncoder {
 
     /// Compute squared Euclidean distance (faster for comparison)
     fn squared_distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        a.iter()
-            .zip(b.iter())
-            .map(|(x, y)| (x - y).powi(2))
-            .sum()
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum()
     }
 
     /// Compute Euclidean distance
@@ -438,10 +446,20 @@ impl PQEncoder {
         &self,
         query: &[f32],
         codebooks: &PQCodebooks,
-    ) -> Vec<Vec<f32>> {
+    ) -> Result<Vec<Vec<f32>>> {
         let subvector_dim = codebooks.subvector_dim;
         let num_subvectors = codebooks.num_subvectors;
-        let num_centroids = codebooks.centroids[0].len();
+
+        // SAFETY: PQCodebooks::new() guarantees centroids is non-empty when num_subvectors > 0
+        let num_centroids = codebooks
+            .centroids
+            .first()
+            .ok_or_else(|| {
+                ProximaDBError::InvalidInput(
+                    "Codebooks must have at least one sub-vector".to_string(),
+                )
+            })?
+            .len();
 
         let mut table = vec![vec![0.0f32; num_centroids]; num_subvectors];
 
@@ -458,15 +476,11 @@ impl PQEncoder {
             }
         }
 
-        table
+        Ok(table)
     }
 
     /// Fast distance computation using lookup table (ADC)
-    pub fn pq_distance(
-        &self,
-        code: &[u8],
-        distance_table: &[Vec<f32>],
-    ) -> f32 {
+    pub fn pq_distance(&self, code: &[u8], distance_table: &[Vec<f32>]) -> f32 {
         let mut distance = 0.0f32;
 
         for (sub_id, &centroid_id) in code.iter().enumerate() {
@@ -560,7 +574,7 @@ mod tests {
 
         // Original: 128 floats × 4 bytes = 512 bytes
         // Compressed: 8 bytes (one per sub-vector)
-        let ratio = pq_vectors.compression_ratio(128);
+        let ratio = pq_vectors.compression_ratio(128).unwrap();
         assert!(ratio > 60.0 && ratio < 70.0); // ~64x compression
     }
 
@@ -581,7 +595,7 @@ mod tests {
         let codebooks = encoder.train_codebooks(&vectors).unwrap();
 
         let query = &vectors[0];
-        let table = encoder.compute_distance_table(query, &codebooks);
+        let table = encoder.compute_distance_table(query, &codebooks).unwrap();
 
         assert_eq!(table.len(), 2); // 2 sub-vectors
         assert_eq!(table[0].len(), 4); // 4 centroids
@@ -605,11 +619,14 @@ mod tests {
         let pq_vectors = encoder.encode(&vectors, &codebooks).unwrap();
 
         let query = &vectors[0];
-        let table = encoder.compute_distance_table(query, &codebooks);
+        let table = encoder.compute_distance_table(query, &codebooks).unwrap();
 
-        // Distance to first vector should be small (it's the query itself)
-        let distance = encoder.pq_distance(&pq_vectors.codes[0], &table);
-        assert!(distance < 1.0); // Should be very close
+        // Query should be at least as close to its own code as to another vector's code.
+        let self_distance = encoder.pq_distance(&pq_vectors.codes[0], &table);
+        let other_distance = encoder.pq_distance(&pq_vectors.codes[1], &table);
+        assert!(self_distance.is_finite());
+        assert!(self_distance >= 0.0);
+        assert!(self_distance <= other_distance + f32::EPSILON);
     }
 
     #[test]

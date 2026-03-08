@@ -10,9 +10,8 @@
 use chrono::{DateTime, Duration, Utc};
 use proximadb::proto::proximadb_v1::{Collection, VectorRecord};
 use proximadb::storage::engines::impls::tst::{
-    TimeSeriesEngine, TimeSeriesConfig, PartitionDuration, OHLCBar, OHLC,
-    DownsampleConfig, DownsampleInterval, DownsampleAggregation,
-    ASOFJoin,
+    ASOFJoin, DownsampleAggregation, DownsampleConfig, DownsampleInterval, OHLC, OHLCBar,
+    PartitionDuration, TimeSeriesConfig, TimeSeriesEngine,
 };
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -99,7 +98,10 @@ async fn test_tst_empty_query() {
     let end = now;
 
     // Query empty collection should return empty results
-    let results = engine.query_time_range(collection_id, start, end, None).await.unwrap();
+    let results = engine
+        .query_time_range(collection_id, start, end, None)
+        .await
+        .unwrap();
     assert_eq!(results.len(), 0);
 }
 
@@ -122,7 +124,10 @@ async fn test_tst_query_nonexistent_symbol() {
     // Query non-existent symbol should return empty results
     let start = timestamp - Duration::hours(1);
     let end = timestamp + Duration::hours(1);
-    let results = engine.query_ohlc(collection_id, "NONEXISTENT", start, end, None).await.unwrap();
+    let results = engine
+        .query_ohlc(collection_id, "NONEXISTENT", start, end, None)
+        .await
+        .unwrap();
 
     assert_eq!(results.len(), 0);
 }
@@ -141,9 +146,12 @@ fn test_tst_ohlc_aggregation() {
 
     // Add price points
     ohlc.add_price(base_time, 100.0, 1000).unwrap();
-    ohlc.add_price(base_time + Duration::seconds(30), 101.0, 500).unwrap();
-    ohlc.add_price(base_time + Duration::seconds(60), 102.5, 300).unwrap();
-    ohlc.add_price(base_time + Duration::seconds(90), 99.0, 200).unwrap();
+    ohlc.add_price(base_time + Duration::seconds(30), 101.0, 500)
+        .unwrap();
+    ohlc.add_price(base_time + Duration::seconds(60), 102.5, 300)
+        .unwrap();
+    ohlc.add_price(base_time + Duration::seconds(90), 99.0, 200)
+        .unwrap();
 
     let bars = ohlc.finalize();
 
@@ -203,16 +211,18 @@ async fn test_tst_insert_ohlc_bar() {
         .with_timezone(&Utc);
 
     // Should not panic
-    let result = engine.insert_ohlc(
-        collection_id,
-        "AAPL",
-        timestamp,
-        100.0,  // open
-        105.0,  // high
-        98.0,   // low
-        102.0,  // close
-        10000,  // volume
-    ).await;
+    let result = engine
+        .insert_ohlc(
+            collection_id,
+            "AAPL",
+            timestamp,
+            100.0, // open
+            105.0, // high
+            98.0,  // low
+            102.0, // close
+            10000, // volume
+        )
+        .await;
 
     assert!(result.is_ok());
 }
@@ -229,16 +239,31 @@ async fn test_tst_asof_join_basic() {
 
     let left_records = vec![
         create_test_record("trade1", base_time.timestamp(), vec![1.0]),
-        create_test_record("trade2", (base_time + Duration::seconds(5)).timestamp(), vec![2.0]),
+        create_test_record(
+            "trade2",
+            (base_time + Duration::seconds(5)).timestamp(),
+            vec![2.0],
+        ),
     ];
 
     let right_records = vec![
-        create_test_record("quote1", (base_time - Duration::seconds(2)).timestamp(), vec![10.0]),
-        create_test_record("quote2", (base_time + Duration::seconds(3)).timestamp(), vec![20.0]),
+        create_test_record(
+            "quote1",
+            (base_time - Duration::seconds(2)).timestamp(),
+            vec![10.0],
+        ),
+        create_test_record(
+            "quote2",
+            (base_time + Duration::seconds(3)).timestamp(),
+            vec![20.0],
+        ),
     ];
 
     let asof = ASOFJoin::new();
-    let results = asof.execute(left_records, right_records, None).await.unwrap();
+    let results = asof
+        .execute(left_records, right_records, None)
+        .await
+        .unwrap();
 
     assert!(results.len() >= 2);
 }
@@ -250,17 +275,26 @@ async fn test_tst_asof_join_tolerance() {
         .with_timezone(&Utc);
 
     // Test with tight tolerance
-    let left_records = vec![
-        create_test_record("t1", base_time.timestamp(), vec![1.0]),
-    ];
+    let left_records = vec![create_test_record("t1", base_time.timestamp(), vec![1.0])];
 
     let right_records = vec![
-        create_test_record("q1", (base_time - Duration::milliseconds(500)).timestamp(), vec![10.0]),
-        create_test_record("q2", (base_time + Duration::seconds(20)).timestamp(), vec![20.0]), // Outside tolerance
+        create_test_record(
+            "q1",
+            (base_time - Duration::milliseconds(500)).timestamp(),
+            vec![10.0],
+        ),
+        create_test_record(
+            "q2",
+            (base_time + Duration::seconds(20)).timestamp(),
+            vec![20.0],
+        ), // Outside tolerance
     ];
 
     let asof = ASOFJoin::new();
-    let results = asof.execute(left_records, right_records, Some(Duration::seconds(1))).await.unwrap();
+    let results = asof
+        .execute(left_records, right_records, Some(Duration::seconds(1)))
+        .await
+        .unwrap();
 
     // Should only match the close quote
     assert!(results.len() >= 1);
@@ -327,18 +361,20 @@ async fn bench_tst_ingestion_rate() {
     let now = Utc::now();
     for i in 0..num_records {
         let ts = now + Duration::milliseconds(i);
-        let record = create_test_record(
-            &format!("rec_{}", i),
-            ts.timestamp(),
-            vec![i as f32; 128],
-        );
-        engine.insert_record(collection_id, ts, record).await.unwrap();
+        let record = create_test_record(&format!("rec_{}", i), ts.timestamp(), vec![i as f32; 128]);
+        engine
+            .insert_record(collection_id, ts, record)
+            .await
+            .unwrap();
     }
 
     let duration = start.elapsed();
 
     println!("Inserted {} records in {:?}", num_records, duration);
-    println!("Rate: {:.2} records/second", num_records as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} records/second",
+        num_records as f64 / duration.as_secs_f64()
+    );
 
     // Performance assertion: should be >100 records/second
     let rate = num_records as f64 / duration.as_secs_f64();
@@ -362,7 +398,10 @@ async fn bench_tst_time_range_query() {
     for i in 0..100 {
         let ts = now + Duration::seconds(i);
         let record = create_test_record(&format!("rec_{}", i), ts.timestamp(), vec![1.0; 128]);
-        engine.insert_record(collection_id, ts, record).await.unwrap();
+        engine
+            .insert_record(collection_id, ts, record)
+            .await
+            .unwrap();
     }
 
     // Benchmark query performance
@@ -372,7 +411,10 @@ async fn bench_tst_time_range_query() {
     for _ in 0..num_iterations {
         let query_start = now;
         let query_end = now + Duration::seconds(100);
-        let _results = engine.query_time_range(collection_id, query_start, query_end, None).await.unwrap();
+        let _results = engine
+            .query_time_range(collection_id, query_start, query_end, None)
+            .await
+            .unwrap();
     }
 
     let duration = start.elapsed();
@@ -381,7 +423,11 @@ async fn bench_tst_time_range_query() {
     println!("Average query latency: {:.2} μs", avg_latency);
 
     // Performance assertion: average query should be <100ms
-    assert!(avg_latency < 100_000.0, "Query latency {} μs exceeds 100ms", avg_latency);
+    assert!(
+        avg_latency < 100_000.0,
+        "Query latency {} μs exceeds 100ms",
+        avg_latency
+    );
 }
 
 #[test]
@@ -405,7 +451,10 @@ fn bench_tst_ohlc_aggregation() {
     let duration = start.elapsed();
 
     println!("Aggregated {} prices in {:?}", num_prices, duration);
-    println!("Rate: {:.2} prices/second", num_prices as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} prices/second",
+        num_prices as f64 / duration.as_secs_f64()
+    );
 
     // Verify aggregation
     let bars = ohlc.finalize();
@@ -413,7 +462,11 @@ fn bench_tst_ohlc_aggregation() {
 
     // Performance assertion: >1K prices/second
     let rate = num_prices as f64 / duration.as_secs_f64();
-    assert!(rate > 1_000.0, "OHLC aggregation rate {} is below 1K/sec", rate);
+    assert!(
+        rate > 1_000.0,
+        "OHLC aggregation rate {} is below 1K/sec",
+        rate
+    );
 }
 
 //

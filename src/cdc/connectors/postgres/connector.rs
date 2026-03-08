@@ -19,12 +19,12 @@
 //! This connector uses PostgreSQL's logical replication with the pgoutput
 //! protocol to capture changes from a PostgreSQL database.
 
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, watch};
-use tokio::time::{timeout, Duration};
-use futures_util::StreamExt;
-use tracing::{debug, info, warn, error};
+use tokio::time::{Duration, timeout};
+use tracing::{debug, error, info, warn};
 
 use super::config::PostgresConfig;
 use super::decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, TupleData};
@@ -38,10 +38,12 @@ use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
 /// Connect to PostgreSQL and verify replication is enabled
 async fn connect_to_postgres(conn_string: &str) -> CdcResult<tokio_postgres::Client> {
-    let config: tokio_postgres::Config = conn_string.parse()
+    let config: tokio_postgres::Config = conn_string
+        .parse()
         .map_err(|e| CdcError::Configuration(format!("Invalid connection string: {}", e)))?;
 
-    let (client, connection) = config.connect(tokio_postgres::NoTls)
+    let (client, connection) = config
+        .connect(tokio_postgres::NoTls)
         .await
         .map_err(|e| CdcError::Connection(format!("Failed to connect: {}", e)))?;
 
@@ -53,17 +55,20 @@ async fn connect_to_postgres(conn_string: &str) -> CdcResult<tokio_postgres::Cli
     });
 
     // Verify wal_level is logical
-    let row = client.query_one(
-        "SELECT setting FROM pg_settings WHERE name = 'wal_level'",
-        &[]
-    ).await
+    let row = client
+        .query_one(
+            "SELECT setting FROM pg_settings WHERE name = 'wal_level'",
+            &[],
+        )
+        .await
         .map_err(|e| CdcError::Connection(format!("Failed to query wal_level: {}", e)))?;
 
     let wal_level: String = row.get(0);
     if wal_level != "logical" {
-        return Err(CdcError::Configuration(
-            format!("wal_level must be 'logical', got: {}", wal_level)
-        ));
+        return Err(CdcError::Configuration(format!(
+            "wal_level must be 'logical', got: {}",
+            wal_level
+        )));
     }
 
     info!("Connected to PostgreSQL, wal_level={}", wal_level);
@@ -77,52 +82,55 @@ async fn create_replication_slot(
     publication: &str,
 ) -> CdcResult<()> {
     // Check if slot exists
-    let exists = client.query_one(
-        "SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE slot_name = $1)",
-        &[&slot_name]
-    ).await
+    let exists = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM pg_replication_slots WHERE slot_name = $1)",
+            &[&slot_name],
+        )
+        .await
         .map_err(|e| CdcError::Connection(format!("Failed to check slot: {}", e)))?;
 
     let slot_exists: bool = exists.get(0);
 
     if !slot_exists {
         info!("Creating replication slot: {}", slot_name);
-        client.execute(
-            &format!("CREATE_REPLICATION_SLOT {} LOGICAL 'pgoutput'", slot_name),
-            &[]
-        ).await
+        client
+            .execute(
+                &format!("CREATE_REPLICATION_SLOT {} LOGICAL 'pgoutput'", slot_name),
+                &[],
+            )
+            .await
             .map_err(|e| CdcError::Connection(format!("Failed to create slot: {}", e)))?;
     } else {
         info!("Replication slot already exists: {}", slot_name);
     }
 
     // Verify publication exists
-    let pub_exists = client.query_one(
-        "SELECT EXISTS(SELECT 1 FROM pg_publication WHERE pubname = $1)",
-        &[&publication]
-    ).await
+    let pub_exists = client
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM pg_publication WHERE pubname = $1)",
+            &[&publication],
+        )
+        .await
         .map_err(|e| CdcError::Connection(format!("Failed to check publication: {}", e)))?;
 
     let publication_exists: bool = pub_exists.get(0);
 
     if !publication_exists {
-        return Err(CdcError::Configuration(
-            format!("Publication '{}' does not exist", publication)
-        ));
+        return Err(CdcError::Configuration(format!(
+            "Publication '{}' does not exist",
+            publication
+        )));
     }
 
     Ok(())
 }
 
 /// Load last offset from offset store
-async fn load_last_offset(
-    offset_store: &Arc<dyn OffsetStore>,
-    slot_name: &str,
-) -> CdcResult<u64> {
+async fn load_last_offset(offset_store: &Arc<dyn OffsetStore>, slot_name: &str) -> CdcResult<u64> {
     match offset_store.load(slot_name).await {
         Ok(Some(offset)) => {
-            let lsn = offset.value.parse::<u64>()
-                .unwrap_or(0);
+            let lsn = offset.value.parse::<u64>().unwrap_or(0);
             info!("Resuming from LSN: {}", lsn);
             Ok(lsn)
         }
@@ -155,11 +163,13 @@ async fn run_replication_stream(
     info!("Starting replication stream for {}", connector_name);
 
     // Connect for replication
-    let config: tokio_postgres::Config = conn_string.parse()
+    let config: tokio_postgres::Config = conn_string
+        .parse()
         .map_err(|e| CdcError::Configuration(format!("Invalid connection string: {}", e)))?;
 
     // Use replication connection
-    let (client, connection) = config.connect(tokio_postgres::NoTls)
+    let (client, connection) = config
+        .connect(tokio_postgres::NoTls)
         .await
         .map_err(|e| CdcError::Connection(format!("Failed to connect: {}", e)))?;
 
@@ -172,14 +182,19 @@ async fn run_replication_stream(
 
     // Start replication
     let query = if start_lsn == 0 {
-        format!("START_REPLICATION SLOT {} LOGICAL 0 (proto_version '1', publication_names '{}')",
-                slot_name, publication)
+        format!(
+            "START_REPLICATION SLOT {} LOGICAL 0 (proto_version '1', publication_names '{}')",
+            slot_name, publication
+        )
     } else {
-        format!("START_REPLICATION SLOT {} LOGICAL {} (proto_version '1', publication_names '{}')",
-                slot_name, start_lsn, publication)
+        format!(
+            "START_REPLICATION SLOT {} LOGICAL {} (proto_version '1', publication_names '{}')",
+            slot_name, start_lsn, publication
+        )
     };
 
-    client.copy_both(&query, &[])
+    client
+        .copy_both(&query, &[])
         .await
         .map_err(|e| CdcError::Connection(format!("Failed to start replication: {}", e)))?;
 
@@ -206,11 +221,10 @@ async fn run_replication_stream(
                     *current_lsn.write().await = decoder.current_lsn();
 
                     // Convert to ChangeEvent
-                    if let Some(change_event) = convert_pgoutput_to_change_event(
-                        event,
-                        decoder.current_lsn(),
-                        &current_tx,
-                    ).await {
+                    if let Some(change_event) =
+                        convert_pgoutput_to_change_event(event, decoder.current_lsn(), &current_tx)
+                            .await
+                    {
                         // Send event
                         if event_tx.try_send(change_event.clone()).is_err() {
                             warn!("Event channel full, dropping event");
@@ -236,7 +250,8 @@ async fn run_replication_stream(
             Err(_) => {
                 // Timeout - check if we should commit offset
                 if events_since_last_commit >= COMMIT_INTERVAL {
-                    if let Err(e) = commit_offset(&offset_store, &slot_name, last_commit_lsn).await {
+                    if let Err(e) = commit_offset(&offset_store, &slot_name, last_commit_lsn).await
+                    {
                         warn!("Failed to commit offset: {}", e);
                     }
                     events_since_last_commit = 0;
@@ -256,10 +271,8 @@ async fn run_replication_stream(
 }
 
 /// Receive WAL data from replication stream
-async fn receive_wal_data(
-    client: &tokio_postgres::Client,
-) -> CdcResult<Option<Vec<u8>>> {
-    use bytes::{Bytes, BufMut};
+async fn receive_wal_data(client: &tokio_postgres::Client) -> CdcResult<Option<Vec<u8>>> {
+    use bytes::{BufMut, Bytes};
 
     // Try to receive WAL data
     match try_receive_wal(client).await {
@@ -276,9 +289,7 @@ async fn receive_wal_data(
 }
 
 /// Try to receive WAL data
-async fn try_receive_wal(
-    client: &tokio_postgres::Client,
-) -> CdcResult<Option<Vec<u8>>> {
+async fn try_receive_wal(client: &tokio_postgres::Client) -> CdcResult<Option<Vec<u8>>> {
     // This is a simplified implementation
     // In production, you'd use the actual replication stream API
     // For now, we return None to indicate no data available
@@ -305,7 +316,9 @@ async fn convert_pgoutput_to_change_event(
             }
             None
         }
-        PgOutputEvent::Insert { relation, tuple, .. } => {
+        PgOutputEvent::Insert {
+            relation, tuple, ..
+        } => {
             let relation = relation?;
 
             // Build record state
@@ -314,16 +327,11 @@ async fn convert_pgoutput_to_change_event(
                 if let Some(name) = name {
                     let json_value = match value {
                         ColumnValue::Null => serde_json::Value::Null,
-                        ColumnValue::Text(s) => {
-                            serde_json::from_str(s)
-                                .unwrap_or_else(|_| serde_json::Value::String(s.clone()))
-                        }
-                        ColumnValue::Binary(b) => {
-                            serde_json::Value::String(base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                b,
-                            ))
-                        }
+                        ColumnValue::Text(s) => serde_json::from_str(s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
+                        ColumnValue::Binary(b) => serde_json::Value::String(
+                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b),
+                        ),
                         ColumnValue::Unchanged => continue,
                     };
                     metadata.insert(name.clone(), json_value);
@@ -359,7 +367,11 @@ async fn convert_pgoutput_to_change_event(
 
             Some(event)
         }
-        PgOutputEvent::Update { relation, new_tuple, .. } => {
+        PgOutputEvent::Update {
+            relation,
+            new_tuple,
+            ..
+        } => {
             let relation = relation?;
             let new_tuple = new_tuple?;
 
@@ -368,16 +380,11 @@ async fn convert_pgoutput_to_change_event(
                 if let Some(name) = name {
                     let json_value = match value {
                         ColumnValue::Null => serde_json::Value::Null,
-                        ColumnValue::Text(s) => {
-                            serde_json::from_str(s)
-                                .unwrap_or_else(|_| serde_json::Value::String(s.clone()))
-                        }
-                        ColumnValue::Binary(b) => {
-                            serde_json::Value::String(base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                b,
-                            ))
-                        }
+                        ColumnValue::Text(s) => serde_json::from_str(s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
+                        ColumnValue::Binary(b) => serde_json::Value::String(
+                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b),
+                        ),
                         ColumnValue::Unchanged => continue,
                     };
                     metadata.insert(name.clone(), json_value);
@@ -413,7 +420,11 @@ async fn convert_pgoutput_to_change_event(
 
             Some(event)
         }
-        PgOutputEvent::Delete { relation, key_tuple, .. } => {
+        PgOutputEvent::Delete {
+            relation,
+            key_tuple,
+            ..
+        } => {
             let relation = relation?;
 
             let mut metadata = HashMap::new();
@@ -421,16 +432,11 @@ async fn convert_pgoutput_to_change_event(
                 if let Some(name) = name {
                     let json_value = match value {
                         ColumnValue::Null => serde_json::Value::Null,
-                        ColumnValue::Text(s) => {
-                            serde_json::from_str(s)
-                                .unwrap_or_else(|_| serde_json::Value::String(s.clone()))
-                        }
-                        ColumnValue::Binary(b) => {
-                            serde_json::Value::String(base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                b,
-                            ))
-                        }
+                        ColumnValue::Text(s) => serde_json::from_str(s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
+                        ColumnValue::Binary(b) => serde_json::Value::String(
+                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b),
+                        ),
                         ColumnValue::Unchanged => continue,
                     };
                     metadata.insert(name.clone(), json_value);
@@ -476,7 +482,9 @@ async fn commit_offset(
     lsn: u64,
 ) -> CdcResult<()> {
     let offset = Offset::new(slot_name, lsn.to_string());
-    offset_store.store(&offset).await
+    offset_store
+        .store(&offset)
+        .await
         .map_err(|e| CdcError::Offset(format!("Failed to commit offset: {}", e)))?;
     debug!("Committed offset LSN: {}", lsn);
     Ok(())
@@ -737,7 +745,7 @@ impl PostgresConnector {
             .collect();
 
         if key_parts.len() == 1 {
-            key_parts.into_iter().next().unwrap()
+            key_parts.into_iter().next().unwrap_or_default()
         } else {
             key_parts.join(":")
         }
@@ -818,13 +826,21 @@ impl CdcSource for PostgresConnector {
         let shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
-        info!("Starting PostgreSQL CDC connector for slot: {}", self.pg_config.slot_name);
+        info!(
+            "Starting PostgreSQL CDC connector for slot: {}",
+            self.pg_config.slot_name
+        );
 
         // Parse connection string and connect
         let client = connect_to_postgres(&self.pg_config.connection_string).await?;
 
         // Create replication slot if it doesn't exist
-        create_replication_slot(&client, &self.pg_config.slot_name, &self.pg_config.publication).await?;
+        create_replication_slot(
+            &client,
+            &self.pg_config.slot_name,
+            &self.pg_config.publication,
+        )
+        .await?;
 
         // Load last offset
         let start_lsn = load_last_offset(&offset_store, &self.pg_config.slot_name).await?;
@@ -856,7 +872,9 @@ impl CdcSource for PostgresConnector {
                 current_tx,
                 shutdown_rx,
                 connector_name,
-            ).await {
+            )
+            .await
+            {
                 error!("Replication stream error: {}", e);
             }
         });
@@ -917,7 +935,7 @@ mod tests {
         let offset_store = Arc::new(MemoryOffsetStore::new());
         PostgresConnector::new(pg_config, offset_store)
             .await
-            .unwrap()
+            .expect("Failed to create test connector")
     }
 
     #[tokio::test]
@@ -941,7 +959,10 @@ mod tests {
         let value = ColumnValue::Text("[1.0, 2.0, 3.0]".to_string());
         let result = connector.parse_vector(&value);
         assert!(result.is_some());
-        assert_eq!(result.unwrap(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(
+            result.expect("Vector parsing should succeed"),
+            vec![1.0, 2.0, 3.0]
+        );
     }
 
     #[tokio::test]
@@ -951,7 +972,10 @@ mod tests {
         let value = ColumnValue::Text("{1.5, 2.5, 3.5}".to_string());
         let result = connector.parse_vector(&value);
         assert!(result.is_some());
-        assert_eq!(result.unwrap(), vec![1.5, 2.5, 3.5]);
+        assert_eq!(
+            result.expect("Vector parsing should succeed"),
+            vec![1.5, 2.5, 3.5]
+        );
     }
 
     #[tokio::test]
@@ -970,11 +994,14 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let offset_store = Arc::new(MemoryOffsetStore::new());
 
-        let handle = connector.start(tx, offset_store).await.unwrap();
+        let handle = connector
+            .start(tx, offset_store)
+            .await
+            .expect("Failed to start connector");
         assert_eq!(connector.status(), SourceStatus::Streaming);
 
         handle.stop();
-        connector.stop().await.unwrap();
+        connector.stop().await.expect("Failed to stop connector");
         assert_eq!(connector.status(), SourceStatus::Stopped);
     }
 
@@ -984,12 +1011,18 @@ mod tests {
         let (tx, _rx) = mpsc::channel(10);
         let offset_store = Arc::new(MemoryOffsetStore::new());
 
-        connector.start(tx, offset_store).await.unwrap();
+        connector
+            .start(tx, offset_store)
+            .await
+            .expect("Failed to start connector");
 
-        connector.pause().await.unwrap();
+        connector.pause().await.expect("Failed to pause connector");
         assert_eq!(connector.status(), SourceStatus::Paused);
 
-        connector.resume().await.unwrap();
+        connector
+            .resume()
+            .await
+            .expect("Failed to resume connector");
         assert_eq!(connector.status(), SourceStatus::Streaming);
     }
 
@@ -998,11 +1031,19 @@ mod tests {
         let connector = create_test_connector().await;
 
         // Initially no offset
-        assert!(connector.current_offset().await.unwrap().is_none());
+        let current_offset = connector
+            .current_offset()
+            .await
+            .expect("Failed to get current offset");
+        assert!(current_offset.is_none());
 
         // After updating LSN
         connector.update_lsn(54321).await;
-        let offset = connector.current_offset().await.unwrap().unwrap();
+        let offset = connector
+            .current_offset()
+            .await
+            .expect("Failed to get current offset")
+            .expect("Offset should exist after updating LSN");
         assert_eq!(offset.lsn, 54321);
     }
 }

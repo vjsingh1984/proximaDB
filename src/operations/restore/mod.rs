@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use anyhow::Result;
-use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -107,7 +106,7 @@ impl RestoreManager {
     pub async fn restore_from_backup(&self, manifest: &BackupManifest) -> Result<RestoreResult> {
         let start_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("Failed to get start time: {}", e))?
             .as_millis() as u64;
 
         info!(
@@ -121,9 +120,7 @@ impl RestoreManager {
         let mut checksum_failures = 0u64;
 
         // Step 1: Download backup from remote target if needed
-        let backup_dir = self
-            .download_backup_if_needed(&manifest.backup_id)
-            .await?;
+        let backup_dir = self.download_backup_if_needed(&manifest.backup_id).await?;
 
         // Step 2: Restore data files
         for file_metadata in &manifest.data_files {
@@ -138,7 +135,10 @@ impl RestoreManager {
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("Failed to restore file {:?}: {}", file_metadata.relative_path, e);
+                    let error_msg = format!(
+                        "Failed to restore file {:?}: {}",
+                        file_metadata.relative_path, e
+                    );
                     warn!("{}", error_msg);
                     errors.push(error_msg);
 
@@ -182,7 +182,7 @@ impl RestoreManager {
         // Step 5: Update statistics
         let duration_ms = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("Failed to calculate duration: {}", e))?
             .as_millis() as u64
             - start_time;
 
@@ -194,7 +194,8 @@ impl RestoreManager {
             stats.restore_duration_ms = Some(duration_ms);
         }
 
-        let success = errors.is_empty() && (self.config.continue_on_error || checksum_failures == 0);
+        let success =
+            errors.is_empty() && (self.config.continue_on_error || checksum_failures == 0);
 
         info!(
             "Restore completed: {} files, {} bytes, {} ms, success: {}",
@@ -223,10 +224,10 @@ impl RestoreManager {
 
         // Check if source file exists
         if !source_path.exists() {
-            return Ok(RestoredFile {
-                restored: false,
-                bytes: 0,
-            });
+            return Err(anyhow::anyhow!(
+                "Source file missing from backup: {}",
+                file_metadata.relative_path
+            ));
         }
 
         // Verify checksum if enabled
@@ -286,7 +287,7 @@ impl RestoreManager {
             let source_path = entry.path();
             let file_name = source_path
                 .file_name()
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Path has no file name: {:?}", source_path))?
                 .to_string_lossy()
                 .to_string();
 
@@ -306,19 +307,22 @@ impl RestoreManager {
     async fn verify_manifest_checksum(
         &self,
         backup_dir: &Path,
-        _manifest: &BackupManifest,
+        manifest: &BackupManifest,
     ) -> Result<bool> {
         let manifest_path = backup_dir.join("manifest.json");
         let manifest_json = tokio::fs::read_to_string(&manifest_path).await?;
+        let mut parsed_manifest: BackupManifest = serde_json::from_str(&manifest_json)?;
+        let stored_checksum = parsed_manifest.manifest_checksum.clone();
 
-        // Parse manifest to extract checksum
-        let parsed: Value = serde_json::from_str(&manifest_json)?;
-        let stored_checksum = parsed["manifest_checksum"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing manifest_checksum"))?;
+        // Align with backup creation: checksum is computed with an empty manifest_checksum field.
+        parsed_manifest.manifest_checksum.clear();
+        let canonical_without_checksum = serde_json::to_string_pretty(&parsed_manifest)?;
+        let calculated = self.calculate_checksum(canonical_without_checksum.as_bytes());
 
-        // Calculate checksum of manifest content (excluding checksum field itself)
-        let calculated = self.calculate_checksum(manifest_json.as_bytes());
+        // Detect obvious backup identity mismatch between caller and manifest-on-disk.
+        if parsed_manifest.backup_id != manifest.backup_id {
+            return Ok(false);
+        }
 
         Ok(stored_checksum == calculated)
     }
@@ -329,7 +333,10 @@ impl RestoreManager {
             BackupTarget::Local { path } => {
                 let backup_dir = path.join(backup_id);
                 if !backup_dir.exists() {
-                    return Err(anyhow::anyhow!("Backup directory not found: {:?}", backup_dir));
+                    return Err(anyhow::anyhow!(
+                        "Backup directory not found: {:?}",
+                        backup_dir
+                    ));
                 }
                 Ok(backup_dir)
             }
@@ -384,9 +391,7 @@ impl RestoreManager {
         let mut warnings = Vec::new();
 
         // Step 1: Verify manifest checksum
-        let backup_dir = self
-            .download_backup_if_needed(&manifest.backup_id)
-            .await?;
+        let backup_dir = self.download_backup_if_needed(&manifest.backup_id).await?;
 
         match self.verify_manifest_checksum(&backup_dir, manifest).await {
             Ok(true) => {}
@@ -506,9 +511,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_manager_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
         let base_path = temp_dir.path();
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .expect("Failed to create storage for test");
         let config = RestoreConfig::default();
 
         let restore_manager = RestoreManager::new(base_path, storage, config);
@@ -517,12 +524,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculate_checksum() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
         let base_path = temp_dir.path();
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .expect("Failed to create storage for test");
         let config = RestoreConfig::default();
 
-        let restore_manager = RestoreManager::new(base_path, storage, config).unwrap();
+        let restore_manager = RestoreManager::new(base_path, storage, config)
+            .expect("Failed to create restore manager for test");
 
         let data = b"Hello, World!";
         let checksum = restore_manager.calculate_checksum(data);
@@ -532,27 +542,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_dry_run() {
-        let temp_dir = TempDir::new().unwrap();
-        let backup_dir = temp_dir.path().join("backup");
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let backup_id = "test_backup";
+        let backup_dir = temp_dir.path().join(backup_id);
         let restore_dir = temp_dir.path().join("restore");
-        tokio::fs::create_dir_all(&backup_dir).await.unwrap();
-        tokio::fs::create_dir_all(&restore_dir).await.unwrap();
+        tokio::fs::create_dir_all(&backup_dir)
+            .await
+            .expect("Failed to create backup dir for test");
+        tokio::fs::create_dir_all(&restore_dir)
+            .await
+            .expect("Failed to create restore dir for test");
 
         // Create a test file in backup
         let test_file = backup_dir.join("test.dat");
-        tokio::fs::write(&test_file, b"test data").await.unwrap();
+        tokio::fs::write(&test_file, b"test data")
+            .await
+            .expect("Failed to write test file for test");
 
-        let storage = UnifiedCachingFilesystem::new_local(&restore_dir).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(&restore_dir)
+            .await
+            .expect("Failed to create storage for test");
         let config = RestoreConfig {
             dry_run: true,
+            verify_checksums: false,
+            target: BackupTarget::Local {
+                path: temp_dir.path().to_path_buf(),
+            },
             ..Default::default()
         };
 
-        let restore_manager = RestoreManager::new(&restore_dir, storage, config).unwrap();
+        let restore_manager = RestoreManager::new(&restore_dir, storage, config)
+            .expect("Failed to create restore manager for test");
 
         // Create a mock manifest
         let manifest = BackupManifest {
-            backup_id: "test_backup".to_string(),
+            backup_id: backup_id.to_string(),
             timestamp: 0,
             lsn_range: (0, 100),
             data_files: vec![DataFileMetadata {
@@ -571,7 +595,7 @@ mod tests {
         let result = restore_manager
             .restore_from_backup(&manifest)
             .await
-            .unwrap();
+            .expect("Failed to restore from backup in test");
 
         assert!(result.success);
         assert_eq!(result.files_restored, 1);
@@ -583,23 +607,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_backup() {
-        let temp_dir = TempDir::new().unwrap();
-        let backup_dir = temp_dir.path().join("backup");
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let backup_id = "test_backup";
+        let backup_dir = temp_dir.path().join(backup_id);
         let restore_dir = temp_dir.path().join("restore");
-        tokio::fs::create_dir_all(&backup_dir).await.unwrap();
-        tokio::fs::create_dir_all(&restore_dir).await.unwrap();
+        tokio::fs::create_dir_all(&backup_dir)
+            .await
+            .expect("Failed to create backup dir for test");
+        tokio::fs::create_dir_all(&restore_dir)
+            .await
+            .expect("Failed to create restore dir for test");
 
         // Create test files
         let test_file = backup_dir.join("test.dat");
-        tokio::fs::write(&test_file, b"test data").await.unwrap();
+        tokio::fs::write(&test_file, b"test data")
+            .await
+            .expect("Failed to write test file for test");
 
         // Create manifest
-        let storage = UnifiedCachingFilesystem::new_local(&restore_dir).await.unwrap();
-        let restore_manager = RestoreManager::new(&restore_dir, storage.clone(), RestoreConfig::default()).unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(&restore_dir)
+            .await
+            .expect("Failed to create storage for test");
+        let restore_manager =
+            RestoreManager::new(&restore_dir, storage.clone(), RestoreConfig::default())
+                .expect("Failed to create restore manager for test");
 
         let checksum = restore_manager.calculate_checksum(b"test data");
-        let manifest = BackupManifest {
-            backup_id: "test_backup".to_string(),
+        let mut manifest = BackupManifest {
+            backup_id: backup_id.to_string(),
             timestamp: 0,
             lsn_range: (0, 100),
             data_files: vec![DataFileMetadata {
@@ -610,15 +645,22 @@ mod tests {
             }],
             total_bytes: 9,
             backup_type: BackupType::Full,
-            manifest_checksum: checksum,
+            manifest_checksum: String::new(),
             previous_backup_id: None,
             wal_segments: vec![],
         };
+        let unsigned_manifest_json = serde_json::to_string_pretty(&manifest)
+            .expect("Failed to serialize unsigned manifest for test");
+        manifest.manifest_checksum =
+            restore_manager.calculate_checksum(unsigned_manifest_json.as_bytes());
 
         // Write manifest to backup dir
         let manifest_path = backup_dir.join("manifest.json");
-        let manifest_json = serde_json::to_string_pretty(&manifest).unwrap();
-        tokio::fs::write(&manifest_path, manifest_json).await.unwrap();
+        let manifest_json =
+            serde_json::to_string_pretty(&manifest).expect("Failed to serialize manifest for test");
+        tokio::fs::write(&manifest_path, manifest_json)
+            .await
+            .expect("Failed to write manifest for test");
 
         let config = RestoreConfig {
             target: BackupTarget::Local {
@@ -626,12 +668,13 @@ mod tests {
             },
             ..Default::default()
         };
-        let restore_manager = RestoreManager::new(&restore_dir, storage, config).unwrap();
+        let restore_manager = RestoreManager::new(&restore_dir, storage, config)
+            .expect("Failed to create restore manager for test");
 
         let validation = restore_manager
             .validate_backup(&manifest)
             .await
-            .unwrap();
+            .expect("Failed to validate backup in test");
 
         assert!(validation.valid);
         assert_eq!(validation.total_files, 1);

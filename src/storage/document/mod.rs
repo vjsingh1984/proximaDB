@@ -89,12 +89,12 @@ impl DocumentRecord {
     }
 
     /// Convert to proto DocumentContent with collection config
-    pub fn to_proto_content_from_config(&self, config: &DocumentCollectionConfig) -> DocumentContent {
-        let indexed_paths: Vec<String> = config
-            .indexes
-            .iter()
-            .map(|idx| idx.path.clone())
-            .collect();
+    pub fn to_proto_content_from_config(
+        &self,
+        config: &DocumentCollectionConfig,
+    ) -> DocumentContent {
+        let indexed_paths: Vec<String> =
+            config.indexes.iter().map(|idx| idx.path.clone()).collect();
         self.to_proto_content_with_paths(&indexed_paths)
     }
 

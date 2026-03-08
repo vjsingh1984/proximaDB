@@ -54,14 +54,14 @@ async fn test_full_backup_restore_cycle() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -81,38 +81,44 @@ async fn test_full_backup_restore_cycle() {
 
     // Verify backup was created
     assert!(manifest.backup_id.starts_with("backup_"));
-    assert_eq!(manifest.backup_type, proximadb::operations::BackupType::Full);
+    assert_eq!(
+        manifest.backup_type,
+        proximadb::operations::BackupType::Full
+    );
     assert!(!manifest.data_files.is_empty());
 
     // Setup restore manager with fresh directory
     let restore_dir = temp_dir.path().join("restore");
     tokio::fs::create_dir_all(&restore_dir).await.unwrap();
 
-    let restore_factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+    let restore_factory =
+        std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let restore_dir_str = restore_dir.to_string_lossy().to_string();
     let restore_base_fs = restore_factory.get_filesystem(&restore_dir_str).unwrap();
-    let restore_storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            restore_base_fs,
-            "restore_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let restore_storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        restore_base_fs,
+        "restore_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let restore_config = RestoreConfig {
         verify_checksums: true,
         continue_on_error: false,
         dry_run: false,
-        target: BackupTarget::Local {
-            path: backup_base,
-        },
+        target: BackupTarget::Local { path: backup_base },
     };
 
-    let restore_manager = RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
+    let restore_manager =
+        RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
 
     // Restore from backup
-    let restore_result = restore_manager.restore_from_backup(&manifest).await.unwrap();
+    let restore_result = restore_manager
+        .restore_from_backup(&manifest)
+        .await
+        .unwrap();
 
     assert!(restore_result.success);
     assert!(restore_result.files_restored > 0);
@@ -144,14 +150,14 @@ async fn test_incremental_backup() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -168,18 +174,29 @@ async fn test_incremental_backup() {
 
     // Create first backup (full)
     let manifest1 = backup_manager.create_incremental_backup().await.unwrap();
-    assert_eq!(manifest1.backup_type, proximadb::operations::BackupType::Full);
+    assert_eq!(
+        manifest1.backup_type,
+        proximadb::operations::BackupType::Full
+    );
     assert!(manifest1.previous_backup_id.is_none());
 
     // Add new file
     let collection_dir = base_path.join("d1/collections/test_collection");
     let new_sst_path = collection_dir.join("data2.sst");
-    tokio::fs::write(&new_sst_path, vec![2u8; 1024]).await.unwrap();
+    tokio::fs::write(&new_sst_path, vec![2u8; 1024])
+        .await
+        .unwrap();
 
     // Create second backup (incremental)
     let manifest2 = backup_manager.create_incremental_backup().await.unwrap();
-    assert_eq!(manifest2.backup_type, proximadb::operations::BackupType::Incremental);
-    assert_eq!(manifest2.previous_backup_id, Some(manifest1.backup_id.clone()));
+    assert_eq!(
+        manifest2.backup_type,
+        proximadb::operations::BackupType::Incremental
+    );
+    assert_eq!(
+        manifest2.previous_backup_id,
+        Some(manifest1.backup_id.clone())
+    );
 
     // Verify second backup includes previous backup ID
     assert!(manifest2.data_files.len() >= 1); // At least the new file
@@ -200,14 +217,14 @@ async fn test_backup_retention() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -249,14 +266,14 @@ async fn test_checksum_verification() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -278,30 +295,33 @@ async fn test_checksum_verification() {
     let restore_dir = temp_dir.path().join("restore");
     tokio::fs::create_dir_all(&restore_dir).await.unwrap();
 
-    let restore_factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+    let restore_factory =
+        std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let restore_dir_str = restore_dir.to_string_lossy().to_string();
     let restore_base_fs = restore_factory.get_filesystem(&restore_dir_str).unwrap();
-    let restore_storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            restore_base_fs,
-            "restore_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let restore_storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        restore_base_fs,
+        "restore_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let restore_config = RestoreConfig {
         verify_checksums: true, // Enable checksum verification
         continue_on_error: false,
         dry_run: false,
-        target: BackupTarget::Local {
-            path: backup_base,
-        },
+        target: BackupTarget::Local { path: backup_base },
     };
 
-    let restore_manager = RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
+    let restore_manager =
+        RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
 
-    let restore_result = restore_manager.restore_from_backup(&manifest).await.unwrap();
+    let restore_result = restore_manager
+        .restore_from_backup(&manifest)
+        .await
+        .unwrap();
 
     // Should succeed with no checksum failures
     assert!(restore_result.success);
@@ -323,14 +343,14 @@ async fn test_backup_validation() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -349,25 +369,24 @@ async fn test_backup_validation() {
     let manifest = backup_manager.create_incremental_backup().await.unwrap();
 
     // Validate backup
-    let restore_factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+    let restore_factory =
+        std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str2 = base_path.to_string_lossy().to_string();
     let restore_base_fs = restore_factory.get_filesystem(&base_path_str2).unwrap();
-    let restore_storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            restore_base_fs,
-            "validation_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let restore_storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        restore_base_fs,
+        "validation_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let restore_config = RestoreConfig {
         verify_checksums: true,
         continue_on_error: false,
         dry_run: false,
-        target: BackupTarget::Local {
-            path: backup_base,
-        },
+        target: BackupTarget::Local { path: backup_base },
     };
 
     let restore_manager = RestoreManager::new(base_path, restore_storage, restore_config).unwrap();
@@ -395,14 +414,14 @@ async fn test_restore_statistics() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -431,30 +450,33 @@ async fn test_restore_statistics() {
     let restore_dir = temp_dir.path().join("restore");
     tokio::fs::create_dir_all(&restore_dir).await.unwrap();
 
-    let restore_factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+    let restore_factory =
+        std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let restore_dir_str = restore_dir.to_string_lossy().to_string();
     let restore_base_fs = restore_factory.get_filesystem(&restore_dir_str).unwrap();
-    let restore_storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            restore_base_fs,
-            "restore_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let restore_storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        restore_base_fs,
+        "restore_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let restore_config = RestoreConfig {
         verify_checksums: true,
         continue_on_error: false,
         dry_run: false,
-        target: BackupTarget::Local {
-            path: backup_base,
-        },
+        target: BackupTarget::Local { path: backup_base },
     };
 
-    let restore_manager = RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
+    let restore_manager =
+        RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
 
-    restore_manager.restore_from_backup(&manifest).await.unwrap();
+    restore_manager
+        .restore_from_backup(&manifest)
+        .await
+        .unwrap();
 
     // Check restore statistics
     let restore_stats = restore_manager.stats().await;
@@ -479,14 +501,14 @@ async fn test_dry_run_restore() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -508,30 +530,33 @@ async fn test_dry_run_restore() {
     let restore_dir = temp_dir.path().join("restore");
     tokio::fs::create_dir_all(&restore_dir).await.unwrap();
 
-    let restore_factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+    let restore_factory =
+        std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let restore_dir_str = restore_dir.to_string_lossy().to_string();
     let restore_base_fs = restore_factory.get_filesystem(&restore_dir_str).unwrap();
-    let restore_storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            restore_base_fs,
-            "restore_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let restore_storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        restore_base_fs,
+        "restore_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let restore_config = RestoreConfig {
         verify_checksums: true,
         continue_on_error: false,
         dry_run: true, // Enable dry run
-        target: BackupTarget::Local {
-            path: backup_base,
-        },
+        target: BackupTarget::Local { path: backup_base },
     };
 
-    let restore_manager = RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
+    let restore_manager =
+        RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
 
-    let restore_result = restore_manager.restore_from_backup(&manifest).await.unwrap();
+    let restore_result = restore_manager
+        .restore_from_backup(&manifest)
+        .await
+        .unwrap();
 
     // Should report success but no files actually restored
     assert!(restore_result.success);
@@ -557,14 +582,14 @@ async fn test_backup_list_ordering() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -613,14 +638,14 @@ async fn test_continue_on_error() {
     let factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let base_path_str = base_path.to_string_lossy().to_string();
     let base_fs = factory.get_filesystem(&base_path_str).unwrap();
-    let storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            base_fs,
-            "backup_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        base_fs,
+        "backup_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let backup_config = BackupConfig {
         enabled: true,
@@ -649,30 +674,33 @@ async fn test_continue_on_error() {
     let restore_dir = temp_dir.path().join("restore");
     tokio::fs::create_dir_all(&restore_dir).await.unwrap();
 
-    let restore_factory = std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+    let restore_factory =
+        std::sync::Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
     let restore_dir_str = restore_dir.to_string_lossy().to_string();
     let restore_base_fs = restore_factory.get_filesystem(&restore_dir_str).unwrap();
-    let restore_storage = std::sync::Arc::new(
-        UnifiedCachingFilesystem::with_serializer(
-            restore_base_fs,
-            "restore_test".to_string(),
-            "test_engine".to_string(),
-            std::sync::Arc::new(proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer),
-        )
-    );
+    let restore_storage = std::sync::Arc::new(UnifiedCachingFilesystem::with_serializer(
+        restore_base_fs,
+        "restore_test".to_string(),
+        "test_engine".to_string(),
+        std::sync::Arc::new(
+            proximadb::storage::persistence::filesystem::metadata_traits::GenericMetadataSerializer,
+        ),
+    ));
 
     let restore_config = RestoreConfig {
         verify_checksums: false, // Disable to test continue on error
         continue_on_error: true, // Enable continue on error
         dry_run: false,
-        target: BackupTarget::Local {
-            path: backup_base,
-        },
+        target: BackupTarget::Local { path: backup_base },
     };
 
-    let restore_manager = RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
+    let restore_manager =
+        RestoreManager::new(&restore_dir, restore_storage, restore_config).unwrap();
 
-    let restore_result = restore_manager.restore_from_backup(&manifest).await.unwrap();
+    let restore_result = restore_manager
+        .restore_from_backup(&manifest)
+        .await
+        .unwrap();
 
     // Should have errors but still report success (continue on error)
     assert!(!restore_result.errors.is_empty());

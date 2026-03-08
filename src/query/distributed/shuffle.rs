@@ -209,10 +209,7 @@ impl ShuffleExchange {
     /// # Returns
     ///
     /// Vector of shuffle blocks, one per target node
-    pub fn partition_data<T>(
-        &self,
-        data: Vec<(ShuffleKey, T)>,
-    ) -> Result<Vec<ShuffleBlock>>
+    pub fn partition_data<T>(&self, data: Vec<(ShuffleKey, T)>) -> Result<Vec<ShuffleBlock>>
     where
         T: serde::Serialize,
     {
@@ -246,22 +243,14 @@ impl ShuffleExchange {
                 continue;
             }
 
-            let target_node = self.available_nodes
-                .get(partition_id)
-                .ok_or_else(|| ProximaDBError::Internal(
-                    format!("Invalid partition ID: {}", partition_id)
-                ))?;
+            let target_node = self.available_nodes.get(partition_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Invalid partition ID: {}", partition_id))
+            })?;
 
             // Extract keys and data
-            let keys: Vec<ShuffleKey> = partition_data
-                .iter()
-                .map(|(k, _)| k.clone())
-                .collect();
+            let keys: Vec<ShuffleKey> = partition_data.iter().map(|(k, _)| k.clone()).collect();
 
-            let data_bytes: Vec<Vec<u8>> = partition_data
-                .into_iter()
-                .map(|(_, d)| d)
-                .collect();
+            let data_bytes: Vec<Vec<u8>> = partition_data.into_iter().map(|(_, d)| d).collect();
 
             let total_size = data_bytes.iter().map(|d| d.len()).sum();
 
@@ -333,10 +322,7 @@ impl ShuffleExchange {
     where
         F: FnMut(String, Vec<Vec<u8>>) -> Result<usize>,
     {
-        info!(
-            "Executing shuffle exchange: {} blocks",
-            blocks.len()
-        );
+        info!("Executing shuffle exchange: {} blocks", blocks.len());
 
         let mut sent_sizes = HashMap::new();
 
@@ -375,10 +361,7 @@ impl ShuffleExchange {
     /// # Returns
     ///
     /// Received data blocks
-    pub async fn receive_shuffled_data<F>(
-        &self,
-        mut receive_fn: F,
-    ) -> Result<Vec<Vec<u8>>>
+    pub async fn receive_shuffled_data<F>(&self, mut receive_fn: F) -> Result<Vec<Vec<u8>>>
     where
         F: FnMut() -> Result<Vec<Vec<u8>>>,
     {
@@ -444,7 +427,9 @@ impl ShuffleExchange {
         records.sort_by(|a, b| {
             let key_a = key_fn(a);
             let key_b = key_fn(b);
-            key_a.partial_cmp(&key_b).unwrap_or(std::cmp::Ordering::Equal)
+            key_a
+                .partial_cmp(&key_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         Ok(records)
@@ -482,9 +467,7 @@ impl ShuffleExchange {
         if join_columns.len() == 1 {
             // Single column join
             match &join_columns[0] {
-                serde_json::Value::String(s) => {
-                    Ok(ShuffleKey::String(s.clone()))
-                }
+                serde_json::Value::String(s) => Ok(ShuffleKey::String(s.clone())),
                 serde_json::Value::Number(n) => {
                     if let Some(i) = n.as_i64() {
                         Ok(ShuffleKey::Integer(i))
@@ -492,24 +475,19 @@ impl ShuffleExchange {
                         Ok(ShuffleKey::Float(f))
                     } else {
                         Err(ProximaDBError::Internal(
-                            "Invalid number value for shuffle key".to_string()
+                            "Invalid number value for shuffle key".to_string(),
                         ))
                     }
                 }
-                _ => {
-                    Err(ProximaDBError::Internal(
-                        "Unsupported JSON type for shuffle key".to_string()
-                    ))
-                }
+                _ => Err(ProximaDBError::Internal(
+                    "Unsupported JSON type for shuffle key".to_string(),
+                )),
             }
         } else {
             // Multi-column join
             let keys: Vec<String> = join_columns
                 .iter()
-                .map(|v| {
-                    serde_json::to_string(v)
-                        .unwrap_or_else(|_| "null".to_string())
-                })
+                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()))
                 .collect();
 
             Ok(ShuffleKey::Composite(keys))
@@ -554,7 +532,11 @@ mod tests {
         let exchange = ShuffleExchange::new(
             config,
             "node1".to_string(),
-            vec!["node1".to_string(), "node2".to_string(), "node3".to_string()],
+            vec![
+                "node1".to_string(),
+                "node2".to_string(),
+                "node3".to_string(),
+            ],
         );
 
         let data = vec![
@@ -568,9 +550,7 @@ mod tests {
         assert!(!blocks.is_empty());
         // All blocks should target one of the nodes
         for block in &blocks {
-            assert!(
-                vec!["node1", "node2", "node3"].contains(&block.target_node.as_str())
-            );
+            assert!(vec!["node1", "node2", "node3"].contains(&block.target_node.as_str()));
         }
     }
 
@@ -580,7 +560,11 @@ mod tests {
         let exchange = ShuffleExchange::new(
             config,
             "node1".to_string(),
-            vec!["node1".to_string(), "node2".to_string(), "node3".to_string()],
+            vec![
+                "node1".to_string(),
+                "node2".to_string(),
+                "node3".to_string(),
+            ],
         );
 
         let hash1 = exchange.hash_string("test");
@@ -597,7 +581,11 @@ mod tests {
         let exchange = ShuffleExchange::new(
             config,
             "node1".to_string(),
-            vec!["node1".to_string(), "node2".to_string(), "node3".to_string()],
+            vec![
+                "node1".to_string(),
+                "node2".to_string(),
+                "node3".to_string(),
+            ],
         );
 
         let cost = exchange.estimate_shuffle_cost(1000); // 1KB

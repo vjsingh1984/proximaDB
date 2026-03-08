@@ -3,8 +3,8 @@
 //! Time-series specific indexing for efficient queries.
 
 use anyhow::Result;
-use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
+use std::collections::BTreeMap;
 
 /// Time-range index
 ///
@@ -36,11 +36,7 @@ impl TimeRangeIndex {
     }
 
     /// Find partitions that overlap with a time range
-    pub fn find_partitions(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> Vec<DateTime<Utc>> {
+    pub fn find_partitions(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<DateTime<Utc>> {
         self.index
             .range(..=end)
             .filter(|(_, (min, max))| *max >= start && *min <= end)

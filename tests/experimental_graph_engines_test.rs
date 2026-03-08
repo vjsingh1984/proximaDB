@@ -16,10 +16,15 @@
 //! cargo test --test experimental_graph_engines_test --features "distributed-graph,tiered-graph"
 //! ```
 
-use proximadb::graph::engines::pulsar::{PulsarGraphEngine, PulsarConfig, ConsistencyLevel};
-use proximadb::graph::engines::quasar::{QuasarGraphEngine, QuasarConfig, ColdStorageBackend};
-use proximadb::graph::{Node, Edge, PropertyValue, GraphEngine};
+#[cfg(feature = "distributed-graph")]
+use proximadb::graph::engines::pulsar::{ConsistencyLevel, PulsarConfig, PulsarGraphEngine};
+#[cfg(feature = "tiered-graph")]
+use proximadb::graph::engines::quasar::{ColdStorageBackend, QuasarConfig, QuasarGraphEngine};
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
+use proximadb::graph::{Edge, Node, PropertyValue};
+#[cfg(any(feature = "distributed-graph", feature = "tiered-graph"))]
 use std::collections::HashMap;
+#[cfg(feature = "tiered-graph")]
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -81,7 +86,9 @@ mod pulsar_tests {
         assert_eq!(inserted_edge.id, "test_edge");
 
         // Get neighbors
-        let neighbors = engine.get_neighbors(&"test_node".to_string(), None).unwrap();
+        let neighbors = engine
+            .get_neighbors(&"test_node".to_string(), None)
+            .unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "test_node2");
     }
@@ -188,7 +195,9 @@ mod pulsar_tests {
         assert!(result.is_ok(), "Cross-shard edge insert should succeed");
 
         // Verify neighbors work across shards
-        let neighbors = engine.get_neighbors(&"alpha_node".to_string(), None).unwrap();
+        let neighbors = engine
+            .get_neighbors(&"alpha_node".to_string(), None)
+            .unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "omega_node");
     }
@@ -217,7 +226,11 @@ mod pulsar_tests {
             };
 
             let result = engine.insert_node(node).await;
-            assert!(result.is_ok(), "Insert should succeed with {:?}", consistency_level);
+            assert!(
+                result.is_ok(),
+                "Insert should succeed with {:?}",
+                consistency_level
+            );
         }
     }
 }
@@ -293,8 +306,10 @@ mod quasar_tests {
 
         let stats = engine.get_stats().await;
         // Should have some nodes in cold tier
-        println!("Hot tier: {}, Cold tier: {}",
-            stats.hot_tier_nodes, stats.cold_tier_nodes);
+        println!(
+            "Hot tier: {}, Cold tier: {}",
+            stats.hot_tier_nodes, stats.cold_tier_nodes
+        );
 
         // Total should be 10
         let total = stats.hot_tier_nodes + stats.cold_tier_nodes;
@@ -331,8 +346,10 @@ mod quasar_tests {
 
         // Check access stats
         let access_stats = engine.get_access_stats().await;
-        assert!(access_stats.total_accesses >= 5,
-            "Should track at least 5 accesses");
+        assert!(
+            access_stats.total_accesses >= 5,
+            "Should track at least 5 accesses"
+        );
     }
 
     #[tokio::test]
@@ -365,21 +382,23 @@ mod quasar_tests {
         let stats = engine.get_stats().await;
 
         // Should have cost savings
-        println!("Storage cost savings: {:.2}%", stats.storage_cost_savings_ratio * 100.0);
+        println!(
+            "Storage cost savings: {:.2}%",
+            stats.storage_cost_savings_ratio * 100.0
+        );
 
         // If any nodes are in cold tier, we should have savings
         if stats.cold_tier_nodes > 0 {
-            assert!(stats.storage_cost_savings_ratio > 0.0,
-                "Should have cost savings with cold tier nodes");
+            assert!(
+                stats.storage_cost_savings_ratio > 0.0,
+                "Should have cost savings with cold tier nodes"
+            );
         }
     }
 
     #[tokio::test]
     async fn test_quasar_cold_storage_backends() {
-        for backend in &[
-            ColdStorageBackend::Json,
-            ColdStorageBackend::Sst,
-        ] {
+        for backend in &[ColdStorageBackend::Json, ColdStorageBackend::Sst] {
             let temp_dir = TempDir::new().unwrap();
             let config = QuasarConfig {
                 cold_tier_path: temp_dir.path().to_path_buf(),
@@ -388,8 +407,11 @@ mod quasar_tests {
             };
 
             let result = QuasarGraphEngine::new(config).await;
-            assert!(result.is_ok(),
-                "Should create QUASAR engine with {:?} backend", backend);
+            assert!(
+                result.is_ok(),
+                "Should create QUASAR engine with {:?} backend",
+                backend
+            );
         }
     }
 }
@@ -404,19 +426,25 @@ fn test_pulsar_feature_flag() {
     #[cfg(not(feature = "distributed-graph"))]
     {
         // PULSAR should return an error when feature is disabled
-        use proximadb::graph::engines::pulsar::{PulsarGraphEngine, PulsarConfig};
+        use proximadb::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
         let config = PulsarConfig::default();
         let result = PulsarGraphEngine::new(config);
-        assert!(result.is_err(), "PULSAR should fail without distributed-graph feature");
+        assert!(
+            result.is_err(),
+            "PULSAR should fail without distributed-graph feature"
+        );
     }
 
     #[cfg(feature = "distributed-graph")]
     {
         // PULSAR should work with the feature enabled
-        use proximadb::graph::engines::pulsar::{PulsarGraphEngine, PulsarConfig};
+        use proximadb::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
         let config = PulsarConfig::default();
         let result = PulsarGraphEngine::new(config);
-        assert!(result.is_ok(), "PULSAR should work with distributed-graph feature");
+        assert!(
+            result.is_ok(),
+            "PULSAR should work with distributed-graph feature"
+        );
     }
 }
 
@@ -426,7 +454,7 @@ fn test_quasar_feature_flag() {
     #[cfg(not(feature = "tiered-graph"))]
     {
         // QUASAR should return an error when feature is disabled
-        use proximadb::graph::engines::quasar::{QuasarGraphEngine, QuasarConfig};
+        use proximadb::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine};
         let temp_dir = TempDir::new().unwrap();
         let config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),
@@ -440,7 +468,7 @@ fn test_quasar_feature_flag() {
     #[cfg(feature = "tiered-graph")]
     {
         // QUASAR should work with the feature enabled
-        use proximadb::graph::engines::quasar::{QuasarGraphEngine, QuasarConfig};
+        use proximadb::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine};
         let temp_dir = TempDir::new().unwrap();
         let config = QuasarConfig {
             cold_tier_path: temp_dir.path().to_path_buf(),

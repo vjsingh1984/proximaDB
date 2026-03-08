@@ -11,9 +11,8 @@ use tracing::{debug, warn};
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
-    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError,
-    ExtractionMode, ExtractionRequest, ExtractionResult, ExtractionStats,
-    QuantizedVector, VectorExtractor,
+    ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
+    ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
 
 /// TST Vector Extractor
@@ -34,9 +33,12 @@ impl TstExtractor {
     /// Create a test extractor (only for unit tests that don't perform I/O)
     #[cfg(test)]
     pub fn test_extractor() -> Self {
-        use crate::storage::persistence::filesystem::{DirEntry, FilesystemError, FileSystem, FsResult, FileMetadata, FileOptions, FilesystemFile};
-        use std::any::Any;
+        use crate::storage::persistence::filesystem::{
+            DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile,
+            FsResult,
+        };
         use async_trait::async_trait;
+        use std::any::Any;
 
         // Minimal mock filesystem
         #[derive(Debug)]
@@ -44,13 +46,22 @@ impl TstExtractor {
 
         #[async_trait]
         impl FileSystem for MockFs {
-            fn as_any(&self) -> &dyn Any { self }
-            fn filesystem_type(&self) -> &'static str { "mock" }
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+            fn filesystem_type(&self) -> &'static str {
+                "mock"
+            }
 
             async fn read(&self, _path: &str) -> FsResult<Vec<u8>> {
                 Err(FilesystemError::NotFound("Mock".to_string()))
             }
-            async fn write(&self, _path: &str, _data: &[u8], _options: Option<FileOptions>) -> FsResult<()> {
+            async fn write(
+                &self,
+                _path: &str,
+                _data: &[u8],
+                _options: Option<FileOptions>,
+            ) -> FsResult<()> {
                 Ok(())
             }
             async fn append(&self, _path: &str, _data: &[u8]) -> FsResult<()> {
@@ -83,7 +94,11 @@ impl TstExtractor {
             async fn sync(&self) -> FsResult<()> {
                 Ok(())
             }
-            async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
+            async fn open_file(
+                &self,
+                _path: &str,
+                _create: bool,
+            ) -> FsResult<Box<dyn FilesystemFile>> {
                 Err(FilesystemError::NotFound("Mock".to_string()))
             }
         }
@@ -139,7 +154,10 @@ impl VectorExtractor for TstExtractor {
                     all_vectors.append(&mut vectors.vectors);
                 }
                 Err(e) => {
-                    warn!("[TST Extractor] Failed to extract from {}: {}", file_path, e);
+                    warn!(
+                        "[TST Extractor] Failed to extract from {}: {}",
+                        file_path, e
+                    );
                 }
             }
         }
@@ -212,7 +230,7 @@ impl TstExtractor {
     async fn extract_from_file(
         &self,
         file_path: &str,
-        request: &ExtractionRequest,
+        _request: &ExtractionRequest,
     ) -> Result<ExtractionResult, ExtractionError> {
         // TODO: Implement actual file reading
         // For now, return empty result with file size estimate
@@ -253,7 +271,8 @@ mod tests {
         // Create a test extractor that doesn't perform actual I/O
         let extractor = TstExtractor::test_extractor();
 
-        let request = ExtractionRequest::full(vec!["file1.tst".to_string(), "file2.tst".to_string()]);
+        let request =
+            ExtractionRequest::full(vec!["file1.tst".to_string(), "file2.tst".to_string()]);
         let cost = extractor.estimate_extraction_cost(&request);
 
         assert_eq!(cost.estimated_vectors, 2000);

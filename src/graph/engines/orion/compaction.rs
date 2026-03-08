@@ -33,11 +33,10 @@
 //! 3. **Atomic Swap**: Replace old files with compacted versions
 //! 4. **Cleanup**: Remove old files after successful swap
 
-use crate::core::error::{ProximaDBError, StorageError};
+use crate::core::error::ProximaDBError;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -63,9 +62,9 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            min_fragmentation_percent: 30,  // Trigger when >30% fragmented
-            min_free_space_percent: 20,      // Trigger when <20% free space
-            compaction_interval_secs: 3600,  // Run every hour
+            min_fragmentation_percent: 30,     // Trigger when >30% fragmented
+            min_free_space_percent: 20,        // Trigger when <20% free space
+            compaction_interval_secs: 3600,    // Run every hour
             max_compaction_duration_secs: 300, // Max 5 minutes per run
             auto_compaction: true,
         }
@@ -148,7 +147,8 @@ impl CompactionManager {
             return Ok(()); // Already running
         }
 
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         let storage_dir = self.storage_dir.clone();
         let interval = std::time::Duration::from_secs(self.config.compaction_interval_secs);
@@ -183,7 +183,8 @@ impl CompactionManager {
 
     /// Stop background compaction task
     pub async fn stop(&mut self) -> Result<()> {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
 
         if let Some(handle) = self.compaction_task.take() {
             handle.abort();
@@ -214,14 +215,14 @@ impl CompactionManager {
     }
 
     /// Calculate current fragmentation percentage
-    async fn calculate_fragmentation(storage_dir: &PathBuf) -> Result<f64> {
+    async fn calculate_fragmentation(_storage_dir: &PathBuf) -> Result<f64> {
         // TODO: Implement actual fragmentation calculation
         // For now, return 0 (no fragmentation)
         Ok(0.0)
     }
 
     /// Calculate current free space percentage
-    async fn calculate_free_space(storage_dir: &PathBuf) -> Result<f64> {
+    async fn calculate_free_space(_storage_dir: &PathBuf) -> Result<f64> {
         // TODO: Implement actual free space calculation
         // For now, return 100 (all free)
         Ok(100.0)
@@ -252,8 +253,7 @@ impl CompactionManager {
 
         info!(
             "Compaction complete: saved {} bytes in {}ms",
-            stats.space_saved,
-            stats.duration_ms
+            stats.space_saved, stats.duration_ms
         );
 
         Ok(stats)

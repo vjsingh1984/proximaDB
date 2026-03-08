@@ -79,12 +79,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::core::search::{FilterExpression, ComparisonOperator};
+use crate::core::search::{ComparisonOperator, FilterExpression};
 
-use super::types::{CatalogPartitionSpec, CatalogPartitionField, PartitionTransform};
+use super::types::{CatalogPartitionSpec, PartitionTransform};
 
 /// Partition pruning result with statistics
 #[derive(Debug, Clone)]
@@ -320,12 +320,12 @@ impl PartitionPruner {
         partition_spec: &CatalogPartitionSpec,
     ) -> bool {
         match filter {
-            FilterExpression::And(exprs) => {
-                exprs.iter().all(|e| self.partition_matches_filter(partition, e, _partition_map, partition_spec))
-            }
-            FilterExpression::Or(exprs) => {
-                exprs.iter().any(|e| self.partition_matches_filter(partition, e, _partition_map, partition_spec))
-            }
+            FilterExpression::And(exprs) => exprs.iter().all(|e| {
+                self.partition_matches_filter(partition, e, _partition_map, partition_spec)
+            }),
+            FilterExpression::Or(exprs) => exprs.iter().any(|e| {
+                self.partition_matches_filter(partition, e, _partition_map, partition_spec)
+            }),
             FilterExpression::Not(expr) => {
                 !self.partition_matches_filter(partition, expr, _partition_map, partition_spec)
             }
@@ -360,9 +360,7 @@ impl PartitionPruner {
 
         // Apply transform-specific logic
         match &partition_field.transform {
-            PartitionTransform::Identity => {
-                self.compare_values(partition_value, operator, value)
-            }
+            PartitionTransform::Identity => self.compare_values(partition_value, operator, value),
             PartitionTransform::Year => self.compare_year(partition_value, operator, value),
             PartitionTransform::Month => self.compare_month(partition_value, operator, value),
             PartitionTransform::Day => self.compare_day(partition_value, operator, value),
@@ -390,15 +388,9 @@ impl PartitionPruner {
         match operator {
             ComparisonOperator::Equals => left == right,
             ComparisonOperator::NotEquals => left != right,
-            ComparisonOperator::LessThan => {
-                self.compare_numeric(left, right, |l, r| l < r)
-            }
-            ComparisonOperator::LessThanOrEqual => {
-                self.compare_numeric(left, right, |l, r| l <= r)
-            }
-            ComparisonOperator::GreaterThan => {
-                self.compare_numeric(left, right, |l, r| l > r)
-            }
+            ComparisonOperator::LessThan => self.compare_numeric(left, right, |l, r| l < r),
+            ComparisonOperator::LessThanOrEqual => self.compare_numeric(left, right, |l, r| l <= r),
+            ComparisonOperator::GreaterThan => self.compare_numeric(left, right, |l, r| l > r),
             ComparisonOperator::GreaterThanOrEqual => {
                 self.compare_numeric(left, right, |l, r| l >= r)
             }
@@ -416,7 +408,12 @@ impl PartitionPruner {
     }
 
     /// Compare numeric values with a comparator function
-    fn compare_numeric<F>(&self, left: &serde_json::Value, right: &serde_json::Value, cmp: F) -> bool
+    fn compare_numeric<F>(
+        &self,
+        left: &serde_json::Value,
+        right: &serde_json::Value,
+        cmp: F,
+    ) -> bool
     where
         F: Fn(f64, f64) -> bool,
     {
@@ -611,12 +608,18 @@ impl PartitionPruner {
 
         // Try date only (YYYY-MM-DD)
         if let Ok(dt) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            return Some(dt.and_hms_opt(0, 0, 0)?.and_utc());
+            return match dt.and_hms_opt(0, 0, 0) {
+                Some(nt) => Some(nt.and_utc()),
+                None => None,
+            };
         }
 
         // Try month (YYYY-MM)
         if let Ok(dt) = chrono::NaiveDate::parse_from_str(&format!("{}-01", s), "%Y-%m-%d") {
-            return Some(dt.and_hms_opt(0, 0, 0)?.and_utc());
+            return match dt.and_hms_opt(0, 0, 0) {
+                Some(nt) => Some(nt.and_utc()),
+                None => None,
+            };
         }
 
         None
@@ -658,14 +661,18 @@ impl PartitionPruner {
     }
 
     /// Compare JSON values for sorting
-    fn compare_json_values(&self, a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
+    fn compare_json_values(
+        &self,
+        a: &serde_json::Value,
+        b: &serde_json::Value,
+    ) -> std::cmp::Ordering {
         match (a, b) {
             // Number comparison
             (serde_json::Value::Number(na), serde_json::Value::Number(nb)) => {
                 match (na.as_f64(), nb.as_f64()) {
-                    (Some(a_val), Some(b_val)) => {
-                        a_val.partial_cmp(&b_val).unwrap_or(std::cmp::Ordering::Equal)
-                    }
+                    (Some(a_val), Some(b_val)) => a_val
+                        .partial_cmp(&b_val)
+                        .unwrap_or(std::cmp::Ordering::Equal),
                     _ => std::cmp::Ordering::Equal,
                 }
             }
@@ -812,7 +819,10 @@ mod tests {
             value: serde_json::json!("US"),
         };
 
-        let result = pruner.prune_partitions(partitions, &spec, &filter).await.unwrap();
+        let result = pruner
+            .prune_partitions(partitions, &spec, &filter)
+            .await
+            .unwrap();
 
         // Should only keep US partitions (3 out of 4)
         assert_eq!(result.total_partitions, 4);
@@ -832,7 +842,10 @@ mod tests {
             value: serde_json::json!("2024-01-01"),
         };
 
-        let result = pruner.prune_partitions(partitions, &spec, &filter).await.unwrap();
+        let result = pruner
+            .prune_partitions(partitions, &spec, &filter)
+            .await
+            .unwrap();
 
         // Should prune 2023 partition
         assert_eq!(result.total_partitions, 4);
@@ -860,7 +873,10 @@ mod tests {
             },
         ]);
 
-        let result = pruner.prune_partitions(partitions, &spec, &filter).await.unwrap();
+        let result = pruner
+            .prune_partitions(partitions, &spec, &filter)
+            .await
+            .unwrap();
 
         // Should only keep 2024 US partitions (2 out of 4)
         assert_eq!(result.total_partitions, 4);
@@ -889,7 +905,10 @@ mod tests {
             },
         ]);
 
-        let result = pruner.prune_partitions(partitions, &spec, &filter).await.unwrap();
+        let result = pruner
+            .prune_partitions(partitions, &spec, &filter)
+            .await
+            .unwrap();
 
         // Should keep all partitions (all are US or CA)
         assert_eq!(result.total_partitions, 4);
@@ -946,7 +965,10 @@ mod tests {
             value: serde_json::json!("US"),
         };
 
-        let result = pruner.prune_partitions(partitions, &spec, &filter).await.unwrap();
+        let result = pruner
+            .prune_partitions(partitions, &spec, &filter)
+            .await
+            .unwrap();
 
         // 1 pruned out of 4 = 0.25
         assert!((result.pruning_ratio - 0.25).abs() < 0.01);
@@ -1010,7 +1032,10 @@ mod tests {
             value: serde_json::json!("US"),
         };
 
-        pruner.prune_partitions(partitions, &spec, &filter).await.unwrap();
+        pruner
+            .prune_partitions(partitions, &spec, &filter)
+            .await
+            .unwrap();
 
         // Check stats updated
         let stats = pruner.get_stats().await;

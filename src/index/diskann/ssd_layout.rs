@@ -36,7 +36,7 @@
 //!
 //! ## Cache Efficiency
 //!
-//! ```
+//! ```text
 //! Original Layout (Random):
 //! Node 0 → [Disk Location 100] → Cache Miss
 //! Node 1 → [Disk Location 5000] → Cache Miss
@@ -50,7 +50,7 @@
 
 use crate::core::error::ProximaDBError;
 use std::collections::{HashMap, HashSet, VecDeque};
-use tracing::{info, warn};
+use tracing::info;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -70,9 +70,9 @@ pub struct SsdLayoutConfig {
 impl Default for SsdLayoutConfig {
     fn default() -> Self {
         Self {
-            landmark_ratio: 0.1,  // 10% of nodes are landmarks
-            cache_size_bytes: 1 << 30,  // 1GB default cache
-            node_size_bytes: 4096,  // 4KB per node (including edges)
+            landmark_ratio: 0.1,       // 10% of nodes are landmarks
+            cache_size_bytes: 1 << 30, // 1GB default cache
+            node_size_bytes: 4096,     // 4KB per node (including edges)
         }
     }
 }
@@ -154,17 +154,14 @@ impl SsdLayoutOptimizer {
     /// Node ordering mapping for reordering graph on disk
     pub fn compute_node_ordering(&self, graph: &[Vec<usize>]) -> Result<NodeOrdering> {
         let num_nodes = graph.len();
-        info!(
-            "Computing SSD-optimized layout for {} nodes",
-            num_nodes
-        );
+        info!("Computing SSD-optimized layout for {} nodes", num_nodes);
 
         // Step 1: Compute node degrees
         let node_degrees = self.compute_degrees(graph);
 
         // Step 2: Select landmark nodes (high-degree nodes)
         let num_landmarks = (num_nodes as f32 * self.config.landmark_ratio).ceil() as usize;
-        let mut landmarks = self.select_landmarks(&node_degrees, num_landmarks);
+        let landmarks = self.select_landmarks(&node_degrees, num_landmarks);
 
         info!(
             "Selected {} landmark nodes ({}% of total)",
@@ -192,11 +189,7 @@ impl SsdLayoutOptimizer {
     }
 
     /// Select landmark nodes based on degree
-    fn select_landmarks(
-        &self,
-        node_degrees: &[(usize, usize)],
-        count: usize,
-    ) -> HashSet<usize> {
+    fn select_landmarks(&self, node_degrees: &[(usize, usize)], count: usize) -> HashSet<usize> {
         let mut sorted = node_degrees.to_vec();
         // Sort by degree (descending)
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
@@ -376,7 +369,11 @@ impl SsdLayoutOptimizer {
     }
 
     /// Compute layout statistics
-    pub fn compute_layout_stats(&self, graph: &[Vec<usize>], ordering: &NodeOrdering) -> LayoutStats {
+    pub fn compute_layout_stats(
+        &self,
+        graph: &[Vec<usize>],
+        ordering: &NodeOrdering,
+    ) -> LayoutStats {
         let num_nodes = graph.len();
         let mut avg_degree = 0.0;
         let mut max_degree = 0;
@@ -477,10 +474,10 @@ mod tests {
     fn test_compute_degrees() {
         let optimizer = SsdLayoutOptimizer::with_default_config();
         let graph = vec![
-            vec![1, 2],     // Node 0: degree 2
-            vec![0, 2],     // Node 1: degree 2
-            vec![0, 1, 3],  // Node 2: degree 3
-            vec![2],        // Node 3: degree 1
+            vec![1, 2],    // Node 0: degree 2
+            vec![0, 2],    // Node 1: degree 2
+            vec![0, 1, 3], // Node 2: degree 3
+            vec![2],       // Node 3: degree 1
         ];
 
         let degrees = optimizer.compute_degrees(&graph);
@@ -502,12 +499,7 @@ mod tests {
     #[test]
     fn test_node_ordering() {
         let optimizer = SsdLayoutOptimizer::with_default_config();
-        let graph = vec![
-            vec![1, 2],
-            vec![0, 2],
-            vec![0, 1, 3],
-            vec![2],
-        ];
+        let graph = vec![vec![1, 2], vec![0, 2], vec![0, 1, 3], vec![2]];
 
         let ordering = optimizer.compute_node_ordering(&graph).unwrap();
 
@@ -549,12 +541,7 @@ mod tests {
     #[test]
     fn test_reorder_graph() {
         let optimizer = SsdLayoutOptimizer::with_default_config();
-        let graph = vec![
-            vec![1, 2],
-            vec![0, 2],
-            vec![0, 1, 3],
-            vec![2],
-        ];
+        let graph = vec![vec![1, 2], vec![0, 2], vec![0, 1, 3], vec![2]];
 
         let ordering = optimizer.compute_node_ordering(&graph).unwrap();
         let reordered = optimizer.reorder_graph(&graph, &ordering);
@@ -570,12 +557,7 @@ mod tests {
     #[test]
     fn test_layout_stats() {
         let optimizer = SsdLayoutOptimizer::with_default_config();
-        let graph = vec![
-            vec![1, 2],
-            vec![0, 2],
-            vec![0, 1, 3],
-            vec![2],
-        ];
+        let graph = vec![vec![1, 2], vec![0, 2], vec![0, 1, 3], vec![2]];
 
         let ordering = optimizer.compute_node_ordering(&graph).unwrap();
         let stats = optimizer.compute_layout_stats(&graph, &ordering);

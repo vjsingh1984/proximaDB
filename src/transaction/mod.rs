@@ -70,10 +70,8 @@ pub mod coordinator;
 pub mod two_phase_commit;
 pub mod wal_coordinator;
 
-pub use coordinator::{
-    CrossModelTransactionCoordinator, TransactionConfig, TransactionStats,
-};
+pub use coordinator::{CrossModelTransactionCoordinator, TransactionConfig, TransactionStats};
 pub use two_phase_commit::{
-    TransactionParticipant, TransactionState, TransactionId, TwoPhaseCommit, Vote,
+    TransactionId, TransactionParticipant, TransactionState, TwoPhaseCommit, Vote,
 };
 pub use wal_coordinator::{TransactionWALRecord, WALCoordinator, WALTransactionState};

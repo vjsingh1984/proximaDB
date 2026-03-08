@@ -7,8 +7,8 @@
 // - Recovery Point Objective (RPO) <1 minute
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
 
 /// Backup manager for creating incremental snapshots
 pub struct BackupManager {
@@ -167,7 +167,7 @@ impl BackupManager {
     pub async fn create_incremental_backup(&self) -> Result<BackupManifest> {
         let start_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("Failed to get current time: {}", e))?
             .as_millis() as u64;
 
         info!("Starting incremental backup");
@@ -224,24 +224,26 @@ impl BackupManager {
             wal_segments,
         };
 
-        // Serialize and calculate checksum
-        let manifest_json = serde_json::to_string_pretty(&manifest)?;
-        let manifest_checksum = self.calculate_checksum(manifest_json.as_bytes());
+        // Calculate checksum over a representation without the checksum field set.
+        let manifest_json_without_checksum = serde_json::to_string_pretty(&manifest)?;
+        let manifest_checksum = self.calculate_checksum(manifest_json_without_checksum.as_bytes());
 
         let mut final_manifest = manifest;
         final_manifest.manifest_checksum = manifest_checksum.clone();
+        let final_manifest_json = serde_json::to_string_pretty(&final_manifest)?;
 
         // Write manifest to backup directory
         let manifest_path = backup_dir.join("manifest.json");
-        tokio::fs::write(&manifest_path, manifest_json).await?;
+        tokio::fs::write(&manifest_path, final_manifest_json).await?;
 
         // Step 7: Upload to remote target if configured
-        self.upload_backup_to_target(&backup_id, &backup_dir).await?;
+        self.upload_backup_to_target(&backup_id, &backup_dir)
+            .await?;
 
         // Step 8: Update statistics
         let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| anyhow::anyhow!("Failed to get current time for duration: {}", e))?
             .as_millis() as u64
             - start_time;
 
@@ -333,15 +335,19 @@ impl BackupManager {
                         if let Some(prev_manifest) = previous_backup {
                             // Check if file has changed since last backup
                             let metadata = tokio::fs::metadata(&path).await?;
-                            let modified_time = metadata
-                                .modified()?
-                                .duration_since(UNIX_EPOCH)?
-                                .as_secs();
+                            let modified_time =
+                                metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs();
 
                             // Check if this file exists in previous backup with different modified time
                             let relative_path = path
                                 .strip_prefix(&self.base_path)
-                                .unwrap()
+                                .map_err(|e| {
+                                    anyhow::anyhow!(
+                                        "Failed to strip prefix from path {:?}: {}",
+                                        path,
+                                        e
+                                    )
+                                })?
                                 .to_string_lossy()
                                 .to_string();
 
@@ -368,21 +374,20 @@ impl BackupManager {
     }
 
     /// Backup a single file to the backup directory
-    async fn backup_file(
-        &self,
-        source_path: &Path,
-        backup_dir: &Path,
-    ) -> Result<DataFileMetadata> {
+    async fn backup_file(&self, source_path: &Path, backup_dir: &Path) -> Result<DataFileMetadata> {
         let metadata = tokio::fs::metadata(source_path).await?;
         let size = metadata.len();
-        let modified_time = metadata
-            .modified()?
-            .duration_since(UNIX_EPOCH)?
-            .as_secs();
+        let modified_time = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs();
 
         let relative_path = source_path
             .strip_prefix(&self.base_path)
-            .unwrap()
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to strip prefix from source path {:?}: {}",
+                    source_path,
+                    e
+                )
+            })?
             .to_string_lossy()
             .to_string();
 
@@ -425,9 +430,16 @@ impl BackupManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == "wal") {
-                let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+                let file_name = path
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Path {:?} has no file name", path))?
+                    .to_string_lossy()
+                    .to_string();
                 let dest_path = backup_dir.join("wal").join(&file_name);
-                tokio::fs::create_dir_all(dest_path.parent().unwrap()).await?;
+                let parent_dir = dest_path.parent().ok_or_else(|| {
+                    anyhow::anyhow!("Path {:?} has no parent directory", dest_path)
+                })?;
+                tokio::fs::create_dir_all(parent_dir).await?;
                 tokio::fs::copy(&path, &dest_path).await?;
                 wal_segments.push(file_name);
             }
@@ -444,18 +456,27 @@ impl BackupManager {
                 Ok(())
             }
             BackupTarget::S3 { bucket, prefix } => {
-                info!("Uploading backup {} to S3://{}/{}", backup_id, bucket, prefix);
+                info!(
+                    "Uploading backup {} to S3://{}/{}",
+                    backup_id, bucket, prefix
+                );
                 // TODO: Implement S3 upload
                 // For now, just log the intent
                 Ok(())
             }
             BackupTarget::GCS { bucket, prefix } => {
-                info!("Uploading backup {} to GCS://{}/{}", backup_id, bucket, prefix);
+                info!(
+                    "Uploading backup {} to GCS://{}/{}",
+                    backup_id, bucket, prefix
+                );
                 // TODO: Implement GCS upload
                 Ok(())
             }
             BackupTarget::Azure { container, prefix } => {
-                info!("Uploading backup {} to Azure://{}/{}", backup_id, container, prefix);
+                info!(
+                    "Uploading backup {} to Azure://{}/{}",
+                    backup_id, container, prefix
+                );
                 // TODO: Implement Azure upload
                 Ok(())
             }
@@ -482,10 +503,7 @@ impl BackupManager {
                 let manifest_path = path.join("manifest.json");
                 if manifest_path.exists() {
                     let metadata = tokio::fs::metadata(&manifest_path).await?;
-                    let modified = metadata
-                        .modified()?
-                        .duration_since(UNIX_EPOCH)?
-                        .as_secs();
+                    let modified = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs();
                     backups.push((path.to_string_lossy().to_string(), modified));
                 }
             }
@@ -524,10 +542,7 @@ impl BackupManager {
                 let manifest_path = path.join("manifest.json");
                 if manifest_path.exists() {
                     let metadata = tokio::fs::metadata(&manifest_path).await?;
-                    let modified = metadata
-                        .modified()?
-                        .duration_since(UNIX_EPOCH)?
-                        .as_secs();
+                    let modified = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs();
                     backups.push((path.to_string_lossy().to_string(), modified));
                 }
             }
@@ -548,11 +563,12 @@ impl BackupManager {
 
     /// Generate a unique backup ID
     fn generate_backup_id(&self) -> String {
-        let timestamp = SystemTime::now()
+        let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        format!("backup_{}", timestamp)
+            .unwrap_or_default()
+            .as_millis();
+        let instance = BACKUP_INSTANCE_COUNT.fetch_add(1, Ordering::Relaxed);
+        format!("backup_{}_{}", timestamp_ms, instance)
     }
 
     /// Get backup directory for a given backup ID
@@ -611,36 +627,45 @@ impl BackupManager {
     }
 }
 
-/// Global backup instance counter for testing
+/// Global backup instance counter for ensuring unique backup IDs
 static BACKUP_INSTANCE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::create_dir_all;
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_backup_manager_creation() {
-        let temp_dir = TempDir::new().unwrap();
+    async fn test_backup_manager_creation() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UnifiedCachingFilesystem: {}", e))?;
         let config = BackupConfig::default();
 
         let backup_manager = BackupManager::new(base_path, wal_writer, storage, config);
         assert!(backup_manager.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_generate_backup_id() {
-        let temp_dir = TempDir::new().unwrap();
+    async fn test_generate_backup_id() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UnifiedCachingFilesystem: {}", e))?;
         let config = BackupConfig::default();
 
-        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
+        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config)
+            .map_err(|e| anyhow::anyhow!("Failed to create BackupManager: {}", e))?;
 
         let id1 = backup_manager.generate_backup_id();
         let id2 = backup_manager.generate_backup_id();
@@ -648,17 +673,23 @@ mod tests {
         assert!(id1.starts_with("backup_"));
         assert!(id2.starts_with("backup_"));
         assert_ne!(id1, id2); // Should be unique
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_calculate_checksum() {
-        let temp_dir = TempDir::new().unwrap();
+    async fn test_calculate_checksum() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UnifiedCachingFilesystem: {}", e))?;
         let config = BackupConfig::default();
 
-        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
+        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config)
+            .map_err(|e| anyhow::anyhow!("Failed to create BackupManager: {}", e))?;
 
         let data = b"Hello, World!";
         let checksum1 = backup_manager.calculate_checksum(data);
@@ -666,33 +697,52 @@ mod tests {
 
         assert_eq!(checksum1, checksum2); // Deterministic
         assert_eq!(checksum1.len(), 64); // SHA-256 = 64 hex chars
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_find_latest_backup_none() {
-        let temp_dir = TempDir::new().unwrap();
+    async fn test_find_latest_backup_none() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UnifiedCachingFilesystem: {}", e))?;
         let config = BackupConfig::default();
 
-        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
+        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config)
+            .map_err(|e| anyhow::anyhow!("Failed to create BackupManager: {}", e))?;
 
-        let latest = backup_manager.find_latest_backup().await.unwrap();
+        let latest = backup_manager
+            .find_latest_backup()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to find latest backup: {}", e))?;
         assert!(latest.is_none());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_list_backups_empty() {
-        let temp_dir = TempDir::new().unwrap();
+    async fn test_list_backups_empty() -> Result<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {}", e))
+            .expect("Failed to create temp directory for test");
         let base_path = temp_dir.path();
         let wal_writer = Arc::new(tokio::sync::Mutex::new(None));
-        let storage = UnifiedCachingFilesystem::new_local(base_path).await.unwrap();
+        let storage = UnifiedCachingFilesystem::new_local(base_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create UnifiedCachingFilesystem: {}", e))?;
         let config = BackupConfig::default();
 
-        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config).unwrap();
+        let backup_manager = BackupManager::new(base_path, wal_writer, storage, config)
+            .map_err(|e| anyhow::anyhow!("Failed to create BackupManager: {}", e))?;
 
-        let backups = backup_manager.list_backups().await.unwrap();
+        let backups = backup_manager
+            .list_backups()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to list backups: {}", e))?;
         assert!(backups.is_empty());
+        Ok(())
     }
 }

@@ -55,7 +55,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::two_phase_commit::{
-    TransactionId, TransactionParticipant, TransactionState, TwoPhaseCommit, Vote,
+    TransactionId, TransactionParticipant, TransactionState, TwoPhaseCommit,
 };
 use super::wal_coordinator::WALCoordinator;
 
@@ -164,7 +164,9 @@ impl CrossModelTransactionCoordinator {
         info!("Registering transaction participant: {}", id);
 
         // Register with 2PC coordinator
-        self.two_phase_commit.register_participant(participant.clone()).await?;
+        self.two_phase_commit
+            .register_participant(participant.clone())
+            .await?;
 
         // Store locally
         let mut participants = self.participants.write().await;
@@ -208,8 +210,11 @@ impl CrossModelTransactionCoordinator {
         tx_id: TransactionId,
         participant_ids: &[String],
     ) -> Result<()> {
-        info!("Committing transaction {} with {} participants",
-            tx_id, participant_ids.len());
+        info!(
+            "Committing transaction {} with {} participants",
+            tx_id,
+            participant_ids.len()
+        );
 
         // Execute two-phase commit
         let result = self.two_phase_commit.commit(tx_id, participant_ids).await;
@@ -292,7 +297,10 @@ impl CrossModelTransactionCoordinator {
             return Ok(());
         }
 
-        warn!("Found {} incomplete transactions, attempting recovery", incomplete.len());
+        warn!(
+            "Found {} incomplete transactions, attempting recovery",
+            incomplete.len()
+        );
 
         let mut recovered = 0;
         for tx_id in incomplete {
@@ -309,9 +317,13 @@ impl CrossModelTransactionCoordinator {
                         let participants = self.participants.read().await;
                         let participant_ids: Vec<String> = participants.keys().cloned().collect();
 
-                        if let Err(e) = self.two_phase_commit.commit(tx_id, &participant_ids).await {
+                        if let Err(e) = self.two_phase_commit.commit(tx_id, &participant_ids).await
+                        {
                             warn!("Failed to commit prepared tx {}: {}", tx_id, e);
-                            self.two_phase_commit.abort(tx_id, &participant_ids).await.ok();
+                            self.two_phase_commit
+                                .abort(tx_id, &participant_ids)
+                                .await
+                                .ok();
                         } else {
                             self.wal_coordinator.write_tx_commit(tx_id).await.ok();
                             recovered += 1;
@@ -324,7 +336,10 @@ impl CrossModelTransactionCoordinator {
                         let participants = self.participants.read().await;
                         let participant_ids: Vec<String> = participants.keys().cloned().collect();
 
-                        self.two_phase_commit.abort(tx_id, &participant_ids).await.ok();
+                        self.two_phase_commit
+                            .abort(tx_id, &participant_ids)
+                            .await
+                            .ok();
                         self.wal_coordinator.write_tx_abort(tx_id).await.ok();
                     }
                 }
@@ -348,13 +363,16 @@ impl CrossModelTransactionCoordinator {
         let cleanup_interval_secs = self.config.cleanup_interval_secs;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(cleanup_interval_secs));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_secs(cleanup_interval_secs));
 
             loop {
                 interval.tick().await;
 
                 // Cleanup old 2PC transactions
-                two_phase_commit.cleanup_old_transactions(cleanup_interval_secs).await;
+                two_phase_commit
+                    .cleanup_old_transactions(cleanup_interval_secs)
+                    .await;
 
                 // Cleanup completed WAL transactions
                 wal_coordinator.cleanup_completed_transactions().await.ok();

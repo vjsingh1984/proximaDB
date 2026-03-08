@@ -56,7 +56,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::{AdapterConfig, InputAdapter};
 use crate::proto::proximadb_v1::{LogEntry, Severity, SqlValue};
@@ -328,7 +328,10 @@ mod tests {
         let time = 1672531200i64; // 2023-01-01 00:00:00 UTC
         let mut record = HashMap::new();
 
-        record.insert("message".to_string(), serde_json::json!("GET /api/v1/users HTTP/1.1 200"));
+        record.insert(
+            "message".to_string(),
+            serde_json::json!("GET /api/v1/users HTTP/1.1 200"),
+        );
         record.insert("level".to_string(), serde_json::json!("info"));
         record.insert("host".to_string(), serde_json::json!("web-server-1"));
         record.insert("service".to_string(), serde_json::json!("apache"));
@@ -339,7 +342,10 @@ mod tests {
 
         assert_eq!(entry.message, "GET /api/v1/users HTTP/1.1 200");
         // Severity is an i32 enum value
-        assert_eq!(entry.severity, crate::proto::proximadb_v1::Severity::Info as i32);
+        assert_eq!(
+            entry.severity,
+            crate::proto::proximadb_v1::Severity::Info as i32
+        );
         assert_eq!(entry.source, Some("web-server-1".to_string()));
         assert_eq!(entry.service, Some("apache".to_string()));
         assert_eq!(entry.timestamp_ns, time * 1_000_000_000);

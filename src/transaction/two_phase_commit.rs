@@ -166,8 +166,11 @@ impl TwoPhaseCommit {
         tx_id: TransactionId,
         participant_ids: &[ParticipantId],
     ) -> Result<()> {
-        info!("Starting 2PC for transaction {} with {} participants",
-            tx_id, participant_ids.len());
+        info!(
+            "Starting 2PC for transaction {} with {} participants",
+            tx_id,
+            participant_ids.len()
+        );
 
         // Phase 1: Prepare
         let prepare_result = self.prepare_phase(tx_id, participant_ids).await;
@@ -176,7 +179,8 @@ impl TwoPhaseCommit {
             warn!("Prepare phase failed for tx {}: {}", tx_id, e);
             self.abort(tx_id, participant_ids).await?;
             return Err(ProximaDBError::TransactionAborted(format!(
-                "Prepare phase failed: {}", e
+                "Prepare phase failed: {}",
+                e
             )));
         }
 
@@ -211,10 +215,9 @@ impl TwoPhaseCommit {
 
         // Ask each participant to prepare
         for participant_id in participant_ids {
-            let participant = participants.get(participant_id)
-                .ok_or_else(|| ProximaDBError::Internal(
-                    format!("Participant not found: {}", participant_id)
-                ))?;
+            let participant = participants.get(participant_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Participant not found: {}", participant_id))
+            })?;
 
             debug!("Preparing participant {} for tx {}", participant_id, tx_id);
 
@@ -224,7 +227,8 @@ impl TwoPhaseCommit {
             // If any participant votes NO, abort immediately
             if vote == Vote::No {
                 return Err(ProximaDBError::TransactionAborted(format!(
-                    "Participant {} voted NO", participant_id
+                    "Participant {} voted NO",
+                    participant_id
                 )));
             }
 
@@ -265,10 +269,9 @@ impl TwoPhaseCommit {
 
         // Ask each participant to commit
         for participant_id in participant_ids {
-            let participant = participants.get(participant_id)
-                .ok_or_else(|| ProximaDBError::Internal(
-                    format!("Participant not found: {}", participant_id)
-                ))?;
+            let participant = participants.get(participant_id).ok_or_else(|| {
+                ProximaDBError::Internal(format!("Participant not found: {}", participant_id))
+            })?;
 
             debug!("Committing participant {} for tx {}", participant_id, tx_id);
 
@@ -299,7 +302,10 @@ impl TwoPhaseCommit {
         // Ask each participant to rollback
         for participant_id in participant_ids {
             if let Some(participant) = participants.get(participant_id) {
-                debug!("Rolling back participant {} for tx {}", participant_id, tx_id);
+                debug!(
+                    "Rolling back participant {} for tx {}",
+                    participant_id, tx_id
+                );
 
                 // Ignore rollback errors (best effort)
                 let _ = participant.rollback(tx_id).await;
@@ -322,7 +328,7 @@ impl TwoPhaseCommit {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         // Combine timestamp with random component
@@ -337,14 +343,17 @@ impl TwoPhaseCommit {
     }
 
     /// Cleanup old transactions
-    pub async fn cleanup_old_transactions(&self, max_age_secs: u64) {
+    pub async fn cleanup_old_transactions(&self, _max_age_secs: u64) {
         let mut to_remove = Vec::new();
 
         // Collect transaction IDs to remove
         {
             let transactions = self.transactions.read().await;
             for (tx_id, state) in transactions.iter() {
-                if matches!(state, TransactionState::Committed | TransactionState::Aborted) {
+                if matches!(
+                    state,
+                    TransactionState::Committed | TransactionState::Aborted
+                ) {
                     to_remove.push(*tx_id);
                 }
             }
@@ -467,7 +476,9 @@ mod tests {
 
         // Begin and commit transaction
         let tx_id = tpc.begin().await.unwrap();
-        let result = tpc.commit(tx_id, &["p1".to_string(), "p2".to_string()]).await;
+        let result = tpc
+            .commit(tx_id, &["p1".to_string(), "p2".to_string()])
+            .await;
 
         assert!(result.is_ok());
 
@@ -496,7 +507,9 @@ mod tests {
 
         // Begin and commit transaction (should abort)
         let tx_id = tpc.begin().await.unwrap();
-        let result = tpc.commit(tx_id, &["p1".to_string(), "p2".to_string()]).await;
+        let result = tpc
+            .commit(tx_id, &["p1".to_string(), "p2".to_string()])
+            .await;
 
         assert!(result.is_err());
 
