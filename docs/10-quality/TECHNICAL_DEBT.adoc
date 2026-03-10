@@ -205,10 +205,26 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | Encryption at rest not implemented
 | P3
 | HIGH
-| *In Progress*
+| *Resolved*
 | Data stored unencrypted on disk. Fails SOC 2 requirements.
 | 1-2 months
-| *PARTIALLY RESOLVED Mar 2026*: **WAL encryption complete**. Integrated WALEncryptionLayer into WriteAheadLogDiskManager with AES-256-GCM encryption. Storage engine (SST/VIPER/etc) file encryption integration pending. Key rotation support implemented.
+| *RESOLVED Mar 2026*: **Storage engine file encryption complete**. Integrated FileEncryptionLayer into LocalFileSystem with transparent AES-256-GCM encryption for all storage engines (SST, VIPER, NOVA, SWIFT, HELIX, RAPTOR). WAL encryption was previously complete. Key rotation support implemented.
+|  |  |  |  |
+|---|---|---|---
+| **Component** | **Status** | **Location** | **Features** |
+| **WAL Encryption** | ✅ Complete | `src/storage/persistence/write_ahead_log/encryption.rs` | WALEncryptionLayer for transaction logs |
+| **File Encryption** | ✅ Complete | `src/storage/persistence/filesystem/local.rs` | FileEncryptionLayer for all storage files |
+| **Key Manager** | ✅ Complete | `src/storage/encryption/key_manager.rs` | KeyVersionManager with rotation support |
+| **Tests** | ✅ Complete | `tests/storage_encryption_test.rs` | 5 integration tests passing |
+
+**Features:**
+- Transparent encryption/decryption at filesystem level
+- AES-256-GCM with hardware acceleration (AES-NI)
+- Per-file key derivation via HKDF
+- Chunked encryption (4KB blocks) for large files
+- Encrypted file detection via magic number ("PEDE")
+- Graceful fallback for unencrypted files
+- Key mismatch detection for security
 
 | TD-017
 | PULSAR/QUASAR advertised but incomplete
