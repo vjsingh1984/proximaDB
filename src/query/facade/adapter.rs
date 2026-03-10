@@ -181,6 +181,22 @@ impl QueryFacadeAdapter {
         self.facade.execute(query_request).await
     }
 
+    /// Execute distributed query across the cluster
+    ///
+    /// Routes query execution through the DistributedQueryCoordinator for
+    /// cluster-aware query execution that can span multiple nodes.
+    #[instrument(skip(self), fields(sql_len = sql.len()))]
+    pub async fn distributed_query(&self, sql: &str) -> Result<QueryResult> {
+        debug!("Executing distributed query via adapter");
+
+        // Force distributed execution path
+        let mut query_request = QueryRequest::federated(sql);
+        query_request.params.force_path = Some("distributed".to_string());
+        query_request.params.include_metrics = true;
+
+        self.facade.execute(query_request).await
+    }
+
     /// Explain a query's execution plan without executing it
     ///
     /// Analyzes the query and returns the planned execution strategy,

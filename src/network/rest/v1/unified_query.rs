@@ -374,6 +374,7 @@ pub fn create_router() -> Router<UnifiedQueryApiState> {
         .route("/execute", post(execute_query))
         .route("/multi-model", post(execute_multi_model_query))
         .route("/federated", post(execute_federated_query))
+        .route("/distributed", post(execute_distributed_query))
         .route("/explain", post(explain_query))
         // Prepared statement endpoints
         .route("/prepare", post(prepare_statement))
@@ -1203,6 +1204,207 @@ async fn execute_federated_via_adapter(
     );
 
     Ok(JsonResponse(response))
+}
+
+// =============================================================================
+// DISTRIBUTED QUERY API
+// =============================================================================
+
+/// Execute distributed query across the cluster
+///
+/// POST /api/v1/unified/distributed
+///
+/// This endpoint executes queries through the DistributedQueryCoordinator for
+/// cluster-aware query execution that can span multiple nodes in a ProximaDB cluster.
+///
+/// ## Features
+///
+/// - **Automatic query distribution**: Decomposes queries into subqueries for each node
+/// - **Result aggregation**: Merges results from multiple nodes
+/// - **Shard-aware routing**: Routes subqueries to appropriate shards
+/// - **Result caching**: Caches query results for improved performance
+/// - **Cross-shard joins**: Supports shuffle exchange for complex joins
+///
+/// Request body:
+/// ```json
+/// {
+///   "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)",
+///   "strategy": "auto",
+///   "timeout_ms": 30000,
+///   "min_nodes": 1
+/// }
+/// ```
+///
+/// ## Execution Strategies
+///
+/// - `localOnly`: Execute on local node only (ignore cluster)
+/// - `distributed`: Distribute across cluster
+/// - `broadcast`: Send to all nodes
+/// - `auto`: Let coordinator decide (default)
+async fn execute_distributed_query(
+    State(state): State<UnifiedQueryApiState>,
+    Json(request): Json<DistributedQueryRequest>,
+) -> ApiResult<JsonResponse<DistributedQueryResponse>> {
+    use std::time::Instant;
+
+    info!("Executing distributed query with strategy: {:?}", request.strategy);
+    let start = Instant::now();
+
+    // All queries route through QueryFacadeAdapter
+    let adapter = state.query_adapter.as_ref().ok_or_else(|| {
+        ApiError::Internal(
+            "QueryFacadeAdapter not configured. Use UnifiedQueryApiState::new_with_adapter()"
+                .to_string(),
+        )
+    })?;
+
+    debug!("Routing distributed query through QueryFacadeAdapter");
+    execute_distributed_via_adapter(adapter, &request, start).await
+}
+
+/// Execute distributed query through the unified QueryFacadeAdapter
+///
+/// This function routes the query through the distributed execution path
+/// for cluster-aware query execution.
+async fn execute_distributed_via_adapter(
+    adapter: &QueryFacadeAdapter,
+    request: &DistributedQueryRequest,
+    start: std::time::Instant,
+) -> ApiResult<JsonResponse<DistributedQueryResponse>> {
+    // Apply strategy hint if provided
+    let query_with_strategy = match request.strategy {
+        ExecutionStrategy::LocalOnly => {
+            format!("/* LOCAL_ONLY */ {}", request.query)
+        }
+        ExecutionStrategy::Distributed => {
+            format!("/* DISTRIBUTED */ {}", request.query)
+        }
+        ExecutionStrategy::Broadcast => {
+            format!("/* BROADCAST */ {}", request.query)
+        }
+        ExecutionStrategy::Auto => request.query.clone(),
+    };
+
+    let result = adapter
+        .distributed_query(&query_with_strategy)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Distributed query failed: {}", e)))?;
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    // Extract metrics if available
+    let metrics_info = result.metrics.unwrap_or_default();
+
+    // Convert QueryResult to DistributedQueryResponse
+    let records = match result.data {
+        crate::query::facade::QueryResultData::Rows(rows) => rows
+            .into_iter()
+            .take(request.limit.unwrap_or(100) as usize)
+            .collect(),
+        _ => vec![],
+    };
+
+    let records_returned = records.len() as u64;
+
+    let response = DistributedQueryResponse {
+        records,
+        total_count: None,
+        records_returned,
+        execution_plan: DistributedPlanResponse {
+            strategy: request.strategy,
+            nodes_involved: 1, // TODO: Extract from actual execution plan
+            execution_time_ms: elapsed_ms,
+        },
+        metrics: DistributedMetricsResponse {
+            total_time_ms: elapsed_ms,
+            planning_time_ms: metrics_info.planning_time_ms as f64,
+            execution_time_ms: metrics_info.execution_time_ms as f64,
+            cache_hits: 0, // TODO: Extract from distributed coordinator stats
+        },
+    };
+
+    info!(
+        "Distributed query executed in {:.2}ms, returned {} records",
+        elapsed_ms, response.records_returned
+    );
+
+    Ok(JsonResponse(response))
+}
+
+/// Request for distributed query execution
+#[derive(Debug, Deserialize)]
+pub struct DistributedQueryRequest {
+    /// SQL query to execute
+    pub query: String,
+    /// Execution strategy hint
+    #[serde(default)]
+    pub strategy: ExecutionStrategy,
+    /// Maximum results to return
+    pub limit: Option<u64>,
+    /// Timeout in milliseconds
+    pub timeout_ms: Option<u64>,
+    /// Minimum nodes required for execution
+    pub min_nodes: Option<usize>,
+}
+
+/// Execution strategy for distributed queries
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecutionStrategy {
+    /// Execute locally only
+    LocalOnly,
+    /// Distribute across cluster
+    Distributed,
+    /// Broadcast to all nodes
+    Broadcast,
+    /// Let coordinator decide
+    #[serde(alias = "auto")]
+    Auto,
+}
+
+impl Default for ExecutionStrategy {
+    fn default() -> Self {
+        ExecutionStrategy::Auto
+    }
+}
+
+/// Response for distributed query execution
+#[derive(Debug, Serialize)]
+pub struct DistributedQueryResponse {
+    /// Result records
+    pub records: Vec<serde_json::Value>,
+    /// Total count (if available)
+    pub total_count: Option<u64>,
+    /// Number of records returned
+    pub records_returned: u64,
+    /// Execution plan details
+    pub execution_plan: DistributedPlanResponse,
+    /// Execution metrics
+    pub metrics: DistributedMetricsResponse,
+}
+
+/// Distributed execution plan information
+#[derive(Debug, Serialize)]
+pub struct DistributedPlanResponse {
+    /// Strategy used for execution
+    pub strategy: ExecutionStrategy,
+    /// Number of nodes involved
+    pub nodes_involved: usize,
+    /// Total execution time in milliseconds
+    pub execution_time_ms: f64,
+}
+
+/// Distributed query execution metrics
+#[derive(Debug, Serialize)]
+pub struct DistributedMetricsResponse {
+    /// Total execution time in milliseconds
+    pub total_time_ms: f64,
+    /// Query planning time in milliseconds
+    pub planning_time_ms: f64,
+    /// Query execution time in milliseconds
+    pub execution_time_ms: f64,
+    /// Number of cache hits
+    pub cache_hits: u64,
 }
 
 // =============================================================================

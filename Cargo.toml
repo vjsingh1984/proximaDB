@@ -9,7 +9,7 @@ repository = "https://github.com/vjsingh1984/proximadb"
 homepage = "https://github.com/vjsingh1984/proximadb"
 keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
-rust-version = "1.88"
+rust-version = "1.88" # Minimum supported Rust version (runs on 1.94+ stable)
 
 [workspace]
 members = [
