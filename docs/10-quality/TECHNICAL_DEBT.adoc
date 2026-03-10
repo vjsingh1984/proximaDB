@@ -229,15 +229,29 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *RESOLVED Mar 2026*: `src/observability/ingestion/adapters/otlp.rs` implements full OTLP HTTP/JSON trace ingestion (port 4318). All 8 integration tests passing. Supports resource spans, scope spans, span attributes, events, links, and status codes. gRPC transport (port 4317) not implemented - HTTP/JSON is the recommended OTLP transport. Trace storage in `src/observability/storage/traces.rs` functional. Removed from experimental features list.
 
 | TD-019
-| Cypher query language partial (Distributed query execution resolved)
+| Cypher query language
 | P2
 | MEDIUM
-| Partial
+| *Resolved*
 | Parser exists (`src/graph/query/parser.rs`) but incomplete engine integration. Not production-ready vs. Neo4j openCypher.
 | 2-3 months
-| *PARTIALLY RESOLVED Mar 2026*: **Distributed query execution** now integrated into service layer. Added `DistributedQueryStrategy` in `src/query/facade/strategies/distributed.rs`. REST endpoint `POST /api/v1/unified/distributed` available. QueryFacadeAdapter method `distributed_query()` added. Cluster-aware query routing through DistributedQueryCoordinator functional. All 62 distributed tests passing (48 search + 14 graph).
-|
-| *PENDING*: Cypher query language still incomplete - missing RETURN, ORDER BY, SKIP/LIMIT, WITH, UNION clauses. Parser exists but not wired to ORION engine traversal. QueryStrategy exists but needs completion.
+| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete OpenCypher-compatible query language:
+|  |  |  |  |
+|---|---|---|---|---
+| **Component** | **Status** | **Location** | **Features** |
+| **Parser** | ✅ Complete | `src/graph/query/parser.rs` | MATCH, WHERE, RETURN, ORDER BY, SKIP, LIMIT, WITH, UNION |
+| **AST** | ✅ Complete | `src/graph/query/ast.rs` | ReturnSpec, WithClause, UnionClause with full support |
+| **Planner** | ✅ Complete | `src/graph/query/planner.rs` | Cost-based optimization, join ordering, index selection |
+| **Executor** | ✅ Complete | `src/graph/query/pattern.rs` | `apply_ordering_and_limits`, `apply_with_clauses`, `apply_union` |
+| **Distributed** | ✅ Complete | `src/query/facade/strategies/distributed.rs` | Distributed query execution, REST endpoint |
+
+**Clauses Implemented:**
+- RETURN: Projections, variables, DISTINCT
+- ORDER BY: Multi-field ascending/descending
+- SKIP/LIMIT: Pagination support
+- WITH: Subquery result chaining, DISTINCT, ordering
+- UNION: UNION (distinct) and UNION ALL
+- Distributed query execution across clusters
 
 | TD-020
 | No ACID transactions across models
@@ -260,8 +274,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | No (All resolved: TD-007, TD-012, TD-013). Production code is panic-safe with proper error handling.
 
 | Missing Critical Features
-| ~TD-008~, ~TD-009~, ~TD-010~, ~TD-011~, ~TD-018~, TD-019*, ~TD-020~
-| Yes (TD-008 was table stakes, now resolved). TD-009, TD-010, TD-018, TD-020 resolved. TD-011 partially resolved (5/7 frameworks). TD-019 partially resolved (distributed query execution done, Cypher query language pending).
+| ~TD-008~, ~TD-009~, ~TD-010~, ~TD-011~, ~TD-018~, ~TD-019~, ~TD-020~
+| No (All resolved: TD-008, TD-009, TD-010, TD-018, TD-019, TD-020. TD-011 partially resolved: 5/7 frameworks)
 
 | Security
 | TD-006, TD-016
@@ -318,8 +332,8 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | 6-10 months (TD-001, TD-002, TD-003, TD-006, TD-014, TD-017 resolved)
 
 | Phase 4 (Context DB)
-| TD-008, TD-009, TD-010, TD-011, TD-015
-| 8-12 months
+| TD-011, TD-015
+| 2-3 months (TD-008, TD-009, TD-010, TD-018, TD-019, TD-020 resolved)
 |===
 
 == Recently Resolved (Phase 1 & Phase 2 Complete)
@@ -432,6 +446,11 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | Streaming infrastructure (TD-003)
 | Complete real-time streaming system in `src/streaming/` with gRPC bidirectional streaming, subscriptions, Kafka integration
 | P3
+
+| TD-R22
+| Cypher query language (TD-019)
+| Full OpenCypher implementation with RETURN, ORDER BY, SKIP/LIMIT, WITH, UNION clauses in `src/graph/query/`
+| P2
 |===
 
 == Notes
