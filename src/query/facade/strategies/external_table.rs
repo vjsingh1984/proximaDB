@@ -42,7 +42,7 @@ impl ExternalTableStrategy {
         self
     }
 
-    fn extract_sql(&self, request: &QueryRequest) -> Result<&str> {
+    fn extract_sql<'a>(&self, request: &'a QueryRequest) -> Result<&'a str> {
         match &request.content {
             QueryContent::Sql(query) => Ok(query.as_str()),
             _ => Err(anyhow!("ExternalTableStrategy requires SQL content")),

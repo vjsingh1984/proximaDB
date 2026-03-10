@@ -254,6 +254,8 @@ ai_endpoints = []
 sales_endpoints = []
 tenant_access = []
 executive_intel = []
+network-rest = []  # Legacy REST-specific wiring gates used by TLS middleware
+compile_protobuf = []  # Legacy protobuf codegen gate referenced by build helpers
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = []

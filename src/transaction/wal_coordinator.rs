@@ -54,7 +54,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 

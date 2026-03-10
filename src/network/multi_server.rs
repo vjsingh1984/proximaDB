@@ -1331,7 +1331,7 @@ impl SharedServices {
                     ..Default::default()
                 },
             )
-            .with_service(observability_service),
+            .with_service(observability_service.clone()),
         );
         let multimodel_storage = Arc::new(
             MultiModelStorageFacade::new()
