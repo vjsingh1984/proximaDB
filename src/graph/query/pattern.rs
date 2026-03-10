@@ -1652,6 +1652,9 @@ mod tests {
                 );
                 map
             },
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         });
 
         let node2 = std::sync::Arc::new(crate::graph::Node {
@@ -1667,6 +1670,9 @@ mod tests {
                 );
                 map
             },
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         });
 
         let node3 = std::sync::Arc::new(crate::graph::Node {
@@ -1682,6 +1688,9 @@ mod tests {
                 );
                 map
             },
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         });
 
         let results = vec![
@@ -1763,7 +1772,7 @@ mod tests {
         // Apply SKIP 5 (should keep 5-9)
         let mut sorted_results = results;
         let skip = Some(5);
-        if skip < sorted_results.len() {
+        if skip.unwrap() < sorted_results.len() {
             sorted_results = sorted_results.split_off(skip.unwrap());
         }
 
@@ -1837,6 +1846,9 @@ mod tests {
                 );
                 map
             },
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         });
 
         let node2 = std::sync::Arc::new(crate::graph::Node {
@@ -1852,6 +1864,9 @@ mod tests {
                 );
                 map
             },
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         });
 
         let node3 = std::sync::Arc::new(crate::graph::Node {
@@ -1867,6 +1882,9 @@ mod tests {
                 );
                 map
             },
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         });
 
         let results = vec![

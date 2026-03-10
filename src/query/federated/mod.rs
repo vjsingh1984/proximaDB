@@ -321,7 +321,7 @@ mod tests {
         FlushParameters, UnifiedStorageEngine,
     };
     use anyhow::Result;
-    use arrow::array::{Float32Array, StringArray};
+    use arrow::array::{Float32Array, Float64Array, Int64Array, StringArray};
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -774,6 +774,90 @@ mod tests {
             .expect("score column should be Float32");
         assert_eq!(ids.value(0), "doc-1");
         assert!((scores.value(0) - 0.91).abs() < f32::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_supports_global_aggregates() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
+                OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
+                OptimizedSearchRecord::new("doc-3".to_string(), 0.47),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT COUNT(*) AS total, MAX(score) AS best_score, AVG(score) AS avg_score FROM VECTOR_SEARCH('products', '[0.1]', 3) WHERE score > 0.2",
+            )
+            .await
+            .expect("global aggregates should execute for vector search");
+
+        assert_eq!(result.row_count(), 1);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["total", "best_score", "avg_score"]);
+
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let totals = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("count column should be Int64");
+        let best_scores = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("max column should be Float32");
+        let avg_scores = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("avg column should be Float64");
+
+        assert_eq!(totals.value(0), 2);
+        assert!((best_scores.value(0) - 0.91).abs() < f32::EPSILON);
+        assert!((avg_scores.value(0) - 0.69).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_group_by_reports_unsupported_execution() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
+                OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT id, COUNT(*) FROM VECTOR_SEARCH('products', '[0.1]', 2) GROUP BY id",
+            )
+            .await
+            .expect_err("group by should fail explicitly until grouped aggregation is implemented");
+
+        assert!(
+            error
+                .to_string()
+                .contains("GROUP BY is not yet supported in federated SQL execution")
+        );
     }
 
     #[tokio::test]

@@ -243,6 +243,11 @@ struct PredicatePushResult {
     predicate_pushed: bool,
 }
 
+struct SelectItem {
+    expression: String,
+    alias: Option<String>,
+}
+
 /// Cost model for different data models
 #[derive(Debug, Clone)]
 pub struct CostModel {
@@ -1789,6 +1794,39 @@ impl CrossModelOptimizer {
             };
         }
 
+        let select_items = Self::extract_select_items(&query.sql);
+        let group_by = Self::extract_group_by_columns(&query.sql);
+        let aggregates = select_items
+            .iter()
+            .filter_map(Self::parse_aggregate_expr)
+            .collect::<Vec<_>>();
+
+        if !group_by.is_empty() {
+            return Err(anyhow!(
+                "GROUP BY is not yet supported in federated SQL execution; only global aggregates over function-backed sources are currently executable"
+            ));
+        }
+
+        let has_aggregate_projection = !aggregates.is_empty();
+        if has_aggregate_projection {
+            let aggregate_columns = aggregates
+                .iter()
+                .map(|aggregate| aggregate.alias.clone())
+                .collect::<Vec<_>>();
+            let estimated_cost = plan.estimated_cost * 1.1;
+            plan = PlanNode {
+                id: self.next_id(),
+                node_type: PlanNodeType::Aggregate {
+                    input: Box::new(plan),
+                    group_by,
+                    aggregates,
+                },
+                estimated_cost,
+                estimated_rows: 1,
+                output_columns: aggregate_columns,
+            };
+        }
+
         let order_by = Self::extract_order_by(&query.sql);
         if !order_by.is_empty() {
             let output_columns = plan.output_columns.clone();
@@ -1825,7 +1863,8 @@ impl CrossModelOptimizer {
         }
 
         let projection = Self::extract_select_columns(&query.sql);
-        if !projection.is_empty()
+        if !has_aggregate_projection
+            && !projection.is_empty()
             && !(projection.len() == 1 && projection[0] == "*")
             && !projection.iter().any(|column| column.ends_with(".*"))
         {
@@ -1958,7 +1997,7 @@ impl CrossModelOptimizer {
         items
     }
 
-    fn extract_select_columns(sql: &str) -> Vec<String> {
+    fn extract_select_items(sql: &str) -> Vec<SelectItem> {
         let Some(select_pos) = Self::find_top_level_keyword(sql, "SELECT") else {
             return vec![];
         };
@@ -1966,17 +2005,109 @@ impl CrossModelOptimizer {
             return vec![];
         };
 
-        Self::split_top_level_list(sql[select_pos + 6..from_pos].trim())
+        let clause = sql[select_pos + 6..from_pos].trim();
+        let clause = clause
+            .strip_prefix("DISTINCT ")
+            .or_else(|| clause.strip_prefix("distinct "))
+            .unwrap_or(clause);
+
+        Self::split_top_level_list(clause)
             .into_iter()
-            .map(|column| {
-                let upper = column.to_uppercase();
+            .map(|item| {
+                let upper = item.to_uppercase();
                 if let Some(as_pos) = upper.rfind(" AS ") {
-                    column[..as_pos].trim().to_string()
+                    SelectItem {
+                        expression: item[..as_pos].trim().to_string(),
+                        alias: Some(item[as_pos + 4..].trim().to_string()),
+                    }
                 } else {
-                    column.trim().to_string()
+                    SelectItem {
+                        expression: item.trim().to_string(),
+                        alias: None,
+                    }
                 }
             })
             .collect()
+    }
+
+    fn extract_select_columns(sql: &str) -> Vec<String> {
+        Self::extract_select_items(sql)
+            .into_iter()
+            .map(|item| item.expression)
+            .collect()
+    }
+
+    fn extract_group_by_columns(sql: &str) -> Vec<String> {
+        let Some(group_by_pos) = Self::find_top_level_keyword(sql, "GROUP BY") else {
+            return vec![];
+        };
+        let end = Self::find_clause_end(
+            sql,
+            group_by_pos + 8,
+            &["ORDER BY", "LIMIT", "OFFSET", "HAVING", ";"],
+        );
+
+        Self::split_top_level_list(sql[group_by_pos + 8..end].trim())
+    }
+
+    fn parse_aggregate_expr(item: &SelectItem) -> Option<AggregateExpr> {
+        let expression = item.expression.trim();
+        let open_paren = expression.find('(')?;
+        if !expression.ends_with(')') {
+            return None;
+        }
+
+        let function_name = expression[..open_paren].trim().to_uppercase();
+        let inner = expression[open_paren + 1..expression.len() - 1].trim();
+        let alias = item.alias.clone().unwrap_or_else(|| expression.to_string());
+
+        match function_name.as_str() {
+            "COUNT" => {
+                if inner == "*" {
+                    Some(AggregateExpr {
+                        function: AggregateFunction::Count,
+                        column: None,
+                        alias,
+                    })
+                } else if let Some(distinct_column) = inner
+                    .strip_prefix("DISTINCT ")
+                    .or_else(|| inner.strip_prefix("distinct "))
+                {
+                    Some(AggregateExpr {
+                        function: AggregateFunction::CountDistinct,
+                        column: Some(distinct_column.trim().to_string()),
+                        alias,
+                    })
+                } else {
+                    Some(AggregateExpr {
+                        function: AggregateFunction::Count,
+                        column: Some(inner.to_string()),
+                        alias,
+                    })
+                }
+            }
+            "SUM" => Some(AggregateExpr {
+                function: AggregateFunction::Sum,
+                column: Some(inner.to_string()),
+                alias,
+            }),
+            "AVG" => Some(AggregateExpr {
+                function: AggregateFunction::Avg,
+                column: Some(inner.to_string()),
+                alias,
+            }),
+            "MIN" => Some(AggregateExpr {
+                function: AggregateFunction::Min,
+                column: Some(inner.to_string()),
+                alias,
+            }),
+            "MAX" => Some(AggregateExpr {
+                function: AggregateFunction::Max,
+                column: Some(inner.to_string()),
+                alias,
+            }),
+            _ => None,
+        }
     }
 
     fn extract_limit_offset(sql: &str) -> (Option<usize>, usize) {

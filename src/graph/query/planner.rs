@@ -1887,6 +1887,7 @@ mod tests {
             edges: vec![],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -1950,6 +1951,7 @@ mod tests {
             }],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["a".to_string(), "b".to_string()],
                 projections: vec![],
@@ -1996,6 +1998,7 @@ mod tests {
                 property: "age".to_string(),
                 constraint: PropertyConstraint::GreaterThan(serde_json::json!(30)),
             }],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -2041,6 +2044,7 @@ mod tests {
             edges: vec![],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -2086,6 +2090,7 @@ mod tests {
             edges: vec![],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],

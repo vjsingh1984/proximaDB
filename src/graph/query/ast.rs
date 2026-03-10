@@ -225,6 +225,32 @@ pub enum VariableBinding {
     Path(Vec<PathElement>),
 }
 
+impl VariableBinding {
+    /// Returns the bound node when this binding represents a node.
+    pub fn as_node(&self) -> Option<&Arc<Node>> {
+        match self {
+            Self::Node(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    /// Returns the bound edge when this binding represents an edge.
+    pub fn as_edge(&self) -> Option<&Arc<Edge>> {
+        match self {
+            Self::Edge(edge) => Some(edge),
+            _ => None,
+        }
+    }
+
+    /// Returns the bound path when this binding represents a path.
+    pub fn as_path(&self) -> Option<&[PathElement]> {
+        match self {
+            Self::Path(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
 /// Element in a path
 #[derive(Debug, Clone)]
 pub enum PathElement {

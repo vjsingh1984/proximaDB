@@ -110,6 +110,59 @@ enum JoinKey {
     Boolean(bool),
 }
 
+#[derive(Debug, Clone)]
+enum AggregateValue {
+    Int64(Option<i64>),
+    Int32(Option<i32>),
+    UInt64(Option<u64>),
+    UInt32(Option<u32>),
+    Float64(Option<f64>),
+    Float32(Option<f32>),
+    Utf8(Option<String>),
+    Boolean(Option<bool>),
+}
+
+impl AggregateValue {
+    fn data_type(&self) -> DataType {
+        match self {
+            Self::Int64(_) => DataType::Int64,
+            Self::Int32(_) => DataType::Int32,
+            Self::UInt64(_) => DataType::UInt64,
+            Self::UInt32(_) => DataType::UInt32,
+            Self::Float64(_) => DataType::Float64,
+            Self::Float32(_) => DataType::Float32,
+            Self::Utf8(_) => DataType::Utf8,
+            Self::Boolean(_) => DataType::Boolean,
+        }
+    }
+
+    fn is_nullable(&self) -> bool {
+        match self {
+            Self::Int64(value) => value.is_none(),
+            Self::Int32(value) => value.is_none(),
+            Self::UInt64(value) => value.is_none(),
+            Self::UInt32(value) => value.is_none(),
+            Self::Float64(value) => value.is_none(),
+            Self::Float32(value) => value.is_none(),
+            Self::Utf8(value) => value.is_none(),
+            Self::Boolean(value) => value.is_none(),
+        }
+    }
+
+    fn into_array(self) -> ArrayRef {
+        match self {
+            Self::Int64(value) => Arc::new(Int64Array::from(vec![value])),
+            Self::Int32(value) => Arc::new(arrow::array::Int32Array::from(vec![value])),
+            Self::UInt64(value) => Arc::new(arrow::array::UInt64Array::from(vec![value])),
+            Self::UInt32(value) => Arc::new(arrow::array::UInt32Array::from(vec![value])),
+            Self::Float64(value) => Arc::new(arrow::array::Float64Array::from(vec![value])),
+            Self::Float32(value) => Arc::new(Float32Array::from(vec![value])),
+            Self::Utf8(value) => Arc::new(StringArray::from(vec![value.as_deref()])),
+            Self::Boolean(value) => Arc::new(arrow::array::BooleanArray::from(vec![value])),
+        }
+    }
+}
+
 /// Federated query executor
 pub struct FederatedExecutor {
     /// Multi-model storage facade
@@ -1043,6 +1096,463 @@ impl FederatedExecutor {
         Ok(std::cmp::Ordering::Equal)
     }
 
+    fn resolve_aggregate_column(
+        batch: &RecordBatch,
+        aggregate: &super::optimizer::AggregateExpr,
+    ) -> Result<usize> {
+        let column = aggregate.column.as_ref().ok_or_else(|| {
+            anyhow!(
+                "Aggregate {:?} requires a column reference",
+                aggregate.function
+            )
+        })?;
+
+        Self::resolve_column_index(batch.schema().as_ref(), column).ok_or_else(|| {
+            anyhow!(
+                "Aggregate column '{}' was not found in schema {:?}",
+                column,
+                batch
+                    .schema()
+                    .fields()
+                    .iter()
+                    .map(|field| field.name().clone())
+                    .collect::<Vec<_>>()
+            )
+        })
+    }
+
+    fn scalar_distinct_key(array: &ArrayRef, row: usize) -> Result<String> {
+        let key = match array.data_type() {
+            DataType::Utf8 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Utf8 aggregate column"))?;
+                format!("s:{}", values.value(row))
+            }
+            DataType::Int64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Int64 aggregate column"))?;
+                format!("i64:{}", values.value(row))
+            }
+            DataType::Int32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Int32 aggregate column"))?;
+                format!("i32:{}", values.value(row))
+            }
+            DataType::UInt64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::UInt64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast UInt64 aggregate column"))?;
+                format!("u64:{}", values.value(row))
+            }
+            DataType::UInt32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::UInt32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast UInt32 aggregate column"))?;
+                format!("u32:{}", values.value(row))
+            }
+            DataType::Float64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::Float64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Float64 aggregate column"))?;
+                format!("f64:{:x}", values.value(row).to_bits())
+            }
+            DataType::Float32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Float32 aggregate column"))?;
+                format!("f32:{:x}", values.value(row).to_bits())
+            }
+            DataType::Boolean => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::BooleanArray>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Boolean aggregate column"))?;
+                format!("b:{}", values.value(row))
+            }
+            other => {
+                return Err(anyhow!(
+                    "COUNT DISTINCT is not yet supported for data type {:?}",
+                    other
+                ));
+            }
+        };
+
+        Ok(key)
+    }
+
+    fn count_distinct_values(array: &ArrayRef) -> Result<i64> {
+        let mut distinct = HashSet::new();
+        for row in 0..array.len() {
+            if array.is_null(row) {
+                continue;
+            }
+            distinct.insert(Self::scalar_distinct_key(array, row)?);
+        }
+        Ok(distinct.len() as i64)
+    }
+
+    fn aggregate_numeric_values(array: &ArrayRef) -> Result<Vec<f64>> {
+        match array.data_type() {
+            DataType::Int64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Int64 aggregate column"))?;
+                Ok((0..values.len())
+                    .filter(|row| !values.is_null(*row))
+                    .map(|row| values.value(row) as f64)
+                    .collect())
+            }
+            DataType::Int32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Int32 aggregate column"))?;
+                Ok((0..values.len())
+                    .filter(|row| !values.is_null(*row))
+                    .map(|row| values.value(row) as f64)
+                    .collect())
+            }
+            DataType::UInt64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::UInt64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast UInt64 aggregate column"))?;
+                Ok((0..values.len())
+                    .filter(|row| !values.is_null(*row))
+                    .map(|row| values.value(row) as f64)
+                    .collect())
+            }
+            DataType::UInt32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::UInt32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast UInt32 aggregate column"))?;
+                Ok((0..values.len())
+                    .filter(|row| !values.is_null(*row))
+                    .map(|row| values.value(row) as f64)
+                    .collect())
+            }
+            DataType::Float64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::Float64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Float64 aggregate column"))?;
+                Ok((0..values.len())
+                    .filter(|row| !values.is_null(*row))
+                    .map(|row| values.value(row))
+                    .collect())
+            }
+            DataType::Float32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Float32 aggregate column"))?;
+                Ok((0..values.len())
+                    .filter(|row| !values.is_null(*row))
+                    .map(|row| values.value(row) as f64)
+                    .collect())
+            }
+            other => Err(anyhow!(
+                "Aggregate numeric functions are not supported for data type {:?}",
+                other
+            )),
+        }
+    }
+
+    fn aggregate_extremum(array: &ArrayRef, choose_min: bool) -> Result<AggregateValue> {
+        match array.data_type() {
+            DataType::Utf8 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Utf8 aggregate column"))?;
+                let mut best: Option<String> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best.as_deref() {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value.to_string());
+                    }
+                }
+                Ok(AggregateValue::Utf8(best))
+            }
+            DataType::Int64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Int64 aggregate column"))?;
+                let mut best: Option<i64> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::Int64(best))
+            }
+            DataType::Int32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Int32 aggregate column"))?;
+                let mut best: Option<i32> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::Int32(best))
+            }
+            DataType::UInt64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::UInt64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast UInt64 aggregate column"))?;
+                let mut best: Option<u64> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::UInt64(best))
+            }
+            DataType::UInt32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::UInt32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast UInt32 aggregate column"))?;
+                let mut best: Option<u32> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::UInt32(best))
+            }
+            DataType::Float64 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::Float64Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Float64 aggregate column"))?;
+                let mut best: Option<f64> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::Float64(best))
+            }
+            DataType::Float32 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Float32 aggregate column"))?;
+                let mut best: Option<f32> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                value < current
+                            } else {
+                                value > current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::Float32(best))
+            }
+            DataType::Boolean => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<arrow::array::BooleanArray>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Boolean aggregate column"))?;
+                let mut best: Option<bool> = None;
+                for row in 0..values.len() {
+                    if values.is_null(row) {
+                        continue;
+                    }
+                    let value = values.value(row);
+                    let replace = match best {
+                        None => true,
+                        Some(current) => {
+                            if choose_min {
+                                !value && current
+                            } else {
+                                value && !current
+                            }
+                        }
+                    };
+                    if replace {
+                        best = Some(value);
+                    }
+                }
+                Ok(AggregateValue::Boolean(best))
+            }
+            other => Err(anyhow!(
+                "Aggregate MIN/MAX is not yet supported for data type {:?}",
+                other
+            )),
+        }
+    }
+
+    fn compute_aggregate_value(
+        batch: &RecordBatch,
+        aggregate: &super::optimizer::AggregateExpr,
+    ) -> Result<AggregateValue> {
+        use super::optimizer::AggregateFunction;
+
+        match aggregate.function {
+            AggregateFunction::Count => {
+                let count = if let Some(column) = &aggregate.column {
+                    let column_index = Self::resolve_column_index(batch.schema().as_ref(), column)
+                        .ok_or_else(|| anyhow!("Aggregate column '{}' was not found", column))?;
+                    let array = batch.column(column_index);
+                    (0..array.len()).filter(|row| !array.is_null(*row)).count() as i64
+                } else {
+                    batch.num_rows() as i64
+                };
+                Ok(AggregateValue::Int64(Some(count)))
+            }
+            AggregateFunction::CountDistinct => {
+                let column_index = Self::resolve_aggregate_column(batch, aggregate)?;
+                let array = batch.column(column_index).clone();
+                Ok(AggregateValue::Int64(Some(Self::count_distinct_values(
+                    &array,
+                )?)))
+            }
+            AggregateFunction::Sum => {
+                let column_index = Self::resolve_aggregate_column(batch, aggregate)?;
+                let array = batch.column(column_index).clone();
+                let values = Self::aggregate_numeric_values(&array)?;
+                Ok(AggregateValue::Float64(if values.is_empty() {
+                    None
+                } else {
+                    Some(values.iter().sum())
+                }))
+            }
+            AggregateFunction::Avg => {
+                let column_index = Self::resolve_aggregate_column(batch, aggregate)?;
+                let array = batch.column(column_index).clone();
+                let values = Self::aggregate_numeric_values(&array)?;
+                Ok(AggregateValue::Float64(if values.is_empty() {
+                    None
+                } else {
+                    Some(values.iter().sum::<f64>() / values.len() as f64)
+                }))
+            }
+            AggregateFunction::Min => {
+                let column_index = Self::resolve_aggregate_column(batch, aggregate)?;
+                let array = batch.column(column_index).clone();
+                Self::aggregate_extremum(&array, true)
+            }
+            AggregateFunction::Max => {
+                let column_index = Self::resolve_aggregate_column(batch, aggregate)?;
+                let array = batch.column(column_index).clone();
+                Self::aggregate_extremum(&array, false)
+            }
+        }
+    }
+
     fn extract_join_key(
         batch: &RecordBatch,
         row: usize,
@@ -1556,16 +2066,48 @@ impl FederatedExecutor {
         group_by: &[String],
         aggregates: &[super::optimizer::AggregateExpr],
     ) -> Result<ExecutionResult> {
-        let _ = input;
-        let aggregate_aliases: Vec<&str> = aggregates
+        if !group_by.is_empty() {
+            return Err(anyhow!(
+                "GROUP BY execution is not yet implemented for federated aggregates: {:?}",
+                group_by
+            ));
+        }
+
+        let result = self.execute_node(input).await?;
+        let batch = self.merge_batches(&result)?;
+
+        let aggregate_values = aggregates
             .iter()
-            .map(|aggregate| aggregate.alias.as_str())
-            .collect();
-        Err(anyhow!(
-            "Aggregate execution is not implemented for group_by {:?} and aggregates {:?}",
-            group_by,
-            aggregate_aliases
-        ))
+            .map(|aggregate| Self::compute_aggregate_value(&batch, aggregate))
+            .collect::<Result<Vec<_>>>()?;
+
+        let fields = aggregates
+            .iter()
+            .zip(aggregate_values.iter())
+            .map(|(aggregate, value)| {
+                Field::new(&aggregate.alias, value.data_type(), value.is_nullable())
+            })
+            .collect::<Vec<_>>();
+        let schema = Arc::new(Schema::new(fields));
+
+        if aggregates.is_empty() {
+            return Ok(ExecutionResult::empty_with_schema(schema));
+        }
+
+        let columns = aggregate_values
+            .into_iter()
+            .map(AggregateValue::into_array)
+            .collect::<Vec<_>>();
+        let aggregated = RecordBatch::try_new(schema.clone(), columns)?;
+
+        Ok(ExecutionResult {
+            batches: vec![aggregated],
+            schema,
+            stats: ExecutionStats {
+                rows_produced: 1,
+                ..Default::default()
+            },
+        })
     }
 
     /// Execute union
